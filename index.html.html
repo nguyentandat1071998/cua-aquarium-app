@@ -1,0 +1,1782 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CUA Nội Bộ">
+<title>CUA Aquarium — Nội Bộ</title>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, orderBy, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
+  authDomain: "cua-aquarium.firebaseapp.com",
+  projectId: "cua-aquarium",
+  storageBucket: "cua-aquarium.firebasestorage.app",
+  messagingSenderId: "838648629093",
+  appId: "1:838648629093:web:f3efc89527272fa7ce838c"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// ===== CONFIG =====
+const WORKER_URL = 'https://cua-video-upload.nguyentandat1071998.workers.dev';
+
+// ===== STATE =====
+let currentUser = null;
+let currentUserData = null;
+let allSKUs = [];
+let currentPhieu = { items: [], photos: [] };
+let currentNhap = { items: [], photos: [] };
+let editingPhieuId = null;
+let currentBaoCa = { tenLo: '', rows: [] }; // rows: [{ten, sl, videoFile, videoUrl, uploading}]
+let recordingStream = null;
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordingRowIdx = null;
+let cameraStream = null;
+let activeModule = 'nhap'; // nhap | xuat
+let activeSubTab = 'tao'; // tao | ds | thongke
+
+// ===== AUTH =====
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    try {
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (userDoc.exists()) {
+        currentUserData = userDoc.data();
+        showApp();
+      } else {
+        await signOut(auth);
+        showLogin('Tài khoản không tồn tại trong hệ thống.');
+      }
+    } catch(e) { showLogin('Lỗi kết nối: ' + e.message); }
+  } else {
+    currentUser = null; currentUserData = null;
+    showLogin();
+  }
+});
+
+window.doLogin = async function() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-err');
+  if (!email || !pass) { err.textContent = 'Vui lòng nhập đầy đủ.'; return; }
+  btn.disabled = true; btn.textContent = 'Đang đăng nhập...'; err.textContent = '';
+  try { await signInWithEmailAndPassword(auth, email, pass); }
+  catch(e) { err.textContent = 'Email hoặc mật khẩu không đúng.'; btn.disabled = false; btn.textContent = 'Đăng nhập'; }
+};
+
+window.doLogout = async function() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  await signOut(auth);
+};
+
+// ===== NAV =====
+function showLogin(msg = '') {
+  document.getElementById('screen-login').style.display = 'flex';
+  document.getElementById('screen-app').style.display = 'none';
+  if (msg) document.getElementById('login-err').textContent = msg;
+}
+
+function showApp() {
+  document.getElementById('screen-login').style.display = 'none';
+  document.getElementById('screen-app').style.display = 'flex';
+  document.getElementById('user-name').textContent = currentUserData.ten || currentUser.email;
+  document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
+  if (currentUserData.role === 'admin') {
+    document.getElementById('mod-admin').style.display = 'flex';
+  }
+  const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
+  ['nhap-export-card','xuat-export-card'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = canExport ? 'block' : 'none';
+  });
+  loadSKUs();
+  switchModule('nhap');
+}
+
+function roleLabel(r) {
+  return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên';
+}
+
+window.switchModule = function(mod) {
+  activeModule = mod;
+  // Update module buttons
+  document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mod-' + mod).classList.add('active');
+  // Update subtab colors
+  const color = mod === 'nhap' ? 'var(--green)' : 'var(--red)';
+  document.querySelectorAll('.sub-tab-bar .stab').forEach(b => {
+    b.style.setProperty('--accent', color);
+  });
+  document.getElementById('sub-tab-bar').dataset.mod = mod;
+  // Switch to tao subtab
+  switchSub('tao');
+};
+
+window.switchSub = function(sub) {
+  activeSubTab = sub;
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.getElementById('stab-' + sub).classList.add('active');
+  // Hide all content panels
+  document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+  // Show correct panel
+  const panelId = `panel-${activeModule}-${sub}`;
+  const panel = document.getElementById(panelId);
+  if (panel) panel.style.display = 'block';
+  // Load data when needed
+  if (sub === 'ds') {
+    if (activeModule === 'nhap') loadNhapList();
+    else loadXuatList();
+  }
+  if (sub === 'thongke') {
+    if (activeModule === 'nhap') loadNhapStats();
+    else if (activeModule === 'xuat') loadXuatStats();
+    else if (activeModule === 'baoca') loadBaoCaStats();
+  }
+  if (sub === 'ds' && activeModule === 'baoca') loadBaoCaList();
+  if (sub === 'tao' && activeModule === 'baoca') initBaocaPanel();
+};
+
+window.switchAdmin = function() {
+  activeModule = 'admin';
+  document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mod-admin').classList.add('active');
+  document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+  document.getElementById('panel-admin').style.display = 'block';
+  document.getElementById('sub-tab-bar').style.display = 'none';
+  loadAdminPanel();
+};
+
+// ===== SKU =====
+async function loadSKUs() {
+  const snap = await getDocs(collection(db, 'skus'));
+  allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+function makeSKUSearch(inputId, dropdownId, giaId) {
+  const input = document.getElementById(inputId);
+  const box = document.getElementById(dropdownId);
+  input.addEventListener('input', function() {
+    const val = this.value;
+    if (!val) { box.style.display = 'none'; return; }
+    const results = allSKUs.filter(s =>
+      s.ten.toLowerCase().includes(val.toLowerCase()) ||
+      (s.sku && s.sku.toLowerCase().includes(val.toLowerCase()))
+    ).slice(0, 8);
+    if (!results.length) { box.style.display = 'none'; return; }
+    box.innerHTML = results.map(s =>
+      `<div class="sku-item" onclick="selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten)}',${s.gia||0},'${escHtml(s.sku||'')}')">
+        <span class="sku-name">${escHtml(s.ten)}</span>
+        <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&s.gia?' · ':''}${s.gia?fmt(s.gia)+'₫':''}</span>
+      </div>`
+    ).join('');
+    box.style.display = 'block';
+  });
+}
+
+window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
+  const input = document.getElementById(inputId);
+  input.value = ten;
+  input.dataset.skuId = id;
+  input.dataset.sku = sku;
+  document.getElementById(giaId).value = gia;
+  document.getElementById(dropdownId).style.display = 'none';
+};
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.sku-wrap')) {
+    document.querySelectorAll('.sku-drop').forEach(d => d.style.display = 'none');
+  }
+});
+
+// ===== BÁO CÁ MỚI VỀ =====
+let pendingVideoBlob = null;
+let pendingVideoUrl = null;
+
+function getBaocaLoName() {
+  const now = new Date();
+  return `Cá/Tép về ngày ${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}`;
+}
+
+function initBaocaPanel() {
+  const label = document.getElementById('baoca-lo-label');
+  const hidden = document.getElementById('baoca-ten-lo');
+  if (label && hidden) {
+    const name = getBaocaLoName();
+    label.textContent = name;
+    hidden.value = name;
+  }
+}
+
+window.adjBaocaQty = function(d) {
+  const el = document.getElementById('baoca-item-sl');
+  el.value = Math.max(1, (parseInt(el.value)||1) + d);
+};
+
+let baocaTimerInterval = null;
+let baocaTimerSec = 0;
+
+window.startBaocaRecord = async function() {
+  const ten = document.getElementById('baoca-item-ten').value.trim();
+  if (!ten) { showToast('Vui lòng nhập tên cá/tép trước khi quay', true); return; }
+  const sl = parseInt(document.getElementById('baoca-item-sl').value) || 0;
+  if (sl < 1) { showToast('Vui lòng nhập số lượng trước khi quay', true); return; }
+  // Mở camera
+  await openBaocaCamera();
+};
+
+async function openBaocaCamera() {
+  const modal = document.getElementById('baoca-cam-modal');
+  try {
+    recordingStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    });
+    document.getElementById('baoca-cam-video').srcObject = recordingStream;
+    modal.classList.add('active');
+    if (modal.requestFullscreen) modal.requestFullscreen().catch(()=>{});
+    else if (modal.webkitRequestFullscreen) modal.webkitRequestFullscreen();
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(recordingStream);
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => { closeBaocaCamModal(); onBaocaRecordStop(); };
+    mediaRecorder.start();
+    baocaTimerSec = 0;
+    document.getElementById('baoca-cam-timer').style.display = 'block';
+    document.getElementById('baoca-timer-sec').textContent = '0';
+    baocaTimerInterval = setInterval(() => {
+      baocaTimerSec++;
+      document.getElementById('baoca-timer-sec').textContent = baocaTimerSec;
+    }, 1000);
+    document.getElementById('baoca-cam-btn').classList.add('recording');
+    const ten = document.getElementById('baoca-item-ten').value.trim();
+    document.getElementById('baoca-cam-label').textContent = 'Bấm để dừng quay';
+    // Hiện tên cá + nhân viên + thời gian lên overlay
+    const tsLabel = document.getElementById('baoca-ts-label');
+    if (tsLabel) {
+      const updateTS = () => {
+        const n = new Date();
+        const ts = `${n.getDate().toString().padStart(2,'0')}/${(n.getMonth()+1).toString().padStart(2,'0')}/${n.getFullYear().toString().slice(-2)} ${n.getHours().toString().padStart(2,'0')}:${n.getMinutes().toString().padStart(2,'0')}:${n.getSeconds().toString().padStart(2,'0')}`;
+        tsLabel.textContent = `${ten} · ${currentUserData?.ten||''} · ${ts}`;
+      };
+      updateTS();
+      window._tsInterval = setInterval(updateTS, 1000);
+    }
+  } catch(e) { showToast('Không mở được camera: ' + e.message, true); }
+}
+
+window.toggleBaocaRecord = function() {
+  // Dừng quay
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    clearInterval(baocaTimerInterval);
+    clearInterval(window._tsInterval);
+    mediaRecorder.stop();
+    recordingStream.getTracks().forEach(t => t.stop());
+    document.getElementById('baoca-record-status').textContent = '⏳ Đang xử lý video...';
+  }
+};
+
+window.cancelBaocaRecord = function() {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  if (recordingStream) { recordingStream.getTracks().forEach(t => t.stop()); recordingStream = null; }
+  clearInterval(baocaTimerInterval);
+  mediaRecorder = null;
+  recordedChunks = [];
+  closeBaocaCamModal();
+};
+
+function closeBaocaCamModal() {
+  const modal = document.getElementById('baoca-cam-modal');
+  modal.classList.remove('active');
+  if (document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  else if (document.webkitFullscreenElement) document.webkitExitFullscreen();
+  document.getElementById('baoca-cam-btn').classList.remove('recording');
+  document.getElementById('baoca-cam-timer').style.display = 'none';
+  document.getElementById('baoca-cam-label').textContent = 'Bấm để bắt đầu quay';
+  document.getElementById('baoca-cam-video').srcObject = null;
+};
+
+// Không thể overlay trực tiếp lên video MediaRecorder vì canvas capture
+// Thay vào đó hiện overlay text lên video preview bằng CSS
+function onBaocaRecordStop() {
+  const blob = new Blob(recordedChunks, { type: 'video/mp4' });
+  pendingVideoBlob = blob;
+  pendingVideoUrl = URL.createObjectURL(blob);
+  const preview = document.getElementById('baoca-record-preview');
+  preview.srcObject = null;
+  preview.src = pendingVideoUrl;
+  document.getElementById('baoca-record-status').textContent = '✓ Quay xong';
+  // Ẩn step info, hiện step record (preview + nút thêm)
+  document.getElementById('baoca-step-info').style.display = 'none';
+  document.getElementById('baoca-step-record').style.display = 'block';
+  mediaRecorder = null;
+  // Upload ngầm ngay
+  startBackgroundUpload(blob);
+}
+
+let backgroundUploadPromise = null;
+let backgroundUploadResult = null;
+
+function startBackgroundUpload(blob) {
+  backgroundUploadResult = null;
+  const statusEl = document.getElementById('baoca-upload-status');
+  statusEl.style.display = 'flex';
+  statusEl.className = 'upload-status';
+  statusEl.textContent = '⏳ Đang upload video...';
+
+  backgroundUploadPromise = new Promise(async (resolve) => {
+    try {
+      const ten = document.getElementById('baoca-item-ten').value.trim() || 'video';
+      const now = new Date();
+      const dd = now.getDate().toString().padStart(2,'0');
+      const mm = (now.getMonth()+1).toString().padStart(2,'0');
+      const hh = now.getHours().toString().padStart(2,'0');
+      const mi = now.getMinutes().toString().padStart(2,'0');
+      const tenSafe = ten.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
+      const filename = `${tenSafe}_${dd}-${mm}_${hh}-${mi}.mp4`;
+      // Streaming upload — gửi blob trực tiếp, không cần base64
+      const response = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'video/mp4',
+          'x-filename': filename,
+        },
+        body: blob,
+        duplex: 'half', // cho phép streaming
+      });
+      const data = await response.json();
+      if (data.success) {
+        backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
+        statusEl.className = 'upload-status done';
+        statusEl.textContent = '✓ Upload xong';
+      } else {
+        backgroundUploadResult = { success: false, error: data.error };
+        statusEl.className = 'upload-status err';
+        statusEl.textContent = '✗ Lỗi: ' + data.error;
+      }
+    } catch(e) {
+      backgroundUploadResult = { success: false, error: e.message };
+      statusEl.className = 'upload-status err';
+      statusEl.textContent = '✗ Lỗi: ' + e.message;
+    }
+    resolve(backgroundUploadResult);
+  });
+}
+
+window.resetBaocaStep = function() {
+  pendingVideoBlob = null;
+  pendingVideoUrl = null;
+  backgroundUploadPromise = null;
+  backgroundUploadResult = null;
+  document.getElementById('baoca-step-info').style.display = 'block';
+  document.getElementById('baoca-step-record').style.display = 'none';
+  document.getElementById('baoca-record-status').textContent = '';
+  document.getElementById('baoca-upload-status').style.display = 'none';
+};
+
+window.addBaocaRow = async function() {
+  const tenEl = document.getElementById('baoca-item-ten');
+  const ten = tenEl.value.trim();
+  const sku = tenEl.dataset.sku || '';
+  const sl = parseInt(document.getElementById('baoca-item-sl').value) || 0;
+  if (!pendingVideoBlob) { showToast('Chưa có video', true); return; }
+
+  const addBtn = document.querySelector('#baoca-step-info .btn-blue');
+  const statusEl = document.getElementById('baoca-upload-status');
+
+  // Nếu upload chưa xong thì chờ
+  if (backgroundUploadPromise && !backgroundUploadResult) {
+    addBtn.disabled = true;
+    addBtn.textContent = '⏳ Chờ upload xong...';
+    statusEl.style.display = 'flex';
+    statusEl.className = 'upload-status';
+    statusEl.textContent = '⏳ Đang chờ upload hoàn tất...';
+    await backgroundUploadPromise;
+    addBtn.disabled = false;
+    addBtn.textContent = '+ Thêm vào phiếu';
+  }
+
+  if (!backgroundUploadResult || !backgroundUploadResult.success) {
+    showToast('Upload thất bại, vui lòng quay lại và thử lại', true);
+    return;
+  }
+
+  currentBaoCa.rows.push({
+    ten, sku, sl,
+    videoUrl: backgroundUploadResult.viewUrl,
+    fileId: backgroundUploadResult.fileId,
+    videoPreview: pendingVideoUrl
+  });
+  showToast('✓ Đã thêm: ' + ten);
+  renderBaocaRows();
+  resetBaocaStep();
+  backgroundUploadPromise = null;
+  backgroundUploadResult = null;
+};
+
+window.removeBaocaRow = function(idx) {
+  currentBaoCa.rows.splice(idx, 1);
+  renderBaocaRows();
+};
+
+function renderBaocaRows() {
+  const card = document.getElementById('baoca-rows-card');
+  const submitBtn = document.getElementById('btn-baoca-submit');
+  const el = document.getElementById('baoca-rows-list');
+  if (!currentBaoCa.rows.length) {
+    card.style.display = 'none'; submitBtn.style.display = 'none'; return;
+  }
+  card.style.display = 'block'; submitBtn.style.display = 'flex';
+  el.innerHTML = currentBaoCa.rows.map((row, idx) => `
+    <div class="baoca-row">
+      <div class="baoca-row-header">
+        <div>
+          <span class="baoca-row-name">${escHtml(row.ten)}</span>
+          ${row.sku ? `<span class="item-sku"> · ${escHtml(row.sku)}</span>` : ''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="baoca-row-sl">${row.sl} con</span>
+          <button class="del-btn" onclick="removeBaocaRow(${idx})">✕</button>
+        </div>
+      </div>
+      ${row.videoPreview ? `<video class="video-preview" src="${row.videoPreview}" controls style="margin-top:6px"></video>` : ''}
+      <div class="upload-status done" style="margin-top:4px">✓ Video đã upload</div>
+    </div>`).join('');
+}
+
+window.submitBaoCa = async function() {
+  const tenLo = document.getElementById('baoca-ten-lo').value.trim() || getBaocaLoName();
+  if (!tenLo) { showToast('Vui lòng nhập tên lô hàng', true); return; }
+  if (!currentBaoCa.rows.length) { showToast('Chưa có dòng hàng nào', true); return; }
+  const stillUploading = currentBaoCa.rows.some(r => r.uploading);
+  if (stillUploading) { showToast('Đang upload video, vui lòng chờ...', true); return; }
+  const btn = document.getElementById('btn-baoca-submit');
+  btn.disabled = true; btn.textContent = 'Đang lưu...';
+  try {
+    await addDoc(collection(db, 'phieu_baoca'), {
+      tenLo,
+      rows: currentBaoCa.rows.map(r => ({ ten: r.ten, sku: r.sku||'', sl: r.sl, videoUrl: r.videoUrl||'', fullUrl: r.fullUrl||'', fileId: r.fileId||'' })),
+      tongSL: currentBaoCa.rows.reduce((s,r) => s+r.sl, 0),
+      tongDong: currentBaoCa.rows.length,
+      nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
+      createdAt: serverTimestamp(),
+      deleted: false
+    });
+    currentBaoCa = { tenLo: '', rows: [] };
+    renderBaocaRows();
+    resetBaocaStep();
+    initBaocaPanel();
+    showToast('✓ Đã lưu phiếu báo cá mới về');
+  } catch(e) { showToast('Lỗi: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = '💾 Lưu phiếu báo cá';
+};
+
+async function loadBaoCaList() {
+  const el = document.getElementById('baoca-ds-list');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db, 'phieu_baoca'), orderBy('createdAt','desc')));
+  let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
+  const from = document.getElementById('baoca-filter-from')?.value;
+  const to = document.getElementById('baoca-filter-to')?.value;
+  if (from||to) docs = docs.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds<from) return false;
+    if (to && ds>to) return false;
+    return true;
+  });
+  if (!docs.length) { el.innerHTML='<div class="empty-msg">Chưa có phiếu nào.</div>'; return; }
+  const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
+  el.innerHTML = docs.map(p => {
+    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
+    return `<div class="phieu-baoca">
+      <div class="phieu-top">
+        <div>
+          <span class="phieu-date">${fmtDate(date)}</span>
+          <div style="font-size:14px;font-weight:600;margin-top:3px">${escHtml(p.tenLo||'')}</div>
+        </div>
+        <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteBaoCa('${p.id}')">Xóa</button>`:''}</div>
+      </div>
+      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'} · ${p.tongDong} dòng · ${p.tongSL} con</div>
+      <div style="margin-top:8px">
+        ${(p.rows||[]).map(r => `
+          <div class="baoca-ds-row">
+            <div class="baoca-ds-row-header">
+              <span class="baoca-ds-row-name">${escHtml(r.ten)}</span>
+              <span class="baoca-row-sl">${r.sl} con</span>
+            </div>
+            ${r.videoUrl ? `
+              <iframe src="${r.videoUrl}" width="100%" height="180" style="border:none;border-radius:6px" allowfullscreen></iframe>
+              <a href="${r.fullUrl||r.videoUrl.replace('/preview','/view')}" target="_blank" class="btn-view-full">⛶ Xem đầy đủ / Tua video</a>
+            ` : '<div class="empty-msg" style="padding:8px">Chưa có video</div>'}
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.deleteBaoCa = async function(id) {
+  if (!confirm('Xóa phiếu này?')) return;
+  await updateDoc(doc(db,'phieu_baoca',id), { deleted:true });
+  showToast('Đã xóa'); loadBaoCaList();
+};
+
+window.clearBaocaFilter = function() {
+  ['baoca-filter-from','baoca-filter-to'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  loadBaoCaList();
+};
+
+async function loadBaoCaStats() {
+  const el = document.getElementById('baoca-stats-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db,'phieu_baoca'), orderBy('createdAt','desc')));
+  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  const byMonth={};
+  all.forEach(p => {
+    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
+    const month = fmtMonth(date);
+    if (!byMonth[month]) byMonth[month]={phieu:0,dong:0,sl:0};
+    byMonth[month].phieu++; byMonth[month].dong+=p.tongDong||0; byMonth[month].sl+=p.tongSL||0;
+  });
+  const rows = Object.entries(byMonth).map(([m,v])=>`<tr><td>${m}</td><td>${v.phieu}</td><td>${v.dong}</td><td class="bold" style="color:var(--blue)">${v.sl}</td></tr>`).join('');
+  el.innerHTML = `<h3 class="stats-h">Theo tháng</h3>
+  <table class="stats-tbl">
+    <thead><tr><th>Tháng</th><th>Lô hàng</th><th>Dòng</th><th>Tổng con</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="4" class="empty-msg">Chưa có dữ liệu</td></tr>'}</tbody>
+  </table>`;
+}
+
+// ===== NHẬP HÀNG =====
+function makeQtyButtons(wrapperId, inputId, onchange) {
+  // handled inline in HTML
+}
+
+window.addNhapItem = function() {
+  const tenEl = document.getElementById('nhap-item-ten');
+  const ten = tenEl.value.trim();
+  const sku = tenEl.dataset.sku || '';
+  const skuId = tenEl.dataset.skuId || '';
+  const sl = parseInt(document.getElementById('nhap-item-sl').value) || 0;
+  const gia = parseFloat(document.getElementById('nhap-item-gia').value) || 0;
+  if (!ten) { showToast('Vui lòng chọn hàng hóa', true); return; }
+  if (sl < 1) { showToast('Số lượng phải lớn hơn 0', true); return; }
+  currentNhap.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
+  tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
+  document.getElementById('nhap-item-sl').value = '1';
+  document.getElementById('nhap-item-gia').value = '';
+  renderNhapItems();
+};
+
+window.removeNhapItem = function(i) { currentNhap.items.splice(i,1); renderNhapItems(); };
+window.adjNhapQty = function(i, d) {
+  currentNhap.items[i].sl = Math.max(1, currentNhap.items[i].sl + d);
+  currentNhap.items[i].tong = currentNhap.items[i].sl * currentNhap.items[i].gia;
+  renderNhapItems();
+};
+window.setNhapQty = function(i, v) {
+  currentNhap.items[i].sl = Math.max(1, parseInt(v)||1);
+  currentNhap.items[i].tong = currentNhap.items[i].sl * currentNhap.items[i].gia;
+  renderNhapItems();
+};
+
+function renderNhapItems() {
+  const el = document.getElementById('nhap-items-list');
+  const totalEl = document.getElementById('nhap-total');
+  if (!currentNhap.items.length) {
+    el.innerHTML = '<div class="empty-msg">Chưa có hàng nào.</div>';
+    totalEl.textContent = '0₫';
+    return;
+  }
+  const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
+  el.innerHTML = currentNhap.items.map((item,idx) => `
+    <div class="item-row">
+      <div class="item-left">
+        <span class="item-name">${escHtml(item.ten)}</span>
+        ${item.sku?`<span class="item-sku">${escHtml(item.sku)}</span>`:''}
+      </div>
+      <div class="item-right">
+        <div class="qty-ctrl">
+          <button onclick="adjNhapQty(${idx},-1)">−</button>
+          <input type="number" value="${item.sl}" onchange="setNhapQty(${idx},this.value)">
+          <button onclick="adjNhapQty(${idx},1)">+</button>
+        </div>
+        <span class="item-total g">${fmt(item.tong)}₫</span>
+        <button class="del-btn" onclick="removeNhapItem(${idx})">✕</button>
+      </div>
+    </div>`).join('');
+  totalEl.textContent = fmt(total) + '₫';
+}
+
+window.submitNhap = async function() {
+  if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
+  const btn = document.getElementById('btn-nhap-submit');
+  btn.disabled = true; btn.textContent = 'Đang lưu...';
+  try {
+    const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
+    await addDoc(collection(db, 'phieu_nhap'), {
+      items: currentNhap.items,
+      photos: currentNhap.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
+      tongGia: total,
+      tongSL: currentNhap.items.reduce((s,i) => s+i.sl, 0),
+      nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
+      createdAt: serverTimestamp(),
+      deleted: false
+    });
+    currentNhap = { items: [], photos: [] };
+    renderNhapItems();
+    renderNhapPhotos();
+    showToast('✓ Đã lưu phiếu nhập');
+  } catch(e) { showToast('Lỗi: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Lưu phiếu nhập';
+};
+
+function renderNhapPhotos() {
+  const el = document.getElementById('nhap-photos');
+  if (!currentNhap.photos.length) { el.innerHTML = '<div class="empty-msg">Chưa có ảnh.</div>'; return; }
+  el.innerHTML = currentNhap.photos.map((p,i) => `
+    <div class="thumb-wrap">
+      <img src="${p.dataUrl}" onclick="viewPhoto('${p.dataUrl}')">
+      <button onclick="currentNhap.photos.splice(${i},1);renderNhapPhotos()">✕</button>
+    </div>`).join('');
+}
+
+// ===== XUẤT HỦY =====
+window.addXuatItem = function() {
+  const tenEl = document.getElementById('xuat-item-ten');
+  const ten = tenEl.value.trim();
+  const sku = tenEl.dataset.sku || '';
+  const skuId = tenEl.dataset.skuId || '';
+  const sl = parseInt(document.getElementById('xuat-item-sl').value) || 0;
+  const gia = parseFloat(document.getElementById('xuat-item-gia').value) || 0;
+  if (!ten) { showToast('Vui lòng chọn hàng hóa', true); return; }
+  if (sl < 1) { showToast('Số lượng phải lớn hơn 0', true); return; }
+  currentPhieu.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
+  tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
+  document.getElementById('xuat-item-sl').value = '1';
+  document.getElementById('xuat-item-gia').value = '';
+  renderXuatItems();
+};
+
+window.removeXuatItem = function(i) { currentPhieu.items.splice(i,1); renderXuatItems(); };
+window.adjXuatQty = function(i,d) {
+  currentPhieu.items[i].sl = Math.max(1, currentPhieu.items[i].sl + d);
+  currentPhieu.items[i].tong = currentPhieu.items[i].sl * currentPhieu.items[i].gia;
+  renderXuatItems();
+};
+window.setXuatQty = function(i,v) {
+  currentPhieu.items[i].sl = Math.max(1, parseInt(v)||1);
+  currentPhieu.items[i].tong = currentPhieu.items[i].sl * currentPhieu.items[i].gia;
+  renderXuatItems();
+};
+
+function renderXuatItems() {
+  const el = document.getElementById('xuat-items-list');
+  const totalEl = document.getElementById('xuat-total');
+  if (!currentPhieu.items.length) {
+    el.innerHTML = '<div class="empty-msg">Chưa có hàng nào.</div>';
+    totalEl.textContent = '0₫';
+    return;
+  }
+  const total = currentPhieu.items.reduce((s,i) => s+i.tong, 0);
+  el.innerHTML = currentPhieu.items.map((item,idx) => `
+    <div class="item-row">
+      <div class="item-left">
+        <span class="item-name">${escHtml(item.ten)}</span>
+        ${item.sku?`<span class="item-sku">${escHtml(item.sku)}</span>`:''}
+      </div>
+      <div class="item-right">
+        <div class="qty-ctrl">
+          <button onclick="adjXuatQty(${idx},-1)">−</button>
+          <input type="number" value="${item.sl}" onchange="setXuatQty(${idx},this.value)">
+          <button onclick="adjXuatQty(${idx},1)">+</button>
+        </div>
+        <span class="item-total r">${fmt(item.tong)}₫</span>
+        <button class="del-btn" onclick="removeXuatItem(${idx})">✕</button>
+      </div>
+    </div>`).join('');
+  totalEl.textContent = fmt(total) + '₫';
+}
+
+window.submitXuat = async function() {
+  if (!currentPhieu.items.length) { showToast('Chưa có hàng nào', true); return; }
+  const btn = document.getElementById('btn-xuat-submit');
+  btn.disabled = true; btn.textContent = 'Đang lưu...';
+  try {
+    const total = currentPhieu.items.reduce((s,i) => s+i.tong, 0);
+    await addDoc(collection(db, 'phieu_huy'), {
+      items: currentPhieu.items,
+      photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
+      tongGia: total,
+      tongSL: currentPhieu.items.reduce((s,i) => s+i.sl, 0),
+      nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
+      createdAt: serverTimestamp(),
+      deleted: false,
+      versions: []
+    });
+    currentPhieu = { items: [], photos: [] };
+    renderXuatItems();
+    renderXuatPhotos();
+    showToast('✓ Đã lưu phiếu xuất hủy');
+  } catch(e) { showToast('Lỗi: ' + e.message, true); }
+  btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
+};
+
+function renderXuatPhotos() {
+  const el = document.getElementById('xuat-photos');
+  if (!currentPhieu.photos.length) { el.innerHTML = '<div class="empty-msg">Chưa có ảnh.</div>'; return; }
+  el.innerHTML = currentPhieu.photos.map((p,i) => `
+    <div class="thumb-wrap">
+      <img src="${p.dataUrl}" onclick="viewPhoto('${p.dataUrl}')">
+      <button onclick="currentPhieu.photos.splice(${i},1);renderXuatPhotos()">✕</button>
+    </div>`).join('');
+}
+
+// ===== CAMERA =====
+window.openCamera = async function(mode) {
+  const modal = document.getElementById('camera-modal');
+  modal.dataset.mode = mode;
+  modal.style.display = 'flex';
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    document.getElementById('camera-video').srcObject = cameraStream;
+  } catch(e) {
+    showToast('Không mở được camera', true);
+    modal.style.display = 'none';
+  }
+};
+
+window.capturePhoto = function() {
+  const mode = document.getElementById('camera-modal').dataset.mode;
+  const video = document.getElementById('camera-video');
+  const canvas = document.getElementById('camera-canvas');
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+  // Timestamp overlay
+  const now = new Date();
+  const d2=now.getDate().toString().padStart(2,'0'), m2=(now.getMonth()+1).toString().padStart(2,'0'), y2=now.getFullYear().toString().slice(-2);
+  const ts = `${d2}/${m2}/${y2} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+  const label = `CUA Aquarium · ${currentUserData?.ten||''} · ${ts}`;
+  const fontSize = Math.max(16, Math.round(canvas.width * 0.025));
+  ctx.font = `bold ${fontSize}px monospace`;
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
+  ctx.fillStyle = '#FFE566';
+  ctx.fillText(label, 14, canvas.height - 10);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  const photoData = { dataUrl, ts };
+  if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
+  else { currentPhieu.photos.push(photoData); renderXuatPhotos(); }
+  closeCamera();
+  showToast('Đã chụp ảnh');
+};
+
+window.closeCamera = function() {
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  document.getElementById('camera-modal').style.display = 'none';
+};
+
+// ===== DANH SÁCH NHẬP =====
+async function loadNhapList(filter={}) {
+  const el = document.getElementById('nhap-ds-list');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db, 'phieu_nhap'), orderBy('createdAt','desc')));
+  let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
+  // Populate NV filter
+  const nvSet = [...new Set(docs.map(d => d.nguoiTao?.ten).filter(Boolean))];
+  const sel = document.getElementById('nhap-filter-nv');
+  if (sel) { const cur=sel.value; sel.innerHTML='<option value="">Tất cả</option>'+nvSet.map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join(''); }
+  // Apply filters
+  const from = document.getElementById('nhap-filter-from')?.value;
+  const to = document.getElementById('nhap-filter-to')?.value;
+  const nv = document.getElementById('nhap-filter-nv')?.value;
+  if (from||to||nv) docs = docs.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds < from) return false;
+    if (to && ds > to) return false;
+    if (nv && d.nguoiTao?.ten !== nv) return false;
+    return true;
+  });
+  if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
+  const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
+  el.innerHTML = docs.map(p => {
+    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
+    return `<div class="phieu-card green">
+      <div class="phieu-top">
+        <div><span class="phieu-date">${fmtDate(date)}</span></div>
+        <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
+      </div>
+      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
+      ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
+      <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="g bold">${fmt(p.tongGia)}₫</span></div>
+    </div>`;
+  }).join('');
+}
+
+window.deleteNhap = async function(id) {
+  if (!confirm('Xóa phiếu nhập này?')) return;
+  await updateDoc(doc(db,'phieu_nhap',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
+  showToast('Đã xóa'); loadNhapList();
+};
+
+window.applyNhapFilter = function() { loadNhapList(); };
+window.clearNhapFilter = function() {
+  ['nhap-filter-from','nhap-filter-to'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('nhap-filter-nv').value='';
+  loadNhapList();
+};
+
+// ===== DANH SÁCH XUẤT =====
+async function loadXuatList(filter={}) {
+  const el = document.getElementById('xuat-ds-list');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db, 'phieu_huy'), orderBy('createdAt','desc')));
+  let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
+  const nvSet = [...new Set(docs.map(d => d.nguoiTao?.ten).filter(Boolean))];
+  const sel = document.getElementById('xuat-filter-nv');
+  if (sel) { const cur=sel.value; sel.innerHTML='<option value="">Tất cả</option>'+nvSet.map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join(''); }
+  const from = document.getElementById('xuat-filter-from')?.value;
+  const to = document.getElementById('xuat-filter-to')?.value;
+  const nv = document.getElementById('xuat-filter-nv')?.value;
+  if (from||to||nv) docs = docs.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds < from) return false;
+    if (to && ds > to) return false;
+    if (nv && d.nguoiTao?.ten !== nv) return false;
+    return true;
+  });
+  if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
+  const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
+  el.innerHTML = docs.map(p => {
+    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
+    return `<div class="phieu-card red">
+      <div class="phieu-top">
+        <div><span class="phieu-date">${fmtDate(date)}</span></div>
+        <div class="phieu-acts">${canEdit?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
+      </div>
+      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
+      ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
+      <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
+      ${p.versions?.length?`<div class="ver-toggle" onclick="toggleVer('${p.id}')">📋 ${p.versions.length} lần sửa</div><div id="ver-${p.id}" style="display:none" class="ver-list">${p.versions.map((v,i)=>`<div class="ver-row">Lần ${i+1} · ${v.editedBy?.ten} · ${v.editedAt?fmtDate(new Date(v.editedAt.seconds*1000)):''}</div>`).join('')}</div>`:''} 
+    </div>`;
+  }).join('');
+}
+
+window.softDeleteXuat = async function(id) {
+  if (!confirm('Xóa phiếu này? Vẫn lưu trong mục Đã xóa.')) return;
+  await updateDoc(doc(db,'phieu_huy',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
+  showToast('Đã xóa phiếu'); loadXuatList();
+};
+
+window.applyXuatFilter = function() { loadXuatList(); };
+window.clearXuatFilter = function() {
+  ['xuat-filter-from','xuat-filter-to'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('xuat-filter-nv').value='';
+  loadXuatList();
+};
+
+window.toggleVer = function(id) {
+  const el = document.getElementById('ver-'+id);
+  el.style.display = el.style.display==='none'?'block':'none';
+};
+
+// ===== EDIT XUẤT =====
+window.openEditXuat = async function(id) {
+  editingPhieuId = id;
+  const snap = await getDoc(doc(db,'phieu_huy',id));
+  const data = snap.data();
+  document.getElementById('edit-items').value = JSON.stringify(data.items, null, 2);
+  document.getElementById('edit-modal').style.display = 'flex';
+};
+window.closeEdit = function() { document.getElementById('edit-modal').style.display='none'; editingPhieuId=null; };
+window.saveEdit = async function() {
+  try {
+    const snap = await getDoc(doc(db,'phieu_huy',editingPhieuId));
+    const old = snap.data();
+    const newItems = JSON.parse(document.getElementById('edit-items').value);
+    const version = { items:old.items, tongGia:old.tongGia, editedBy:{uid:currentUser.uid,ten:currentUserData.ten}, editedAt:new Date() };
+    const versions = [...(old.versions||[]), version];
+    const total = newItems.reduce((s,i) => s+(i.sl*i.gia), 0);
+    await updateDoc(doc(db,'phieu_huy',editingPhieuId), {
+      items: newItems.map(i=>({...i,tong:i.sl*i.gia})),
+      tongGia: total, tongSL: newItems.reduce((s,i)=>s+i.sl,0),
+      versions, lastEditedBy:{uid:currentUser.uid,ten:currentUserData.ten}, lastEditedAt:serverTimestamp()
+    });
+    closeEdit(); showToast('Đã cập nhật phiếu'); loadXuatList();
+  } catch(e) { showToast('Lỗi: '+e.message, true); }
+};
+
+// ===== THỐNG KÊ =====
+async function loadNhapStats() {
+  const el = document.getElementById('nhap-stats-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db,'phieu_nhap'), orderBy('createdAt','desc')));
+  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  el.innerHTML = buildStatsHTML(all, 'green');
+}
+
+async function loadXuatStats() {
+  const el = document.getElementById('xuat-stats-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
+  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  el.innerHTML = buildStatsHTML(all, 'red');
+}
+
+function buildStatsHTML(all, color) {
+  const byMonth={}, byDay={};
+  all.forEach(p => {
+    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
+    const day = fmtDateOnly(date), month = fmtMonth(date);
+    if (!byMonth[month]) byMonth[month]={gia:0,sl:0,phieu:0};
+    if (!byDay[day]) byDay[day]={gia:0,sl:0,phieu:0};
+    byMonth[month].gia+=p.tongGia||0; byMonth[month].sl+=p.tongSL||0; byMonth[month].phieu++;
+    byDay[day].gia+=p.tongGia||0; byDay[day].sl+=p.tongSL||0; byDay[day].phieu++;
+  });
+  const cls = color==='green'?'g':'r';
+  const tbl = (rows) => `<table class="stats-tbl">
+    <thead><tr><th>Ngày/Tháng</th><th>Phiếu</th><th>SL</th><th>Giá trị</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="4" class="empty-msg">Chưa có dữ liệu</td></tr>'}</tbody>
+  </table>`;
+  const mRows = Object.entries(byMonth).map(([m,v])=>`<tr><td>${m}</td><td>${v.phieu}</td><td>${v.sl}</td><td class="${cls} bold">${fmt(v.gia)}₫</td></tr>`).join('');
+  const dRows = Object.entries(byDay).slice(0,30).map(([d,v])=>`<tr><td>${d}</td><td>${v.phieu}</td><td>${v.sl}</td><td class="${cls} bold">${fmt(v.gia)}₫</td></tr>`).join('');
+  return `<h3 class="stats-h">Theo tháng</h3>${tbl(mRows)}<h3 class="stats-h" style="margin-top:1.5rem">Theo ngày (30 ngày gần nhất)</h3>${tbl(dRows)}`;
+}
+
+// ===== EXPORT CSV =====
+window.exportNhapCSV = async function() {
+  const from = document.getElementById('nhap-export-from')?.value;
+  const to = document.getElementById('nhap-export-to')?.value;
+  const snap = await getDocs(query(collection(db,'phieu_nhap'), orderBy('createdAt','desc')));
+  let all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  if (from||to) all = all.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds<from) return false;
+    if (to && ds>to) return false;
+    return true;
+  });
+  if (!all.length) { showToast('Không có dữ liệu', true); return; }
+  const map={};
+  all.forEach(p => p.items.forEach(i => {
+    const k=i.sku||i.ten;
+    if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
+    map[k].sl+=i.sl;
+  }));
+  downloadCSV(Object.values(map), 'nhap-kho', 'Số lượng nhập');
+};
+
+window.exportXuatCSV = async function() {
+  const from = document.getElementById('xuat-export-from')?.value;
+  const to = document.getElementById('xuat-export-to')?.value;
+  const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
+  let all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  if (from||to) all = all.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds<from) return false;
+    if (to && ds>to) return false;
+    return true;
+  });
+  if (!all.length) { showToast('Không có dữ liệu', true); return; }
+  const map={};
+  all.forEach(p => p.items.forEach(i => {
+    const k=i.sku||i.ten;
+    if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
+    map[k].sl+=i.sl;
+  }));
+  downloadCSV(Object.values(map), 'xuat-huy', 'Số lượng hủy');
+};
+
+function downloadCSV(rows, filename, slLabel) {
+  const header = `Mã hàng,Tên hàng,Đơn vị tính,${slLabel}`;
+  const lines = rows.map(r => `"${r.ma}","${r.ten}",,${r.sl}`);
+  const csv = '\uFEFF' + [header, ...lines].join('\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download=`${filename}-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  showToast('Đã xuất CSV');
+}
+
+// ===== ADMIN =====
+async function loadAdminPanel() {
+  const el = document.getElementById('admin-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const uSnap = await getDocs(collection(db,'users'));
+  const users = uSnap.docs.map(d=>({id:d.id,...d.data()}));
+  el.innerHTML = `
+    <div class="admin-block">
+      <h3>Tài khoản nhân viên</h3>
+      <div class="user-list">${users.map(u=>`
+        <div class="user-row">
+          <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
+          <span class="uemail">${u.email||''}</span>
+        </div>`).join('')}</div>
+      <div class="admin-form">
+        <h4>Thêm tài khoản mới</h4>
+        <p class="info-note">⚠️ Tạo user trong Firebase Auth trước, copy UID rồi điền vào đây.</p>
+        <input id="new-uid" placeholder="UID từ Firebase Auth">
+        <input id="new-ten" placeholder="Tên nhân viên">
+        <input id="new-email" placeholder="Email">
+        <select id="new-role"><option value="nhan_vien">Nhân viên</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
+        <button class="btn-g" onclick="addUser()">Thêm vào hệ thống</button>
+      </div>
+    </div>
+    <div class="admin-block" style="margin-top:1rem">
+      <h3>Import SKU từ KiotViet</h3>
+      <p class="info-note">File CSV gồm cột: <b>sku, ten, gia</b></p>
+      <input type="file" id="sku-file" accept=".csv" onchange="importSKU(this)">
+      <div id="import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
+    </div>
+    <div class="admin-block" style="margin-top:1rem">
+      <h3>Phiếu đã xóa</h3>
+      <button class="btn-outline" onclick="loadDeletedList()">Xem phiếu đã xóa</button>
+      <div id="deleted-list" style="margin-top:12px"></div>
+    </div>`;
+}
+
+window.addUser = async function() {
+  const uid=document.getElementById('new-uid').value.trim();
+  const ten=document.getElementById('new-ten').value.trim();
+  const email=document.getElementById('new-email').value.trim();
+  const role=document.getElementById('new-role').value;
+  if (!uid||!ten) { showToast('Vui lòng nhập UID và tên',true); return; }
+  await setDoc(doc(db,'users',uid), { ten, email, role, createdAt:serverTimestamp() });
+  showToast('Đã thêm: '+ten); loadAdminPanel();
+};
+
+window.importSKU = async function(input) {
+  const file = input.files[0]; if (!file) return;
+  let text = await file.text();
+  if (text.includes('\uFFFD') || text.split('').some(c=>c.charCodeAt(0)>127&&c.charCodeAt(0)<160)) {
+    text = await new Promise(res => { const r=new FileReader(); r.onload=e=>res(e.target.result); r.readAsText(file,'windows-1258'); });
+  }
+  const lines = text.trim().split('\n');
+  const hdr = lines[0].split(',').map(h=>h.trim().replace(/"/g,'').toLowerCase());
+  const skuIdx=hdr.indexOf('sku'), tenIdx=hdr.indexOf('ten'), giaIdx=hdr.indexOf('gia');
+  if (tenIdx===-1) { showToast('CSV thiếu cột "ten"',true); return; }
+  let count=0;
+  for (let i=1;i<lines.length;i++) {
+    const cols=lines[i].split(',').map(c=>c.trim().replace(/"/g,''));
+    if (!cols[tenIdx]) continue;
+    await addDoc(collection(db,'skus'), { ten:cols[tenIdx], sku:skuIdx>=0?cols[skuIdx]:'', gia:giaIdx>=0?parseFloat(cols[giaIdx].replace(/[^0-9.]/g,''))||0:0 });
+    count++;
+  }
+  document.getElementById('import-result').textContent = `✓ Đã import ${count} SKU`;
+  await loadSKUs();
+  showToast(`Import xong ${count} SKU`);
+};
+
+window.loadDeletedList = async function() {
+  const el = document.getElementById('deleted-list');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
+  const docs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>d.deleted);
+  if (!docs.length) { el.innerHTML='<div class="empty-msg">Không có phiếu đã xóa.</div>'; return; }
+  el.innerHTML = docs.map(p => {
+    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
+    return `<div class="phieu-card red" style="opacity:0.7">
+      <div class="phieu-top"><span class="phieu-date">${fmtDate(date)}</span>
+      <button class="btn-xs" onclick="restoreXuat('${p.id}')">Khôi phục</button></div>
+      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
+    </div>`;
+  }).join('');
+};
+
+window.restoreXuat = async function(id) {
+  await updateDoc(doc(db,'phieu_huy',id),{deleted:false});
+  showToast('Đã khôi phục'); loadDeletedList();
+};
+
+// ===== UTILS =====
+function fmt(n) { return Math.round(n).toLocaleString('vi-VN'); }
+function fmtDate(date) {
+  const d=date.getDate().toString().padStart(2,'0'), m=(date.getMonth()+1).toString().padStart(2,'0'), y=date.getFullYear().toString().slice(-2);
+  return `${d}/${m}/${y} ${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+}
+function fmtDateOnly(date) {
+  return `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
+}
+function fmtMonth(date) {
+  return `${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function showToast(msg, isErr=false) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast'+(isErr?' err':'');
+  t.style.display='block'; setTimeout(()=>t.style.display='none', 2800);
+}
+window.viewPhoto = function(src) {
+  document.getElementById('viewer-img').src=src;
+  document.getElementById('photo-viewer').style.display='flex';
+};
+window.closeViewer = function() { document.getElementById('photo-viewer').style.display='none'; };
+
+// Init SKU search after DOM ready
+document.addEventListener('DOMContentLoaded', () => {
+  makeSKUSearch('nhap-item-ten','nhap-sku-drop','nhap-item-gia');
+  makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia');
+  makeSKUSearch('baoca-item-ten','baoca-sku-drop','baoca-dummy-gia');
+});
+</script>
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --green:#1B7A3E;--green-bg:#E8F5EE;--green-mid:#2EAB58;
+  --red:#C0392B;--red-bg:#FDF0EE;--red-mid:#E74C3C;
+  --bg:#F4F5F7;--surface:#fff;--border:#E4E6EA;
+  --text:#1A1D23;--text2:#5A6070;--text3:#9099AA;
+  --radius:12px;--shadow:0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.04);
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
+
+/* LOGIN */
+#screen-login{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:1rem}
+.login-box{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:2rem;width:100%;max-width:360px}
+.login-logo{text-align:center;margin-bottom:1.5rem}
+.login-logo h1{font-size:22px;font-weight:700;color:var(--green)}
+.login-logo p{font-size:13px;color:var(--text2)}
+.login-box label{display:block;font-size:12px;font-weight:500;color:var(--text2);margin:12px 0 4px}
+.login-box input{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;outline:none}
+.login-box input:focus{border-color:var(--green)}
+#login-err{color:var(--red);font-size:12px;margin-top:8px;min-height:16px}
+#login-btn{width:100%;margin-top:16px;padding:11px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
+
+/* APP SHELL */
+#screen-app{display:none;flex-direction:column;min-height:100vh}
+
+/* HEADER */
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.brand{font-weight:700;font-size:15px;color:var(--green)}
+.header-right{display:flex;align-items:center;gap:10px}
+.uinfo .uname{font-size:13px;font-weight:600;text-align:right}
+.uinfo .urole{font-size:11px;color:var(--text2);text-align:right}
+.btn-logout{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--text2)}
+
+/* MODULE TABS */
+.mod-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:8px 12px;gap:8px}
+.mod-btn{flex:1;padding:9px 8px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:var(--bg);color:var(--text2);transition:all .15s}
+.mod-btn.green.active{background:var(--green);color:#fff}
+.mod-btn.red.active{background:var(--red);color:#fff}
+.mod-btn.admin-btn{flex:none;padding:9px 14px;font-size:13px}
+.mod-btn.admin-btn.active{background:#5B21B6;color:#fff}
+
+/* SUB TABS */
+.sub-tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border)}
+.stab{flex:1;padding:10px 8px;border:none;background:none;font-size:13px;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:2.5px solid transparent;transition:all .15s}
+.sub-tab-bar[data-mod="nhap"] .stab.active{color:var(--green);border-bottom-color:var(--green)}
+.sub-tab-bar[data-mod="xuat"] .stab.active{color:var(--red);border-bottom-color:var(--red)}
+
+/* CONTENT */
+.app-body{flex:1;padding:14px;max-width:680px;width:100%;margin:0 auto}
+.panel{display:none}
+
+/* CARDS */
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+.card-title{font-size:11px;font-weight:600;color:var(--text2);letter-spacing:.6px;text-transform:uppercase;margin-bottom:12px}
+.field{margin-bottom:10px}
+.field label{display:block;font-size:12px;font-weight:500;color:var(--text2);margin-bottom:4px}
+input,select,textarea{width:100%;padding:9px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;color:var(--text);background:#fff;outline:none;-webkit-appearance:none}
+input:focus,select:focus{border-color:var(--green)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* SKU SEARCH */
+.sku-wrap{position:relative}
+.sku-drop{position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.1);z-index:200;max-height:220px;overflow-y:auto;display:none}
+.sku-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)}
+.sku-item:last-child{border-bottom:none}
+.sku-item:hover{background:var(--green-bg)}
+.sku-name{display:block;font-size:13px;font-weight:500}
+.sku-meta{display:block;font-size:11px;color:var(--text2)}
+
+/* QTY */
+.qty-ctrl{display:flex;align-items:center}
+.qty-ctrl button{width:34px;height:34px;border:1.5px solid var(--border);background:var(--bg);color:var(--text);font-size:16px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.qty-ctrl button:first-child{border-radius:8px 0 0 8px;border-right:none}
+.qty-ctrl button:last-child{border-radius:0 8px 8px 0;border-left:none}
+.qty-ctrl input{text-align:center;border-radius:0;width:44px;flex:none;padding:7px 4px}
+
+/* ITEMS LIST */
+.items-list-wrap{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:10px}
+.item-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--border)}
+.item-row:last-child{border-bottom:none}
+.item-left{flex:1;min-width:0;padding-right:8px}
+.item-name{font-size:13px;font-weight:500;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item-sku{font-size:11px;color:var(--text3)}
+.item-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.item-total{font-size:13px;font-weight:600;min-width:70px;text-align:right}
+.g{color:var(--green)} .r{color:var(--red)} .bold{font-weight:700}
+.del-btn{background:none;border:none;cursor:pointer;color:var(--text3);font-size:15px;padding:2px 4px}
+.del-btn:hover{color:var(--red)}
+
+/* TOTAL BAR */
+.total-bar{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;background:var(--bg);border-radius:8px;margin-bottom:4px;font-weight:600}
+
+/* PHOTOS */
+.photo-grid{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.thumb-wrap{position:relative;width:76px;height:76px}
+.thumb-wrap img{width:100%;height:100%;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer}
+.thumb-wrap button{position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+
+/* BUTTONS */
+.btn-g{width:100%;padding:11px;background:var(--green);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px}
+.btn-g:disabled{opacity:.6;cursor:not-allowed}
+.btn-r{width:100%;padding:11px;background:var(--red);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px}
+.btn-r:disabled{opacity:.6;cursor:not-allowed}
+.btn-outline{width:100%;padding:10px;background:#fff;color:var(--text);border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-weight:500;cursor:pointer}
+.btn-xs{padding:3px 9px;border-radius:5px;font-size:11px;cursor:pointer;background:var(--bg);border:1px solid var(--border);color:var(--text2)}
+.btn-xs.danger{background:var(--red-bg);border-color:var(--red);color:var(--red)}
+
+/* PHIẾU CARDS */
+.phieu-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px}
+.phieu-card.green{border-left:3px solid var(--green)}
+.phieu-card.red{border-left:3px solid var(--red)}
+.phieu-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
+.phieu-date{font-size:12px;color:var(--text2)}
+.phieu-acts{display:flex;gap:5px}
+.phieu-nv{font-size:12px;color:var(--text2);margin-bottom:8px}
+.phieu-rows{border-top:1px solid var(--border);padding-top:8px}
+.phieu-row{display:flex;justify-content:space-between;font-size:13px;padding:3px 0;color:var(--text)}
+.phieu-thumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.phieu-thumbs img{width:56px;height:56px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid var(--border)}
+.phieu-footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:13px}
+.ver-toggle{font-size:12px;color:var(--text2);cursor:pointer;margin-top:8px;padding-top:8px;border-top:1px dotted var(--border)}
+.ver-list{margin-top:6px}
+.ver-row{font-size:12px;color:var(--text2);padding:3px 0;border-bottom:1px dashed var(--border)}
+
+/* FILTER */
+.filter-bar{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px;margin-bottom:12px}
+.filter-bar h4{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+.filter-actions{display:flex;gap:8px;margin-top:8px}
+.filter-actions button{flex:1;padding:8px;border:none;border-radius:7px;font-size:13px;font-weight:500;cursor:pointer}
+.filter-actions .btn-apply-g{background:var(--green);color:#fff}
+.filter-actions .btn-apply-r{background:var(--red);color:#fff}
+.filter-actions .btn-clear{background:var(--bg);color:var(--text2);border:1px solid var(--border)}
+
+/* EXPORT */
+.export-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-top:14px;display:none}
+.export-card h4{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+
+/* STATS */
+.stats-h{font-size:14px;font-weight:600;color:var(--text2);margin-bottom:8px}
+.stats-tbl{width:100%;border-collapse:collapse;background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);font-size:13px}
+.stats-tbl th{background:var(--bg);padding:8px 10px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border)}
+.stats-tbl th:not(:first-child){text-align:right}
+.stats-tbl td{padding:8px 10px;border-bottom:1px solid var(--border)}
+.stats-tbl td:not(:first-child){text-align:right}
+.stats-tbl tr:last-child td{border-bottom:none}
+
+/* ADMIN */
+.admin-block{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+.admin-block h3{font-size:14px;font-weight:600;margin-bottom:12px}
+.admin-block h4{font-size:13px;font-weight:600;margin:12px 0 8px;padding-top:12px;border-top:1px solid var(--border)}
+.user-list{margin-bottom:12px}
+.user-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.user-row:last-child{border-bottom:none}
+.uname{font-size:13px;font-weight:500}
+.uemail{font-size:12px;color:var(--text2)}
+.rbadge{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;margin-left:6px;font-weight:600}
+.rbadge.admin{background:#EDE9FE;color:#5B21B6}
+.rbadge.quan_ly{background:#FEF3C7;color:#B45309}
+.rbadge.nhan_vien{background:var(--green-bg);color:var(--green)}
+.admin-form input,.admin-form select{margin-bottom:8px}
+.info-note{font-size:12px;color:#B45309;background:#FEF3C7;padding:8px 10px;border-radius:6px;margin-bottom:10px}
+
+/* BAOCA CAMERA FULLSCREEN */
+#baoca-cam-modal{display:none;position:fixed;inset:0;background:#000;z-index:2000;flex-direction:column}
+#baoca-cam-modal.active{display:flex}
+#baoca-cam-video{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}
+.baoca-cam-ui{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:space-between;pointer-events:none}
+.baoca-cam-top{display:flex;justify-content:space-between;align-items:center;padding:16px;pointer-events:all}
+.baoca-cam-cancel{background:rgba(0,0,0,0.5);color:#fff;border:none;border-radius:20px;padding:8px 16px;font-size:14px;cursor:pointer}
+.baoca-cam-timer{background:rgba(200,0,0,0.8);color:#fff;border-radius:20px;padding:6px 14px;font-size:14px;font-weight:600}
+.baoca-cam-bottom{display:flex;flex-direction:column;align-items:center;padding-bottom:40px;gap:12px;pointer-events:all}
+.baoca-cam-shutter{width:72px;height:72px;border-radius:50%;border:4px solid #fff;background:rgba(255,255,255,0.2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.baoca-cam-shutter.recording{border-color:#ff3b30;background:rgba(255,59,48,0.2)}
+.shutter-inner{width:52px;height:52px;border-radius:50%;background:#fff;transition:all .2s}
+.baoca-cam-shutter.recording .shutter-inner{border-radius:8px;width:28px;height:28px;background:#ff3b30}
+.baoca-cam-status{color:#fff;font-size:13px;text-shadow:0 1px 3px rgba(0,0,0,0.8)}
+.baoca-cam-ts-overlay{position:absolute;bottom:130px;left:0;right:0;text-align:center;pointer-events:none}
+.baoca-cam-ts-overlay span{background:rgba(0,0,0,0.55);color:#FFE566;font-size:13px;font-family:monospace;font-weight:bold;padding:4px 12px;border-radius:4px}
+
+/* BÁO CÁ */
+:root { --blue:#0369A1; --blue-bg:#E0F2FE; --blue-mid:#0284C7; }
+.btn-blue{width:100%;padding:11px;background:var(--blue);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;margin-top:4px}
+.btn-blue:disabled{opacity:.6;cursor:not-allowed}
+.btn-apply-blue{background:var(--blue);color:#fff}
+.sub-tab-bar[data-mod="baoca"] .stab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.baoca-row{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px}
+.baoca-row-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.baoca-row-name{font-size:14px;font-weight:600}
+.baoca-row-sl{font-size:13px;color:var(--blue);font-weight:500}
+.video-section{margin-top:8px}
+.video-section label{font-size:12px;font-weight:500;color:var(--text2);display:block;margin-bottom:6px}
+.video-actions{display:flex;gap:8px}
+.btn-record{flex:1;padding:9px;border:1.5px solid var(--blue);background:var(--blue-bg);color:var(--blue);border-radius:8px;font-size:13px;font-weight:500;cursor:pointer}
+.btn-record.recording{background:var(--red-bg);border-color:var(--red);color:var(--red);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.video-preview{width:100%;border-radius:8px;margin-top:8px;max-height:200px;background:#000}
+.upload-status{font-size:12px;color:var(--text2);margin-top:6px;display:flex;align-items:center;gap:4px}
+.upload-status.done{color:var(--green)}
+.upload-status.err{color:var(--red)}
+.phieu-baoca{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px;border-left:3px solid var(--blue)}
+.btn-view-full{display:block;text-align:center;margin-top:6px;padding:7px;background:var(--blue-bg);color:var(--blue);border-radius:6px;font-size:12px;font-weight:500;text-decoration:none}
+.btn-view-full:hover{background:var(--blue);color:#fff}
+.baoca-ds-row{border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px}
+.baoca-ds-row-header{display:flex;justify-content:space-between;font-size:13px;margin-bottom:6px}
+.baoca-ds-row-name{font-weight:500}
+
+/* CAMERA */
+#camera-modal{display:none;position:fixed;inset:0;background:#000;z-index:1000;flex-direction:column;align-items:center;justify-content:center}
+#camera-video{width:100%;max-width:480px}
+#camera-canvas{display:none}
+.cam-actions{display:flex;gap:16px;margin-top:16px}
+.btn-capture{width:64px;height:64px;background:#fff;border:4px solid rgba(255,255,255,0.5);border-radius:50%;cursor:pointer}
+.btn-cam-cancel{padding:12px 24px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px}
+
+/* EDIT MODAL */
+#edit-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem}
+.edit-card{background:var(--surface);border-radius:var(--radius);padding:18px;width:100%;max-width:480px}
+.edit-card h3{font-size:15px;font-weight:600;margin-bottom:12px}
+.edit-card textarea{height:180px;font-family:monospace;font-size:12px;margin-bottom:10px}
+.edit-btns{display:flex;gap:8px}
+
+/* PHOTO VIEWER */
+#photo-viewer{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:2000;align-items:center;justify-content:center;flex-direction:column}
+#viewer-img{max-width:100%;max-height:85vh;border-radius:6px}
+#photo-viewer button{margin-top:14px;padding:10px 24px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:8px;cursor:pointer}
+
+/* TOAST */
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1A2340;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:3000;display:none;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.2)}
+.toast.err{background:var(--red)}
+.empty-msg{padding:20px;text-align:center;color:var(--text3);font-size:13px}
+.loading{padding:24px;text-align:center;color:var(--text3)}
+
+/* DESKTOP SIDEBAR */
+@media (min-width: 768px) {
+  #screen-app{flex-direction:row}
+  .sidebar{width:200px;min-width:200px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:16px 12px;gap:6px;position:sticky;top:0;height:100vh;overflow-y:auto}
+  .sidebar-brand{font-size:16px;font-weight:700;color:var(--green);padding:4px 8px 16px;border-bottom:1px solid var(--border);margin-bottom:6px}
+  .sidebar-section{font-size:10px;font-weight:600;color:var(--text3);letter-spacing:.6px;text-transform:uppercase;padding:10px 8px 4px}
+  .sidebar .mod-btn{text-align:left;padding:9px 12px;font-size:13px;border-radius:8px;font-weight:500;width:100%;flex:none}
+  .sidebar .mod-btn.green:not(.active){background:var(--bg);color:var(--green)}
+  .sidebar .mod-btn.red:not(.active){background:var(--bg);color:var(--red)}
+  .sidebar .mod-btn.admin-btn:not(.active){background:var(--bg);color:#5B21B6}
+  .sidebar-user{margin-top:auto;padding-top:12px;border-top:1px solid var(--border)}
+  .sidebar-user .uname{font-size:13px;font-weight:600}
+  .sidebar-user .urole{font-size:11px;color:var(--text2)}
+  .sidebar-user .btn-logout{margin-top:8px;width:100%;text-align:center}
+  .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .app-header{display:none}
+  .mod-bar{display:none}
+  .sub-tab-bar{position:sticky;top:0;z-index:50}
+  .app-body{max-width:720px}
+}
+@media (max-width: 767px) {
+  .sidebar{display:none}
+  .main-content{flex:1;display:flex;flex-direction:column}
+}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="screen-login">
+  <div class="login-box">
+    <div class="login-logo">
+      <h1>🐠 CUA Aquarium</h1>
+      <p>Hệ thống quản lý nội bộ</p>
+    </div>
+    <label>Email</label>
+    <input type="email" id="login-email" placeholder="email@cuaaquarium.com" autocomplete="username">
+    <label>Mật khẩu</label>
+    <input type="password" id="login-pass" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+    <div id="login-err"></div>
+    <button id="login-btn" onclick="doLogin()">Đăng nhập</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="screen-app">
+
+  <!-- SIDEBAR (desktop) -->
+  <div class="sidebar">
+    <div class="sidebar-brand">🐠 CUA Aquarium</div>
+    <div class="sidebar-section">Module</div>
+    <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
+    <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
+    <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="color:#0369A1">🐟 Báo cá mới về</button>
+    <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">⚙️ Admin</button>
+    <div class="sidebar-user">
+      <div class="uname" id="sidebar-uname"></div>
+      <div class="urole" id="sidebar-urole"></div>
+      <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main-content">
+    <!-- Header (mobile) -->
+    <header class="app-header">
+      <div class="brand">🐠 CUA Aquarium</div>
+      <div class="header-right">
+        <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
+        <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
+      </div>
+    </header>
+
+    <!-- Module tabs (mobile) -->
+    <div class="mod-bar">
+      <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">📦 Nhập hàng</button>
+      <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">🔴 Xuất hủy</button>
+      <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="background:var(--bg);color:#0369A1">🐟 Báo cá</button>
+      <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">⚙️</button>
+    </div>
+
+    <!-- Sub tabs -->
+    <div class="sub-tab-bar" id="sub-tab-bar" data-mod="nhap">
+      <button class="stab" id="stab-tao" onclick="switchSub('tao')">➕ Tạo phiếu</button>
+      <button class="stab" id="stab-ds" onclick="switchSub('ds')">📋 Danh sách</button>
+      <button class="stab" id="stab-thongke" onclick="switchSub('thongke')">📊 Thống kê</button>
+    </div>
+
+    <!-- PANELS -->
+    <div class="app-body">
+
+      <!-- NHẬP / TẠO -->
+      <div class="panel" id="panel-nhap-tao">
+        <div class="card">
+          <div class="card-title">Tìm hàng hóa</div>
+          <div class="field sku-wrap">
+            <label>Tên hàng / SKU</label>
+            <input type="text" id="nhap-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
+            <div class="sku-drop" id="nhap-sku-drop"></div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label>Số lượng</label>
+              <div class="qty-ctrl">
+                <button onclick="document.getElementById('nhap-item-sl').value=Math.max(1,(parseInt(document.getElementById('nhap-item-sl').value)||1)-1)">−</button>
+                <input type="number" id="nhap-item-sl" value="1" min="1">
+                <button onclick="document.getElementById('nhap-item-sl').value=(parseInt(document.getElementById('nhap-item-sl').value)||0)+1">+</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>Giá (₫)</label>
+              <input type="number" id="nhap-item-gia" readonly style="background:#f8f8f8">
+            </div>
+          </div>
+          <button class="btn-g" style="background:var(--green-mid)" onclick="addNhapItem()">+ Thêm vào phiếu</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Hàng trong phiếu</div>
+          <div class="items-list-wrap" id="nhap-items-list"><div class="empty-msg">Chưa có hàng nào.</div></div>
+          <div class="total-bar"><span>Tổng giá trị nhập</span><span id="nhap-total" class="g">0₫</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Ảnh minh chứng</div>
+          <div class="photo-grid" id="nhap-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
+          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('nhap')">📷 Chụp ảnh</button>
+        </div>
+
+        <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">💾 Lưu phiếu nhập</button>
+      </div>
+
+      <!-- NHẬP / DANH SÁCH -->
+      <div class="panel" id="panel-nhap-ds">
+        <div class="filter-bar">
+          <h4>Lọc phiếu</h4>
+          <div class="row2">
+            <div class="field"><label>Từ ngày</label><input type="date" id="nhap-filter-from"></div>
+            <div class="field"><label>Đến ngày</label><input type="date" id="nhap-filter-to"></div>
+          </div>
+          <div class="field"><label>Người nhập</label><select id="nhap-filter-nv"><option value="">Tất cả</option></select></div>
+          <div class="filter-actions">
+            <button class="btn-apply-g" onclick="applyNhapFilter()">Lọc</button>
+            <button class="btn-clear" onclick="clearNhapFilter()">Xóa lọc</button>
+          </div>
+        </div>
+        <div id="nhap-ds-list"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- NHẬP / THỐNG KÊ -->
+      <div class="panel" id="panel-nhap-thongke">
+        <div class="export-card" id="nhap-export-card">
+          <h4>XUẤT FILE</h4>
+          <div class="row2">
+            <div class="field"><label>Từ ngày</label><input type="date" id="nhap-export-from"></div>
+            <div class="field"><label>Đến ngày</label><input type="date" id="nhap-export-to"></div>
+          </div>
+          <button class="btn-g" onclick="exportNhapCSV()">⬇️ Xuất CSV nhập kho</button>
+        </div>
+        <div id="nhap-stats-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- XUẤT / TẠO -->
+      <div class="panel" id="panel-xuat-tao">
+        <div class="card">
+          <div class="card-title">Tìm hàng hóa</div>
+          <div class="field sku-wrap">
+            <label>Tên hàng / SKU</label>
+            <input type="text" id="xuat-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
+            <div class="sku-drop" id="xuat-sku-drop"></div>
+          </div>
+          <div class="row2">
+            <div class="field">
+              <label>Số lượng</label>
+              <div class="qty-ctrl">
+                <button onclick="document.getElementById('xuat-item-sl').value=Math.max(1,(parseInt(document.getElementById('xuat-item-sl').value)||1)-1)">−</button>
+                <input type="number" id="xuat-item-sl" value="1" min="1">
+                <button onclick="document.getElementById('xuat-item-sl').value=(parseInt(document.getElementById('xuat-item-sl').value)||0)+1">+</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>Giá (₫)</label>
+              <input type="number" id="xuat-item-gia" readonly style="background:#f8f8f8">
+            </div>
+          </div>
+          <button class="btn-r" style="background:var(--red-mid)" onclick="addXuatItem()">+ Thêm vào phiếu</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Hàng trong phiếu</div>
+          <div class="items-list-wrap" id="xuat-items-list"><div class="empty-msg">Chưa có hàng nào.</div></div>
+          <div class="total-bar"><span>Tổng giá trị hủy</span><span id="xuat-total" class="r">0₫</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Ảnh minh chứng</div>
+          <div class="photo-grid" id="xuat-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
+          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('xuat')">📷 Chụp ảnh</button>
+        </div>
+
+        <button class="btn-r" id="btn-xuat-submit" onclick="submitXuat()">💾 Lưu phiếu xuất hủy</button>
+      </div>
+
+      <!-- XUẤT / DANH SÁCH -->
+      <div class="panel" id="panel-xuat-ds">
+        <div class="filter-bar">
+          <h4>Lọc phiếu</h4>
+          <div class="row2">
+            <div class="field"><label>Từ ngày</label><input type="date" id="xuat-filter-from"></div>
+            <div class="field"><label>Đến ngày</label><input type="date" id="xuat-filter-to"></div>
+          </div>
+          <div class="field"><label>Người xuất</label><select id="xuat-filter-nv"><option value="">Tất cả</option></select></div>
+          <div class="filter-actions">
+            <button class="btn-apply-r" onclick="applyXuatFilter()">Lọc</button>
+            <button class="btn-clear" onclick="clearXuatFilter()">Xóa lọc</button>
+          </div>
+        </div>
+        <div id="xuat-ds-list"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- XUẤT / THỐNG KÊ -->
+      <div class="panel" id="panel-xuat-thongke">
+        <div class="export-card" id="xuat-export-card">
+          <h4>XUẤT FILE</h4>
+          <div class="row2">
+            <div class="field"><label>Từ ngày</label><input type="date" id="xuat-export-from"></div>
+            <div class="field"><label>Đến ngày</label><input type="date" id="xuat-export-to"></div>
+          </div>
+          <button class="btn-r" onclick="exportXuatCSV()">⬇️ Xuất CSV xuất hủy</button>
+        </div>
+        <div id="xuat-stats-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- BÁO CÁ / TẠO -->
+      <div class="panel" id="panel-baoca-tao">
+        <div class="card">
+          <div class="card-title" id="baoca-lo-label">Đang tải...</div>
+
+          <!-- Bước 1: Quay video -->
+          <!-- Bước 1: Nhập tên + số lượng -->
+          <div id="baoca-step-info">
+            <div class="field sku-wrap">
+              <label>Tên cá / tép</label>
+              <input type="text" id="baoca-item-ten" placeholder="Gõ để tìm SKU..." autocomplete="off">
+              <div class="sku-drop" id="baoca-sku-drop"></div>
+            </div>
+            <div class="field">
+              <label>Số lượng đếm được</label>
+              <div class="qty-ctrl">
+                <button onclick="adjBaocaQty(-1)">−</button>
+                <input type="number" id="baoca-item-sl" value="1" min="1">
+                <button onclick="adjBaocaQty(1)">+</button>
+              </div>
+            </div>
+            <button class="btn-blue" id="btn-baoca-record" onclick="startBaocaRecord()" style="margin-top:4px">
+              🎥 Quay video đếm cá
+            </button>
+          </div>
+
+          <!-- Bước 2: Sau khi quay xong -->
+          <div id="baoca-step-record" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+            <div id="baoca-video-preview-wrap" style="margin-bottom:10px">
+              <video id="baoca-record-preview" class="video-preview" controls></video>
+            </div>
+            <div id="baoca-record-status" style="font-size:12px;color:var(--text2);margin-bottom:8px;text-align:center"></div>
+            <div id="baoca-upload-status" class="upload-status" style="display:none;margin-bottom:8px"></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-blue" style="flex:1" id="btn-baoca-add" onclick="addBaocaRow()">+ Thêm vào phiếu</button>
+              <button class="btn-outline" style="flex:none;width:80px" onclick="resetBaocaStep()">Hủy</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="baoca-rows-card" style="display:none">
+          <div class="card-title">Dòng hàng đã thêm</div>
+          <div id="baoca-rows-list"></div>
+        </div>
+
+        <button class="btn-blue" id="btn-baoca-submit" onclick="submitBaoCa()" style="display:none">💾 Lưu phiếu báo cá</button>
+        <input type="hidden" id="baoca-ten-lo">
+      </div>
+
+      <!-- BÁO CÁ / DANH SÁCH -->
+      <div class="panel" id="panel-baoca-ds">
+        <div class="filter-bar">
+          <h4>Lọc phiếu</h4>
+          <div class="row2">
+            <div class="field"><label>Từ ngày</label><input type="date" id="baoca-filter-from"></div>
+            <div class="field"><label>Đến ngày</label><input type="date" id="baoca-filter-to"></div>
+          </div>
+          <div class="filter-actions">
+            <button class="btn-apply-blue" onclick="loadBaoCaList()">Lọc</button>
+            <button class="btn-clear" onclick="clearBaocaFilter()">Xóa lọc</button>
+          </div>
+        </div>
+        <div id="baoca-ds-list"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- BÁO CÁ / THỐNG KÊ -->
+      <div class="panel" id="panel-baoca-thongke">
+        <div id="baoca-stats-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- ADMIN -->
+      <div class="panel" id="panel-admin">
+        <div id="admin-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+    </div><!-- app-body -->
+  </div><!-- main-content -->
+</div><!-- screen-app -->
+
+<!-- BAOCA CAMERA FULLSCREEN -->
+<div id="baoca-cam-modal">
+  <video id="baoca-cam-video" autoplay playsinline muted></video>
+  <div class="baoca-cam-ui">
+    <div class="baoca-cam-top">
+      <button class="baoca-cam-cancel" onclick="cancelBaocaRecord()">✕ Hủy</button>
+      <div id="baoca-cam-timer" class="baoca-cam-timer" style="display:none">⏺ <span id="baoca-timer-sec">0</span>s</div>
+    </div>
+    <div class="baoca-cam-ts-overlay">
+      <span id="baoca-ts-label"></span>
+    </div>
+    <div class="baoca-cam-bottom">
+      <button id="baoca-cam-btn" class="baoca-cam-shutter" onclick="toggleBaocaRecord()">
+        <div class="shutter-inner"></div>
+      </button>
+      <div id="baoca-cam-label" class="baoca-cam-status">Bấm để bắt đầu quay</div>
+    </div>
+  </div>
+</div>
+
+<!-- CAMERA -->
+<div id="camera-modal">
+  <video id="camera-video" autoplay playsinline></video>
+  <canvas id="camera-canvas"></canvas>
+  <div class="cam-actions">
+    <button class="btn-cam-cancel" onclick="closeCamera()">Hủy</button>
+    <button class="btn-capture" onclick="capturePhoto()" title="Chụp"></button>
+  </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div id="edit-modal">
+  <div class="edit-card">
+    <h3>Chỉnh sửa phiếu</h3>
+    <textarea id="edit-items" placeholder="JSON danh sách hàng..."></textarea>
+    <div class="edit-btns">
+      <button class="btn-r" style="flex:1" onclick="saveEdit()">Lưu thay đổi</button>
+      <button class="btn-outline" style="flex:none;width:80px" onclick="closeEdit()">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- PHOTO VIEWER -->
+<div id="photo-viewer" onclick="closeViewer()">
+  <img id="viewer-img" alt="Ảnh">
+  <button>Đóng</button>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// Sync sidebar with mobile nav
+function updateSidebar(active) {
+  ['nhap','xuat','admin'].forEach(m => {
+    const el = document.getElementById('sidebar-' + m);
+    if (el) el.classList.remove('active');
+  });
+  const el = document.getElementById('sidebar-' + active);
+  if (el) el.classList.add('active');
+}
+
+// Override showApp to also update sidebar
+const _origShowApp = window.showApp;
+const origSwitchModule = window.switchModule;
+window.switchModule = function(mod) {
+  origSwitchModule(mod);
+  updateSidebar(mod);
+  // Show sub tab bar
+  document.getElementById('sub-tab-bar').style.display = 'flex';
+};
+
+const origSwitchAdmin = window.switchAdmin;
+window.switchAdmin = function() {
+  origSwitchAdmin();
+  updateSidebar('admin');
+};
+
+// Update sidebar user info when app shows
+const observer = new MutationObserver(() => {
+  const uname = document.getElementById('user-name')?.textContent;
+  const urole = document.getElementById('user-role')?.textContent;
+  if (uname) {
+    const sn = document.getElementById('sidebar-uname');
+    const sr = document.getElementById('sidebar-urole');
+    if (sn) sn.textContent = uname;
+    if (sr) sr.textContent = urole;
+    // Show admin in sidebar
+    const sa = document.getElementById('sidebar-admin');
+    const ma = document.getElementById('mod-admin');
+    if (sa && ma) {
+      sa.style.display = ma.style.display;
+    }
+  }
+});
+observer.observe(document.getElementById('user-name') || document.body, { childList: true, subtree: true });
+</script>
+
+</body>
+</html>
