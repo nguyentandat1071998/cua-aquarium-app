@@ -253,7 +253,7 @@ async function openBaocaCamera() {
   try {
     // Lấy stream camera gốc (video + audio riêng)
     recordingStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: { facingMode: 'environment', width: { ideal: 854 }, height: { ideal: 480 } },
       audio: true
     });
 
@@ -266,10 +266,10 @@ async function openBaocaCamera() {
     if (modal.requestFullscreen) modal.requestFullscreen().catch(()=>{});
     else if (modal.webkitRequestFullscreen) modal.webkitRequestFullscreen();
 
-    // Setup canvas để vẽ timestamp lên video
+    // Setup canvas để vẽ timestamp lên video — giảm resolution để file nhẹ
     const canvas = document.getElementById('baoca-record-canvas');
-    canvas.width = videoEl.videoWidth || 1280;
-    canvas.height = videoEl.videoHeight || 720;
+    canvas.width = Math.min(videoEl.videoWidth || 854, 854);
+    canvas.height = Math.min(videoEl.videoHeight || 480, 480);
     const ctx = canvas.getContext('2d');
     const ten = document.getElementById('baoca-item-ten').value.trim();
     const nv = currentUserData?.ten || '';
@@ -293,7 +293,7 @@ async function openBaocaCamera() {
     }
     drawFrame();
 
-    // Record từ canvas stream + audio track gốc
+    // Record từ canvas stream + audio track gốc — 15fps để nhẹ hơn
     canvasStream = canvas.captureStream(30);
     const audioTrack = recordingStream.getAudioTracks()[0];
     if (audioTrack) canvasStream.addTrack(audioTrack);
@@ -305,7 +305,12 @@ async function openBaocaCamera() {
       ? 'video/webm'
       : 'video/mp4';
 
-    mediaRecorder = new MediaRecorder(canvasStream, { mimeType });
+    // Giới hạn bitrate 1Mbps để video nhẹ, đủ để xem đếm cá
+    const recOptions = { mimeType };
+    if (MediaRecorder.isTypeSupported(mimeType)) {
+      try { recOptions.videoBitsPerSecond = 1000000; } catch(e) {}
+    }
+    mediaRecorder = new MediaRecorder(canvasStream, recOptions);
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => { closeBaocaCamModal(); onBaocaRecordStop(); };
     recordingStartTime = Date.now();
