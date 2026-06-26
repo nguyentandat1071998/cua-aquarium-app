@@ -244,22 +244,72 @@ window.startBaocaRecord = async function() {
   await openBaocaCamera();
 };
 
+let canvasStream = null;
+let canvasAnimFrame = null;
+
 async function openBaocaCamera() {
   const modal = document.getElementById('baoca-cam-modal');
   try {
+    // Lấy stream camera gốc (video + audio riêng)
     recordingStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: true
     });
-    document.getElementById('baoca-cam-video').srcObject = recordingStream;
+
+    // Hiện video lên màn hình
+    const videoEl = document.getElementById('baoca-cam-video');
+    videoEl.srcObject = recordingStream;
+    await videoEl.play();
+
     modal.classList.add('active');
     if (modal.requestFullscreen) modal.requestFullscreen().catch(()=>{});
     else if (modal.webkitRequestFullscreen) modal.webkitRequestFullscreen();
+
+    // Setup canvas để vẽ timestamp lên video
+    const canvas = document.getElementById('baoca-record-canvas');
+    canvas.width = videoEl.videoWidth || 1280;
+    canvas.height = videoEl.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    const ten = document.getElementById('baoca-item-ten').value.trim();
+    const nv = currentUserData?.ten || '';
+
+    // Vẽ từng frame lên canvas + timestamp
+    function drawFrame() {
+      if (!recordingStream) return;
+      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+      // Timestamp overlay
+      const now = new Date();
+      const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+      const label = `${ten} · ${nv} · CUA Aquarium · ${ts}`;
+      const fontSize = Math.max(16, Math.round(canvas.width * 0.022));
+      ctx.font = `bold ${fontSize}px monospace`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(8, canvas.height - fontSize - 18, tw + 20, fontSize + 14);
+      ctx.fillStyle = '#FFE566';
+      ctx.fillText(label, 18, canvas.height - 8);
+      canvasAnimFrame = requestAnimationFrame(drawFrame);
+    }
+    drawFrame();
+
+    // Record từ canvas stream + audio track gốc
+    canvasStream = canvas.captureStream(30);
+    const audioTrack = recordingStream.getAudioTracks()[0];
+    if (audioTrack) canvasStream.addTrack(audioTrack);
+
     recordedChunks = [];
-    mediaRecorder = new MediaRecorder(recordingStream);
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+      ? 'video/webm;codecs=vp9,opus'
+      : MediaRecorder.isTypeSupported('video/webm')
+      ? 'video/webm'
+      : 'video/mp4';
+
+    mediaRecorder = new MediaRecorder(canvasStream, { mimeType });
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => { closeBaocaCamModal(); onBaocaRecordStop(); };
-    mediaRecorder.start();
+    mediaRecorder.start(100); // chunk mỗi 100ms
+
+    // Timer đếm giây
     baocaTimerSec = 0;
     document.getElementById('baoca-cam-timer').style.display = 'block';
     document.getElementById('baoca-timer-sec').textContent = '0';
@@ -267,20 +317,22 @@ async function openBaocaCamera() {
       baocaTimerSec++;
       document.getElementById('baoca-timer-sec').textContent = baocaTimerSec;
     }, 1000);
+
     document.getElementById('baoca-cam-btn').classList.add('recording');
-    const ten = document.getElementById('baoca-item-ten').value.trim();
     document.getElementById('baoca-cam-label').textContent = 'Bấm để dừng quay';
-    // Hiện tên cá + nhân viên + thời gian lên overlay
+
+    // Update timestamp label trên UI
     const tsLabel = document.getElementById('baoca-ts-label');
     if (tsLabel) {
       const updateTS = () => {
         const n = new Date();
         const ts = `${n.getDate().toString().padStart(2,'0')}/${(n.getMonth()+1).toString().padStart(2,'0')}/${n.getFullYear().toString().slice(-2)} ${n.getHours().toString().padStart(2,'0')}:${n.getMinutes().toString().padStart(2,'0')}:${n.getSeconds().toString().padStart(2,'0')}`;
-        tsLabel.textContent = `${ten} · ${currentUserData?.ten||''} · ${ts}`;
+        tsLabel.textContent = `${ten} · ${nv} · ${ts}`;
       };
       updateTS();
       window._tsInterval = setInterval(updateTS, 1000);
     }
+
   } catch(e) { showToast('Không mở được camera: ' + e.message, true); }
 }
 
@@ -307,6 +359,10 @@ window.cancelBaocaRecord = function() {
 };
 
 function closeBaocaCamModal() {
+  // Stop canvas animation
+  if (canvasAnimFrame) { cancelAnimationFrame(canvasAnimFrame); canvasAnimFrame = null; }
+  // Stop canvas stream
+  if (canvasStream) { canvasStream.getTracks().forEach(t => t.stop()); canvasStream = null; }
   const modal = document.getElementById('baoca-cam-modal');
   modal.classList.remove('active');
   if (document.fullscreenElement) document.exitFullscreen().catch(()=>{});
@@ -315,12 +371,14 @@ function closeBaocaCamModal() {
   document.getElementById('baoca-cam-timer').style.display = 'none';
   document.getElementById('baoca-cam-label').textContent = 'Bấm để bắt đầu quay';
   document.getElementById('baoca-cam-video').srcObject = null;
+  clearInterval(window._tsInterval);
 };
 
 // Không thể overlay trực tiếp lên video MediaRecorder vì canvas capture
 // Thay vào đó hiện overlay text lên video preview bằng CSS
 function onBaocaRecordStop() {
-  const blob = new Blob(recordedChunks, { type: 'video/mp4' });
+  const mimeType = recordedChunks[0]?.type || 'video/webm';
+  const blob = new Blob(recordedChunks, { type: mimeType });
   pendingVideoBlob = blob;
   pendingVideoUrl = URL.createObjectURL(blob);
   const preview = document.getElementById('baoca-record-preview');
@@ -1713,7 +1771,8 @@ input:focus,select:focus{border-color:var(--green)}
 
 <!-- BAOCA CAMERA FULLSCREEN -->
 <div id="baoca-cam-modal">
-  <video id="baoca-cam-video" autoplay playsinline muted></video>
+  <video id="baoca-cam-video" autoplay playsinline muted style="position:absolute;opacity:0;pointer-events:none"></video>
+  <canvas id="baoca-record-canvas" style="width:100%;height:100%;object-fit:cover;position:absolute;inset:0"></canvas>
   <div class="baoca-cam-ui">
     <div class="baoca-cam-top">
       <button class="baoca-cam-cancel" onclick="cancelBaocaRecord()">✕ Hủy</button>
