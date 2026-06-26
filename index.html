@@ -167,6 +167,7 @@ async function loadSKUs() {
 function makeSKUSearch(inputId, dropdownId, giaId) {
   const input = document.getElementById(inputId);
   const box = document.getElementById(dropdownId);
+  if (!input || !box) return;
   input.addEventListener('input', function() {
     const val = this.value;
     if (!val) { box.style.display = 'none'; return; }
@@ -176,12 +177,16 @@ function makeSKUSearch(inputId, dropdownId, giaId) {
     ).slice(0, 8);
     if (!results.length) { box.style.display = 'none'; return; }
     box.innerHTML = results.map(s =>
-      `<div class="sku-item" onclick="selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten)}',${s.gia||0},'${escHtml(s.sku||'')}')">
+      `<div class="sku-item" onmousedown="event.preventDefault();selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten)}',${s.gia||0},'${escHtml(s.sku||'')}')">
         <span class="sku-name">${escHtml(s.ten)}</span>
         <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&s.gia?' · ':''}${s.gia?fmt(s.gia)+'₫':''}</span>
       </div>`
     ).join('');
     box.style.display = 'block';
+  });
+  // Đóng dropdown khi blur
+  input.addEventListener('blur', function() {
+    setTimeout(() => { box.style.display = 'none'; }, 150);
   });
 }
 
@@ -190,8 +195,14 @@ window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
   input.value = ten;
   input.dataset.skuId = id;
   input.dataset.sku = sku;
-  document.getElementById(giaId).value = gia;
-  document.getElementById(dropdownId).style.display = 'none';
+  if (giaId) {
+    const giaEl = document.getElementById(giaId);
+    if (giaEl) giaEl.value = gia;
+  }
+  const drop = document.getElementById(dropdownId);
+  if (drop) drop.style.display = 'none';
+  // Blur input để đóng dropdown hoàn toàn
+  setTimeout(() => input.blur(), 50);
 };
 
 document.addEventListener('click', e => {
