@@ -8,7 +8,6 @@
 <meta name="apple-mobile-web-app-title" content="CUA Nội Bộ">
 <title>CUA Aquarium — Nội Bộ</title>
 
-<script src="https://cdn.jsdelivr.net/npm/fix-webm-duration@1.0.6/fix-webm-duration.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -381,30 +380,55 @@ function closeBaocaCamModal() {
 // Thay vào đó hiện overlay text lên video preview bằng CSS
 function onBaocaRecordStop() {
   const mimeType = recordedChunks[0]?.type || 'video/webm';
-  const rawBlob = new Blob(recordedChunks, { type: mimeType });
-  const duration = recordingStartTime ? Date.now() - recordingStartTime : 0;
+  const blob = new Blob(recordedChunks, { type: mimeType });
 
   document.getElementById('baoca-record-status').textContent = '⏳ Đang xử lý video...';
 
-  // Fix metadata duration nếu là WebM
-  const processBlob = (blob) => {
-    pendingVideoBlob = blob;
-    pendingVideoUrl = URL.createObjectURL(blob);
-    const preview = document.getElementById('baoca-record-preview');
-    preview.srcObject = null;
-    preview.src = pendingVideoUrl;
-    document.getElementById('baoca-record-status').textContent = '✓ Quay xong';
-    document.getElementById('baoca-step-info').style.display = 'none';
-    document.getElementById('baoca-step-record').style.display = 'block';
-    mediaRecorder = null;
-    startBackgroundUpload(blob);
+  // Dùng video element để load và lấy duration thực
+  const tempVideo = document.createElement('video');
+  tempVideo.preload = 'metadata';
+  const url = URL.createObjectURL(blob);
+  tempVideo.src = url;
+
+  // Seek đến cuối để force load duration
+  tempVideo.ondurationchange = function() {
+    if (tempVideo.duration !== Infinity && !isNaN(tempVideo.duration)) {
+      finalizeRecording(blob, url);
+    }
   };
 
-  if (typeof ysFixWebmDuration !== 'undefined' && mimeType.includes('webm')) {
-    ysFixWebmDuration(rawBlob, duration, processBlob);
-  } else {
-    processBlob(rawBlob);
-  }
+  tempVideo.onloadedmetadata = function() {
+    if (tempVideo.duration === Infinity) {
+      // Seek về cuối để fix duration
+      tempVideo.currentTime = 1e10;
+      tempVideo.ontimeupdate = function() {
+        tempVideo.ontimeupdate = null;
+        tempVideo.currentTime = 0;
+        finalizeRecording(blob, url);
+      };
+    } else {
+      finalizeRecording(blob, url);
+    }
+  };
+
+  // Fallback nếu không fix được sau 3 giây
+  setTimeout(() => {
+    if (!pendingVideoBlob) finalizeRecording(blob, url);
+  }, 3000);
+}
+
+function finalizeRecording(blob, url) {
+  if (pendingVideoBlob) return; // đã xử lý rồi
+  pendingVideoBlob = blob;
+  pendingVideoUrl = url;
+  const preview = document.getElementById('baoca-record-preview');
+  preview.srcObject = null;
+  preview.src = url;
+  document.getElementById('baoca-record-status').textContent = '✓ Quay xong';
+  document.getElementById('baoca-step-info').style.display = 'none';
+  document.getElementById('baoca-step-record').style.display = 'block';
+  mediaRecorder = null;
+  startBackgroundUpload(blob);
 }
 
 let backgroundUploadPromise = null;
