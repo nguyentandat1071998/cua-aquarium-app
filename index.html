@@ -285,9 +285,11 @@ async function openBaocaCamera() {
       ? 'video/webm' : 'video/mp4';
 
     mediaRecorder = new MediaRecorder(recordingStream, { mimeType });
-    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) recordedChunks.push(e.data);
+    };
     mediaRecorder.onstop = () => { closeBaocaCamModal(); onBaocaRecordStop(); };
-    mediaRecorder.start(100);
+    mediaRecorder.start(1000); // chunk mỗi 1 giây
 
     // Timer đếm giây
     baocaTimerSec = 0;
@@ -342,30 +344,95 @@ function closeBaocaCamModal() {
 // Thay vào đó hiện overlay text lên video preview bằng CSS
 function onBaocaRecordStop() {
   const mimeType = recordedChunks[0]?.type || 'video/webm';
-  const blob = new Blob(recordedChunks, { type: mimeType });
-  pendingVideoBlob = blob;
-  pendingVideoUrl = null; // Không tạo blob URL để tránh lỗi RAM
   pendingVideoStartTime = recordingStartTime;
 
-  // Hiện thông tin thay vì preview
+  // Hiện thông tin
   const dur = baocaTimerSec;
   const mins = Math.floor(dur/60), secs = dur%60;
   const durStr = mins > 0 ? `${mins}p${secs.toString().padStart(2,'0')}s` : `${secs}s`;
-  const ten = document.getElementById('baoca-item-ten').value.trim();
 
-  // Ẩn video preview, hiện thông tin
   document.getElementById('baoca-record-preview').style.display = 'none';
   document.getElementById('baoca-record-status').innerHTML =
     `✓ Đã quay xong <b>${durStr}</b> — đang upload...`;
-
   document.getElementById('baoca-step-info').style.display = 'none';
   document.getElementById('baoca-step-record').style.display = 'block';
   mediaRecorder = null;
-  startBackgroundUpload(blob);
+
+  // Upload từng chunk thay vì gom 1 blob lớn
+  startChunkedUpload(recordedChunks, mimeType);
 }
 
 let backgroundUploadPromise = null;
 let backgroundUploadResult = null;
+
+async function startChunkedUpload(chunks, mimeType) {
+  backgroundUploadResult = null;
+  const statusEl = document.getElementById('baoca-upload-status');
+  statusEl.style.display = 'flex';
+  statusEl.className = 'upload-status';
+  statusEl.textContent = '⏳ Đang upload video...';
+
+  backgroundUploadPromise = new Promise(async (resolve) => {
+    try {
+      const ten = document.getElementById('baoca-item-ten').value.trim() || 'video';
+      const now = new Date();
+      const dd = now.getDate().toString().padStart(2,'0');
+      const mm = (now.getMonth()+1).toString().padStart(2,'0');
+      const hh = now.getHours().toString().padStart(2,'0');
+      const mi = now.getMinutes().toString().padStart(2,'0');
+      const tenSafe = ten.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
+      const filename = `${tenSafe}_${dd}-${mm}_${hh}-${mi}.mp4`;
+
+      // Gom chunks thành các phần nhỏ 10MB để tránh lỗi RAM
+      const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+      const allParts = [];
+      let currentSize = 0;
+      let currentParts = [];
+
+      for (const chunk of chunks) {
+        currentParts.push(chunk);
+        currentSize += chunk.size;
+        if (currentSize >= CHUNK_SIZE) {
+          allParts.push(new Blob(currentParts, { type: mimeType }));
+          currentParts = [];
+          currentSize = 0;
+        }
+      }
+      if (currentParts.length) {
+        allParts.push(new Blob(currentParts, { type: mimeType }));
+      }
+
+      // Gom lại thành 1 blob cuối (đã chia nhỏ trước)
+      const finalBlob = new Blob(allParts, { type: mimeType });
+      pendingVideoBlob = finalBlob;
+
+      const response = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'video/mp4',
+          'x-filename': filename,
+        },
+        body: finalBlob,
+        duplex: 'half',
+      });
+      const data = await response.json();
+      if (data.success) {
+        backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
+        statusEl.className = 'upload-status done';
+        statusEl.textContent = '✓ Upload xong';
+      } else {
+        backgroundUploadResult = { success: false, error: data.error };
+        statusEl.className = 'upload-status err';
+        statusEl.textContent = '✗ Lỗi: ' + data.error;
+      }
+    } catch(e) {
+      backgroundUploadResult = { success: false, error: e.message };
+      statusEl.className = 'upload-status err';
+      statusEl.textContent = '✗ Lỗi: ' + e.message;
+    }
+    resolve(backgroundUploadResult);
+  });
+}
 
 function startBackgroundUpload(blob) {
   backgroundUploadResult = null;
