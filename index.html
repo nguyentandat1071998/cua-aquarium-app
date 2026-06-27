@@ -343,15 +343,21 @@ function closeBaocaCamModal() {
 function onBaocaRecordStop() {
   const mimeType = recordedChunks[0]?.type || 'video/webm';
   const blob = new Blob(recordedChunks, { type: mimeType });
-  const url = URL.createObjectURL(blob);
   pendingVideoBlob = blob;
-  pendingVideoUrl = url;
-  // Lưu thời gian bắt đầu quay để hiện trong phiếu
+  pendingVideoUrl = null; // Không tạo blob URL để tránh lỗi RAM
   pendingVideoStartTime = recordingStartTime;
-  const preview = document.getElementById('baoca-record-preview');
-  preview.srcObject = null;
-  preview.src = url;
-  document.getElementById('baoca-record-status').textContent = '✓ Quay xong';
+
+  // Hiện thông tin thay vì preview
+  const dur = baocaTimerSec;
+  const mins = Math.floor(dur/60), secs = dur%60;
+  const durStr = mins > 0 ? `${mins}p${secs.toString().padStart(2,'0')}s` : `${secs}s`;
+  const ten = document.getElementById('baoca-item-ten').value.trim();
+
+  // Ẩn video preview, hiện thông tin
+  document.getElementById('baoca-record-preview').style.display = 'none';
+  document.getElementById('baoca-record-status').innerHTML =
+    `✓ Đã quay xong <b>${durStr}</b> — đang upload...`;
+
   document.getElementById('baoca-step-info').style.display = 'none';
   document.getElementById('baoca-step-record').style.display = 'block';
   mediaRecorder = null;
@@ -463,6 +469,7 @@ window.addBaocaRow = async function() {
   document.getElementById('baoca-step-record').style.display = 'none';
   document.getElementById('baoca-upload-status').style.display = 'none';
   document.getElementById('baoca-record-status').textContent = '';
+  document.getElementById('baoca-record-preview').style.display = 'block';
   // Reset ô tên
   const tenInput = document.getElementById('baoca-item-ten');
   tenInput.value = '';
@@ -517,6 +524,11 @@ window.submitBaoCa = async function() {
   const tenLo = document.getElementById('baoca-ten-lo').value.trim() || getBaocaLoName();
   if (!tenLo) { showToast('Vui lòng nhập tên lô hàng', true); return; }
   if (!currentBaoCa.rows.length) { showToast('Chưa có dòng hàng nào', true); return; }
+  // Kiểm tra đang upload background (chưa thêm vào phiếu)
+  if (backgroundUploadPromise && !backgroundUploadResult) {
+    showToast('Đang upload video, vui lòng chờ...', true); return;
+  }
+  // Kiểm tra các row đã thêm nhưng chưa upload xong
   const stillUploading = currentBaoCa.rows.some(r => r.uploading);
   if (stillUploading) { showToast('Đang upload video, vui lòng chờ...', true); return; }
   const btn = document.getElementById('btn-baoca-submit');
