@@ -244,92 +244,50 @@ window.startBaocaRecord = async function() {
   await openBaocaCamera();
 };
 
-let canvasStream = null;
-let canvasAnimFrame = null;
 let recordingStartTime = null;
+let pendingVideoStartTime = null;
 
 async function openBaocaCamera() {
   const modal = document.getElementById('baoca-cam-modal');
   try {
-    // Lấy stream camera gốc (video + audio riêng)
     recordingStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'environment' },
       audio: true
     });
 
-    // Hiện video lên màn hình
     const videoEl = document.getElementById('baoca-cam-video');
     videoEl.srcObject = recordingStream;
+    videoEl.style.opacity = '1';
     await videoEl.play();
-
-    // Chờ video load xong để lấy kích thước thực tế
-    await new Promise(res => {
-      if (videoEl.readyState >= 2) { res(); return; }
-      videoEl.onloadeddata = res;
-      setTimeout(res, 1000);
-    });
 
     modal.classList.add('active');
     if (modal.requestFullscreen) modal.requestFullscreen().catch(()=>{});
     else if (modal.webkitRequestFullscreen) modal.webkitRequestFullscreen();
 
-    // Dùng đúng kích thước thực của camera (portrait hay landscape đều ok)
-    const canvas = document.getElementById('baoca-record-canvas');
-    const vw = videoEl.videoWidth || 720;
-    const vh = videoEl.videoHeight || 1280;
-    canvas.width = vw;
-    canvas.height = vh;
-    const ctx = canvas.getContext('2d');
+    // Lưu thời gian bắt đầu quay
+    recordingStartTime = new Date();
     const ten = document.getElementById('baoca-item-ten').value.trim();
     const nv = currentUserData?.ten || '';
 
-    // Vẽ từng frame lên canvas + timestamp
-    function drawFrame() {
-      if (!recordingStream) return;
-      ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-      // Timestamp overlay
-      const now = new Date();
-      const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
-      const line1 = ten;
-      const line2 = `${nv} · CUA Aquarium · ${ts}`;
-      const fontSize = Math.max(11, Math.round(canvas.width * 0.013));
-      ctx.font = `bold ${fontSize}px monospace`;
-      const tw1 = ctx.measureText(line1).width;
-      const tw2 = ctx.measureText(line2).width;
-      const maxW = Math.max(tw1, tw2);
-      const lineH = fontSize + 6;
-      const boxH = lineH * 2 + 10;
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(6, canvas.height - boxH - 6, maxW + 16, boxH);
-      ctx.fillStyle = '#FFE566';
-      ctx.fillText(line1, 14, canvas.height - lineH - 8);
-      ctx.fillText(line2, 14, canvas.height - 8);
-      canvasAnimFrame = requestAnimationFrame(drawFrame);
+    // Hiện timestamp tĩnh trên UI overlay
+    const tsLabel = document.getElementById('baoca-ts-label');
+    if (tsLabel) {
+      const now = recordingStartTime;
+      const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+      tsLabel.innerHTML = `<span>${ten}</span><br><span>${nv} · CUA Aquarium · ${ts}</span>`;
     }
-    drawFrame();
 
-    // Record từ canvas stream + audio track gốc — 15fps để nhẹ hơn
-    canvasStream = canvas.captureStream(30);
-    const audioTrack = recordingStream.getAudioTracks()[0];
-    if (audioTrack) canvasStream.addTrack(audioTrack);
-
+    // Record thẳng từ camera gốc
     recordedChunks = [];
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
       ? 'video/webm;codecs=vp9,opus'
       : MediaRecorder.isTypeSupported('video/webm')
-      ? 'video/webm'
-      : 'video/mp4';
+      ? 'video/webm' : 'video/mp4';
 
-    // Giới hạn bitrate 1Mbps để video nhẹ, đủ để xem đếm cá
-    const recOptions = { mimeType };
-    if (MediaRecorder.isTypeSupported(mimeType)) {
-      try { recOptions.videoBitsPerSecond = 2500000; } catch(e) {}
-    }
-    mediaRecorder = new MediaRecorder(canvasStream, recOptions);
+    mediaRecorder = new MediaRecorder(recordingStream, { mimeType });
     mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
     mediaRecorder.onstop = () => { closeBaocaCamModal(); onBaocaRecordStop(); };
-    recordingStartTime = Date.now();
-    mediaRecorder.start(100); // chunk mỗi 100ms
+    mediaRecorder.start(100);
 
     // Timer đếm giây
     baocaTimerSec = 0;
@@ -342,18 +300,6 @@ async function openBaocaCamera() {
 
     document.getElementById('baoca-cam-btn').classList.add('recording');
     document.getElementById('baoca-cam-label').textContent = 'Bấm để dừng quay';
-
-    // Update timestamp label trên UI
-    const tsLabel = document.getElementById('baoca-ts-label');
-    if (tsLabel) {
-      const updateTS = () => {
-        const n = new Date();
-        const ts = `${n.getDate().toString().padStart(2,'0')}/${(n.getMonth()+1).toString().padStart(2,'0')}/${n.getFullYear().toString().slice(-2)} ${n.getHours().toString().padStart(2,'0')}:${n.getMinutes().toString().padStart(2,'0')}:${n.getSeconds().toString().padStart(2,'0')}`;
-        tsLabel.textContent = `${ten} · ${nv} · ${ts}`;
-      };
-      updateTS();
-      window._tsInterval = setInterval(updateTS, 1000);
-    }
 
   } catch(e) { showToast('Không mở được camera: ' + e.message, true); }
 }
@@ -381,10 +327,6 @@ window.cancelBaocaRecord = function() {
 };
 
 function closeBaocaCamModal() {
-  // Stop canvas animation
-  if (canvasAnimFrame) { cancelAnimationFrame(canvasAnimFrame); canvasAnimFrame = null; }
-  // Stop canvas stream
-  if (canvasStream) { canvasStream.getTracks().forEach(t => t.stop()); canvasStream = null; }
   const modal = document.getElementById('baoca-cam-modal');
   modal.classList.remove('active');
   if (document.fullscreenElement) document.exitFullscreen().catch(()=>{});
@@ -401,46 +343,11 @@ function closeBaocaCamModal() {
 function onBaocaRecordStop() {
   const mimeType = recordedChunks[0]?.type || 'video/webm';
   const blob = new Blob(recordedChunks, { type: mimeType });
-
-  document.getElementById('baoca-record-status').textContent = '⏳ Đang xử lý video...';
-
-  // Dùng video element để load và lấy duration thực
-  const tempVideo = document.createElement('video');
-  tempVideo.preload = 'metadata';
   const url = URL.createObjectURL(blob);
-  tempVideo.src = url;
-
-  // Seek đến cuối để force load duration
-  tempVideo.ondurationchange = function() {
-    if (tempVideo.duration !== Infinity && !isNaN(tempVideo.duration)) {
-      finalizeRecording(blob, url);
-    }
-  };
-
-  tempVideo.onloadedmetadata = function() {
-    if (tempVideo.duration === Infinity) {
-      // Seek về cuối để fix duration
-      tempVideo.currentTime = 1e10;
-      tempVideo.ontimeupdate = function() {
-        tempVideo.ontimeupdate = null;
-        tempVideo.currentTime = 0;
-        finalizeRecording(blob, url);
-      };
-    } else {
-      finalizeRecording(blob, url);
-    }
-  };
-
-  // Fallback nếu không fix được sau 3 giây
-  setTimeout(() => {
-    if (!pendingVideoBlob) finalizeRecording(blob, url);
-  }, 3000);
-}
-
-function finalizeRecording(blob, url) {
-  if (pendingVideoBlob) return; // đã xử lý rồi
   pendingVideoBlob = blob;
   pendingVideoUrl = url;
+  // Lưu thời gian bắt đầu quay để hiện trong phiếu
+  pendingVideoStartTime = recordingStartTime;
   const preview = document.getElementById('baoca-record-preview');
   preview.srcObject = null;
   preview.src = url;
@@ -539,12 +446,14 @@ window.addBaocaRow = async function() {
     return;
   }
 
+  const startTime = pendingVideoStartTime ? fmtDate(pendingVideoStartTime) : '';
   currentBaoCa.rows.push({
     ten, sku, sl,
     videoUrl: backgroundUploadResult.viewUrl,
     fullUrl: backgroundUploadResult.fullUrl,
     fileId: backgroundUploadResult.fileId,
-    videoPreview: pendingVideoUrl
+    videoPreview: pendingVideoUrl,
+    startTime
   });
   showToast('✓ Đã thêm: ' + ten);
   renderBaocaRows();
@@ -569,6 +478,7 @@ window.addBaocaRow = async function() {
 
   pendingVideoBlob = null;
   pendingVideoUrl = null;
+  pendingVideoStartTime = null;
   backgroundUploadPromise = null;
   backgroundUploadResult = null;
 };
@@ -614,7 +524,7 @@ window.submitBaoCa = async function() {
   try {
     await addDoc(collection(db, 'phieu_baoca'), {
       tenLo,
-      rows: currentBaoCa.rows.map(r => ({ ten: r.ten, sku: r.sku||'', sl: r.sl, videoUrl: r.videoUrl||'', fullUrl: r.fullUrl||'', fileId: r.fileId||'' })),
+      rows: currentBaoCa.rows.map(r => ({ ten: r.ten, sku: r.sku||'', sl: r.sl, videoUrl: r.videoUrl||'', fullUrl: r.fullUrl||'', fileId: r.fileId||'', startTime: r.startTime||'' })),
       tongSL: currentBaoCa.rows.reduce((s,r) => s+r.sl, 0),
       tongDong: currentBaoCa.rows.length,
       nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
@@ -660,13 +570,15 @@ async function loadBaoCaList() {
         ${(p.rows||[]).map(r => `
           <div class="baoca-ds-row">
             <div class="baoca-ds-row-header">
-              <span class="baoca-ds-row-name">${escHtml(r.ten)}</span>
+              <div>
+                <span class="baoca-ds-row-name">${escHtml(r.ten)}</span>
+                ${r.startTime ? `<span style="font-size:11px;color:var(--text2);display:block">🕐 ${r.startTime}</span>` : ''}
+              </div>
               <span class="baoca-row-sl">${r.sl} con</span>
             </div>
-            ${r.videoUrl ? `
-              <iframe src="${r.videoUrl}" width="100%" height="180" style="border:none;border-radius:6px" allowfullscreen></iframe>
-              <a href="${r.fullUrl||r.videoUrl.replace('/preview','/view')}" target="_blank" class="btn-view-full">⛶ Xem đầy đủ / Tua video</a>
-            ` : '<div class="empty-msg" style="padding:8px">Chưa có video</div>'}
+            ${r.videoUrl
+              ? `<a href="${r.fullUrl||r.videoUrl.replace('/preview','/view')}" target="_blank" class="btn-view-full">▶ Xem video</a>`
+              : '<div class="empty-msg" style="padding:6px;font-size:12px">Chưa có video</div>'}
           </div>`).join('')}
       </div>
     </div>`;
@@ -1829,8 +1741,7 @@ input:focus,select:focus{border-color:var(--green)}
 
 <!-- BAOCA CAMERA FULLSCREEN -->
 <div id="baoca-cam-modal">
-  <video id="baoca-cam-video" autoplay playsinline muted style="position:absolute;opacity:0;pointer-events:none"></video>
-  <canvas id="baoca-record-canvas" style="width:100%;height:100%;object-fit:contain;position:absolute;inset:0;background:#000"></canvas>
+  <video id="baoca-cam-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;position:absolute;inset:0"></video>
   <div class="baoca-cam-ui">
     <div class="baoca-cam-top">
       <button class="baoca-cam-cancel" onclick="cancelBaocaRecord()">✕ Hủy</button>
