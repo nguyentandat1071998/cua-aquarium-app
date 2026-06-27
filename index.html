@@ -495,6 +495,16 @@ window.removeBaocaRow = function(idx) {
   renderBaocaRows();
 };
 
+window.adjBaocaRowQty = function(idx, d) {
+  currentBaoCa.rows[idx].sl = Math.max(1, currentBaoCa.rows[idx].sl + d);
+  renderBaocaRows();
+};
+
+window.setBaocaRowQty = function(idx, v) {
+  currentBaoCa.rows[idx].sl = Math.max(1, parseInt(v)||1);
+  renderBaocaRows();
+};
+
 function renderBaocaRows() {
   const card = document.getElementById('baoca-rows-card');
   const submitBtn = document.getElementById('btn-baoca-submit');
@@ -506,17 +516,20 @@ function renderBaocaRows() {
   el.innerHTML = currentBaoCa.rows.map((row, idx) => `
     <div class="baoca-row">
       <div class="baoca-row-header">
-        <div>
+        <div style="flex:1;min-width:0">
           <span class="baoca-row-name">${escHtml(row.ten)}</span>
           ${row.sku ? `<span class="item-sku"> · ${escHtml(row.sku)}</span>` : ''}
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span class="baoca-row-sl">${row.sl} con</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div class="qty-ctrl" style="width:100px">
+            <button onclick="adjBaocaRowQty(${idx},-1)">−</button>
+            <input type="number" value="${row.sl}" min="1" onchange="setBaocaRowQty(${idx},this.value)" style="text-align:center;border-radius:0;width:36px;padding:4px 2px;font-size:13px">
+            <button onclick="adjBaocaRowQty(${idx},1)">+</button>
+          </div>
           <button class="del-btn" onclick="removeBaocaRow(${idx})">✕</button>
         </div>
       </div>
-      ${row.videoPreview ? `<video class="video-preview" src="${row.videoPreview}" controls style="margin-top:6px"></video>` : ''}
-      <div class="upload-status done" style="margin-top:4px">✓ Video đã upload</div>
+      <div class="upload-status done" style="margin-top:6px">✓ Video đã upload</div>
     </div>`).join('');
 }
 
@@ -1199,6 +1212,22 @@ window.viewPhoto = function(src) {
 window.closeViewer = function() { document.getElementById('photo-viewer').style.display='none'; };
 
 // Init SKU search after DOM ready
+// Chặn nhập chữ vào tất cả input number
+document.addEventListener('keydown', e => {
+  if (e.target.type === 'number') {
+    const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Tab','Enter','.'];
+    if (!allowed.includes(e.key) && !/^[0-9]$/.test(e.key)) {
+      e.preventDefault();
+    }
+  }
+});
+
+document.addEventListener('input', e => {
+  if (e.target.type === 'number') {
+    e.target.value = e.target.value.replace(/[^0-9]/g, '');
+  }
+});
+
 document.addEventListener('DOMContentLoaded', () => {
   makeSKUSearch('nhap-item-ten','nhap-sku-drop','nhap-item-gia');
   makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia');
