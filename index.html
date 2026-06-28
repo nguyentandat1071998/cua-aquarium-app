@@ -397,62 +397,89 @@ function onBaocaRecordStop() {
 
   document.getElementById('baoca-record-preview').style.display = 'none';
   document.getElementById('baoca-record-status').innerHTML =
-    `✓ Đã quay xong <b>${durStr}</b> — đang hoàn tất upload...`;
+    `✓ Đã quay xong <b>${durStr}</b> — đang upload...`;
   document.getElementById('baoca-step-info').style.display = 'none';
   document.getElementById('baoca-step-record').style.display = 'block';
   mediaRecorder = null;
 
-  // Đợi queue upload xong rồi gửi chunk cuối để finalize
-  finalizeStreamUpload();
+  // Upload sau khi stop
+  doUploadAfterStop(recordedChunks);
 }
 
-async function finalizeStreamUpload() {
+async function doUploadAfterStop(chunks) {
   const statusEl = document.getElementById('baoca-upload-status');
   statusEl.style.display = 'flex';
   statusEl.className = 'upload-status';
-  statusEl.textContent = '⏳ Đang hoàn tất upload...';
+  statusEl.textContent = '⏳ Đang upload...';
 
   backgroundUploadPromise = new Promise(async (resolve) => {
     try {
-      // Đợi tất cả chunks đã được upload
-      await window._uploadQueue;
+      const ten = document.getElementById('baoca-item-ten').value.trim() || 'video';
+      const now = new Date();
+      const dd=now.getDate().toString().padStart(2,'0'), mm=(now.getMonth()+1).toString().padStart(2,'0');
+      const hh=now.getHours().toString().padStart(2,'0'), mi=now.getMinutes().toString().padStart(2,'0');
+      const tenSafe = ten.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
+      const filename = `${tenSafe}_${dd}-${mm}_${hh}-${mi}.webm`;
 
-      if (!window._uploadUrl) throw new Error('Không có upload session');
+      // Upload từng chunk 5MB qua Worker
+      const PART = 5 * 1024 * 1024;
+      let offset = 0;
+      let partBlobs = [];
+      let partSize = 0;
 
-      // Gửi chunk cuối (rỗng) để finalize — hoặc gửi lại chunk cuối cùng với total size
-      const totalSize = window._uploadOffset;
-      // Gọi lại Drive để lấy trạng thái và fileId
-      const statusRes = await fetch(WORKER_URL, {
+      // Khởi tạo upload session
+      const initRes = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: {
-          'x-action': 'chunk',
-          'x-upload-url': window._uploadUrl,
-          'x-range-start': String(totalSize),
-          'x-total-size': String(totalSize),
-          'x-is-last': 'true',
-          'Content-Type': 'video/webm',
-          'Content-Range': `bytes */${totalSize}`,
-        },
-        body: new Uint8Array(0)
+        headers: { 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
+        body: '{}'
       });
-      const data = await statusRes.json();
+      const initData = await initRes.json();
+      if (!initData.success) throw new Error('Init failed: ' + initData.error);
+      const uploadUrl = initData.uploadUrl;
 
-      if (data.success && data.status === 'done') {
-        backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
-        statusEl.className = 'upload-status done';
-        statusEl.textContent = '✓ Upload xong';
-      } else if (data.success && data.status === 'continue') {
-        // Vẫn còn chunks chưa lên — báo lỗi
-        throw new Error('Upload chưa hoàn tất, thử lại');
-      } else {
-        throw new Error(data.error || 'Upload thất bại');
+      // Gom và upload từng phần 5MB
+      for (let i = 0; i <= chunks.length; i++) {
+        const isLast = i === chunks.length;
+        if (!isLast) {
+          partBlobs.push(chunks[i]);
+          partSize += chunks[i].size;
+        }
+
+        if (partSize >= PART || isLast) {
+          if (partBlobs.length === 0 && isLast) break;
+          const partBlob = new Blob(partBlobs, { type: chunks[0]?.type || 'video/webm' });
+          const res = await fetch(WORKER_URL, {
+            method: 'POST',
+            headers: {
+              'x-action': 'chunk',
+              'x-upload-url': uploadUrl,
+              'x-range-start': String(offset),
+              'x-is-last': isLast ? 'true' : 'false',
+              'Content-Type': 'video/webm',
+            },
+            body: partBlob
+          });
+          const data = await res.json();
+
+          if (isLast && data.success && data.status === 'done') {
+            backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
+            statusEl.className = 'upload-status done';
+            statusEl.textContent = '✓ Upload xong';
+            resolve(backgroundUploadResult);
+            return;
+          }
+
+          offset += partBlob.size;
+          partBlobs = [];
+          partSize = 0;
+        }
       }
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
       statusEl.className = 'upload-status err';
       statusEl.textContent = '✗ Lỗi: ' + e.message;
+      resolve(backgroundUploadResult);
     }
-    resolve(backgroundUploadResult);
   });
 }
 
