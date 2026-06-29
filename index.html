@@ -422,25 +422,35 @@ async function doUploadAfterStop(chunks) {
 
       // Gom tất cả chunks thành 1 blob
       const blob = new Blob(chunks, { type: chunks[0]?.type || 'video/webm' });
-      statusEl.textContent = `⏳ Đang upload (${(blob.size/1024/1024).toFixed(1)}MB)...`;
+      pendingVideoBlob = blob; // Set để addBaocaRow biết có video
+      const sizeMB = (blob.size/1024/1024).toFixed(1);
 
-      // Upload thẳng lên Worker
-      const response = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'video/webm',
-          'x-filename': filename,
-        },
-        body: blob,
+      // Upload với XMLHttpRequest để có progress %
+      const uploadResult = await new Promise((res2, rej2) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', WORKER_URL);
+        xhr.setRequestHeader('Content-Type', 'video/webm');
+        xhr.setRequestHeader('x-filename', filename);
+        xhr.upload.onprogress = e => {
+          if (e.lengthComputable) {
+            const pct = Math.round(e.loaded / e.total * 100);
+            statusEl.textContent = `⏳ Đang upload ${pct}% (${sizeMB}MB)...`;
+          }
+        };
+        xhr.onload = () => {
+          try { res2(JSON.parse(xhr.responseText)); }
+          catch(e) { rej2(new Error('Lỗi parse response')); }
+        };
+        xhr.onerror = () => rej2(new Error('Lỗi kết nối'));
+        xhr.send(blob);
       });
 
-      const data = await response.json();
-      if (data.success) {
-        backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
+      if (uploadResult.success) {
+        backgroundUploadResult = { success: true, viewUrl: uploadResult.viewUrl, fullUrl: uploadResult.fullUrl, fileId: uploadResult.fileId };
         statusEl.className = 'upload-status done';
         statusEl.textContent = '✓ Upload xong';
       } else {
-        throw new Error(data.error || 'Upload thất bại');
+        throw new Error(uploadResult.error || 'Upload thất bại');
       }
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
@@ -1658,7 +1668,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v2</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v3</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
