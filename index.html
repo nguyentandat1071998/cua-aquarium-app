@@ -409,7 +409,7 @@ async function doUploadAfterStop(chunks) {
   const statusEl = document.getElementById('baoca-upload-status');
   statusEl.style.display = 'flex';
   statusEl.className = 'upload-status';
-  statusEl.textContent = '⏳ Chuẩn bị upload...';
+  statusEl.textContent = '⏳ Chuẩn bị...';
 
   backgroundUploadPromise = new Promise(async (resolve) => {
     try {
@@ -420,44 +420,72 @@ async function doUploadAfterStop(chunks) {
       const tenSafe = ten.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
       const filename = `${tenSafe}_${dd}-${mm}_${hh}-${mi}.webm`;
 
-      // Gom tất cả chunks thành 1 blob
+      // Gom blob
       const blob = new Blob(chunks, { type: chunks[0]?.type || 'video/webm' });
-      pendingVideoBlob = blob; // Set để addBaocaRow biết có video
-      const sizeMB = (blob.size/1024/1024).toFixed(1);
+      pendingVideoBlob = blob;
+      const totalSize = blob.size;
+      const sizeMB = (totalSize/1024/1024).toFixed(1);
 
-      // Upload với XMLHttpRequest để có progress %
-      const uploadResult = await new Promise((res2, rej2) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', WORKER_URL);
-        xhr.setRequestHeader('Content-Type', 'video/webm');
-        xhr.setRequestHeader('x-filename', filename);
-        xhr.upload.onprogress = e => {
-          if (e.lengthComputable) {
-            const pct = Math.round(e.loaded / e.total * 100);
-            statusEl.textContent = `⏳ Đang upload ${pct}% (${sizeMB}MB)...`;
-          }
-        };
-        xhr.onload = () => {
-          try { res2(JSON.parse(xhr.responseText)); }
-          catch(e) { rej2(new Error('Lỗi parse response')); }
-        };
-        xhr.onerror = () => rej2(new Error('Lỗi kết nối'));
-        xhr.send(blob);
+      // Init upload session
+      statusEl.textContent = '⏳ Khởi tạo...';
+      const initRes = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
+        body: '{}'
       });
+      const initData = await initRes.json();
+      if (!initData.success) throw new Error('Init: ' + initData.error);
+      const uploadUrl = initData.uploadUrl;
 
-      if (uploadResult.success) {
-        backgroundUploadResult = { success: true, viewUrl: uploadResult.viewUrl, fullUrl: uploadResult.fullUrl, fileId: uploadResult.fileId };
-        statusEl.className = 'upload-status done';
-        statusEl.textContent = '✓ Upload xong';
-      } else {
-        throw new Error(uploadResult.error || 'Upload thất bại');
+      // Chunk size: 5MB (bội số 256KB = 5*1024*1024 / 256 = 20 — đúng chuẩn)
+      const CHUNK = 5 * 1024 * 1024;
+      let offset = 0;
+
+      while (offset < totalSize) {
+        const end = Math.min(offset + CHUNK, totalSize);
+        const isLast = end >= totalSize;
+        const chunk = blob.slice(offset, end);
+        const pct = Math.round(offset / totalSize * 100);
+        statusEl.textContent = `⏳ Đang upload ${pct}% (${sizeMB}MB)...`;
+
+        const res = await fetch(WORKER_URL, {
+          method: 'POST',
+          headers: {
+            'x-action': 'chunk',
+            'x-upload-url': uploadUrl,
+            'x-range-start': String(offset),
+            'x-total-size': String(totalSize),
+            'x-is-last': isLast ? 'true' : 'false',
+            'Content-Type': 'video/webm',
+          },
+          body: chunk
+        });
+
+        const data = await res.json();
+
+        if (data.status === 'done') {
+          backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
+          statusEl.className = 'upload-status done';
+          statusEl.textContent = `✓ Upload xong (${sizeMB}MB)`;
+          resolve(backgroundUploadResult);
+          return;
+        }
+
+        if (data.status === 'continue') {
+          // Dùng nextOffset từ Drive thay vì tự tính
+          offset = data.nextOffset !== undefined ? data.nextOffset : end;
+          continue;
+        }
+
+        throw new Error(data.error || 'Upload lỗi: ' + JSON.stringify(data));
       }
+
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
       statusEl.className = 'upload-status err';
       statusEl.textContent = '✗ Lỗi: ' + e.message;
+      resolve(backgroundUploadResult);
     }
-    resolve(backgroundUploadResult);
   });
 }
 
@@ -1668,7 +1696,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v3</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v4</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -1685,7 +1713,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v3</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v4</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -1702,7 +1730,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v3</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v4</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
