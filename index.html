@@ -766,10 +766,13 @@ async function loadBaoCaList() {
   let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
   const from = document.getElementById('baoca-filter-from')?.value;
   const to = document.getElementById('baoca-filter-to')?.value;
-  if (from||to) docs = docs.filter(d => {
+  const filterXB = document.getElementById('baoca-filter-xuat')?.value || 'all';
+  if (from||to||filterXB!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds<from) return false;
     if (to && ds>to) return false;
+    if (filterXB === 'chua' && d.daXuat) return false;
+    if (filterXB === 'da' && !d.daXuat) return false;
     return true;
   });
   if (!docs.length) { el.innerHTML='<div class="empty-msg">Chưa có phiếu nào.</div>'; return; }
@@ -780,6 +783,7 @@ async function loadBaoCaList() {
       <div class="phieu-top">
         <div>
           <span class="phieu-date">${fmtDate(date)}</span>
+          ${p.daXuat ? `<span class="badge-xuat da">✓ Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}
           <div style="font-size:14px;font-weight:600;margin-top:3px">${escHtml(p.tenLo||'')}</div>
         </div>
         <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteBaoCa('${p.id}')">Xóa</button>`:''}</div>
@@ -1080,11 +1084,14 @@ async function loadNhapList(filter={}) {
   const from = document.getElementById('nhap-filter-from')?.value;
   const to = document.getElementById('nhap-filter-to')?.value;
   const nv = document.getElementById('nhap-filter-nv')?.value;
-  if (from||to||nv) docs = docs.filter(d => {
+  const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
+  if (from||to||nv||filterX!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
     if (to && ds > to) return false;
     if (nv && d.nguoiTao?.ten !== nv) return false;
+    if (filterX === 'chua' && d.daXuat) return false;
+    if (filterX === 'da' && !d.daXuat) return false;
     return true;
   });
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
@@ -1093,7 +1100,7 @@ async function loadNhapList(filter={}) {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card green">
       <div class="phieu-top">
-        <div><span class="phieu-date">${fmtDate(date)}</span></div>
+        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">✓ Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
         <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
@@ -1129,11 +1136,14 @@ async function loadXuatList(filter={}) {
   const from = document.getElementById('xuat-filter-from')?.value;
   const to = document.getElementById('xuat-filter-to')?.value;
   const nv = document.getElementById('xuat-filter-nv')?.value;
-  if (from||to||nv) docs = docs.filter(d => {
+  const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
+  if (from||to||nv||filterX!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
     if (to && ds > to) return false;
     if (nv && d.nguoiTao?.ten !== nv) return false;
+    if (filterX === 'chua' && d.daXuat) return false;
+    if (filterX === 'da' && !d.daXuat) return false;
     return true;
   });
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
@@ -1142,7 +1152,7 @@ async function loadXuatList(filter={}) {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card red">
       <div class="phieu-top">
-        <div><span class="phieu-date">${fmtDate(date)}</span></div>
+        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">✓ Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
         <div class="phieu-acts">${canEdit?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
@@ -1235,47 +1245,100 @@ function buildStatsHTML(all, color) {
   return `<h3 class="stats-h">Theo tháng</h3>${tbl(mRows)}<h3 class="stats-h" style="margin-top:1.5rem">Theo ngày (30 ngày gần nhất)</h3>${tbl(dRows)}`;
 }
 
+// ===== EXPORT CSV BÁO CÁ =====
+window.exportBaocaCSV = async function() {
+  const from = document.getElementById('baoca-export-from')?.value;
+  const to = document.getElementById('baoca-export-to')?.value;
+  const filterXuat = document.getElementById('baoca-export-filter')?.value || 'all';
+  const snap = await getDocs(query(collection(db, 'phieu_baoca'), orderBy('createdAt', 'desc')));
+  let docs = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(d => !d.deleted);
+
+  if (from || to) docs = docs.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds < from) return false;
+    if (to && ds > to) return false;
+    return true;
+  });
+  if (filterXuat === 'chua') docs = docs.filter(d => !d.daXuat);
+  if (filterXuat === 'da') docs = docs.filter(d => d.daXuat);
+
+  if (!docs.length) { showToast('Không có phiếu nào để xuất', true); return; }
+
+  // Gom SKU
+  const map = {};
+  docs.forEach(p => (p.rows||[]).forEach(r => {
+    const k = r.sku || r.ten;
+    if (!map[k]) map[k] = { ma: r.sku||'', ten: r.ten, sl: 0 };
+    map[k].sl += r.sl;
+  }));
+
+  const header = 'Mã hàng,Tên hàng,Số lượng nhập';
+  const lines = Object.values(map).map(r => `"${r.ma}","${r.ten}",${r.sl}`);
+  const csv = '\uFEFF' + [header, ...lines].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `baoca-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+
+  // Đánh dấu đã xuất
+  const batch = docs.map(d => updateDoc(doc(db, 'phieu_baoca', d.id), {
+    daXuat: true, xuatAt: serverTimestamp()
+  }));
+  await Promise.all(batch);
+  showToast(`Đã xuất CSV ${docs.length} phiếu`);
+  loadBaoCaStats();
+};
+
 // ===== EXPORT CSV =====
 window.exportNhapCSV = async function() {
   const from = document.getElementById('nhap-export-from')?.value;
   const to = document.getElementById('nhap-export-to')?.value;
   const snap = await getDocs(query(collection(db,'phieu_nhap'), orderBy('createdAt','desc')));
-  let all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
-  if (from||to) all = all.filter(d => {
+  let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
+  if (from||to) allDocs = allDocs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds<from) return false;
     if (to && ds>to) return false;
     return true;
   });
-  if (!all.length) { showToast('Không có dữ liệu', true); return; }
+  if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
   const map={};
-  all.forEach(p => p.items.forEach(i => {
+  allDocs.forEach(p => p.items.forEach(i => {
     const k=i.sku||i.ten;
     if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
     map[k].sl+=i.sl;
   }));
   downloadCSV(Object.values(map), 'nhap-kho', 'Số lượng nhập');
+  // Đánh dấu đã xuất
+  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_nhap',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
+  showToast(`Đã xuất CSV ${allDocs.length} phiếu`);
+  loadNhapList();
 };
 
 window.exportXuatCSV = async function() {
   const from = document.getElementById('xuat-export-from')?.value;
   const to = document.getElementById('xuat-export-to')?.value;
   const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
-  let all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
-  if (from||to) all = all.filter(d => {
+  let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
+  if (from||to) allDocs = allDocs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds<from) return false;
     if (to && ds>to) return false;
     return true;
   });
-  if (!all.length) { showToast('Không có dữ liệu', true); return; }
+  if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
   const map={};
-  all.forEach(p => p.items.forEach(i => {
+  allDocs.forEach(p => p.items.forEach(i => {
     const k=i.sku||i.ten;
     if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
     map[k].sl+=i.sl;
   }));
   downloadCSV(Object.values(map), 'xuat-huy', 'Số lượng hủy');
+  // Đánh dấu đã xuất
+  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_huy',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
+  showToast(`Đã xuất CSV ${allDocs.length} phiếu`);
+  loadXuatList();
 };
 
 function downloadCSV(rows, filename, slLabel) {
@@ -1540,6 +1603,9 @@ input:focus,select:focus{border-color:var(--green)}
 .btn-xs.danger{background:var(--red-bg);border-color:var(--red);color:var(--red)}
 
 /* PHIẾU CARDS */
+.badge-xuat{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;margin-left:6px;font-weight:600}
+.badge-xuat.da{background:#E6F5EC;color:#1B7A3E}
+.badge-xuat.chua{background:#FEF3C7;color:#B45309}
 .phieu-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px}
 .phieu-card.green{border-left:3px solid var(--green)}
 .phieu-card.red{border-left:3px solid var(--red)}
@@ -1696,7 +1762,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v4</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v7</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -1713,7 +1779,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v4</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v7</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -1730,7 +1796,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v4</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v7</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -1805,6 +1871,13 @@ input:focus,select:focus{border-color:var(--green)}
             <div class="field"><label>Đến ngày</label><input type="date" id="nhap-filter-to"></div>
           </div>
           <div class="field"><label>Người nhập</label><select id="nhap-filter-nv"><option value="">Tất cả</option></select></div>
+          <div class="field"><label>Trạng thái xuất</label>
+            <select id="nhap-filter-xuat">
+              <option value="all">Tất cả</option>
+              <option value="chua">Chưa xuất</option>
+              <option value="da">Đã xuất</option>
+            </select>
+          </div>
           <div class="filter-actions">
             <button class="btn-apply-g" onclick="applyNhapFilter()">Lọc</button>
             <button class="btn-clear" onclick="clearNhapFilter()">Xóa lọc</button>
@@ -1876,6 +1949,13 @@ input:focus,select:focus{border-color:var(--green)}
             <div class="field"><label>Đến ngày</label><input type="date" id="xuat-filter-to"></div>
           </div>
           <div class="field"><label>Người xuất</label><select id="xuat-filter-nv"><option value="">Tất cả</option></select></div>
+          <div class="field"><label>Trạng thái xuất</label>
+            <select id="xuat-filter-xuat">
+              <option value="all">Tất cả</option>
+              <option value="chua">Chưa xuất</option>
+              <option value="da">Đã xuất</option>
+            </select>
+          </div>
           <div class="filter-actions">
             <button class="btn-apply-r" onclick="applyXuatFilter()">Lọc</button>
             <button class="btn-clear" onclick="clearXuatFilter()">Xóa lọc</button>
@@ -1954,6 +2034,13 @@ input:focus,select:focus{border-color:var(--green)}
             <div class="field"><label>Từ ngày</label><input type="date" id="baoca-filter-from"></div>
             <div class="field"><label>Đến ngày</label><input type="date" id="baoca-filter-to"></div>
           </div>
+          <div class="field"><label>Trạng thái xuất</label>
+            <select id="baoca-filter-xuat">
+              <option value="all">Tất cả</option>
+              <option value="chua">Chưa xuất</option>
+              <option value="da">Đã xuất</option>
+            </select>
+          </div>
           <div class="filter-actions">
             <button class="btn-apply-blue" onclick="loadBaoCaList()">Lọc</button>
             <button class="btn-clear" onclick="clearBaocaFilter()">Xóa lọc</button>
@@ -1964,6 +2051,22 @@ input:focus,select:focus{border-color:var(--green)}
 
       <!-- BÁO CÁ / THỐNG KÊ -->
       <div class="panel" id="panel-baoca-thongke">
+        <div class="export-card" id="baoca-export-card" style="display:none">
+          <h4>XUẤT FILE</h4>
+          <div class="row2">
+            <div class="field"><label>Từ ngày</label><input type="date" id="baoca-export-from"></div>
+            <div class="field"><label>Đến ngày</label><input type="date" id="baoca-export-to"></div>
+          </div>
+          <div class="field">
+            <label>Lọc theo trạng thái</label>
+            <select id="baoca-export-filter">
+              <option value="all">Tất cả phiếu</option>
+              <option value="chua">Chưa xuất</option>
+              <option value="da">Đã xuất</option>
+            </select>
+          </div>
+          <button class="btn-blue" onclick="exportBaocaCSV()">⬇️ Xuất CSV</button>
+        </div>
         <div id="baoca-stats-content"><div class="loading">Đang tải...</div></div>
       </div>
 
