@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="CUA Nội Bộ">
+<meta name="apple-mobile-web-app-title" content="CUA Aquarium">
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1B7A3E">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>CUA Aquarium — Nội Bộ</title>
+<title>CUA Aquarium</title>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -1689,7 +1689,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1>🐠 CUA Aquarium</h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium</h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -1706,7 +1706,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand">🐠 CUA Aquarium</div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium</div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -1723,7 +1723,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand">🐠 CUA Aquarium</div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium</div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -1989,6 +1989,19 @@ input:focus,select:focus{border-color:var(--green)}
   </div>
 </div>
 
+<!-- EXIT CONFIRM OVERLAY -->
+<div id="exit-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;padding:1rem">
+  <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:320px;text-align:center">
+    <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+    <h3 style="font-size:16px;font-weight:600;margin-bottom:8px">Bạn có chắc muốn thoát?</h3>
+    <p style="font-size:14px;color:#5A6070;margin-bottom:20px">Dữ liệu đang làm hoặc video đang upload có thể bị mất.</p>
+    <div style="display:flex;gap:10px">
+      <button onclick="cancelExit()" style="flex:1;padding:11px;background:#1B7A3E;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Ở lại</button>
+      <button onclick="confirmExit()" style="flex:1;padding:11px;background:#f5f5f5;color:#333;border:1px solid #ddd;border-radius:8px;font-size:14px;cursor:pointer">Thoát</button>
+    </div>
+  </div>
+</div>
+
 <!-- CAMERA -->
 <div id="camera-modal">
   <video id="camera-video" autoplay playsinline></video>
@@ -2020,6 +2033,33 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="toast" class="toast"></div>
 
 <script>
+// Bẫy gesture back/vuốt điều hướng Android
+function pushDummyState() {
+  history.pushState({ preventExit: true }, '');
+}
+
+window.addEventListener('popstate', function(e) {
+  // Luôn hiện xác nhận thoát
+  pushDummyState();
+  showExitConfirm();
+});
+
+function showExitConfirm() {
+  const overlay = document.getElementById('exit-confirm-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+window.confirmExit = function() {
+  document.getElementById('exit-confirm-overlay').style.display = 'none';
+  // Xóa hết dummy states rồi thoát
+  history.go(-history.length);
+};
+
+window.cancelExit = function() {
+  document.getElementById('exit-confirm-overlay').style.display = 'none';
+  pushDummyState();
+};
+
 // Cảnh báo khi thoát app có dữ liệu chưa lưu
 window.addEventListener('beforeunload', e => {
   const hasData = currentBaoCa?.rows?.length > 0 ||
@@ -2092,6 +2132,9 @@ const observer = new MutationObserver(() => {
   }
 });
 observer.observe(document.getElementById('user-name') || document.body, { childList: true, subtree: true });
+
+// Push dummy state để bẫy gesture back
+setTimeout(pushDummyState, 500);
 </script>
 
 </body>
