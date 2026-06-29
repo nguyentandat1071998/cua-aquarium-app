@@ -100,10 +100,10 @@ function showApp() {
     document.getElementById('mod-admin').style.display = 'flex';
   }
   const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
-  ['nhap-export-card','xuat-export-card'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = canExport ? 'block' : 'none';
-  });
+  // Lưu quyền xuất file vào biến global
+  window._canExport = canExport;
+  if (!canExport) document.body.classList.add('hide-export');
+  else document.body.classList.remove('hide-export');
   loadSKUs();
   switchModule('nhap');
 }
@@ -775,6 +775,7 @@ window.loadBaoCaList = async function() {
     if (filterXB === 'da' && !d.daXuat) return false;
     return true;
   });
+  renderSummary('baoca', docs);
   if (!docs.length) { el.innerHTML='<div class="empty-msg">Chưa có phiếu nào.</div>'; return; }
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
   el.innerHTML = docs.map(p => {
@@ -1094,6 +1095,7 @@ window.loadNhapList = async function(filter={}) {
     if (filterX === 'da' && !d.daXuat) return false;
     return true;
   });
+  renderSummary('nhap', docs);
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
   el.innerHTML = docs.map(p => {
@@ -1146,6 +1148,7 @@ window.loadXuatList = async function(filter={}) {
     if (filterX === 'da' && !d.daXuat) return false;
     return true;
   });
+  renderSummary('xuat', docs);
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
   el.innerHTML = docs.map(p => {
@@ -1245,22 +1248,58 @@ function buildStatsHTML(all, color) {
   return `<h3 class="stats-h">Theo tháng</h3>${tbl(mRows)}<h3 class="stats-h" style="margin-top:1.5rem">Theo ngày (30 ngày gần nhất)</h3>${tbl(dRows)}`;
 }
 
+// ===== SUMMARY =====
+function renderSummary(mod, docs, type) {
+  const el = document.getElementById(mod + '-summary');
+  const content = document.getElementById(mod + '-summary-content');
+  if (!el || !content) return;
+  if (!docs.length) { el.style.display = 'none'; return; }
+
+  let totalPhieu = docs.length;
+  let totalSL = 0;
+  let totalGia = 0;
+  const skuMap = {};
+
+  docs.forEach(p => {
+    const items = p.items || p.rows || [];
+    items.forEach(i => {
+      totalSL += i.sl || 0;
+      totalGia += i.tong || (i.sl * (i.gia || 0)) || 0;
+      const k = i.sku || i.ten;
+      if (!skuMap[k]) skuMap[k] = { ten: i.ten, sl: 0 };
+      skuMap[k].sl += i.sl;
+    });
+  });
+
+  const top5 = Object.values(skuMap).sort((a,b) => b.sl - a.sl).slice(0,5);
+
+  content.innerHTML = `
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+      <span>📋 <b>${totalPhieu}</b> phiếu</span>
+      <span>📦 <b>${totalSL}</b> sản phẩm</span>
+      ${totalGia ? `<span>💰 <b>${fmt(totalGia)}₫</b></span>` : ''}
+    </div>
+    <div style="font-size:12px;color:var(--text2)">Top mặt hàng: ${top5.map(s => `${escHtml(s.ten)} (${s.sl})`).join(' · ')}</div>
+  `;
+  el.style.display = 'block';
+}
+
 // ===== EXPORT CSV BÁO CÁ =====
 window.exportBaocaCSV = async function() {
-  const from = document.getElementById('baoca-export-from')?.value;
-  const to = document.getElementById('baoca-export-to')?.value;
-  const filterXuat = document.getElementById('baoca-export-filter')?.value || 'all';
+  const from = document.getElementById('baoca-filter-from')?.value;
+  const to = document.getElementById('baoca-filter-to')?.value;
+  const filterXuat = document.getElementById('baoca-filter-xuat')?.value || 'all';
   const snap = await getDocs(query(collection(db, 'phieu_baoca'), orderBy('createdAt', 'desc')));
   let docs = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(d => !d.deleted);
 
-  if (from || to) docs = docs.filter(d => {
+  docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
     if (to && ds > to) return false;
+    if (filterXuat === 'chua' && d.daXuat) return false;
+    if (filterXuat === 'da' && !d.daXuat) return false;
     return true;
   });
-  if (filterXuat === 'chua') docs = docs.filter(d => !d.daXuat);
-  if (filterXuat === 'da') docs = docs.filter(d => d.daXuat);
 
   if (!docs.length) { showToast('Không có phiếu nào để xuất', true); return; }
 
@@ -1292,14 +1331,17 @@ window.exportBaocaCSV = async function() {
 
 // ===== EXPORT CSV =====
 window.exportNhapCSV = async function() {
-  const from = document.getElementById('nhap-export-from')?.value;
-  const to = document.getElementById('nhap-export-to')?.value;
+  const from = document.getElementById('nhap-filter-from')?.value;
+  const to = document.getElementById('nhap-filter-to')?.value;
+  const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
   const snap = await getDocs(query(collection(db,'phieu_nhap'), orderBy('createdAt','desc')));
   let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
-  if (from||to) allDocs = allDocs.filter(d => {
+  allDocs = allDocs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds<from) return false;
     if (to && ds>to) return false;
+    if (filterX === 'chua' && d.daXuat) return false;
+    if (filterX === 'da' && !d.daXuat) return false;
     return true;
   });
   if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
@@ -1317,14 +1359,17 @@ window.exportNhapCSV = async function() {
 };
 
 window.exportXuatCSV = async function() {
-  const from = document.getElementById('xuat-export-from')?.value;
-  const to = document.getElementById('xuat-export-to')?.value;
+  const from = document.getElementById('xuat-filter-from')?.value;
+  const to = document.getElementById('xuat-filter-to')?.value;
+  const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
   const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
   let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
-  if (from||to) allDocs = allDocs.filter(d => {
+  allDocs = allDocs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds<from) return false;
     if (to && ds>to) return false;
+    if (filterX === 'chua' && d.daXuat) return false;
+    if (filterX === 'da' && !d.daXuat) return false;
     return true;
   });
   if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
@@ -1340,6 +1385,43 @@ window.exportXuatCSV = async function() {
   showToast(`Đã xuất CSV ${allDocs.length} phiếu`);
   loadXuatList();
 };
+
+function buildCSVHeader(loaiPhieu, docs) {
+  const nguoiXuat = currentUserData?.ten || currentUser?.email || '';
+  const now = new Date();
+  const nowStr = fmtDate(now);
+
+  const dates = docs
+    .map(d => d.createdAt?.toDate ? d.createdAt.toDate() : null)
+    .filter(Boolean).sort((a,b) => a-b);
+  const fromStr = dates.length ? fmtDateOnly(dates[0]) : '';
+  const toStr = dates.length ? fmtDateOnly(dates[dates.length-1]) : '';
+  const thoiGian = fromStr === toStr ? fromStr : `${fromStr} - ${toStr}`;
+
+  // Ghi chú nằm bên phải — mỗi dòng là 1 row CSV với cột trống ở đầu
+  const sep = ',,,,'; // đẩy sang phải qua các cột data
+  const lines = [
+    `${sep}Loại phiếu:,${loaiPhieu}`,
+    `${sep}Người xuất:,${nguoiXuat}`,
+    `${sep}Thời gian xuất:,${nowStr}`,
+    `${sep}Khoảng thời gian:,${thoiGian}`,
+    `${sep}Tổng phiếu:,${docs.length}`,
+    `${sep}`,
+    `${sep}Chi tiết từng phiếu:`,
+  ];
+
+  docs.forEach(d => {
+    const date = d.createdAt?.toDate ? d.createdAt.toDate() : new Date();
+    const nguoiTao = d.nguoiTao?.ten || '—';
+    lines.push(`${sep}[${fmtDate(date)}] ${nguoiTao}`);
+    (d.items || d.rows || []).forEach(i => {
+      lines.push(`${sep}  ${i.sku ? i.sku + ' - ' : ''}${i.ten}: ${i.sl}`);
+    });
+    lines.push(`${sep}`);
+  });
+
+  return lines.join('\n');
+}
 
 function downloadCSV(rows, filename, slLabel) {
   const header = `Mã hàng,Tên hàng,Đơn vị tính,${slLabel}`;
@@ -1632,8 +1714,9 @@ input:focus,select:focus{border-color:var(--green)}
 .filter-actions .btn-clear{background:var(--bg);color:var(--text2);border:1px solid var(--border)}
 
 /* EXPORT */
-.export-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-top:14px;display:none}
+.export-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-top:14px}
 .export-card h4{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+.hide-export .export-card{display:none}
 
 /* STATS */
 .stats-h{font-size:14px;font-weight:600;color:var(--text2);margin-bottom:8px}
@@ -1762,7 +1845,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v9</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v25</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -1779,7 +1862,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v9</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v25</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -1796,7 +1879,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v9</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v25</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -1882,6 +1965,13 @@ input:focus,select:focus{border-color:var(--green)}
             <button class="btn-apply-g" onclick="applyNhapFilter()">Lọc</button>
             <button class="btn-clear" onclick="clearNhapFilter()">Xóa lọc</button>
           </div>
+          <div id="nhap-export-card" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <button class="btn-g" onclick="exportNhapCSV()" style="margin-top:0">⬇️ Xuất CSV theo bộ lọc</button>
+          </div>
+        </div>
+        <div id="nhap-summary" style="display:none;background:var(--green-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
+          <div style="font-weight:600;color:var(--green);margin-bottom:6px">Tổng theo bộ lọc</div>
+          <div id="nhap-summary-content"></div>
         </div>
         <div id="nhap-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
@@ -1935,7 +2025,7 @@ input:focus,select:focus{border-color:var(--green)}
       <!-- XUẤT / DANH SÁCH -->
       <div class="panel" id="panel-xuat-ds">
         <div class="filter-bar">
-          <h4>Lọc phiếu</h4>
+          <h4>Lọc & Xuất file</h4>
           <div class="row2">
             <div class="field"><label>Từ ngày</label><input type="date" id="xuat-filter-from"></div>
             <div class="field"><label>Đến ngày</label><input type="date" id="xuat-filter-to"></div>
@@ -1952,6 +2042,13 @@ input:focus,select:focus{border-color:var(--green)}
             <button class="btn-apply-r" onclick="applyXuatFilter()">Lọc</button>
             <button class="btn-clear" onclick="clearXuatFilter()">Xóa lọc</button>
           </div>
+          <div id="xuat-export-card" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <button class="btn-r" onclick="exportXuatCSV()" style="margin-top:0">⬇️ Xuất CSV theo bộ lọc</button>
+          </div>
+        </div>
+        <div id="xuat-summary" style="display:none;background:var(--red-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
+          <div style="font-weight:600;color:var(--red);margin-bottom:6px">Tổng theo bộ lọc</div>
+          <div id="xuat-summary-content"></div>
         </div>
         <div id="xuat-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
@@ -2013,7 +2110,7 @@ input:focus,select:focus{border-color:var(--green)}
       <!-- BÁO CÁ / DANH SÁCH -->
       <div class="panel" id="panel-baoca-ds">
         <div class="filter-bar">
-          <h4>Lọc phiếu</h4>
+          <h4>Lọc & Xuất file</h4>
           <div class="row2">
             <div class="field"><label>Từ ngày</label><input type="date" id="baoca-filter-from"></div>
             <div class="field"><label>Đến ngày</label><input type="date" id="baoca-filter-to"></div>
@@ -2029,6 +2126,13 @@ input:focus,select:focus{border-color:var(--green)}
             <button class="btn-apply-blue" onclick="loadBaoCaList()">Lọc</button>
             <button class="btn-clear" onclick="clearBaocaFilter()">Xóa lọc</button>
           </div>
+          <div id="baoca-export-card" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+            <button class="btn-blue" onclick="exportBaocaCSV()" style="margin-top:0">⬇️ Xuất CSV theo bộ lọc</button>
+          </div>
+        </div>
+        <div id="baoca-summary" style="display:none;background:var(--blue-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
+          <div style="font-weight:600;color:var(--blue);margin-bottom:6px">Tổng theo bộ lọc</div>
+          <div id="baoca-summary-content"></div>
         </div>
         <div id="baoca-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
