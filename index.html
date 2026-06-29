@@ -427,6 +427,7 @@ async function doUploadAfterStop(chunks) {
       let partSize = 0;
 
       // Khởi tạo upload session
+      statusEl.textContent = '⏳ Khởi tạo upload...';
       const initRes = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
@@ -435,6 +436,7 @@ async function doUploadAfterStop(chunks) {
       const initData = await initRes.json();
       if (!initData.success) throw new Error('Init failed: ' + initData.error);
       const uploadUrl = initData.uploadUrl;
+      statusEl.textContent = '⏳ Đang upload (0%)...';
 
       // Gom và upload từng phần 5MB
       for (let i = 0; i <= chunks.length; i++) {
@@ -467,8 +469,16 @@ async function doUploadAfterStop(chunks) {
             resolve(backgroundUploadResult);
             return;
           }
+          if (data.success === false) {
+            throw new Error(data.error || 'Chunk upload failed');
+          }
 
           offset += partBlob.size;
+          // Hiện progress
+          const totalChunks = chunks.length;
+          const doneChunks = Math.round(offset / (chunks.reduce((s,c)=>s+c.size,0) || 1) * totalChunks);
+          const pct = Math.min(99, Math.round(offset / (chunks.reduce((s,c)=>s+c.size,0)||1) * 100));
+          statusEl.textContent = `⏳ Đang upload (${pct}%)...`;
           partBlobs = [];
           partSize = 0;
         }
