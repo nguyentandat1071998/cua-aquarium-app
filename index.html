@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1B7A3E">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>CUA Aquarium</title>
+<title>CUA Aquarium v2</title>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -409,7 +409,7 @@ async function doUploadAfterStop(chunks) {
   const statusEl = document.getElementById('baoca-upload-status');
   statusEl.style.display = 'flex';
   statusEl.className = 'upload-status';
-  statusEl.textContent = '⏳ Đang upload...';
+  statusEl.textContent = '⏳ Chuẩn bị upload...';
 
   backgroundUploadPromise = new Promise(async (resolve) => {
     try {
@@ -420,75 +420,34 @@ async function doUploadAfterStop(chunks) {
       const tenSafe = ten.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
       const filename = `${tenSafe}_${dd}-${mm}_${hh}-${mi}.webm`;
 
-      // Upload từng chunk 5MB qua Worker
-      const PART = 5 * 1024 * 1024;
-      let offset = 0;
-      let partBlobs = [];
-      let partSize = 0;
+      // Gom tất cả chunks thành 1 blob
+      const blob = new Blob(chunks, { type: chunks[0]?.type || 'video/webm' });
+      statusEl.textContent = `⏳ Đang upload (${(blob.size/1024/1024).toFixed(1)}MB)...`;
 
-      // Khởi tạo upload session
-      statusEl.textContent = '⏳ Khởi tạo upload...';
-      const initRes = await fetch(WORKER_URL, {
+      // Upload thẳng lên Worker
+      const response = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: { 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
-        body: '{}'
+        headers: {
+          'Content-Type': 'video/webm',
+          'x-filename': filename,
+        },
+        body: blob,
       });
-      const initData = await initRes.json();
-      if (!initData.success) throw new Error('Init failed: ' + initData.error);
-      const uploadUrl = initData.uploadUrl;
-      statusEl.textContent = '⏳ Đang upload (0%)...';
 
-      // Gom và upload từng phần 5MB
-      for (let i = 0; i <= chunks.length; i++) {
-        const isLast = i === chunks.length;
-        if (!isLast) {
-          partBlobs.push(chunks[i]);
-          partSize += chunks[i].size;
-        }
-
-        if (partSize >= PART || isLast) {
-          if (partBlobs.length === 0 && isLast) break;
-          const partBlob = new Blob(partBlobs, { type: chunks[0]?.type || 'video/webm' });
-          const res = await fetch(WORKER_URL, {
-            method: 'POST',
-            headers: {
-              'x-action': 'chunk',
-              'x-upload-url': uploadUrl,
-              'x-range-start': String(offset),
-              'x-is-last': isLast ? 'true' : 'false',
-              'Content-Type': 'video/webm',
-            },
-            body: partBlob
-          });
-          const data = await res.json();
-
-          if (isLast && data.success && data.status === 'done') {
-            backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
-            statusEl.className = 'upload-status done';
-            statusEl.textContent = '✓ Upload xong';
-            resolve(backgroundUploadResult);
-            return;
-          }
-          if (data.success === false) {
-            throw new Error(data.error || 'Chunk upload failed');
-          }
-
-          offset += partBlob.size;
-          // Hiện progress
-          const totalChunks = chunks.length;
-          const doneChunks = Math.round(offset / (chunks.reduce((s,c)=>s+c.size,0) || 1) * totalChunks);
-          const pct = Math.min(99, Math.round(offset / (chunks.reduce((s,c)=>s+c.size,0)||1) * 100));
-          statusEl.textContent = `⏳ Đang upload (${pct}%)...`;
-          partBlobs = [];
-          partSize = 0;
-        }
+      const data = await response.json();
+      if (data.success) {
+        backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
+        statusEl.className = 'upload-status done';
+        statusEl.textContent = '✓ Upload xong';
+      } else {
+        throw new Error(data.error || 'Upload thất bại');
       }
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
       statusEl.className = 'upload-status err';
       statusEl.textContent = '✗ Lỗi: ' + e.message;
-      resolve(backgroundUploadResult);
     }
+    resolve(backgroundUploadResult);
   });
 }
 
@@ -1699,7 +1658,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium</h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v2</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -1716,7 +1675,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium</div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v2</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -1733,7 +1692,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium</div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v2</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
