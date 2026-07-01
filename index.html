@@ -467,8 +467,14 @@ function renderBenhForm(id, state) {
     <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:8px">Danh sách cá bệnh:</div>
     ${benhList.map((b, bi) => `
       <div class="cl-benh-row">
-        <input type="text" value="${escHtml(b.ten||'')}" placeholder="Tên cá/tép..." style="margin-bottom:6px"
-          onchange="clUpdateBenh('${id}',${bi},'ten',this.value)">
+        <div class="sku-wrap" style="margin-bottom:6px">
+          <input type="text" value="${escHtml(b.ten||'')}" placeholder="Gõ tên cá/tép..."
+            id="cl-benh-${id}-${bi}"
+            oninput="searchSKUBenh('${id}',${bi},this.value)"
+            onchange="clUpdateBenh('${id}',${bi},'ten',this.value)"
+            autocomplete="off">
+          <div class="sku-drop" id="cl-benh-drop-${id}-${bi}"></div>
+        </div>
         <input type="text" value="${escHtml(b.tinhtrang||'')}" placeholder="Tình trạng (Nấm, Thối thân, Túm lắc...)"
           style="margin-bottom:6px" onchange="clUpdateBenh('${id}',${bi},'tinhtrang',this.value)">
         <input type="text" value="${escHtml(b.xuly||'')}" placeholder="Xử lý (Đã tách riêng, đánh thuốc...)"
@@ -505,6 +511,34 @@ function renderBenhDanhSach() {
 }
 
 // === CHECKLIST ACTIONS ===
+window.searchSKUBenh = function(taskId, rowIdx, val) {
+  const dropId = `cl-benh-drop-${taskId}-${rowIdx}`;
+  const box = document.getElementById(dropId);
+  if (!box) return;
+  if (!val || val.length < 1) { box.style.display = 'none'; return; }
+  const results = allSKUs.filter(s =>
+    s.ten.toLowerCase().includes(val.toLowerCase()) ||
+    (s.sku && s.sku.toLowerCase().includes(val.toLowerCase()))
+  ).slice(0, 6);
+  if (!results.length) { box.style.display = 'none'; return; }
+  box.innerHTML = results.map(s =>
+    `<div class="sku-item" onmousedown="event.preventDefault();selectSKUBenh('${taskId}',${rowIdx},'${escHtml(s.ten)}','${escHtml(s.sku||'')}')">
+      <span class="sku-name">${escHtml(s.ten)}</span>
+      <span class="sku-meta">${escHtml(s.sku||'')}</span>
+    </div>`
+  ).join('');
+  box.style.display = 'block';
+};
+
+window.selectSKUBenh = function(taskId, rowIdx, ten, sku) {
+  const inputEl = document.getElementById(`cl-benh-${taskId}-${rowIdx}`);
+  if (inputEl) inputEl.value = ten;
+  const box = document.getElementById(`cl-benh-drop-${taskId}-${rowIdx}`);
+  if (box) box.style.display = 'none';
+  clUpdateBenh(taskId, rowIdx, 'ten', ten);
+  clUpdateBenh(taskId, rowIdx, 'sku', sku);
+};
+
 window.clQuanSat = function(id, ketqua) {
   if (!checklistState[id]) checklistState[id] = {};
   checklistState[id].ketqua = ketqua;
@@ -2257,7 +2291,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v27</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v28</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -2293,7 +2327,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v27</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v28</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -2311,7 +2345,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v27</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v28</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
