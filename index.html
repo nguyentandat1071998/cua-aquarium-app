@@ -11,6 +11,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>CUA Aquarium v2</title>
 
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -170,6 +171,18 @@ let cameraStream = null;
 let activeModule = 'nhap'; // nhap | xuat
 let activeSubTab = 'tao'; // tao | ds | thongke
 
+// ===== CHECKIN CONFIG =====
+const CHECKIN_QR_SECRET = 'CUA-AQUARIUM-451A-VUON-LAI';
+const STORE_LAT = 10.7868; // 451A Vườn Lài, Q.Tân Phú
+const STORE_LNG = 106.6283;
+const GPS_RADIUS = 150; // mét
+
+let checkinCa = null;
+let checkinStream = null;
+let qrScanInterval = null;
+let checkinVideoStream = null;
+let checkinTsInterval = null;
+
 // ===== VÀO CA =====
 let currentCa = null; // 'sang' | 'chieu'
 let checklistState = {}; // taskId -> {done, ketqua, photos, benhList}
@@ -183,19 +196,284 @@ function showVaoCa() {
   const now = new Date();
   const thu = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][now.getDay()];
   document.getElementById('vao-ca-ngay').textContent = `${thu}, ${fmtDateOnly(now)}`;
+  // Reset về bước 1
+  document.getElementById('step-chon-ca').style.display = 'block';
+  document.getElementById('step-quet-qr').style.display = 'none';
+  document.getElementById('step-chup-anh').style.display = 'none';
+}
+
+window.chonCa = function(ca) {
+  checkinCa = ca;
+  // Chuyển sang bước quét QR
+  document.getElementById('step-chon-ca').style.display = 'none';
+  document.getElementById('step-quet-qr').style.display = 'block';
+  startQRScan();
+};
+
+window.huyQuetQR = function() {
+  stopQRScan();
+  document.getElementById('step-quet-qr').style.display = 'none';
+  document.getElementById('step-chon-ca').style.display = 'block';
+};
+
+window.huyChupAnh = function() {
+  stopCheckinCamera();
+  document.getElementById('step-chup-anh').style.display = 'none';
+  document.getElementById('step-chon-ca').style.display = 'block';
+};
+
+// === QUÉT QR ===
+async function startQRScan() {
+  try {
+    checkinStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment' }
+    });
+    const video = document.getElementById('qr-video');
+    video.srcObject = checkinStream;
+    await video.play();
+
+    const canvas = document.getElementById('qr-canvas');
+    const ctx = canvas.getContext('2d');
+
+    qrScanInterval = setInterval(() => {
+      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert'
+      });
+      if (code) {
+        if (code.data === CHECKIN_QR_SECRET) {
+          document.getElementById('qr-status').textContent = '✓ QR hợp lệ! Đang xử lý...';
+          clearInterval(qrScanInterval); // Dừng scan, giữ stream để chụp ảnh
+          setTimeout(() => chupAnhQRVaCheckin(), 300);
+        } else {
+          document.getElementById('qr-status').textContent = '✗ Mã QR không hợp lệ';
+        }
+      }
+    }, 200);
+  } catch(e) {
+    document.getElementById('qr-status').textContent = 'Không mở được camera: ' + e.message;
+  }
+}
+
+// Chụp ảnh timestamp từ camera QR rồi checkin luôn
+async function chupAnhQRVaCheckin() {
+  const statusEl = document.getElementById('qr-status');
+  statusEl.textContent = '⏳ Đang xác minh vị trí...';
+
+  // 1. Kiểm tra GPS
+  let gpsOk = false;
+  let gpsInfo = '';
+  let isMock = false;
+  try {
+    const pos = await new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, enableHighAccuracy: true })
+    );
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    const dist = getDistance(lat, lng, STORE_LAT, STORE_LNG);
+    gpsOk = dist <= GPS_RADIUS;
+    gpsInfo = `${dist.toFixed(0)}m`;
+    if (pos.coords.accuracy && pos.coords.accuracy === 0) isMock = true;
+  } catch(e) {
+    gpsInfo = 'GPS không xác định';
+  }
+
+  if (isMock) {
+    statusEl.textContent = '⚠️ Phát hiện GPS giả — không thể checkin';
+    showToast('Phát hiện GPS giả!', true);
+    return;
+  }
+
+  // 2. Chụp frame hiện tại từ camera QR + vẽ timestamp
+  const video = document.getElementById('qr-video');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  const now = new Date();
+  const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+  const label = `${currentUserData?.ten||''} · ${checkinCa==='sang'?'Ca sáng':'Ca chiều'} · ${ts} · GPS:${gpsInfo}`;
+  const fontSize = Math.max(13, Math.round(canvas.width * 0.030));
+  ctx.font = `bold ${fontSize}px monospace`;
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(6, canvas.height - fontSize - 14, tw + 14, fontSize + 10);
+  ctx.fillStyle = gpsOk ? '#FFE566' : '#FF6B6B';
+  ctx.fillText(label, 13, canvas.height - 6);
+
+  const photoData = canvas.toDataURL('image/jpeg', 0.75);
+  stopQRScan();
+
+  // 3. Lưu checkin
+  statusEl.textContent = '⏳ Đang lưu...';
+  await addDoc(collection(db, 'ca_lam_viec'), {
+    ca: checkinCa,
+    nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
+    ngay: now.toISOString().slice(0,10),
+    vaoLuc: serverTimestamp(),
+    thoatLuc: null,
+    gpsOk, gpsDist: gpsInfo, isMock,
+    photo: photoData
+  });
+
+  if (!gpsOk) {
+    showToast(`⚠️ Check-in thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+  } else {
+    showToast('✓ Check-in thành công!');
+  }
+
+  currentCa = checkinCa;
+  checklistState = {};
+  await loadBenhDanhSach();
+  showApp();
+  switchModule('checklist');
+}
+
+function stopQRScan() {
+  clearInterval(qrScanInterval);
+  if (checkinStream) { checkinStream.getTracks().forEach(t => t.stop()); checkinStream = null; }
+}
+
+// === CAMERA CHỤP ẢNH CHECKIN ===
+async function startCheckinCamera() {
+  try {
+    checkinVideoStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' } // Camera trước để chụp selfie
+    });
+    const video = document.getElementById('checkin-video');
+    video.srcObject = checkinVideoStream;
+    await video.play();
+
+    // Timestamp overlay realtime
+    const overlay = document.getElementById('checkin-ts-overlay');
+    const updateTS = () => {
+      const now = new Date();
+      const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+      overlay.textContent = `${currentUserData?.ten||''} · ${checkinCa==='sang'?'Ca sáng':'Ca chiều'} · ${ts}`;
+    };
+    updateTS();
+    checkinTsInterval = setInterval(updateTS, 1000);
+  } catch(e) {
+    document.getElementById('checkin-status').textContent = 'Không mở được camera: ' + e.message;
+  }
+}
+
+function stopCheckinCamera() {
+  clearInterval(checkinTsInterval);
+  if (checkinVideoStream) { checkinVideoStream.getTracks().forEach(t => t.stop()); checkinVideoStream = null; }
+}
+
+// === CHỤP ẢNH + KIỂM TRA GPS ===
+window.chupAnhCheckin = async function() {
+  const statusEl = document.getElementById('checkin-status');
+  statusEl.textContent = '⏳ Đang xác minh vị trí...';
+  statusEl.style.color = 'var(--text2)';
+
+  // 1. Kiểm tra GPS
+  let gpsOk = false;
+  let gpsInfo = '';
+  let isMock = false;
+  try {
+    const pos = await new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, enableHighAccuracy: true })
+    );
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    const dist = getDistance(lat, lng, STORE_LAT, STORE_LNG);
+    gpsOk = dist <= GPS_RADIUS;
+    gpsInfo = `${dist.toFixed(0)}m`;
+
+    // Detect mock location (chỉ hoạt động trên một số trình duyệt)
+    if (pos.coords.accuracy && pos.coords.accuracy === 0) isMock = true;
+
+  } catch(e) {
+    gpsInfo = 'Không xác định được GPS';
+  }
+
+  if (isMock) {
+    statusEl.textContent = '⚠️ Phát hiện GPS giả — không thể checkin';
+    statusEl.style.color = 'var(--red)';
+    showToast('Phát hiện GPS giả!', true);
+    return;
+  }
+
+  // 2. Chụp ảnh từ canvas
+  const video = document.getElementById('checkin-video');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  // Vẽ timestamp lên ảnh
+  const now = new Date();
+  const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+  const label = `${currentUserData?.ten||''} · ${checkinCa==='sang'?'Ca sáng':'Ca chiều'} · ${ts} · GPS: ${gpsInfo}`;
+  const fontSize = Math.max(14, Math.round(canvas.width * 0.035));
+  ctx.font = `bold ${fontSize}px monospace`;
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(8, canvas.height - fontSize - 16, tw + 16, fontSize + 12);
+  ctx.fillStyle = gpsOk ? '#FFE566' : '#FF6B6B';
+  ctx.fillText(label, 16, canvas.height - 8);
+
+  const photoData = canvas.toDataURL('image/jpeg', 0.7);
+
+  stopCheckinCamera();
+
+  // 3. Lưu checkin vào Firestore
+  statusEl.textContent = '⏳ Đang lưu...';
+  const caData = {
+    ca: checkinCa,
+    nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
+    ngay: now.toISOString().slice(0,10),
+    vaoLuc: serverTimestamp(),
+    thoatLuc: null,
+    gpsOk,
+    gpsDist: gpsInfo,
+    isMock,
+    photo: photoData
+  };
+  await addDoc(collection(db, 'ca_lam_viec'), caData);
+
+  if (!gpsOk) {
+    showToast(`⚠️ Checkin thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+  } else {
+    showToast('✓ Check-in thành công!');
+  }
+
+  // 4. Vào app
+  currentCa = checkinCa;
+  checklistState = {};
+  await loadBenhDanhSach();
+  showApp();
+  switchModule('checklist');
+};
+
+// Tính khoảng cách 2 tọa độ (Haversine)
+function getDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLng = (lat2-lng1) * Math.PI/180;
+  const a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)*Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
 window.vaoCa = async function(ca) {
   currentCa = ca;
   checklistState = {};
-  // Lưu ca vào Firestore
-  const caData = {
+  await addDoc(collection(db, 'ca_lam_viec'), {
     ca, nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
     ngay: new Date().toISOString().slice(0,10),
     vaoLuc: serverTimestamp(), thoatLuc: null
-  };
-  await addDoc(collection(db, 'ca_lam_viec'), caData);
-  // Load danh sách cá bệnh
+  });
   await loadBenhDanhSach();
   showApp();
   switchModule('checklist');
@@ -396,10 +674,11 @@ document.addEventListener('click', e => {
 });
 
 // ===== CHECKLIST =====
+let expandedTask = null;
+
 function renderChecklist() {
   if (!currentCa) return;
   const ca = currentCa === 'sang' ? CA_SANG : CA_CHIEU;
-  const thu = getThuKey();
   const tasks = getTasksForCa(currentCa);
   const now = new Date();
   const thuTen = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][now.getDay()];
@@ -407,34 +686,44 @@ function renderChecklist() {
   document.getElementById('cl-ca-label').textContent = `📋 ${ca.ten} — ${thuTen}`;
   document.getElementById('cl-ngay-label').textContent = `${ca.bat_dau} – ${ca.ket_thuc}`;
 
-  // Hiện nhắc nhở tắt đèn nếu đang ca chiều và sau 20h
   if (currentCa === 'chieu' && now.getHours() >= 20) {
     document.getElementById('cl-nhac-tat').style.display = 'block';
   }
 
+  const doneCnt = tasks.filter((_,i) => checklistState[`task_${i}`]?.done).length;
+
   const el = document.getElementById('checklist-list');
-  el.innerHTML = tasks.map((t, idx) => {
+  el.innerHTML = `<div style="font-size:12px;color:var(--text2);margin-bottom:8px;text-align:right">${doneCnt}/${tasks.length} hoàn thành</div>` +
+  tasks.map((t, idx) => {
     const id = `task_${idx}`;
     const state = checklistState[id] || {};
     const isDone = state.done;
-    const needPhoto = TASK_CAN_CHUP.includes(t.loai);
+    const isExpanded = expandedTask === id;
     const isQS = TASK_QUANSAT.includes(t.loai);
+    // Nếu task quan sát và có cá bệnh đang theo dõi thì hiện badge
+    const benhCount = benhDanhSach.length;
 
     return `<div class="cl-task ${isDone ? 'done' : ''}" id="cltask-${id}">
-      <div class="cl-task-header">
-        <span class="cl-gio">${t.gio}</span>
-        ${isDone ? '<span class="cl-done-badge">✓ Hoàn thành</span>' : ''}
+      <div class="cl-task-header" onclick="toggleTask('${id}')" style="cursor:pointer">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="cl-gio">${t.gio}</span>
+          <span class="cl-task-name" style="margin:0">${t.task}${isQS && benhCount > 0 && !isDone ? `<span style="background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:6px">${benhCount} bệnh</span>` : ''}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          ${isDone ? '<span class="cl-done-badge">✓</span>' : ''}
+          <span style="color:var(--text3);font-size:16px">${isExpanded ? '▲' : '▼'}</span>
+        </div>
       </div>
-      <div class="cl-task-name">${t.task}</div>
-      ${isDone ? '' : renderTaskAction(id, t, state)}
+      ${isExpanded && !isDone ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${renderTaskAction(id, t, state)}</div>` : ''}
+      ${isExpanded && isDone ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--green)">✓ Đã hoàn thành lúc ${state.doneAt||''}</div>` : ''}
     </div>`;
   }).join('');
-
-  // Render danh sách cá bệnh nếu có
-  if (benhDanhSach.length > 0) {
-    el.innerHTML += renderBenhDanhSach();
-  }
 }
+
+window.toggleTask = function(id) {
+  expandedTask = expandedTask === id ? null : id;
+  renderChecklist();
+};
 
 function renderTaskAction(id, task, state) {
   const needPhoto = TASK_CAN_CHUP.includes(task.loai);
@@ -446,7 +735,8 @@ function renderTaskAction(id, task, state) {
       <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">🔴 Cá bệnh</button>
     </div>
     ${state.ketqua==='benh' ? renderBenhForm(id, state) : ''}
-    ${state.ketqua==='ok' ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">✓ Xác nhận hoàn thành</button>` : ''}`;
+    ${state.ketqua==='ok' ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">✓ Xác nhận hoàn thành</button>` : ''}
+    ${benhDanhSach.length > 0 ? `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)">${renderBenhDanhSach()}</div>` : ''}`;
   }
 
   if (needPhoto) {
@@ -599,7 +889,8 @@ window.clChupAnh = function(id) {
 };
 
 window.clHoanThanh = async function(id) {
-  checklistState[id] = { ...(checklistState[id]||{}), done: true };
+  checklistState[id] = { ...(checklistState[id]||{}), done: true, doneAt: fmtDate(new Date()) };
+  expandedTask = null;
   showToast('✓ Hoàn thành task');
   renderChecklist();
 };
@@ -629,6 +920,39 @@ window.clSaveXuLy = async function(benhId, xuly) {
   if (!b || !b.lichSu?.length) return;
   b.lichSu[b.lichSu.length-1].xuly = xuly;
   await updateDoc(doc(db,'ca_benh',benhId), { lichSu: b.lichSu });
+};
+
+// ===== QR ADMIN =====
+window.showQRAdmin = function() {
+  document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+  document.getElementById('panel-admin-qr').style.display = 'block';
+  generateQRCode();
+};
+
+window.switchAdminTab = function(tab) {
+  document.getElementById('panel-admin-qr').style.display = 'none';
+  document.getElementById('panel-admin').style.display = 'block';
+};
+
+function generateQRCode() {
+  const el = document.getElementById('qr-display');
+  // Dùng QR code API
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(CHECKIN_QR_SECRET)}&format=png&qzone=2`;
+  el.innerHTML = `<img src="${qrUrl}" style="width:200px;height:200px;border-radius:8px">`;
+}
+
+window.printQR = function() {
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(CHECKIN_QR_SECRET)}&format=png&qzone=2`;
+  const win = window.open('', '_blank');
+  win.document.write(`
+    <html><body style="text-align:center;padding:40px;font-family:Arial">
+      <h2 style="color:#1B7A3E">CUA Aquarium</h2>
+      <p style="color:#666;margin-bottom:20px">Quét mã QR để Check-in / Check-out ca làm việc</p>
+      <img src="${qrUrl}" style="width:300px;height:300px">
+      <p style="color:#999;font-size:12px;margin-top:20px">451A Vườn Lài, P.Phú Thọ Hoà, Q.Tân Phú, TP.HCM</p>
+      <script>window.onload=()=>window.print()<\/script>
+    </body></html>
+  `);
 };
 
 // ===== BÁO CÁ MỚI VỀ =====
@@ -2174,7 +2498,7 @@ input:focus,select:focus{border-color:var(--green)}
 .cl-task.active{border-left-color:#7C3AED}
 .cl-task-header{display:flex;justify-content:space-between;align-items:center}
 .cl-gio{font-size:12px;font-weight:600;color:#7C3AED;background:#EDE9FE;padding:2px 8px;border-radius:20px}
-.cl-task-name{font-size:14px;font-weight:500;margin:6px 0 10px}
+.cl-task-name{font-size:14px;font-weight:500;margin:6px 0 10px;flex:1}
 .cl-btn-group{display:flex;gap:8px}
 .cl-btn{flex:1;padding:9px 6px;border:1.5px solid var(--border);border-radius:8px;background:var(--bg);font-size:12px;font-weight:500;cursor:pointer;text-align:center}
 .cl-btn.selected-ok{background:#E6F5EC;border-color:#1B7A3E;color:#1B7A3E}
@@ -2291,7 +2615,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v28</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v31</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -2308,17 +2632,38 @@ input:focus,select:focus{border-color:var(--green)}
   <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:2rem;width:100%;max-width:360px;text-align:center">
     <img src="icon-192.png" style="width:64px;height:64px;border-radius:16px;margin-bottom:12px">
     <h2 style="font-size:18px;font-weight:700;color:var(--green);margin-bottom:4px">Chào <span id="vao-ca-ten"></span>!</h2>
-    <p style="font-size:13px;color:var(--text2);margin-bottom:24px">Chọn ca làm việc hôm nay</p>
-    <div id="vao-ca-ngay" style="font-size:12px;color:var(--text2);margin-bottom:16px"></div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <button onclick="vaoCa('sang')" style="padding:16px;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
-        🌅 Ca sáng<br><span style="font-size:12px;font-weight:400;opacity:0.85">8h30 – 16h30</span>
-      </button>
-      <button onclick="vaoCa('chieu')" style="padding:16px;background:#0369A1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
-        🌆 Ca chiều<br><span style="font-size:12px;font-weight:400;opacity:0.85">13h30 – 21h30</span>
-      </button>
+    <div id="vao-ca-ngay" style="font-size:12px;color:var(--text2);margin-bottom:20px"></div>
+
+    <!-- Bước 1: Chọn ca -->
+    <div id="step-chon-ca">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Chọn ca làm việc hôm nay</p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button onclick="chonCa('sang')" style="padding:16px;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
+          🌅 Ca sáng<br><span style="font-size:12px;font-weight:400;opacity:0.85">8h30 – 16h30</span>
+        </button>
+        <button onclick="chonCa('chieu')" style="padding:16px;background:#0369A1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
+          🌆 Ca chiều<br><span style="font-size:12px;font-weight:400;opacity:0.85">13h30 – 21h30</span>
+        </button>
+      </div>
+      <button onclick="doLogout()" style="margin-top:16px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;text-decoration:underline">Đăng xuất</button>
     </div>
-    <button onclick="doLogout()" style="margin-top:16px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;text-decoration:underline">Đăng xuất</button>
+
+    <!-- Bước 2: Quét QR -->
+    <div id="step-quet-qr" style="display:none">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Hướng camera vào mã QR tại cửa hàng</p>
+      <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:12px;background:#000">
+        <video id="qr-video" autoplay playsinline muted style="width:100%;height:220px;object-fit:cover"></video>
+        <canvas id="qr-canvas" style="display:none"></canvas>
+        <!-- Khung ngắm -->
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+          <div style="width:160px;height:160px;border:2px solid #fff;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.4)"></div>
+        </div>
+      </div>
+      <div id="qr-status" style="font-size:13px;color:var(--text2);margin-bottom:12px">Đang tìm mã QR...</div>
+      <button onclick="huyQuetQR()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--text2)">← Quay lại</button>
+    </div>
+
+
   </div>
 </div>
 
@@ -2327,7 +2672,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v28</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v31</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -2345,7 +2690,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v28</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v31</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -2624,6 +2969,19 @@ input:focus,select:focus{border-color:var(--green)}
           </div>
         </div>
         <div id="checklist-list"></div>
+      </div>
+
+      <!-- ADMIN / QR CHECKIN -->
+      <div class="panel" id="panel-admin-qr" style="display:none">
+        <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;text-align:center">
+          <h4 style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:12px">MÃ QR CHECK-IN CỬA HÀNG</h4>
+          <div id="qr-display" style="margin:0 auto 12px;width:200px;height:200px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border-radius:8px">
+            <div class="loading">Đang tạo QR...</div>
+          </div>
+          <p style="font-size:12px;color:var(--text2);margin-bottom:12px">In mã QR này dán tại quầy thu ngân</p>
+          <button onclick="printQR()" class="btn-g" style="margin-bottom:8px">🖨️ In mã QR</button>
+          <button onclick="switchAdminTab('main')" class="btn-outline">← Quay lại</button>
+        </div>
       </div>
 
       <!-- ADMIN -->
