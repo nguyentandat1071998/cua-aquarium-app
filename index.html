@@ -1247,20 +1247,25 @@ function renderTaskAction(id, task, state) {
   if (isQS) {
     const coCaBenh = benhDanhSach.length > 0;
     const daCapNhatHet = !coCaBenh || benhDanhSach.every(b => state.benhChon?.[b.id]);
-    let html = `<div class="cl-btn-group">
-      ${!coCaBenh ? `<button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">Bình thường</button>` : ''}
-      <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">${coCaBenh ? 'Thêm cá bệnh' : 'Cá bệnh'}</button>
-    </div>`;
-    if (state.ketqua === 'benh') html += renderBenhForm(id, state, coCaBenh);
-    if (!coCaBenh && state.ketqua === 'ok') {
-      html += `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanhQuanSat('${id}')">Xác nhận hoàn thành</button>`;
-    }
-    if (coCaBenh) {
-      html += `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)">
-        ${renderBenhDanhSach(id)}
-        <button class="btn-blue" style="margin-top:10px;width:100%" ${daCapNhatHet ? '' : 'disabled'} onclick="clHoanThanhQuanSat('${id}')">Hoàn thành</button>
-        ${!daCapNhatHet ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;text-align:center">Cập nhật tình trạng cho tất cả cá/tép đang bệnh trước khi hoàn thành</div>` : ''}
+    let html = '';
+
+    if (!coCaBenh) {
+      html += `<div class="cl-btn-group">
+        <button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">Bình thường</button>
+        <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">Cá bệnh</button>
       </div>`;
+      if (state.ketqua === 'benh') html += renderBenhForm(id, state, coCaBenh);
+      if (state.ketqua === 'ok') {
+        html += `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanhQuanSat('${id}')">Xác nhận hoàn thành</button>`;
+      }
+    } else {
+      html += renderBenhDanhSach(id);
+      html += `<div class="cl-btn-group" style="margin-top:8px">
+        <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">Thêm cá bệnh</button>
+      </div>`;
+      if (state.ketqua === 'benh') html += renderBenhForm(id, state, coCaBenh);
+      html += `<button class="btn-blue" style="margin-top:10px;width:100%" ${daCapNhatHet ? '' : 'disabled'} onclick="clHoanThanhQuanSat('${id}')">Hoàn thành</button>`;
+      if (!daCapNhatHet) html += `<div style="font-size:11px;color:var(--text2);margin-top:6px;text-align:center">Cập nhật tình trạng cho tất cả cá/tép đang bệnh trước khi hoàn thành</div>`;
     }
     return html;
   }
@@ -1399,7 +1404,13 @@ window.clHoanThanhQuanSat = async function(id) {
 
   // Nếu có nhập cá bệnh mới thì lưu lại
   if (state.ketqua === 'benh') {
-    const benhList = (state.benhList || []).filter(b => b.ten.trim());
+    let benhList = (state.benhList || []).filter(b => b.ten.trim());
+    const tenDaCo = new Set(benhDanhSach.map(b => b.ten.trim().toLowerCase()));
+    const trung = benhList.filter(b => tenDaCo.has(b.ten.trim().toLowerCase()));
+    benhList = benhList.filter(b => !tenDaCo.has(b.ten.trim().toLowerCase()));
+    if (trung.length) {
+      showToast(`${trung.map(b=>b.ten).join(', ')} đã có trong danh sách, không thêm lại`, true);
+    }
     if (benhList.length) {
       const now = new Date();
       const phatHienLuc = fmtDate(now);
@@ -1412,7 +1423,7 @@ window.clHoanThanhQuanSat = async function(id) {
           ca: currentCa, ngay: now.toISOString().slice(0,10)
         });
       }
-    } else if (!coCaBenh) {
+    } else if (!coCaBenh && !trung.length) {
       showToast('Vui lòng nhập tên cá bệnh', true);
       return;
     }
@@ -3173,7 +3184,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v58</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v59</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3227,7 +3238,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v58</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v59</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3247,7 +3258,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v58</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v59</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
