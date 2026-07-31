@@ -132,6 +132,7 @@ const CHECKLIST = {
 // Ca làm việc
 const CA_SANG  = {ten:"Ca sáng",  bat_dau:"8h30",  ket_thuc:"16h30", tasks_den:"16h00"};
 const CA_CHIEU = {ten:"Ca chiều", bat_dau:"13h30", ket_thuc:"21h30", tasks_den:"21h05"};
+const CA_FULL  = {ten:"Cả ngày",  bat_dau:"8h30",  ket_thuc:"21h30", tasks_den:"21h05"};
 
 // Loại task cần chụp ảnh
 const TASK_CAN_CHUP = ["vesinhanh","chamcay","thaynuoc","hutcan","vesinh_ho","chamcay_quansat"];
@@ -149,9 +150,10 @@ function getTasksForCa(ca) {
   if (ca === 'sang') return tasks.filter(t => {
     const h = parseInt(t.gio); return h >= 8 && h <= 16;
   });
-  return tasks.filter(t => {
+  if (ca === 'chieu') return tasks.filter(t => {
     const h = parseInt(t.gio); return h >= 13;
   });
+  return tasks; // 'full' — làm cả ngày, hiển thị toàn bộ task trong ngày
 }
 
 
@@ -180,11 +182,8 @@ const STORE_LAT = 10.7883316; // 451A Vườn Lài, Q.Tân Phú (đo lại từ 
 const STORE_LNG = 106.6233427;
 const GPS_RADIUS = 150; // mét
 
-let checkinCa = null;
 let checkinStream = null;
 let qrScanInterval = null;
-let checkinVideoStream = null;
-let checkinTsInterval = null;
 let currentShiftDocId = null;
 let checkoutStream = null;
 let checkoutScanInterval = null;
@@ -192,13 +191,20 @@ let checkoutScanInterval = null;
 // Giờ chuẩn theo ca (để tính trễ giờ / thiếu giờ)
 const CA_GIO = {
   sang:  { batDau: 8*60+30,  ketThuc: 16*60+30 },
-  chieu: { batDau: 13*60+30, ketThuc: 21*60+30 }
+  chieu: { batDau: 13*60+30, ketThuc: 21*60+30 },
+  full:  { batDau: 8*60+30,  ketThuc: 21*60+30 }
 };
 
+let lichCaWeekOffset = 0;
+let lichCaUsersCache = null;
+
 // ===== VÀO CA =====
-let currentCa = null; // 'sang' | 'chieu'
+let currentCa = null; // 'sang' | 'chieu' | 'full'
+let currentShiftNgay = null; // ngày (YYYY-MM-DD) của phiếu ca đang mở, để chặn checkout qua ngày
 let checklistState = {}; // taskId -> {done, ketqua, photos, benhList}
 let benhDanhSach = []; // danh sách cá đang bệnh toàn cửa hàng
+
+function getTodayISO() { return new Date().toISOString().slice(0,10); }
 
 function showVaoCa() {
   const elLogin = document.getElementById('screen-login');
@@ -212,26 +218,9 @@ function showVaoCa() {
   const now = new Date();
   const thu = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][now.getDay()];
   document.getElementById('vao-ca-ngay').textContent = `${thu}, ${fmtDateOnly(now)}`;
-  // Reset về bước 1
-  document.getElementById('step-chon-ca').style.display = 'block';
-  document.getElementById('step-quet-qr').style.display = 'none';
-}
-
-window.chonCa = function(ca) {
-  checkinCa = ca;
-  // Chuyển sang bước quét QR
-  document.getElementById('step-chon-ca').style.display = 'none';
-  document.getElementById('step-quet-qr').style.display = 'block';
+  document.getElementById('qr-status').textContent = 'Đang tìm mã QR...';
   startQRScan();
-};
-
-window.huyQuetQR = function() {
-  stopQRScan();
-  document.getElementById('step-quet-qr').style.display = 'none';
-  document.getElementById('step-chon-ca').style.display = 'block';
-};
-
-
+}
 
 // === QUÉT QR ===
 async function startQRScan() {
@@ -268,6 +257,43 @@ async function startQRScan() {
   } catch(e) {
     document.getElementById('qr-status').textContent = 'Không mở được camera: ' + e.message;
   }
+}
+
+// Tìm/khởi tạo phiếu ca hôm nay trong lich_ca (theo lịch xếp ca đã sắp sẵn) rồi ghi nhận check-in
+async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
+  const ngay = getTodayISO();
+  const shiftId = `${ngay}_${currentUser.uid}`;
+  const shiftRef = doc(db, 'lich_ca', shiftId);
+  const snap = await getDoc(shiftRef);
+  let loaiCa = 'full';
+
+  if (snap.exists()) {
+    const data = snap.data();
+    loaiCa = data.loaiCa || 'full';
+    if (data.vaoLuc) {
+      // Đã check-in ca này trước đó rồi (mở lại app) — không ghi đè giờ vào
+      currentShiftDocId = shiftId;
+      currentShiftNgay = ngay;
+      currentCa = loaiCa;
+      return;
+    }
+    await updateDoc(shiftRef, {
+      vaoLuc: serverTimestamp(), gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
+    });
+  } else {
+    // Không có lịch xếp trước — vẫn cho check-in, đánh dấu ngoài lịch để Admin/Quản lý biết
+    await setDoc(shiftRef, {
+      ngay, uid: currentUser.uid, ten: currentUserData?.ten || '',
+      loaiCa: 'full', ngoaiLich: true,
+      xepBoi: null, createdAt: serverTimestamp(),
+      vaoLuc: serverTimestamp(), thoatLuc: null,
+      gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
+    });
+    loaiCa = 'full';
+  }
+  currentShiftDocId = shiftId;
+  currentShiftNgay = ngay;
+  currentCa = loaiCa;
 }
 
 // Chụp ảnh timestamp từ camera QR rồi checkin luôn
@@ -309,7 +335,7 @@ async function chupAnhQRVaCheckin() {
 
   const now = new Date();
   const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
-  const label = `${currentUserData?.ten||''} · ${checkinCa==='sang'?'Ca sáng':'Ca chiều'} · ${ts} · GPS:${gpsInfo}`;
+  const label = `${currentUserData?.ten||''} · Check-in · ${ts} · GPS:${gpsInfo}`;
   const fontSize = Math.max(13, Math.round(canvas.width * 0.030));
   ctx.font = `bold ${fontSize}px monospace`;
   const tw = ctx.measureText(label).width;
@@ -321,18 +347,9 @@ async function chupAnhQRVaCheckin() {
   const photoData = canvas.toDataURL('image/jpeg', 0.75);
   stopQRScan();
 
-  // 3. Lưu checkin
+  // 3. Lưu checkin vào lịch ca
   statusEl.textContent = '⏳ Đang lưu...';
-  const shiftRef = await addDoc(collection(db, 'ca_lam_viec'), {
-    ca: checkinCa,
-    nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
-    ngay: now.toISOString().slice(0,10),
-    vaoLuc: serverTimestamp(),
-    thoatLuc: null,
-    gpsOk, gpsDist: gpsInfo, isMock,
-    photo: photoData
-  });
-  currentShiftDocId = shiftRef.id;
+  await xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData);
 
   if (!gpsOk) {
     showToast(`⚠️ Check-in thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
@@ -340,7 +357,6 @@ async function chupAnhQRVaCheckin() {
     showToast('✓ Check-in thành công!');
   }
 
-  currentCa = checkinCa;
   checklistState = {};
   await loadBenhDanhSach();
   showApp();
@@ -352,122 +368,6 @@ function stopQRScan() {
   if (checkinStream) { checkinStream.getTracks().forEach(t => t.stop()); checkinStream = null; }
 }
 
-// === CAMERA CHỤP ẢNH CHECKIN ===
-async function startCheckinCamera() {
-  try {
-    checkinVideoStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user' } // Camera trước để chụp selfie
-    });
-    const video = document.getElementById('checkin-video');
-    video.srcObject = checkinVideoStream;
-    await video.play();
-
-    // Timestamp overlay realtime
-    const overlay = document.getElementById('checkin-ts-overlay');
-    const updateTS = () => {
-      const now = new Date();
-      const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
-      overlay.textContent = `${currentUserData?.ten||''} · ${checkinCa==='sang'?'Ca sáng':'Ca chiều'} · ${ts}`;
-    };
-    updateTS();
-    checkinTsInterval = setInterval(updateTS, 1000);
-  } catch(e) {
-    document.getElementById('checkin-status').textContent = 'Không mở được camera: ' + e.message;
-  }
-}
-
-function stopCheckinCamera() {
-  clearInterval(checkinTsInterval);
-  if (checkinVideoStream) { checkinVideoStream.getTracks().forEach(t => t.stop()); checkinVideoStream = null; }
-}
-
-// === CHỤP ẢNH + KIỂM TRA GPS ===
-window.chupAnhCheckin = async function() {
-  const statusEl = document.getElementById('checkin-status');
-  statusEl.textContent = '⏳ Đang xác minh vị trí...';
-  statusEl.style.color = 'var(--text2)';
-
-  // 1. Kiểm tra GPS
-  let gpsOk = false;
-  let gpsInfo = '';
-  let isMock = false;
-  try {
-    const pos = await new Promise((res, rej) =>
-      navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, enableHighAccuracy: true })
-    );
-    const lat = pos.coords.latitude;
-    const lng = pos.coords.longitude;
-    const dist = getDistance(lat, lng, STORE_LAT, STORE_LNG);
-    gpsOk = dist <= GPS_RADIUS;
-    gpsInfo = `${dist.toFixed(0)}m`;
-
-    // Detect mock location (chỉ hoạt động trên một số trình duyệt)
-    if (pos.coords.accuracy && pos.coords.accuracy === 0) isMock = true;
-
-  } catch(e) {
-    gpsInfo = 'Không xác định được GPS';
-  }
-
-  if (isMock) {
-    statusEl.textContent = '⚠️ Phát hiện GPS giả — không thể checkin';
-    statusEl.style.color = 'var(--red)';
-    showToast('Phát hiện GPS giả!', true);
-    return;
-  }
-
-  // 2. Chụp ảnh từ canvas
-  const video = document.getElementById('checkin-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
-
-  // Vẽ timestamp lên ảnh
-  const now = new Date();
-  const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
-  const label = `${currentUserData?.ten||''} · ${checkinCa==='sang'?'Ca sáng':'Ca chiều'} · ${ts} · GPS: ${gpsInfo}`;
-  const fontSize = Math.max(14, Math.round(canvas.width * 0.035));
-  ctx.font = `bold ${fontSize}px monospace`;
-  const tw = ctx.measureText(label).width;
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
-  ctx.fillRect(8, canvas.height - fontSize - 16, tw + 16, fontSize + 12);
-  ctx.fillStyle = gpsOk ? '#FFE566' : '#FF6B6B';
-  ctx.fillText(label, 16, canvas.height - 8);
-
-  const photoData = canvas.toDataURL('image/jpeg', 0.7);
-
-  stopCheckinCamera();
-
-  // 3. Lưu checkin vào Firestore
-  statusEl.textContent = '⏳ Đang lưu...';
-  const caData = {
-    ca: checkinCa,
-    nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
-    ngay: now.toISOString().slice(0,10),
-    vaoLuc: serverTimestamp(),
-    thoatLuc: null,
-    gpsOk,
-    gpsDist: gpsInfo,
-    isMock,
-    photo: photoData
-  };
-  await addDoc(collection(db, 'ca_lam_viec'), caData);
-
-  if (!gpsOk) {
-    showToast(`⚠️ Checkin thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
-  } else {
-    showToast('✓ Check-in thành công!');
-  }
-
-  // 4. Vào app
-  currentCa = checkinCa;
-  checklistState = {};
-  await loadBenhDanhSach();
-  showApp();
-  switchModule('checklist');
-};
-
 // Tính khoảng cách 2 tọa độ (Haversine)
 function getDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000;
@@ -478,20 +378,188 @@ function getDistance(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-window.vaoCa = async function(ca) {
-  currentCa = ca;
-  checklistState = {};
-  await addDoc(collection(db, 'ca_lam_viec'), {
-    ca, nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
-    ngay: new Date().toISOString().slice(0,10),
-    vaoLuc: serverTimestamp(), thoatLuc: null
+// ===== CA LÀM VIỆC (Lịch xếp ca + check-in/out tích hợp) =====
+function getWeekMonday(offset) {
+  const now = new Date();
+  const day = now.getDay(); // 0 = CN
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday + offset*7);
+  return monday;
+}
+
+function getWeekDatesISO(offset) {
+  const monday = getWeekMonday(offset);
+  const dates = [];
+  for (let i=0; i<7; i++) {
+    const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate()+i);
+    dates.push(d.toISOString().slice(0,10));
+  }
+  return dates;
+}
+
+window.doiTuanLichCa = function(delta) {
+  lichCaWeekOffset += delta;
+  renderLichCaTab();
+};
+
+async function renderLichCaTab() {
+  const el = document.getElementById('lichca-content');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const dates = getWeekDatesISO(lichCaWeekOffset);
+  const start = dates[0], end = dates[6];
+  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)));
+  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
+  const canEdit = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
+  const today = getTodayISO();
+  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
+
+  const daysHtml = dates.map(ngay => {
+    const d = new Date(ngay + 'T00:00:00');
+    const thu = thuTenFull[d.getDay()];
+    const isToday = ngay === today;
+    const dayShifts = shifts.filter(s => s.ngay === ngay).sort((a,b) => (a.ten||'').localeCompare(b.ten||''));
+    const rows = dayShifts.map(s => renderShiftRow(s, canEdit)).join('') ||
+      `<p style="font-size:12px;color:var(--text2);padding:4px 0">Chưa xếp ca</p>`;
+    return `
+      <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <h4 style="font-size:13px;font-weight:600">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
+          ${canEdit ? `<button class="btn-xs" onclick="moFormXepCa('${ngay}')">+ Xếp ca</button>` : ''}
+        </div>
+        <div id="xepca-form-${ngay}"></div>
+        ${rows}
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <button class="btn-xs" onclick="doiTuanLichCa(-1)">← Tuần trước</button>
+      <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
+      <button class="btn-xs" onclick="doiTuanLichCa(1)">Tuần sau →</button>
+    </div>
+    ${daysHtml}`;
+}
+
+function renderShiftRow(s, canEdit) {
+  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Cả ngày';
+  const caInfo = CA_GIO[s.loaiCa] || CA_GIO.full;
+  const vaoDate = s.vaoLuc?.seconds ? new Date(s.vaoLuc.seconds*1000) : null;
+  const raDate = s.thoatLuc?.seconds ? new Date(s.thoatLuc.seconds*1000) : null;
+  const today = getTodayISO();
+  const qua12hDem = s.ngay < today;
+
+  let badges = [];
+  if (s.khongCheckout || (vaoDate && !raDate && qua12hDem)) {
+    badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Chưa check-out (quá hạn)</span>`);
+  } else if (vaoDate && !raDate) {
+    badges.push(`<span class="rbadge" style="background:#FEF3C7;color:#B45309">Đang làm</span>`);
+  } else if (!vaoDate && s.ngay <= today) {
+    badges.push(`<span class="rbadge" style="background:#EEE;color:var(--text2)">Chưa check-in</span>`);
+  }
+  if (vaoDate) {
+    const vaoPhut = vaoDate.getHours()*60 + vaoDate.getMinutes();
+    const tre = vaoPhut - caInfo.batDau;
+    if (tre > 5) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Trễ ${tre}p</span>`);
+  }
+  if (raDate) {
+    const raPhut = raDate.getHours()*60 + raDate.getMinutes();
+    const som = caInfo.ketThuc - raPhut;
+    if (som > 5) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Về sớm ${som}p</span>`);
+  }
+  if (s.gpsOk === false) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS vào lệch</span>`);
+  if (s.thoatGpsOk === false) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS ra lệch</span>`);
+  if (s.ngoaiLich) badges.push(`<span class="rbadge" style="background:#EDE9FE;color:#5B21B6">Ngoài lịch</span>`);
+
+  const tongGio = (s.khongCheckout || (vaoDate && !raDate && qua12hDem)) ? '0h'
+    : (vaoDate && raDate) ? ((raDate - vaoDate)/3600000).toFixed(1)+'h' : '—';
+
+  return `
+    <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:4px;padding:8px 0">
+      <div style="display:flex;justify-content:space-between;width:100%">
+        <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
+        ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
+      </div>
+      <div style="font-size:12px;color:var(--text2)">
+        Vào: ${vaoDate ? vaoDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
+        · Ra: ${raDate ? raDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
+        · Tổng: ${tongGio}
+      </div>
+      ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
+    </div>`;
+}
+
+window.moFormXepCa = async function(ngay) {
+  const el = document.getElementById(`xepca-form-${ngay}`);
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; } // bấm lại để đóng form
+  if (!lichCaUsersCache) {
+    const uSnap = await getDocs(collection(db,'users'));
+    lichCaUsersCache = uSnap.docs.map(d => ({id:d.id, ...d.data()}));
+  }
+  el.innerHTML = `
+    <div style="background:var(--bg);border-radius:8px;padding:10px;margin-bottom:8px;display:flex;flex-direction:column;gap:8px">
+      <select id="xepca-uid-${ngay}">
+        ${lichCaUsersCache.map(u => `<option value="${u.id}">${escHtml(u.ten||u.email)}</option>`).join('')}
+      </select>
+      <select id="xepca-loaica-${ngay}">
+        <option value="sang">Ca sáng (8h30–16h30)</option>
+        <option value="chieu">Ca chiều (13h30–21h30)</option>
+        <option value="full">Cả ngày</option>
+      </select>
+      <div style="display:flex;gap:8px">
+        <button class="btn-g" style="flex:1" onclick="luuXepCa('${ngay}')">Lưu</button>
+        <button class="btn-outline" onclick="document.getElementById('xepca-form-${ngay}').innerHTML=''">Hủy</button>
+      </div>
+    </div>`;
+};
+
+window.luuXepCa = async function(ngay) {
+  const uid = document.getElementById(`xepca-uid-${ngay}`).value;
+  const loaiCa = document.getElementById(`xepca-loaica-${ngay}`).value;
+  const user = (lichCaUsersCache||[]).find(u => u.id === uid);
+  const shiftId = `${ngay}_${uid}`;
+  const existingSnap = await getDoc(doc(db,'lich_ca', shiftId));
+  if (existingSnap.exists() && existingSnap.data().vaoLuc) {
+    showToast('Nhân viên đã check-in ca này, không thể sửa lịch', true);
+    return;
+  }
+  await setDoc(doc(db,'lich_ca', shiftId), {
+    ngay, uid, ten: user?.ten || user?.email || '',
+    loaiCa, ngoaiLich: false, deleted: false,
+    xepBoi: { uid: currentUser.uid, ten: currentUserData.ten },
+    createdAt: serverTimestamp(),
+    vaoLuc: existingSnap.exists() ? (existingSnap.data().vaoLuc || null) : null,
+    thoatLuc: existingSnap.exists() ? (existingSnap.data().thoatLuc || null) : null
+  }, { merge: true });
+  showToast('Đã xếp ca cho ' + (user?.ten || ''));
+  document.getElementById(`xepca-form-${ngay}`).innerHTML = '';
+  renderLichCaTab();
+};
+
+window.xoaLichCa = async function(id) {
+  if (!confirm('Xóa lịch ca này?')) return;
+  await updateDoc(doc(db,'lich_ca', id), {
+    deleted: true, deletedAt: serverTimestamp(), deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
-  await loadBenhDanhSach();
-  showApp();
-  switchModule('checklist');
+  showToast('Đã xóa lịch ca');
+  renderLichCaTab();
 };
 
 window.thoatCa = function() {
+  const today = getTodayISO();
+  if (currentShiftNgay && currentShiftNgay !== today) {
+    // Đã qua 12h đêm — không cho checkout ca hôm qua nữa
+    (async () => {
+      if (currentShiftDocId) {
+        await updateDoc(doc(db, 'lich_ca', currentShiftDocId), { khongCheckout: true });
+      }
+      showToast('⚠️ Đã qua 12h đêm — ca này được ghi nhận "chưa check-out", tổng giờ làm = 0', true);
+      currentCa = null; checklistState = {}; currentShiftDocId = null; currentShiftNgay = null;
+      showVaoCa();
+    })();
+    return;
+  }
   if (!confirm('Thoát ca? Cần quét QR tại cửa hàng để xác nhận check-out.')) return;
   batDauCheckout();
 };
@@ -543,6 +611,20 @@ window.huyCheckout = function() {
 
 async function xuLyCheckout() {
   const statusEl = document.getElementById('checkout-status');
+
+  // An toàn: nếu quá trình quét QR kéo dài qua 12h đêm thì chặn lại
+  const today = getTodayISO();
+  if (currentShiftNgay && currentShiftNgay !== today) {
+    huyCheckout();
+    if (currentShiftDocId) {
+      await updateDoc(doc(db, 'lich_ca', currentShiftDocId), { khongCheckout: true });
+    }
+    showToast('⚠️ Đã qua 12h đêm — ca này được ghi nhận "chưa check-out", tổng giờ làm = 0', true);
+    currentCa = null; checklistState = {}; currentShiftDocId = null; currentShiftNgay = null;
+    showVaoCa();
+    return;
+  }
+
   statusEl.textContent = '⏳ Đang xác minh vị trí...';
 
   let gpsOk = false, gpsInfo = '', isMock = false;
@@ -587,7 +669,7 @@ async function xuLyCheckout() {
 
   statusEl.textContent = '⏳ Đang lưu...';
   if (currentShiftDocId) {
-    await updateDoc(doc(db, 'ca_lam_viec', currentShiftDocId), {
+    await updateDoc(doc(db, 'lich_ca', currentShiftDocId), {
       thoatLuc: serverTimestamp(),
       thoatGpsOk: gpsOk, thoatGpsDist: gpsInfo, thoatIsMock: isMock,
       thoatPhoto: photoData
@@ -605,6 +687,7 @@ async function xuLyCheckout() {
   currentCa = null;
   checklistState = {};
   currentShiftDocId = null;
+  currentShiftNgay = null;
   showVaoCa();
 }
 
@@ -702,6 +785,15 @@ window.switchModule = function(mod) {
     document.getElementById('panel-checklist-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderChecklist();
+    return;
+  }
+  if (mod === 'lichca') {
+    document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('mod-lichca').classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-lichca-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderLichCaTab();
     return;
   }
   document.getElementById('sub-tab-bar').style.display = 'flex';
@@ -810,7 +902,7 @@ let expandedTask = null;
 
 function renderChecklist() {
   if (!currentCa) return;
-  const ca = currentCa === 'sang' ? CA_SANG : CA_CHIEU;
+  const ca = currentCa === 'sang' ? CA_SANG : currentCa === 'chieu' ? CA_CHIEU : CA_FULL;
   const tasks = getTasksForCa(currentCa);
   const now = new Date();
   const thuTen = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][now.getDay()];
@@ -818,7 +910,7 @@ function renderChecklist() {
   document.getElementById('cl-ca-label').textContent = `📋 ${ca.ten} — ${thuTen}`;
   document.getElementById('cl-ngay-label').textContent = `${ca.bat_dau} – ${ca.ket_thuc}`;
 
-  if (currentCa === 'chieu' && now.getHours() >= 20) {
+  if ((currentCa === 'chieu' || currentCa === 'full') && now.getHours() >= 20) {
     document.getElementById('cl-nhac-tat').style.display = 'block';
   }
 
@@ -2351,67 +2443,11 @@ async function loadAdminPanel() {
       <div id="import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
     </div>
     <div class="admin-block" style="margin-top:1rem">
-      <h3>Lịch sử chấm công</h3>
-      <button class="btn-outline" onclick="loadAttendanceHistory()">Xem lịch sử chấm công</button>
-      <div id="attendance-list" style="margin-top:12px"></div>
-    </div>
-    <div class="admin-block" style="margin-top:1rem">
       <h3>Phiếu đã xóa</h3>
       <button class="btn-outline" onclick="loadDeletedList()">Xem phiếu đã xóa</button>
       <div id="deleted-list" style="margin-top:12px"></div>
     </div>`;
 }
-
-// ===== LỊCH SỬ CHẤM CÔNG =====
-window.loadAttendanceHistory = async function() {
-  const el = document.getElementById('attendance-list');
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const snap = await getDocs(query(collection(db,'ca_lam_viec'), orderBy('ngay','desc'), limit(100)));
-  const rows = snap.docs.map(d => ({id:d.id, ...d.data()}));
-
-  if (!rows.length) { el.innerHTML = '<p class="info-note">Chưa có dữ liệu chấm công.</p>'; return; }
-
-  const html = rows.map(r => {
-    const caInfo = CA_GIO[r.ca] || CA_GIO.sang;
-    const caLabel = r.ca === 'sang' ? 'Ca sáng' : 'Ca chiều';
-    const vaoDate = r.vaoLuc?.seconds ? new Date(r.vaoLuc.seconds*1000) : null;
-    const raDate = r.thoatLuc?.seconds ? new Date(r.thoatLuc.seconds*1000) : null;
-
-    let canhBao = [];
-    if (vaoDate) {
-      const vaoPhut = vaoDate.getHours()*60 + vaoDate.getMinutes();
-      const treSo = vaoPhut - caInfo.batDau;
-      if (treSo > 5) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Trễ ${treSo} phút</span>`);
-    }
-    if (raDate) {
-      const raPhut = raDate.getHours()*60 + raDate.getMinutes();
-      const somSo = caInfo.ketThuc - raPhut;
-      if (somSo > 5) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Về sớm ${somSo} phút</span>`);
-    } else {
-      canhBao.push(`<span class="rbadge" style="background:#FEF3C7;color:#B45309">Chưa check-out</span>`);
-    }
-    if (r.gpsOk === false) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS vào ngoài phạm vi</span>`);
-    if (r.thoatGpsOk === false) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS ra ngoài phạm vi</span>`);
-
-    const tongGio = (vaoDate && raDate) ? ((raDate - vaoDate)/3600000).toFixed(1)+'h' : '—';
-
-    return `
-      <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:4px;padding:10px 0">
-        <div style="display:flex;justify-content:space-between;width:100%">
-          <span class="uname">${escHtml(r.nguoiTao?.ten||'')} · ${caLabel}</span>
-          <span class="uemail">${r.ngay||''}</span>
-        </div>
-        <div style="font-size:12px;color:var(--text2)">
-          Vào: ${vaoDate ? vaoDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
-          · Ra: ${raDate ? raDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
-          · Tổng: ${tongGio}
-        </div>
-        ${canhBao.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">${canhBao.join('')}</div>` : ''}
-      </div>`;
-  }).join('');
-
-  el.innerHTML = `<div class="user-list">${html}</div>`;
-};
 
 window.addUser = async function() {
   const uid=document.getElementById('new-uid').value.trim();
@@ -2809,7 +2845,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v39</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v40</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -2828,23 +2864,9 @@ input:focus,select:focus{border-color:var(--green)}
     <h2 style="font-size:18px;font-weight:700;color:var(--green);margin-bottom:4px">Chào <span id="vao-ca-ten"></span>!</h2>
     <div id="vao-ca-ngay" style="font-size:12px;color:var(--text2);margin-bottom:20px"></div>
 
-    <!-- Bước 1: Chọn ca -->
-    <div id="step-chon-ca">
-      <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Chọn ca làm việc hôm nay</p>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <button onclick="chonCa('sang')" style="padding:16px;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
-          🌅 Ca sáng<br><span style="font-size:12px;font-weight:400;opacity:0.85">8h30 – 16h30</span>
-        </button>
-        <button onclick="chonCa('chieu')" style="padding:16px;background:#0369A1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer">
-          🌆 Ca chiều<br><span style="font-size:12px;font-weight:400;opacity:0.85">13h30 – 21h30</span>
-        </button>
-      </div>
-      <button onclick="doLogout()" style="margin-top:16px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;text-decoration:underline">Đăng xuất</button>
-    </div>
-
-    <!-- Bước 2: Quét QR -->
-    <div id="step-quet-qr" style="display:none">
-      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Hướng camera vào mã QR tại cửa hàng</p>
+    <!-- Quét QR để check-in (ca làm việc lấy theo lịch xếp ca) -->
+    <div id="step-quet-qr">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Hướng camera vào mã QR tại cửa hàng để check-in</p>
       <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:12px;background:#000">
         <video id="qr-video" autoplay playsinline muted style="width:100%;height:220px;object-fit:cover"></video>
         <canvas id="qr-canvas" style="display:none"></canvas>
@@ -2854,10 +2876,9 @@ input:focus,select:focus{border-color:var(--green)}
         </div>
       </div>
       <div id="qr-status" style="font-size:13px;color:var(--text2);margin-bottom:12px">Đang tìm mã QR...</div>
-      <button onclick="huyQuetQR()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--text2)">← Quay lại</button>
     </div>
 
-
+    <button onclick="doLogout()" style="margin-top:16px;background:none;border:none;color:var(--text2);font-size:13px;cursor:pointer;text-decoration:underline">Đăng xuất</button>
   </div>
 </div>
 
@@ -2866,12 +2887,13 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v39</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v40</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="color:#0369A1">🐟 Báo cá mới về</button>
     <button class="mod-btn" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')" style="color:#7C3AED">📋 Checklist</button>
+    <button class="mod-btn" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')" style="color:#0891B2">📅 Ca làm việc</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">⚙️ Admin</button>
     <div class="sidebar-user">
       <div class="uname" id="sidebar-uname"></div>
@@ -2884,7 +2906,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v39</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v40</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -2897,6 +2919,7 @@ input:focus,select:focus{border-color:var(--green)}
       <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">🔴 Xuất hủy</button>
       <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="background:var(--bg);color:#0369A1">🐟 Báo cá</button>
       <button class="mod-btn" id="mod-checklist" onclick="switchModule('checklist')" style="background:var(--bg);color:#7C3AED">📋 Checklist</button>
+      <button class="mod-btn" id="mod-lichca" onclick="switchModule('lichca')" style="background:var(--bg);color:#0891B2">📅 Ca làm việc</button>
       <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">⚙️</button>
     </div>
 
@@ -3163,6 +3186,11 @@ input:focus,select:focus{border-color:var(--green)}
           </div>
         </div>
         <div id="checklist-list"></div>
+      </div>
+
+      <!-- CA LÀM VIỆC -->
+      <div class="panel" id="panel-lichca-main">
+        <div id="lichca-content"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- ADMIN / QR CHECKIN -->
