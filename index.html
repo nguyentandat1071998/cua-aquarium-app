@@ -204,7 +204,7 @@ let currentShiftNgay = null; // ngày (YYYY-MM-DD) của phiếu ca đang mở, 
 let checklistState = {}; // taskId -> {done, ketqua, photos, benhList}
 let benhDanhSach = []; // danh sách cá đang bệnh toàn cửa hàng
 
-function getTodayISO() { return new Date().toISOString().slice(0,10); }
+function getTodayISO() { return toLocalISO(new Date()); }
 
 function showVaoCa() {
   const elLogin = document.getElementById('screen-login');
@@ -401,12 +401,19 @@ function getWeekMonday(offset) {
   return monday;
 }
 
+function toLocalISO(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function getWeekDatesISO(offset) {
   const monday = getWeekMonday(offset);
   const dates = [];
   for (let i=0; i<7; i++) {
     const d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate()+i);
-    dates.push(d.toISOString().slice(0,10));
+    dates.push(toLocalISO(d));
   }
   return dates;
 }
@@ -452,15 +459,32 @@ async function renderLichCaTab() {
       <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
       <button class="btn-xs" onclick="doiTuanLichCa(1)">Tuần sau →</button>
     </div>
+    ${canEdit ? `
+    <div class="admin-block" style="margin-bottom:12px">
+      <button class="btn-g" style="width:100%" onclick="moFormXepCaTuan()">🗓️ Xếp ca (cả tuần cho 1 nhân viên)</button>
+      <div id="xepca-tuan-form"></div>
+    </div>` : ''}
     ${daysHtml}`;
 }
 
 function renderShiftRow(s, canEdit) {
   const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Cả ngày';
+  const today = getTodayISO();
+
+  // Ngày chưa tới — chỉ hiện tên NV + loại ca xếp, chưa có gì để check-in/ra nên khỏi hiện cho đỡ rối
+  if (s.ngay > today) {
+    return `
+      <div class="user-row" style="padding:8px 0">
+        <div style="display:flex;justify-content:space-between;width:100%">
+          <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
+          ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
+        </div>
+      </div>`;
+  }
+
   const caInfo = CA_GIO[s.loaiCa] || CA_GIO.full;
   const vaoDate = s.vaoLuc?.seconds ? new Date(s.vaoLuc.seconds*1000) : null;
   const raDate = s.thoatLuc?.seconds ? new Date(s.thoatLuc.seconds*1000) : null;
-  const today = getTodayISO();
   const qua12hDem = s.ngay < today;
 
   let badges = [];
@@ -557,6 +581,95 @@ window.xoaLichCa = async function(id) {
     deleted: true, deletedAt: serverTimestamp(), deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
   showToast('Đã xóa lịch ca');
+  renderLichCaTab();
+};
+
+// === XẾP CA CẢ TUẦN CHO 1 NHÂN VIÊN (nhanh hơn thay vì xếp từng ngày) ===
+window.moFormXepCaTuan = async function() {
+  const el = document.getElementById('xepca-tuan-form');
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; } // bấm lại để đóng
+  if (!lichCaUsersCache) {
+    const uSnap = await getDocs(collection(db,'users'));
+    lichCaUsersCache = uSnap.docs.map(d => ({id:d.id, ...d.data()}));
+  }
+  el.innerHTML = `
+    <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border)">
+      <select id="xepca-tuan-uid" onchange="loadXepCaTuanForm()">
+        <option value="">-- Chọn nhân viên --</option>
+        ${lichCaUsersCache.map(u => `<option value="${u.id}">${escHtml(u.ten||u.email)}</option>`).join('')}
+      </select>
+      <div id="xepca-tuan-days"></div>
+    </div>`;
+};
+
+window.loadXepCaTuanForm = async function() {
+  const uid = document.getElementById('xepca-tuan-uid').value;
+  const daysEl = document.getElementById('xepca-tuan-days');
+  if (!uid) { daysEl.innerHTML = ''; return; }
+  daysEl.innerHTML = '<div class="loading">Đang tải...</div>';
+
+  const dates = getWeekDatesISO(lichCaWeekOffset);
+  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
+  const existing = {};
+  for (const ngay of dates) {
+    const snap = await getDoc(doc(db,'lich_ca', `${ngay}_${uid}`));
+    if (snap.exists() && !snap.data().deleted) existing[ngay] = snap.data();
+  }
+
+  daysEl.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+      ${dates.map(ngay => {
+        const d = new Date(ngay + 'T00:00:00');
+        const thu = thuTenFull[d.getDay()];
+        const cur = existing[ngay];
+        const locked = !!(cur && cur.vaoLuc);
+        return `
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:12px;color:var(--text2);min-width:78px">${thu} ${d.getDate()}/${d.getMonth()+1}</span>
+          <select id="xtc-${ngay}" ${locked ? 'disabled' : ''} style="flex:1">
+            <option value="" ${!cur ? 'selected' : ''}>— Nghỉ —</option>
+            <option value="sang" ${cur?.loaiCa==='sang' ? 'selected' : ''}>Ca sáng</option>
+            <option value="chieu" ${cur?.loaiCa==='chieu' ? 'selected' : ''}>Ca chiều</option>
+            <option value="full" ${cur?.loaiCa==='full' ? 'selected' : ''}>Cả ngày</option>
+          </select>
+          ${locked ? '<span style="font-size:11px;color:var(--text2)">Đã check-in</span>' : ''}
+        </div>`;
+      }).join('')}
+      <button class="btn-g" style="margin-top:4px" onclick="luuXepCaTuan('${uid}')">Lưu lịch tuần này</button>
+    </div>`;
+};
+
+window.luuXepCaTuan = async function(uid) {
+  const dates = getWeekDatesISO(lichCaWeekOffset);
+  const user = (lichCaUsersCache||[]).find(u => u.id === uid);
+  let count = 0;
+  for (const ngay of dates) {
+    const sel = document.getElementById(`xtc-${ngay}`);
+    if (!sel || sel.disabled) continue; // đã check-in — không đổi lịch ngày đó nữa
+    const loaiCa = sel.value;
+    const shiftId = `${ngay}_${uid}`;
+    if (!loaiCa) {
+      // Nghỉ — nếu có lịch cũ chưa check-in thì xóa mềm
+      const snap = await getDoc(doc(db,'lich_ca', shiftId));
+      if (snap.exists() && !snap.data().vaoLuc && !snap.data().deleted) {
+        await updateDoc(doc(db,'lich_ca', shiftId), {
+          deleted: true, deletedAt: serverTimestamp(), deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
+        });
+      }
+      continue;
+    }
+    await setDoc(doc(db,'lich_ca', shiftId), {
+      ngay, uid, ten: user?.ten || user?.email || '',
+      loaiCa, ngoaiLich: false, deleted: false,
+      xepBoi: { uid: currentUser.uid, ten: currentUserData.ten },
+      createdAt: serverTimestamp(),
+      vaoLuc: null, thoatLuc: null
+    }, { merge: true });
+    count++;
+  }
+  showToast(`Đã lưu lịch tuần cho ${user?.ten || ''} (${count} ca)`);
+  document.getElementById('xepca-tuan-form').innerHTML = '';
   renderLichCaTab();
 };
 
@@ -2859,7 +2972,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v41</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v42</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -2910,7 +3023,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v41</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v42</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -2929,7 +3042,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v41</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v42</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
