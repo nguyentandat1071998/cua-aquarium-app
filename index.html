@@ -1313,13 +1313,11 @@ function renderBenhDanhSach(taskId) {
         <div style="font-size:12px;color:var(--text2);margin:4px 0">Tình trạng: ${escHtml(b.tinhtrang||'')}</div>
         <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Phát hiện: ${b.phatHienLuc||''}</div>
         <div class="cl-tick-group">
-          <button class="cl-tick ok ${daChon==='on_hon'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','on_hon')">Ổn hơn</button>
-          <button class="cl-tick nang ${daChon==='nang_hon'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','nang_hon')">Nặng hơn</button>
-          <button class="cl-tick vay ${daChon==='vay_vay'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','vay_vay')">↔ Vẫn vậy</button>
-          <button class="cl-tick het ${daChon==='het_benh'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','het_benh')">Hết bệnh</button>
+          <button class="cl-tick ok ${daChon==='on_hon'?'chosen':(daChon?'dim':'')}" onclick="clCapNhatBenh('${taskId}','${b.id}','on_hon')">Ổn hơn</button>
+          <button class="cl-tick nang ${daChon==='nang_hon'?'chosen':(daChon?'dim':'')}" onclick="clCapNhatBenh('${taskId}','${b.id}','nang_hon')">Nặng hơn</button>
+          <button class="cl-tick vay ${daChon==='vay_vay'?'chosen':(daChon?'dim':'')}" onclick="clCapNhatBenh('${taskId}','${b.id}','vay_vay')">↔ Vẫn vậy</button>
+          <button class="cl-tick het ${daChon==='het_benh'?'chosen':(daChon?'dim':'')}" onclick="clCapNhatBenh('${taskId}','${b.id}','het_benh')">Hết bệnh</button>
         </div>
-        ${(daChon && daChon!=='het_benh') ? `<input type="text" placeholder="Xử lý: đánh thuốc lúc mấy giờ..." style="margin-top:6px"
-          onchange="clStageXuLy('${taskId}','${b.id}',this.value)">` : ''}
         ${lichSuMoiNhat.length ? `<div style="font-size:11px;color:var(--text2);margin-top:6px">
           Lịch sử: ${lichSuMoiNhat.map(h=>`${h.trangThai} (${h.nv} ${h.gio})`).join(' → ')}
         </div>` : ''}
@@ -1387,7 +1385,6 @@ window.clHoanThanhQuanSat = async function(id) {
   const state = checklistState[id] || {};
   const coCaBenh = benhDanhSach.length > 0;
   const benhChon = state.benhChon || {};
-  const benhXuLy = state.benhXuLy || {};
 
   // Nếu đang có cá/tép bệnh sẵn, bắt buộc chọn tình trạng cho tất cả mới cho hoàn thành
   if (coCaBenh) {
@@ -1430,7 +1427,7 @@ window.clHoanThanhQuanSat = async function(id) {
         await updateDoc(doc(db,'ca_benh',b.id), { hetBenh: true });
       } else {
         const tenTT = {on_hon:'Ổn hơn', nang_hon:'Nặng hơn', vay_vay:'Vẫn vậy'}[trangThai];
-        const lichSuEntry = { trangThai: tenTT, nv: currentUserData.ten, gio: fmtDate(new Date()), xuly: benhXuLy[b.id] || '' };
+        const lichSuEntry = { trangThai: tenTT, nv: currentUserData.ten, gio: fmtDate(new Date()), xuly: '' };
         const lichSuMoi = [...(b.lichSu||[]), lichSuEntry];
         await updateDoc(doc(db,'ca_benh',b.id), { lichSu: lichSuMoi });
       }
@@ -1463,12 +1460,6 @@ window.clCapNhatBenh = function(taskId, benhId, trangThai) {
   if (!checklistState[taskId].benhChon) checklistState[taskId].benhChon = {};
   checklistState[taskId].benhChon[benhId] = trangThai;
   renderChecklist();
-};
-
-window.clStageXuLy = function(taskId, benhId, xuly) {
-  if (!checklistState[taskId]) checklistState[taskId] = {};
-  if (!checklistState[taskId].benhXuLy) checklistState[taskId].benhXuLy = {};
-  checklistState[taskId].benhXuLy[benhId] = xuly;
 };
 
 // ===== QR ADMIN =====
@@ -3070,7 +3061,8 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 .cl-tick.nang{background:var(--red-bg);border-color:var(--red);color:var(--red)}
 .cl-tick.vay{background:#FEF3C7;border-color:#B45309;color:#B45309}
 .cl-tick.het{background:#EDE9FE;border-color:#7C3AED;color:#7C3AED}
-.cl-tick.chosen{padding:7px 13px;font-size:12px;font-weight:700;transform:scale(1.05)}
+.cl-tick.chosen{padding:8px 15px;font-size:13px;font-weight:700;transform:scale(1.1);box-shadow:0 2px 6px rgba(0,0,0,0.15)}
+.cl-tick.dim{padding:3px 7px;font-size:9.5px;opacity:.4;transform:scale(.85)}
 .cl-tick.ok.chosen{background:#1B7A3E;color:#fff}
 .cl-tick.nang.chosen{background:var(--red);color:#fff}
 .cl-tick.vay.chosen{background:#B45309;color:#fff}
@@ -3181,7 +3173,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v57</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v58</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3235,7 +3227,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v57</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v58</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3255,7 +3247,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v57</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v58</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
