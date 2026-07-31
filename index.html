@@ -1245,13 +1245,24 @@ function renderTaskAction(id, task, state) {
   const isQS = TASK_QUANSAT.includes(task.loai);
 
   if (isQS) {
-    return `<div class="cl-btn-group">
-      <button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">Bình thường</button>
+    const coCaBenh = benhDanhSach.length > 0;
+    const daCapNhatHet = !coCaBenh || benhDanhSach.every(b => state.benhDaCapNhat?.[b.id]);
+    let html = `<div class="cl-btn-group">
+      ${!coCaBenh ? `<button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">Bình thường</button>` : ''}
       <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">Cá bệnh</button>
-    </div>
-    ${state.ketqua==='benh' ? renderBenhForm(id, state) : ''}
-    ${state.ketqua==='ok' ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">Xác nhận hoàn thành</button>` : ''}
-    ${benhDanhSach.length > 0 ? `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)">${renderBenhDanhSach()}</div>` : ''}`;
+    </div>`;
+    if (state.ketqua === 'benh') html += renderBenhForm(id, state, coCaBenh);
+    if (!coCaBenh && state.ketqua === 'ok') {
+      html += `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanhQuanSat('${id}')">Xác nhận hoàn thành</button>`;
+    }
+    if (coCaBenh) {
+      html += `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)">
+        ${renderBenhDanhSach(id)}
+        <button class="btn-blue" style="margin-top:10px;width:100%" ${daCapNhatHet ? '' : 'disabled'} onclick="clHoanThanhQuanSat('${id}')">Hoàn thành</button>
+        ${!daCapNhatHet ? `<div style="font-size:11px;color:var(--text2);margin-top:6px;text-align:center">Cập nhật tình trạng cho tất cả cá/tép đang bệnh trước khi hoàn thành</div>` : ''}
+      </div>`;
+    }
+    return html;
   }
 
   if (needPhoto) {
@@ -1266,14 +1277,14 @@ function renderTaskAction(id, task, state) {
   return `<button class="btn-blue" onclick="clHoanThanh('${id}')">Hoàn thành</button>`;
 }
 
-function renderBenhForm(id, state) {
+function renderBenhForm(id, state, coCaBenh) {
   const benhList = state.benhList || [];
   return `<div class="cl-benh-form">
     <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:8px">Danh sách cá bệnh:</div>
     ${benhList.map((b, bi) => `
       <div class="cl-benh-row">
         <div class="sku-wrap" style="margin-bottom:6px">
-          <input type="text" value="${escHtml(b.ten||'')}" placeholder="Gõ tên cá/tép..."
+          <input type="text" value="${escHtml(b.ten||'')}" placeholder="Tên cá/tép..."
             id="cl-benh-${id}-${bi}"
             oninput="searchSKUBenh('${id}',${bi},this.value)"
             onchange="clUpdateBenh('${id}',${bi},'ten',this.value)"
@@ -1281,17 +1292,15 @@ function renderBenhForm(id, state) {
           <div class="sku-drop" id="cl-benh-drop-${id}-${bi}"></div>
         </div>
         <input type="text" value="${escHtml(b.tinhtrang||'')}" placeholder="Tình trạng (Nấm, Thối thân, Túm lắc...)"
-          style="margin-bottom:6px" onchange="clUpdateBenh('${id}',${bi},'tinhtrang',this.value)">
-        <input type="text" value="${escHtml(b.xuly||'')}" placeholder="Xử lý (Đã tách riêng, đánh thuốc...)"
-          onchange="clUpdateBenh('${id}',${bi},'xuly',this.value)">
+          onchange="clUpdateBenh('${id}',${bi},'tinhtrang',this.value)">
         <button class="del-btn" style="margin-top:4px" onclick="clRemoveBenh('${id}',${bi})">✕ Xóa dòng</button>
       </div>`).join('')}
     <button class="cl-btn" style="width:100%;margin-top:4px" onclick="clAddBenh('${id}')">+ Thêm cá bệnh</button>
-    ${benhList.length > 0 ? `<button class="btn-blue" style="margin-top:8px" onclick="clLuuBenh('${id}')">Lưu & Hoàn thành</button>` : ''}
+    ${(!coCaBenh && benhList.length > 0) ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanhQuanSat('${id}')">Hoàn thành</button>` : ''}
   </div>`;
 }
 
-function renderBenhDanhSach() {
+function renderBenhDanhSach(taskId) {
   if (!benhDanhSach.length) return '';
   return `<div style="background:#FDF0EE;border-radius:var(--radius);padding:13px;margin-bottom:10px;border-left:3px solid var(--red)">
     <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:10px">Danh sách cá/tép đang bệnh (${benhDanhSach.length})</div>
@@ -1301,10 +1310,10 @@ function renderBenhDanhSach() {
         <div style="font-size:12px;color:var(--text2);margin:4px 0">Tình trạng: ${escHtml(b.tinhtrang||'')}</div>
         <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Phát hiện: ${b.phatHienLuc||''}</div>
         <div class="cl-tick-group">
-          <button class="cl-tick ok" onclick="clCapNhatBenh('${b.id}','on_hon')">Ổn hơn</button>
-          <button class="cl-tick nang" onclick="clCapNhatBenh('${b.id}','nang_hon')">Nặng hơn</button>
-          <button class="cl-tick vay" onclick="clCapNhatBenh('${b.id}','vay_vay')">↔ Vẫn vậy</button>
-          <button class="cl-tick het" onclick="clCapNhatBenh('${b.id}','het_benh')">Hết bệnh</button>
+          <button class="cl-tick ok" onclick="clCapNhatBenh('${taskId}','${b.id}','on_hon')">Ổn hơn</button>
+          <button class="cl-tick nang" onclick="clCapNhatBenh('${taskId}','${b.id}','nang_hon')">Nặng hơn</button>
+          <button class="cl-tick vay" onclick="clCapNhatBenh('${taskId}','${b.id}','vay_vay')">↔ Vẫn vậy</button>
+          <button class="cl-tick het" onclick="clCapNhatBenh('${taskId}','${b.id}','het_benh')">Hết bệnh</button>
         </div>
         ${b.showXuLy ? `<input type="text" placeholder="Xử lý: đánh thuốc lúc mấy giờ..." style="margin-top:6px"
           onchange="clSaveXuLy('${b.id}',this.value)">` : ''}
@@ -1370,31 +1379,44 @@ window.clUpdateBenh = function(id, idx, field, val) {
   checklistState[id].benhList[idx][field] = val;
 };
 
-window.clLuuBenh = async function(id) {
-  const state = checklistState[id];
-  const benhList = state?.benhList?.filter(b => b.ten.trim()) || [];
-  if (!benhList.length) { showToast('Vui lòng nhập tên cá bệnh', true); return; }
+window.clHoanThanhQuanSat = async function(id) {
+  const state = checklistState[id] || {};
+  const coCaBenh = benhDanhSach.length > 0;
 
-  const now = new Date();
-  const phatHienLuc = fmtDate(now);
-
-  // Lưu từng con cá vào collection ca_benh
-  for (const b of benhList) {
-    await addDoc(collection(db, 'ca_benh'), {
-      ten: b.ten,
-      tinhtrang: b.tinhtrang,
-      xuly: b.xuly,
-      hetBenh: false,
-      phatHienLuc,
-      phatHienBoi: { uid: currentUser.uid, ten: currentUserData.ten },
-      lichSu: [{ trangThai: 'Phát hiện', nv: currentUserData.ten, gio: phatHienLuc, xuly: b.xuly }],
-      ca: currentCa, ngay: now.toISOString().slice(0,10)
-    });
+  // Nếu đang có cá/tép bệnh sẵn, bắt buộc cập nhật tình trạng hết mới cho hoàn thành
+  if (coCaBenh) {
+    const daCapNhatHet = benhDanhSach.every(b => state.benhDaCapNhat?.[b.id]);
+    if (!daCapNhatHet) {
+      showToast('Vui lòng cập nhật tình trạng cho tất cả cá/tép đang bệnh', true);
+      return;
+    }
   }
 
-  checklistState[id].done = true;
-  await loadBenhDanhSach();
-  showToast(`Đã lưu ${benhList.length} cá bệnh`);
+  // Nếu có nhập cá bệnh mới thì lưu lại
+  if (state.ketqua === 'benh') {
+    const benhList = (state.benhList || []).filter(b => b.ten.trim());
+    if (benhList.length) {
+      const now = new Date();
+      const phatHienLuc = fmtDate(now);
+      for (const b of benhList) {
+        await addDoc(collection(db, 'ca_benh'), {
+          ten: b.ten, tinhtrang: b.tinhtrang, xuly: '',
+          hetBenh: false, phatHienLuc,
+          phatHienBoi: { uid: currentUser.uid, ten: currentUserData.ten },
+          lichSu: [{ trangThai: 'Phát hiện', nv: currentUserData.ten, gio: phatHienLuc, xuly: '' }],
+          ca: currentCa, ngay: now.toISOString().slice(0,10)
+        });
+      }
+      await loadBenhDanhSach();
+    } else if (!coCaBenh) {
+      showToast('Vui lòng nhập tên cá bệnh', true);
+      return;
+    }
+  }
+
+  checklistState[id] = { ...(checklistState[id]||{}), done: true, doneAt: fmtDate(new Date()) };
+  expandedTask = null;
+  showToast('Hoàn thành task');
   renderChecklist();
 };
 
@@ -1410,7 +1432,7 @@ window.clHoanThanh = async function(id) {
   renderChecklist();
 };
 
-window.clCapNhatBenh = async function(benhId, trangThai) {
+window.clCapNhatBenh = async function(taskId, benhId, trangThai) {
   const b = benhDanhSach.find(x => x.id === benhId);
   if (!b) return;
   b.showXuLy = trangThai !== 'het_benh';
@@ -1424,6 +1446,12 @@ window.clCapNhatBenh = async function(benhId, trangThai) {
     const lichSuEntry = { trangThai: tenTT, nv: currentUserData.ten, gio: fmtDate(new Date()), xuly: '' };
     b.lichSu = [...(b.lichSu||[]), lichSuEntry];
     await updateDoc(doc(db,'ca_benh',benhId), { lichSu: b.lichSu });
+  }
+
+  if (taskId && taskId !== 'null' && taskId !== 'undefined') {
+    if (!checklistState[taskId]) checklistState[taskId] = {};
+    if (!checklistState[taskId].benhDaCapNhat) checklistState[taskId].benhDaCapNhat = {};
+    checklistState[taskId].benhDaCapNhat[benhId] = true;
   }
 
   await loadBenhDanhSach();
@@ -3142,7 +3170,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v54</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v55</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3196,7 +3224,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v54</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v55</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3216,7 +3244,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v54</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v55</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
