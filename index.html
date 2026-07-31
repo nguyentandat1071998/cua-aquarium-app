@@ -132,7 +132,7 @@ const CHECKLIST = {
 // Ca làm việc
 const CA_SANG  = {ten:"Ca sáng",  bat_dau:"8h30",  ket_thuc:"16h30", tasks_den:"16h00"};
 const CA_CHIEU = {ten:"Ca chiều", bat_dau:"13h30", ket_thuc:"21h30", tasks_den:"21h05"};
-const CA_FULL  = {ten:"Cả ngày",  bat_dau:"8h30",  ket_thuc:"21h30", tasks_den:"21h05"};
+const CA_FULL  = {ten:"Ca Full",  bat_dau:"8h30",  ket_thuc:"21h30", tasks_den:"21h05"};
 
 // Loại task cần chụp ảnh
 const TASK_CAN_CHUP = ["vesinhanh","chamcay","thaynuoc","hutcan","vesinh_ho","chamcay_quansat"];
@@ -454,7 +454,7 @@ async function renderLichCaTab() {
     return `
       <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <h4 style="font-size:13px;font-weight:600">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
+          <h4 style="font-size:15px;font-weight:700">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
           ${canEdit ? `<button class="btn-xs" onclick="moFormXepCa('${ngay}')">+ Xếp ca</button>` : ''}
         </div>
         <div id="xepca-form-${ngay}"></div>
@@ -476,12 +476,15 @@ async function renderLichCaTab() {
     ${daysHtml}`;
 }
 
+const CA_MAU = { sang: '#C2792F', chieu: '#3D6EA6', full: '#6B5B95' };
+
 function renderShiftRow(s, canEdit) {
-  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Cả ngày';
+  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Ca Full';
+  const caMau = CA_MAU[s.loaiCa] || CA_MAU.full;
   return `
     <div class="user-row" style="padding:8px 0">
       <div style="display:flex;justify-content:space-between;width:100%">
-        <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
+        <span class="uname">${escHtml(s.ten||'')} · <span style="color:${caMau};font-weight:600">${caLabel}</span></span>
         ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
       </div>
     </div>`;
@@ -489,7 +492,7 @@ function renderShiftRow(s, canEdit) {
 
 // ===== CHẤM CÔNG (chỉ Admin/Quản lý) — dữ liệu check-in/out thực tế =====
 function renderChamCongRow(s) {
-  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Cả ngày';
+  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Ca Full';
   const today = getTodayISO();
   const caInfo = CA_GIO[s.loaiCa] || CA_GIO.full;
   const vaoDate = s.vaoLuc?.seconds ? new Date(s.vaoLuc.seconds*1000) : null;
@@ -639,7 +642,7 @@ window.moFormXepCa = async function(ngay) {
       <select id="xepca-loaica-${ngay}">
         <option value="sang">Ca sáng (8h30–16h30)</option>
         <option value="chieu">Ca chiều (13h30–21h30)</option>
-        <option value="full">Cả ngày</option>
+        <option value="full">Ca Full</option>
       </select>
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuXepCa('${ngay}')">Lưu</button>
@@ -695,7 +698,7 @@ window.moFormXepCaTuan = async function() {
 const CA_LIST_XEP = [
   { key:'sang',  label:'Ca sáng (8h30–16h30)' },
   { key:'chieu', label:'Ca chiều (13h30–21h30)' },
-  { key:'full',  label:'Cả ngày (8h30–21h30)' }
+  { key:'full',  label:'Ca Full (8h30–21h30)' }
 ];
 
 function renderXepCaTuanForm() {
@@ -2876,8 +2879,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* MODULE TABS */
 .mod-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:8px 10px;gap:6px;overflow-x:auto}
 .mod-btn{flex:1;padding:8px 6px;border:none;border-radius:8px;font-size:11.5px;font-weight:600;cursor:pointer;background:var(--bg);color:var(--text2);transition:all .15s;white-space:nowrap}
+.mod-btn.green{color:var(--green)}
 .mod-btn.green.active{background:var(--green);color:#fff}
+.mod-btn.red{color:var(--red)}
 .mod-btn.red.active{background:var(--red);color:#fff}
+.mod-btn.purple{color:#7C3AED}
+.mod-btn.purple.active{background:#7C3AED;color:#fff}
+.mod-btn.teal{color:#0891B2}
+.mod-btn.teal.active{background:#0891B2;color:#fff}
 .mod-btn.admin-btn{flex:none;padding:8px 12px;font-size:11.5px}
 .mod-btn.admin-btn.active{background:#5B21B6;color:#fff}
 
@@ -3133,7 +3142,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v53</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v54</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3187,12 +3196,12 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v53</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v54</span></div>
     <div class="sidebar-section">Module</div>
-    <button class="mod-btn" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')" style="color:#7C3AED">Checklist</button>
+    <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
-    <button class="mod-btn" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')" style="color:#0891B2">Lịch làm việc</button>
+    <button class="mod-btn teal" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="display:none;color:#0369A1">Báo cá mới về</button>
     <button class="mod-btn" id="sidebar-chamcong" onclick="switchModule('chamcong');updateSidebar('chamcong')" style="display:none;color:#B45309">Chấm công</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
@@ -3207,7 +3216,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v53</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v54</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3216,10 +3225,10 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
     <!-- Module tabs (mobile) -->
     <div class="mod-bar">
-      <button class="mod-btn" id="mod-checklist" onclick="switchModule('checklist')" style="background:var(--bg);color:#7C3AED">Checklist</button>
+      <button class="mod-btn purple" id="mod-checklist" onclick="switchModule('checklist')">Checklist</button>
       <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Nhập hàng</button>
       <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
-      <button class="mod-btn" id="mod-lichca" onclick="switchModule('lichca')" style="background:var(--bg);color:#0891B2">Lịch làm việc</button>
+      <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
       <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
       <button class="mod-btn" id="mod-chamcong" onclick="switchModule('chamcong')" style="display:none;background:var(--bg);color:#B45309">Chấm công</button>
       <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
