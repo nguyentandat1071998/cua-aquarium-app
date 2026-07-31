@@ -199,6 +199,7 @@ let lichCaWeekOffset = 0;
 let lichCaUsersCache = null;
 let lichCaShiftsCache = null;
 let lichCaDatesCache = null;
+let chamCongWeekOffset = 0;
 
 // ===== VÀO CA =====
 let currentCa = null; // 'sang' | 'chieu' | 'full'
@@ -262,11 +263,11 @@ async function startQRScan() {
       });
       if (code) {
         if (code.data === CHECKIN_QR_SECRET) {
-          document.getElementById('qr-status').textContent = '✓ QR hợp lệ! Đang xử lý...';
+          document.getElementById('qr-status').textContent = 'QR hợp lệ! Đang xử lý...';
           clearInterval(qrScanInterval); // Dừng scan, giữ stream để chụp ảnh
           setTimeout(() => chupAnhQRVaCheckin(), 300);
         } else {
-          document.getElementById('qr-status').textContent = '✗ Mã QR không hợp lệ';
+          document.getElementById('qr-status').textContent = 'Mã QR không hợp lệ';
         }
       }
     }, 200);
@@ -340,7 +341,7 @@ async function chupAnhQRVaCheckin() {
   }
 
   if (isMock) {
-    statusEl.textContent = '⚠️ Phát hiện GPS giả — không thể checkin';
+    statusEl.textContent = 'Phát hiện GPS giả — không thể checkin';
     showToast('Phát hiện GPS giả!', true);
     return;
   }
@@ -372,9 +373,9 @@ async function chupAnhQRVaCheckin() {
   await xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData);
 
   if (!gpsOk) {
-    showToast(`⚠️ Check-in thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+    showToast(`Check-in thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
   } else {
-    showToast('✓ Check-in thành công!');
+    showToast('Check-in thành công!');
   }
 
   checklistState = {};
@@ -469,7 +470,7 @@ async function renderLichCaTab() {
     </div>
     ${canEdit ? `
     <div class="admin-block" style="margin-bottom:12px">
-      <button class="btn-g" style="width:100%" onclick="moFormXepCaTuan()">🗓️ Xếp ca cả tuần (tất cả nhân viên)</button>
+      <button class="btn-g" style="width:100%" onclick="moFormXepCaTuan()">Xếp ca cả tuần (tất cả nhân viên)</button>
       <div id="xepca-tuan-form"></div>
     </div>` : ''}
     ${daysHtml}`;
@@ -477,19 +478,19 @@ async function renderLichCaTab() {
 
 function renderShiftRow(s, canEdit) {
   const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Cả ngày';
+  return `
+    <div class="user-row" style="padding:8px 0">
+      <div style="display:flex;justify-content:space-between;width:100%">
+        <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
+        ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
+      </div>
+    </div>`;
+}
+
+// ===== CHẤM CÔNG (chỉ Admin/Quản lý) — dữ liệu check-in/out thực tế =====
+function renderChamCongRow(s) {
+  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Cả ngày';
   const today = getTodayISO();
-
-  // Ngày chưa tới — chỉ hiện tên NV + loại ca xếp, chưa có gì để check-in/ra nên khỏi hiện cho đỡ rối
-  if (s.ngay > today) {
-    return `
-      <div class="user-row" style="padding:8px 0">
-        <div style="display:flex;justify-content:space-between;width:100%">
-          <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
-          ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
-        </div>
-      </div>`;
-  }
-
   const caInfo = CA_GIO[s.loaiCa] || CA_GIO.full;
   const vaoDate = s.vaoLuc?.seconds ? new Date(s.vaoLuc.seconds*1000) : null;
   const raDate = s.thoatLuc?.seconds ? new Date(s.thoatLuc.seconds*1000) : null;
@@ -522,10 +523,7 @@ function renderShiftRow(s, canEdit) {
 
   return `
     <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:4px;padding:8px 0">
-      <div style="display:flex;justify-content:space-between;width:100%">
-        <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
-        ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
-      </div>
+      <span class="uname">${escHtml(s.ten||'')} · ${caLabel}</span>
       <div style="font-size:12px;color:var(--text2)">
         Vào: ${vaoDate ? vaoDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
         · Ra: ${raDate ? raDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
@@ -533,6 +531,96 @@ function renderShiftRow(s, canEdit) {
       </div>
       ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
     </div>`;
+}
+
+let xemLichWeekOffset = 0;
+
+window.xemLichTruocKhiVaoCa = function() {
+  xemLichWeekOffset = 0;
+  document.getElementById('xemlich-modal').style.display = 'flex';
+  renderXemLichContent();
+};
+
+window.dongXemLich = function() {
+  document.getElementById('xemlich-modal').style.display = 'none';
+};
+
+window.doiTuanXemLich = function(delta) {
+  xemLichWeekOffset += delta;
+  renderXemLichContent();
+};
+
+async function renderXemLichContent() {
+  const el = document.getElementById('xemlich-content');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const dates = getWeekDatesISO(xemLichWeekOffset);
+  const start = dates[0], end = dates[6];
+  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)));
+  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
+  const today = getTodayISO();
+  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
+
+  const daysHtml = dates.map(ngay => {
+    const d = new Date(ngay + 'T00:00:00');
+    const thu = thuTenFull[d.getDay()];
+    const isToday = ngay === today;
+    const dayShifts = shifts.filter(s => s.ngay === ngay).sort((a,b) => (a.ten||'').localeCompare(b.ten||''));
+    const rows = dayShifts.map(s => renderShiftRow(s, false)).join('') ||
+      `<p style="font-size:12px;color:var(--text2);padding:4px 0">Chưa xếp ca</p>`;
+    return `
+      <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
+        <h4 style="font-size:13px;font-weight:600;margin-bottom:6px">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
+        ${rows}
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <button class="btn-xs" onclick="doiTuanXemLich(-1)">← Tuần trước</button>
+      <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
+      <button class="btn-xs" onclick="doiTuanXemLich(1)">Tuần sau →</button>
+    </div>
+    ${daysHtml}`;
+}
+
+window.doiTuanChamCong = function(delta) {
+  chamCongWeekOffset += delta;
+  renderChamCongTab();
+};
+
+async function renderChamCongTab() {
+  const el = document.getElementById('chamcong-content');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const dates = getWeekDatesISO(chamCongWeekOffset);
+  const start = dates[0], end = dates[6];
+  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)));
+  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
+  const today = getTodayISO();
+  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
+
+  const daysHtml = dates.map(ngay => {
+    const d = new Date(ngay + 'T00:00:00');
+    const thu = thuTenFull[d.getDay()];
+    const isToday = ngay === today;
+    const dayShifts = shifts.filter(s => s.ngay === ngay).sort((a,b) => (a.ten||'').localeCompare(b.ten||''));
+    const rows = dayShifts.map(s => renderChamCongRow(s)).join('') ||
+      `<p style="font-size:12px;color:var(--text2);padding:4px 0">Không có ca nào</p>`;
+    return `
+      <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
+        <h4 style="font-size:13px;font-weight:600;margin-bottom:6px">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
+        ${rows}
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <button class="btn-xs" onclick="doiTuanChamCong(-1)">← Tuần trước</button>
+      <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
+      <button class="btn-xs" onclick="doiTuanChamCong(1)">Tuần sau →</button>
+    </div>
+    ${daysHtml}`;
 }
 
 window.moFormXepCa = async function(ngay) {
@@ -650,7 +738,7 @@ function renderXepCaTuanForm() {
   el.innerHTML = `
     <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--border)">
       ${daysHtml}
-      <button class="btn-g" style="width:100%;margin-top:4px" onclick="luuXepCaTuan()">💾 Lưu lịch cả tuần</button>
+      <button class="btn-g" style="width:100%;margin-top:4px" onclick="luuXepCaTuan()">Lưu lịch cả tuần</button>
     </div>`;
 }
 
@@ -714,7 +802,7 @@ window.thoatCa = function() {
       if (currentShiftDocId) {
         await updateDoc(doc(db, 'lich_ca', currentShiftDocId), { khongCheckout: true });
       }
-      showToast('⚠️ Đã qua 12h đêm — ca này được ghi nhận "chưa check-out", tổng giờ làm = 0', true);
+      showToast('Đã qua 12h đêm — ca này được ghi nhận "chưa check-out", tổng giờ làm = 0', true);
       currentCa = null; checklistState = {}; currentShiftDocId = null; currentShiftNgay = null;
       showVaoCa();
     })();
@@ -750,11 +838,11 @@ window.batDauCheckout = async function() {
       });
       if (code) {
         if (code.data === CHECKIN_QR_SECRET) {
-          statusEl.textContent = '✓ QR hợp lệ! Đang xử lý...';
+          statusEl.textContent = 'QR hợp lệ! Đang xử lý...';
           clearInterval(checkoutScanInterval);
           setTimeout(() => xuLyCheckout(), 300);
         } else {
-          statusEl.textContent = '✗ Mã QR không hợp lệ';
+          statusEl.textContent = 'Mã QR không hợp lệ';
         }
       }
     }, 200);
@@ -779,7 +867,7 @@ async function xuLyCheckout() {
     if (currentShiftDocId) {
       await updateDoc(doc(db, 'lich_ca', currentShiftDocId), { khongCheckout: true });
     }
-    showToast('⚠️ Đã qua 12h đêm — ca này được ghi nhận "chưa check-out", tổng giờ làm = 0', true);
+    showToast('Đã qua 12h đêm — ca này được ghi nhận "chưa check-out", tổng giờ làm = 0', true);
     currentCa = null; checklistState = {}; currentShiftDocId = null; currentShiftNgay = null;
     showVaoCa();
     return;
@@ -801,7 +889,7 @@ async function xuLyCheckout() {
   }
 
   if (isMock) {
-    statusEl.textContent = '⚠️ Phát hiện GPS giả — không thể checkout';
+    statusEl.textContent = 'Phát hiện GPS giả — không thể checkout';
     showToast('Phát hiện GPS giả!', true);
     return;
   }
@@ -835,13 +923,13 @@ async function xuLyCheckout() {
       thoatPhoto: photoData
     });
   } else {
-    showToast('⚠️ Không tìm thấy phiếu ca để checkout, đã lưu thoát ca cục bộ', true);
+    showToast('Không tìm thấy phiếu ca để checkout, đã lưu thoát ca cục bộ', true);
   }
 
   if (!gpsOk) {
-    showToast(`⚠️ Check-out thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+    showToast(`Check-out thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
   } else {
-    showToast('✓ Check-out thành công!');
+    showToast('Check-out thành công!');
   }
 
   currentCa = null;
@@ -924,6 +1012,11 @@ function showApp() {
     document.getElementById('mod-admin').style.display = 'flex';
   }
   const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
+  if (canExport) {
+    document.getElementById('mod-chamcong').style.display = 'flex';
+    const scc = document.getElementById('sidebar-chamcong');
+    if (scc) scc.style.display = 'flex';
+  }
   // Lưu quyền xuất file vào biến global
   window._canExport = canExport;
   if (!canExport) document.body.classList.add('hide-export');
@@ -954,6 +1047,15 @@ window.switchModule = function(mod) {
     document.getElementById('panel-lichca-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderLichCaTab();
+    return;
+  }
+  if (mod === 'chamcong') {
+    document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('mod-chamcong').classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-chamcong-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderChamCongTab();
     return;
   }
   document.getElementById('sub-tab-bar').style.display = 'flex';
@@ -1067,7 +1169,7 @@ function renderChecklist() {
   const now = new Date();
   const thuTen = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][now.getDay()];
 
-  document.getElementById('cl-ca-label').textContent = `📋 ${ca.ten} — ${thuTen}`;
+  document.getElementById('cl-ca-label').textContent = `${ca.ten} — ${thuTen}`;
   document.getElementById('cl-ngay-label').textContent = `${ca.bat_dau} – ${ca.ket_thuc}`;
 
   if ((currentCa === 'chieu' || currentCa === 'full') && now.getHours() >= 20) {
@@ -1094,12 +1196,12 @@ function renderChecklist() {
           <span class="cl-task-name" style="margin:0">${t.task}${isQS && benhCount > 0 && !isDone ? `<span style="background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:6px">${benhCount} bệnh</span>` : ''}</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
-          ${isDone ? '<span class="cl-done-badge">✓</span>' : ''}
+          ${isDone ? '<span class="cl-done-badge"></span>' : ''}
           <span style="color:var(--text3);font-size:16px">${isExpanded ? '▲' : '▼'}</span>
         </div>
       </div>
       ${isExpanded && !isDone ? `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">${renderTaskAction(id, t, state)}</div>` : ''}
-      ${isExpanded && isDone ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--green)">✓ Đã hoàn thành lúc ${state.doneAt||''}</div>` : ''}
+      ${isExpanded && isDone ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px;color:var(--green)">Đã hoàn thành lúc ${state.doneAt||''}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -1115,24 +1217,24 @@ function renderTaskAction(id, task, state) {
 
   if (isQS) {
     return `<div class="cl-btn-group">
-      <button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">✅ Bình thường</button>
-      <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">🔴 Cá bệnh</button>
+      <button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">Bình thường</button>
+      <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">Cá bệnh</button>
     </div>
     ${state.ketqua==='benh' ? renderBenhForm(id, state) : ''}
-    ${state.ketqua==='ok' ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">✓ Xác nhận hoàn thành</button>` : ''}
+    ${state.ketqua==='ok' ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">Xác nhận hoàn thành</button>` : ''}
     ${benhDanhSach.length > 0 ? `<div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border)">${renderBenhDanhSach()}</div>` : ''}`;
   }
 
   if (needPhoto) {
     return `<div>
       ${state.photo ? `<div style="margin-bottom:8px"><img src="${state.photo}" style="width:100%;border-radius:8px;max-height:150px;object-fit:cover"></div>` : ''}
-      <button class="cl-btn" onclick="clChupAnh('${id}')" style="width:100%">📷 ${state.photo ? 'Chụp lại' : 'Chụp ảnh minh chứng'}</button>
-      ${state.photo ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">✓ Xác nhận hoàn thành</button>` : ''}
+      <button class="cl-btn" onclick="clChupAnh('${id}')" style="width:100%">${state.photo ? 'Chụp lại' : 'Chụp ảnh minh chứng'}</button>
+      ${state.photo ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanh('${id}')">Xác nhận hoàn thành</button>` : ''}
     </div>`;
   }
 
   // Task thường (Cho ăn)
-  return `<button class="btn-blue" onclick="clHoanThanh('${id}')">✓ Hoàn thành</button>`;
+  return `<button class="btn-blue" onclick="clHoanThanh('${id}')">Hoàn thành</button>`;
 }
 
 function renderBenhForm(id, state) {
@@ -1156,24 +1258,24 @@ function renderBenhForm(id, state) {
         <button class="del-btn" style="margin-top:4px" onclick="clRemoveBenh('${id}',${bi})">✕ Xóa dòng</button>
       </div>`).join('')}
     <button class="cl-btn" style="width:100%;margin-top:4px" onclick="clAddBenh('${id}')">+ Thêm cá bệnh</button>
-    ${benhList.length > 0 ? `<button class="btn-blue" style="margin-top:8px" onclick="clLuuBenh('${id}')">✓ Lưu & Hoàn thành</button>` : ''}
+    ${benhList.length > 0 ? `<button class="btn-blue" style="margin-top:8px" onclick="clLuuBenh('${id}')">Lưu & Hoàn thành</button>` : ''}
   </div>`;
 }
 
 function renderBenhDanhSach() {
   if (!benhDanhSach.length) return '';
   return `<div style="background:#FDF0EE;border-radius:var(--radius);padding:13px;margin-bottom:10px;border-left:3px solid var(--red)">
-    <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:10px">🔴 Danh sách cá/tép đang bệnh (${benhDanhSach.length})</div>
+    <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:10px">Danh sách cá/tép đang bệnh (${benhDanhSach.length})</div>
     ${benhDanhSach.map(b => `
       <div style="background:#fff;border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
         <div style="font-weight:600;font-size:13px">${escHtml(b.ten)}</div>
         <div style="font-size:12px;color:var(--text2);margin:4px 0">Tình trạng: ${escHtml(b.tinhtrang||'')}</div>
         <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Phát hiện: ${b.phatHienLuc||''}</div>
         <div class="cl-tick-group">
-          <button class="cl-tick ok" onclick="clCapNhatBenh('${b.id}','on_hon')">👍 Ổn hơn</button>
-          <button class="cl-tick nang" onclick="clCapNhatBenh('${b.id}','nang_hon')">👎 Nặng hơn</button>
+          <button class="cl-tick ok" onclick="clCapNhatBenh('${b.id}','on_hon')">Ổn hơn</button>
+          <button class="cl-tick nang" onclick="clCapNhatBenh('${b.id}','nang_hon')">Nặng hơn</button>
           <button class="cl-tick vay" onclick="clCapNhatBenh('${b.id}','vay_vay')">↔ Vẫn vậy</button>
-          <button class="cl-tick het" onclick="clCapNhatBenh('${b.id}','het_benh')">✅ Hết bệnh</button>
+          <button class="cl-tick het" onclick="clCapNhatBenh('${b.id}','het_benh')">Hết bệnh</button>
         </div>
         ${b.showXuLy ? `<input type="text" placeholder="Xử lý: đánh thuốc lúc mấy giờ..." style="margin-top:6px"
           onchange="clSaveXuLy('${b.id}',this.value)">` : ''}
@@ -1275,7 +1377,7 @@ window.clChupAnh = function(id) {
 window.clHoanThanh = async function(id) {
   checklistState[id] = { ...(checklistState[id]||{}), done: true, doneAt: fmtDate(new Date()) };
   expandedTask = null;
-  showToast('✓ Hoàn thành task');
+  showToast('Hoàn thành task');
   renderChecklist();
 };
 
@@ -1287,7 +1389,7 @@ window.clCapNhatBenh = async function(benhId, trangThai) {
   if (trangThai === 'het_benh') {
     if (!confirm(`Xác nhận ${b.ten} đã hết bệnh?`)) return;
     await updateDoc(doc(db,'ca_benh',benhId), { hetBenh: true });
-    showToast(`${b.ten} đã hết bệnh ✓`);
+    showToast(`${b.ten} đã hết bệnh `);
   } else {
     const tenTT = {on_hon:'Ổn hơn', nang_hon:'Nặng hơn', vay_vay:'Vẫn vậy'}[trangThai];
     const lichSuEntry = { trangThai: tenTT, nv: currentUserData.ten, gio: fmtDate(new Date()), xuly: '' };
@@ -1521,7 +1623,7 @@ function onBaocaRecordStop() {
 
   document.getElementById('baoca-record-preview').style.display = 'none';
   document.getElementById('baoca-record-status').innerHTML =
-    `✓ Đã quay xong <b>${durStr}</b> — đang upload...`;
+    `Đã quay xong <b>${durStr}</b> — đang upload...`;
   document.getElementById('baoca-step-info').style.display = 'none';
   document.getElementById('baoca-step-record').style.display = 'block';
   mediaRecorder = null;
@@ -1591,7 +1693,7 @@ async function doUploadAfterStop(chunks) {
         if (data.status === 'done') {
           backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
           statusEl.className = 'upload-status done';
-          statusEl.textContent = `✓ Upload xong (${sizeMB}MB)`;
+          statusEl.textContent = `Upload xong (${sizeMB}MB)`;
           resolve(backgroundUploadResult);
           return;
         }
@@ -1608,7 +1710,7 @@ async function doUploadAfterStop(chunks) {
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
       statusEl.className = 'upload-status err';
-      statusEl.textContent = '✗ Lỗi: ' + e.message;
+      statusEl.textContent = 'Lỗi: ' + e.message;
       resolve(backgroundUploadResult);
     }
   });
@@ -1671,16 +1773,16 @@ async function startChunkedUpload(chunks, mimeType) {
       if (data.success) {
         backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
         statusEl.className = 'upload-status done';
-        statusEl.textContent = '✓ Upload xong';
+        statusEl.textContent = 'Upload xong';
       } else {
         backgroundUploadResult = { success: false, error: data.error };
         statusEl.className = 'upload-status err';
-        statusEl.textContent = '✗ Lỗi: ' + data.error;
+        statusEl.textContent = 'Lỗi: ' + data.error;
       }
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
       statusEl.className = 'upload-status err';
-      statusEl.textContent = '✗ Lỗi: ' + e.message;
+      statusEl.textContent = 'Lỗi: ' + e.message;
     }
     resolve(backgroundUploadResult);
   });
@@ -1717,16 +1819,16 @@ function startBackgroundUpload(blob) {
       if (data.success) {
         backgroundUploadResult = { success: true, viewUrl: data.viewUrl, fullUrl: data.fullUrl, fileId: data.fileId };
         statusEl.className = 'upload-status done';
-        statusEl.textContent = '✓ Upload xong';
+        statusEl.textContent = 'Upload xong';
       } else {
         backgroundUploadResult = { success: false, error: data.error };
         statusEl.className = 'upload-status err';
-        statusEl.textContent = '✗ Lỗi: ' + data.error;
+        statusEl.textContent = 'Lỗi: ' + data.error;
       }
     } catch(e) {
       backgroundUploadResult = { success: false, error: e.message };
       statusEl.className = 'upload-status err';
-      statusEl.textContent = '✗ Lỗi: ' + e.message;
+      statusEl.textContent = 'Lỗi: ' + e.message;
     }
     resolve(backgroundUploadResult);
   });
@@ -1763,7 +1865,7 @@ window.addBaocaRow = async function() {
     statusEl.textContent = '⏳ Đang chờ upload hoàn tất...';
     await backgroundUploadPromise;
     addBtn.disabled = false;
-    addBtn.textContent = '🎥 Quay video đếm cá';
+    addBtn.textContent = 'Quay video đếm cá';
   }
 
   if (!backgroundUploadResult || !backgroundUploadResult.success) {
@@ -1780,7 +1882,7 @@ window.addBaocaRow = async function() {
     videoPreview: pendingVideoUrl,
     startTime
   });
-  showToast('✓ Đã thêm: ' + ten);
+  showToast('Đã thêm: ' + ten);
   renderBaocaRows();
 
   // Reset hoàn toàn về bước 1
@@ -1848,7 +1950,7 @@ function renderBaocaRows() {
           <button class="del-btn" onclick="removeBaocaRow(${idx})">✕</button>
         </div>
       </div>
-      <div class="upload-status done" style="margin-top:6px">✓ Video đã upload</div>
+      <div class="upload-status done" style="margin-top:6px">Video đã upload</div>
     </div>`).join('');
 }
 
@@ -1879,9 +1981,9 @@ window.submitBaoCa = async function() {
     renderBaocaRows();
     resetBaocaStep();
     initBaocaPanel();
-    showToast('✓ Đã lưu phiếu báo cá mới về');
+    showToast('Đã lưu phiếu báo cá mới về');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
-  btn.disabled = false; btn.textContent = '💾 Lưu phiếu báo cá';
+  btn.disabled = false; btn.textContent = 'Lưu phiếu báo cá';
 };
 
 window.loadBaoCaList = async function() {
@@ -1909,19 +2011,19 @@ window.loadBaoCaList = async function() {
       <div class="phieu-top">
         <div>
           <span class="phieu-date">${fmtDate(date)}</span>
-          ${p.daXuat ? `<span class="badge-xuat da">✓ Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}
+          ${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}
           <div style="font-size:14px;font-weight:600;margin-top:3px">${escHtml(p.tenLo||'')}</div>
         </div>
         <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteBaoCa('${p.id}')">Xóa</button>`:''}</div>
       </div>
-      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'} · ${p.tongDong} dòng · ${p.tongSL} con</div>
+      <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · ${p.tongDong} dòng · ${p.tongSL} con</div>
       <div style="margin-top:8px">
         ${(p.rows||[]).map(r => `
           <div class="baoca-ds-row">
             <div class="baoca-ds-row-header">
               <div>
                 <span class="baoca-ds-row-name">${escHtml(r.ten)}</span>
-                ${r.startTime ? `<span style="font-size:11px;color:var(--text2);display:block">🕐 ${r.startTime}</span>` : ''}
+                ${r.startTime ? `<span style="font-size:11px;color:var(--text2);display:block">${r.startTime}</span>` : ''}
               </div>
               <span class="baoca-row-sl">${r.sl} con</span>
             </div>
@@ -2043,7 +2145,7 @@ window.submitNhap = async function() {
     currentNhap = { items: [], photos: [] };
     renderNhapItems();
     renderNhapPhotos();
-    showToast('✓ Đã lưu phiếu nhập');
+    showToast('Đã lưu phiếu nhập');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu nhập';
 };
@@ -2133,7 +2235,7 @@ window.submitXuat = async function() {
     currentPhieu = { items: [], photos: [] };
     renderXuatItems();
     renderXuatPhotos();
-    showToast('✓ Đã lưu phiếu xuất hủy');
+    showToast('Đã lưu phiếu xuất hủy');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
 };
@@ -2232,10 +2334,10 @@ window.loadNhapList = async function(filter={}) {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card green">
       <div class="phieu-top">
-        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">✓ Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
+        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
         <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
       </div>
-      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="g bold">${fmt(p.tongGia)}₫</span></div>
@@ -2285,14 +2387,14 @@ window.loadXuatList = async function(filter={}) {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card red">
       <div class="phieu-top">
-        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">✓ Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
+        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
         <div class="phieu-acts">${canEdit?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
       </div>
-      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
-      ${p.versions?.length?`<div class="ver-toggle" onclick="toggleVer('${p.id}')">📋 ${p.versions.length} lần sửa</div><div id="ver-${p.id}" style="display:none" class="ver-list">${p.versions.map((v,i)=>`<div class="ver-row">Lần ${i+1} · ${v.editedBy?.ten} · ${v.editedAt?fmtDate(new Date(v.editedAt.seconds*1000)):''}</div>`).join('')}</div>`:''} 
+      ${p.versions?.length?`<div class="ver-toggle" onclick="toggleVer('${p.id}')">${p.versions.length} lần sửa</div><div id="ver-${p.id}" style="display:none" class="ver-list">${p.versions.map((v,i)=>`<div class="ver-row">Lần ${i+1} · ${v.editedBy?.ten} · ${v.editedAt?fmtDate(new Date(v.editedAt.seconds*1000)):''}</div>`).join('')}</div>`:''} 
     </div>`;
   }).join('');
 }
@@ -2405,9 +2507,9 @@ function renderSummary(mod, docs, type) {
 
   content.innerHTML = `
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
-      <span>📋 <b>${totalPhieu}</b> phiếu</span>
-      <span>📦 <b>${totalSL}</b> sản phẩm</span>
-      ${totalGia ? `<span>💰 <b>${fmt(totalGia)}₫</b></span>` : ''}
+      <span><b>${totalPhieu}</b> phiếu</span>
+      <span><b>${totalSL}</b> sản phẩm</span>
+      ${totalGia ? `<span><b>${fmt(totalGia)}₫</b></span>` : ''}
     </div>
     <div style="font-size:12px;color:var(--text2)">Top mặt hàng: ${top5.map(s => `${escHtml(s.ten)} (${s.sl})`).join(' · ')}</div>
   `;
@@ -2575,7 +2677,7 @@ async function loadAdminPanel() {
     <div class="admin-block">
       <h3>Check-in cửa hàng</h3>
       <p class="info-note">Xem & in mã QR để nhân viên quét check-in tại quầy.</p>
-      <button class="btn-g" onclick="showQRAdmin()">📱 Xem & In mã QR Check-in</button>
+      <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
     </div>
     <div class="admin-block" style="margin-top:1rem">
       <h3>Tài khoản nhân viên</h3>
@@ -2586,7 +2688,7 @@ async function loadAdminPanel() {
         </div>`).join('')}</div>
       <div class="admin-form">
         <h4>Thêm tài khoản mới</h4>
-        <p class="info-note">⚠️ Tạo user trong Firebase Auth trước, copy UID rồi điền vào đây.</p>
+        <p class="info-note">Tạo user trong Firebase Auth trước, copy UID rồi điền vào đây.</p>
         <input id="new-uid" placeholder="UID từ Firebase Auth">
         <input id="new-ten" placeholder="Tên nhân viên">
         <input id="new-email" placeholder="Email">
@@ -2634,7 +2736,7 @@ window.importSKU = async function(input) {
     await addDoc(collection(db,'skus'), { ten:cols[tenIdx], sku:skuIdx>=0?cols[skuIdx]:'', gia:giaIdx>=0?parseFloat(cols[giaIdx].replace(/[^0-9.]/g,''))||0:0 });
     count++;
   }
-  document.getElementById('import-result').textContent = `✓ Đã import ${count} SKU`;
+  document.getElementById('import-result').textContent = `Đã import ${count} SKU`;
   await loadSKUs();
   showToast(`Import xong ${count} SKU`);
 };
@@ -2650,7 +2752,7 @@ window.loadDeletedList = async function() {
     return `<div class="phieu-card red" style="opacity:0.7">
       <div class="phieu-top"><span class="phieu-date">${fmtDate(date)}</span>
       <button class="btn-xs" onclick="restoreXuat('${p.id}')">Khôi phục</button></div>
-      <div class="phieu-nv">👤 ${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
     </div>`;
   }).join('');
@@ -2948,6 +3050,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 /* CAMERA */
 #camera-modal{display:none;position:fixed;inset:0;background:#000;z-index:1000;flex-direction:column;align-items:center;justify-content:center}
 #checkout-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2200;align-items:center;justify-content:center;padding:1rem}
+#xemlich-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2200;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto}
 #camera-video{width:100%;max-width:480px}
 #camera-canvas{display:none}
 .cam-actions{display:flex;gap:16px;margin-top:16px}
@@ -3004,7 +3107,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v48</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v50</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3026,8 +3129,11 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
     <!-- Bước 1: Bấm nút để bắt đầu -->
     <div id="step-bat-dau">
       <p style="font-size:13px;color:var(--text2);margin-bottom:18px">Bấm nút bên dưới khi bạn đã ở cửa hàng, sẵn sàng quét mã QR để check-in.</p>
-      <button onclick="batDauQuetQR()" style="padding:16px;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;width:100%">
-        📷 Vào ca
+      <button onclick="batDauQuetQR()" style="padding:16px;background:var(--green);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;width:100%;margin-bottom:10px">
+        Vào ca
+      </button>
+      <button onclick="xemLichTruocKhiVaoCa()" style="padding:12px;background:none;color:#0891B2;border:1.5px solid #0891B2;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;width:100%">
+        Xem lịch làm việc
       </button>
     </div>
 
@@ -3055,14 +3161,15 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v48</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v50</span></div>
     <div class="sidebar-section">Module</div>
-    <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
-    <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
-    <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="color:#0369A1">🐟 Báo cá mới về</button>
-    <button class="mod-btn" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')" style="color:#7C3AED">📋 Checklist</button>
-    <button class="mod-btn" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')" style="color:#0891B2">📅 Ca làm việc</button>
-    <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">⚙️ Admin</button>
+    <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
+    <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
+    <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="color:#0369A1">Báo cá mới về</button>
+    <button class="mod-btn" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')" style="color:#7C3AED">Checklist</button>
+    <button class="mod-btn" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')" style="color:#0891B2">Ca làm việc</button>
+    <button class="mod-btn" id="sidebar-chamcong" onclick="switchModule('chamcong');updateSidebar('chamcong')" style="display:none;color:#B45309">Chấm công</button>
+    <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
     <div class="sidebar-user">
       <div class="uname" id="sidebar-uname"></div>
       <div class="urole" id="sidebar-urole"></div>
@@ -3074,7 +3181,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v48</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v50</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3083,19 +3190,20 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
     <!-- Module tabs (mobile) -->
     <div class="mod-bar">
-      <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">📦 Nhập hàng</button>
-      <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">🔴 Xuất hủy</button>
-      <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="background:var(--bg);color:#0369A1">🐟 Báo cá</button>
-      <button class="mod-btn" id="mod-checklist" onclick="switchModule('checklist')" style="background:var(--bg);color:#7C3AED">📋 Checklist</button>
-      <button class="mod-btn" id="mod-lichca" onclick="switchModule('lichca')" style="background:var(--bg);color:#0891B2">📅 Ca làm việc</button>
-      <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">⚙️</button>
+      <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Nhập hàng</button>
+      <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
+      <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="background:var(--bg);color:#0369A1">Báo cá</button>
+      <button class="mod-btn" id="mod-checklist" onclick="switchModule('checklist')" style="background:var(--bg);color:#7C3AED">Checklist</button>
+      <button class="mod-btn" id="mod-lichca" onclick="switchModule('lichca')" style="background:var(--bg);color:#0891B2">Ca làm việc</button>
+      <button class="mod-btn" id="mod-chamcong" onclick="switchModule('chamcong')" style="display:none;background:var(--bg);color:#B45309">Chấm công</button>
+      <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none"></button>
     </div>
 
     <!-- Sub tabs -->
     <div class="sub-tab-bar" id="sub-tab-bar" data-mod="nhap">
-      <button class="stab" id="stab-tao" onclick="switchSub('tao')">➕ Tạo phiếu</button>
-      <button class="stab" id="stab-ds" onclick="switchSub('ds')">📋 Danh sách</button>
-      <button class="stab" id="stab-thongke" onclick="switchSub('thongke')">📊 Thống kê</button>
+      <button class="stab" id="stab-tao" onclick="switchSub('tao')">Tạo phiếu</button>
+      <button class="stab" id="stab-ds" onclick="switchSub('ds')">Danh sách</button>
+      <button class="stab" id="stab-thongke" onclick="switchSub('thongke')">Thống kê</button>
     </div>
 
     <!-- PANELS -->
@@ -3136,10 +3244,10 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
         <div class="card">
           <div class="card-title">Ảnh minh chứng</div>
           <div class="photo-grid" id="nhap-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
-          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('nhap')">📷 Chụp ảnh</button>
+          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('nhap')">Chụp ảnh</button>
         </div>
 
-        <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">💾 Lưu phiếu nhập</button>
+        <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">Lưu phiếu nhập</button>
       </div>
 
       <!-- NHẬP / DANH SÁCH -->
@@ -3163,7 +3271,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
             <button class="btn-clear" onclick="clearNhapFilter()">Xóa lọc</button>
           </div>
           <div id="nhap-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            <button class="btn-g" onclick="exportNhapCSV()" style="margin-top:0">⬇️ Xuất CSV theo bộ lọc</button>
+            <button class="btn-g" onclick="exportNhapCSV()" style="margin-top:0">Xuất CSV theo bộ lọc</button>
           </div>
         </div>
         <div id="nhap-summary" style="display:none;background:var(--green-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
@@ -3213,10 +3321,10 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
         <div class="card">
           <div class="card-title">Ảnh minh chứng</div>
           <div class="photo-grid" id="xuat-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
-          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('xuat')">📷 Chụp ảnh</button>
+          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('xuat')">Chụp ảnh</button>
         </div>
 
-        <button class="btn-r" id="btn-xuat-submit" onclick="submitXuat()">💾 Lưu phiếu xuất hủy</button>
+        <button class="btn-r" id="btn-xuat-submit" onclick="submitXuat()">Lưu phiếu xuất hủy</button>
       </div>
 
       <!-- XUẤT / DANH SÁCH -->
@@ -3240,7 +3348,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
             <button class="btn-clear" onclick="clearXuatFilter()">Xóa lọc</button>
           </div>
           <div id="xuat-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            <button class="btn-r" onclick="exportXuatCSV()" style="margin-top:0">⬇️ Xuất CSV theo bộ lọc</button>
+            <button class="btn-r" onclick="exportXuatCSV()" style="margin-top:0">Xuất CSV theo bộ lọc</button>
           </div>
         </div>
         <div id="xuat-summary" style="display:none;background:var(--red-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
@@ -3269,7 +3377,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
               <div class="sku-drop" id="baoca-sku-drop"></div>
             </div>
             <button class="btn-blue" id="btn-baoca-record" onclick="startBaocaRecord()" style="margin-top:4px">
-              🎥 Quay video đếm cá
+              Quay video đếm cá
             </button>
           </div>
 
@@ -3300,7 +3408,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
           <div id="baoca-rows-list"></div>
         </div>
 
-        <button class="btn-blue" id="btn-baoca-submit" onclick="submitBaoCa()" style="display:none">💾 Lưu phiếu báo cá</button>
+        <button class="btn-blue" id="btn-baoca-submit" onclick="submitBaoCa()" style="display:none">Lưu phiếu báo cá</button>
         <input type="hidden" id="baoca-ten-lo">
       </div>
 
@@ -3324,7 +3432,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
             <button class="btn-clear" onclick="clearBaocaFilter()">Xóa lọc</button>
           </div>
           <div id="baoca-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            <button class="btn-blue" onclick="exportBaocaCSV()" style="margin-top:0">⬇️ Xuất CSV theo bộ lọc</button>
+            <button class="btn-blue" onclick="exportBaocaCSV()" style="margin-top:0">Xuất CSV theo bộ lọc</button>
           </div>
         </div>
         <div id="baoca-summary" style="display:none;background:var(--blue-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
@@ -3350,7 +3458,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
             <button onclick="thoatCa()" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">Thoát ca</button>
           </div>
           <div id="cl-nhac-tat" style="margin-top:10px;padding:8px 10px;background:#FEF3C7;border-radius:6px;font-size:12px;color:#B45309;font-weight:500;display:none">
-            ⚠️ TẮT ĐÈN, QUẠT, MÁY LẠNH TRƯỚC KHI VỀ !!!
+            TẮT ĐÈN, QUẠT, MÁY LẠNH TRƯỚC KHI VỀ !!!
           </div>
         </div>
         <div id="checklist-list"></div>
@@ -3361,6 +3469,11 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
         <div id="lichca-content"><div class="loading">Đang tải...</div></div>
       </div>
 
+      <!-- CHẤM CÔNG (Admin/Quản lý) -->
+      <div class="panel" id="panel-chamcong-main">
+        <div id="chamcong-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
       <!-- ADMIN / QR CHECKIN -->
       <div class="panel" id="panel-admin-qr" style="display:none">
         <div style="background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;text-align:center">
@@ -3369,7 +3482,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
             <div class="loading">Đang tạo QR...</div>
           </div>
           <p style="font-size:12px;color:var(--text2);margin-bottom:12px">In mã QR này dán tại quầy thu ngân</p>
-          <button onclick="printQR()" class="btn-g" style="margin-bottom:8px">🖨️ In mã QR</button>
+          <button onclick="printQR()" class="btn-g" style="margin-bottom:8px">In mã QR</button>
           <button onclick="switchAdminTab('main')" class="btn-outline">← Quay lại</button>
         </div>
       </div>
@@ -3407,7 +3520,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="exit-confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;padding:1rem">
   <div style="background:#fff;border-radius:16px;padding:24px;width:100%;max-width:320px;text-align:center;position:relative">
     <button onclick="cancelExit()" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:20px;color:#999;cursor:pointer;line-height:1">✕</button>
-    <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+    <div style="font-size:32px;margin-bottom:12px"></div>
     <h3 style="font-size:16px;font-weight:600;margin-bottom:8px">Bạn có chắc muốn thoát?</h3>
     <p style="font-size:14px;color:#5A6070;margin-bottom:20px">Phiếu chưa hoàn thành sẽ bị mất khi thoát app.</p>
     <div style="display:flex;gap:10px">
@@ -3431,6 +3544,17 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
     </div>
     <div id="checkout-status" style="font-size:13px;color:var(--text2);margin-bottom:12px">Đang tìm mã QR...</div>
     <button onclick="huyCheckout()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--text2)">← Hủy</button>
+  </div>
+</div>
+
+<!-- XEM LỊCH LÀM VIỆC (trước khi check-in) -->
+<div id="xemlich-modal">
+  <div style="background:var(--surface);border-radius:var(--radius);padding:16px;width:100%;max-width:400px;margin-top:2rem">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="font-size:15px;font-weight:600">Lịch làm việc</h3>
+      <button onclick="dongXemLich()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1">✕</button>
+    </div>
+    <div id="xemlich-content"><div class="loading">Đang tải...</div></div>
   </div>
 </div>
 
