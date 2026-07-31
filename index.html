@@ -15,7 +15,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, orderBy, where, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -185,6 +185,15 @@ let checkinStream = null;
 let qrScanInterval = null;
 let checkinVideoStream = null;
 let checkinTsInterval = null;
+let currentShiftDocId = null;
+let checkoutStream = null;
+let checkoutScanInterval = null;
+
+// Giờ chuẩn theo ca (để tính trễ giờ / thiếu giờ)
+const CA_GIO = {
+  sang:  { batDau: 8*60+30,  ketThuc: 16*60+30 },
+  chieu: { batDau: 13*60+30, ketThuc: 21*60+30 }
+};
 
 // ===== VÀO CA =====
 let currentCa = null; // 'sang' | 'chieu'
@@ -314,7 +323,7 @@ async function chupAnhQRVaCheckin() {
 
   // 3. Lưu checkin
   statusEl.textContent = '⏳ Đang lưu...';
-  await addDoc(collection(db, 'ca_lam_viec'), {
+  const shiftRef = await addDoc(collection(db, 'ca_lam_viec'), {
     ca: checkinCa,
     nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten },
     ngay: now.toISOString().slice(0,10),
@@ -323,6 +332,7 @@ async function chupAnhQRVaCheckin() {
     gpsOk, gpsDist: gpsInfo, isMock,
     photo: photoData
   });
+  currentShiftDocId = shiftRef.id;
 
   if (!gpsOk) {
     showToast(`⚠️ Check-in thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
@@ -482,11 +492,121 @@ window.vaoCa = async function(ca) {
 };
 
 window.thoatCa = function() {
-  if (!confirm('Thoát ca? Checklist sẽ được lưu lại.')) return;
+  if (!confirm('Thoát ca? Cần quét QR tại cửa hàng để xác nhận check-out.')) return;
+  batDauCheckout();
+};
+
+// === CHECK-OUT QUA QR ===
+window.batDauCheckout = async function() {
+  const modal = document.getElementById('checkout-modal');
+  const statusEl = document.getElementById('checkout-status');
+  modal.style.display = 'flex';
+  statusEl.textContent = 'Đang tìm mã QR...';
+  try {
+    checkoutStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const video = document.getElementById('checkout-video');
+    video.srcObject = checkoutStream;
+    await video.play();
+
+    const canvas = document.getElementById('checkout-canvas');
+    const ctx = canvas.getContext('2d');
+
+    checkoutScanInterval = setInterval(() => {
+      if (video.readyState !== video.HAVE_ENOUGH_DATA) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert'
+      });
+      if (code) {
+        if (code.data === CHECKIN_QR_SECRET) {
+          statusEl.textContent = '✓ QR hợp lệ! Đang xử lý...';
+          clearInterval(checkoutScanInterval);
+          setTimeout(() => xuLyCheckout(), 300);
+        } else {
+          statusEl.textContent = '✗ Mã QR không hợp lệ';
+        }
+      }
+    }, 200);
+  } catch(e) {
+    statusEl.textContent = 'Không mở được camera: ' + e.message;
+  }
+};
+
+window.huyCheckout = function() {
+  clearInterval(checkoutScanInterval);
+  if (checkoutStream) { checkoutStream.getTracks().forEach(t => t.stop()); checkoutStream = null; }
+  document.getElementById('checkout-modal').style.display = 'none';
+};
+
+async function xuLyCheckout() {
+  const statusEl = document.getElementById('checkout-status');
+  statusEl.textContent = '⏳ Đang xác minh vị trí...';
+
+  let gpsOk = false, gpsInfo = '', isMock = false;
+  try {
+    const pos = await new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(res, rej, { timeout: 10000, enableHighAccuracy: true })
+    );
+    const dist = getDistance(pos.coords.latitude, pos.coords.longitude, STORE_LAT, STORE_LNG);
+    gpsOk = dist <= GPS_RADIUS;
+    gpsInfo = `${dist.toFixed(0)}m`;
+    if (pos.coords.accuracy && pos.coords.accuracy === 0) isMock = true;
+  } catch(e) {
+    gpsInfo = 'GPS không xác định';
+  }
+
+  if (isMock) {
+    statusEl.textContent = '⚠️ Phát hiện GPS giả — không thể checkout';
+    showToast('Phát hiện GPS giả!', true);
+    return;
+  }
+
+  const video = document.getElementById('checkout-video');
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  const now = new Date();
+  const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+  const label = `${currentUserData?.ten||''} · Check-out · ${ts} · GPS:${gpsInfo}`;
+  const fontSize = Math.max(13, Math.round(canvas.width * 0.030));
+  ctx.font = `bold ${fontSize}px monospace`;
+  const tw = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(6, canvas.height - fontSize - 14, tw + 14, fontSize + 10);
+  ctx.fillStyle = gpsOk ? '#FFE566' : '#FF6B6B';
+  ctx.fillText(label, 13, canvas.height - 6);
+  const photoData = canvas.toDataURL('image/jpeg', 0.75);
+
+  huyCheckout();
+
+  statusEl.textContent = '⏳ Đang lưu...';
+  if (currentShiftDocId) {
+    await updateDoc(doc(db, 'ca_lam_viec', currentShiftDocId), {
+      thoatLuc: serverTimestamp(),
+      thoatGpsOk: gpsOk, thoatGpsDist: gpsInfo, thoatIsMock: isMock,
+      thoatPhoto: photoData
+    });
+  } else {
+    showToast('⚠️ Không tìm thấy phiếu ca để checkout, đã lưu thoát ca cục bộ', true);
+  }
+
+  if (!gpsOk) {
+    showToast(`⚠️ Check-out thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+  } else {
+    showToast('✓ Check-out thành công!');
+  }
+
   currentCa = null;
   checklistState = {};
+  currentShiftDocId = null;
   showVaoCa();
-};
+}
 
 async function loadBenhDanhSach() {
   const snap = await getDocs(query(collection(db,'ca_benh'), where('hetBenh','==',false)));
@@ -2231,11 +2351,67 @@ async function loadAdminPanel() {
       <div id="import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
     </div>
     <div class="admin-block" style="margin-top:1rem">
+      <h3>Lịch sử chấm công</h3>
+      <button class="btn-outline" onclick="loadAttendanceHistory()">Xem lịch sử chấm công</button>
+      <div id="attendance-list" style="margin-top:12px"></div>
+    </div>
+    <div class="admin-block" style="margin-top:1rem">
       <h3>Phiếu đã xóa</h3>
       <button class="btn-outline" onclick="loadDeletedList()">Xem phiếu đã xóa</button>
       <div id="deleted-list" style="margin-top:12px"></div>
     </div>`;
 }
+
+// ===== LỊCH SỬ CHẤM CÔNG =====
+window.loadAttendanceHistory = async function() {
+  const el = document.getElementById('attendance-list');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(query(collection(db,'ca_lam_viec'), orderBy('ngay','desc'), limit(100)));
+  const rows = snap.docs.map(d => ({id:d.id, ...d.data()}));
+
+  if (!rows.length) { el.innerHTML = '<p class="info-note">Chưa có dữ liệu chấm công.</p>'; return; }
+
+  const html = rows.map(r => {
+    const caInfo = CA_GIO[r.ca] || CA_GIO.sang;
+    const caLabel = r.ca === 'sang' ? 'Ca sáng' : 'Ca chiều';
+    const vaoDate = r.vaoLuc?.seconds ? new Date(r.vaoLuc.seconds*1000) : null;
+    const raDate = r.thoatLuc?.seconds ? new Date(r.thoatLuc.seconds*1000) : null;
+
+    let canhBao = [];
+    if (vaoDate) {
+      const vaoPhut = vaoDate.getHours()*60 + vaoDate.getMinutes();
+      const treSo = vaoPhut - caInfo.batDau;
+      if (treSo > 5) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Trễ ${treSo} phút</span>`);
+    }
+    if (raDate) {
+      const raPhut = raDate.getHours()*60 + raDate.getMinutes();
+      const somSo = caInfo.ketThuc - raPhut;
+      if (somSo > 5) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Về sớm ${somSo} phút</span>`);
+    } else {
+      canhBao.push(`<span class="rbadge" style="background:#FEF3C7;color:#B45309">Chưa check-out</span>`);
+    }
+    if (r.gpsOk === false) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS vào ngoài phạm vi</span>`);
+    if (r.thoatGpsOk === false) canhBao.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS ra ngoài phạm vi</span>`);
+
+    const tongGio = (vaoDate && raDate) ? ((raDate - vaoDate)/3600000).toFixed(1)+'h' : '—';
+
+    return `
+      <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:4px;padding:10px 0">
+        <div style="display:flex;justify-content:space-between;width:100%">
+          <span class="uname">${escHtml(r.nguoiTao?.ten||'')} · ${caLabel}</span>
+          <span class="uemail">${r.ngay||''}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text2)">
+          Vào: ${vaoDate ? vaoDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
+          · Ra: ${raDate ? raDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
+          · Tổng: ${tongGio}
+        </div>
+        ${canhBao.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">${canhBao.join('')}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="user-list">${html}</div>`;
+};
 
 window.addUser = async function() {
   const uid=document.getElementById('new-uid').value.trim();
@@ -2576,6 +2752,7 @@ input:focus,select:focus{border-color:var(--green)}
 
 /* CAMERA */
 #camera-modal{display:none;position:fixed;inset:0;background:#000;z-index:1000;flex-direction:column;align-items:center;justify-content:center}
+#checkout-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2200;align-items:center;justify-content:center;padding:1rem}
 #camera-video{width:100%;max-width:480px}
 #camera-canvas{display:none}
 .cam-actions{display:flex;gap:16px;margin-top:16px}
@@ -2632,7 +2809,7 @@ input:focus,select:focus{border-color:var(--green)}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v38</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v39</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -2689,7 +2866,7 @@ input:focus,select:focus{border-color:var(--green)}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v38</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v39</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">📦 Nhập hàng</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">🔴 Xuất hủy</button>
@@ -2707,7 +2884,7 @@ input:focus,select:focus{border-color:var(--green)}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v38</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v39</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3041,6 +3218,23 @@ input:focus,select:focus{border-color:var(--green)}
       <button onclick="confirmExit()" style="flex:1;padding:11px;background:#C0392B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">XÁC NHẬN THOÁT</button>
       <button onclick="cancelExit()" style="flex:1;padding:11px;background:#f5f5f5;color:#333;border:1px solid #ddd;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">HỦY</button>
     </div>
+  </div>
+</div>
+
+<!-- CHECKOUT QR -->
+<div id="checkout-modal">
+  <div style="background:var(--surface);border-radius:var(--radius);padding:16px;width:100%;max-width:340px;text-align:center">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:8px">Check-out ca làm việc</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:10px">Hướng camera vào mã QR tại cửa hàng</p>
+    <div style="position:relative;border-radius:12px;overflow:hidden;margin-bottom:12px;background:#000">
+      <video id="checkout-video" autoplay playsinline muted style="width:100%;height:220px;object-fit:cover"></video>
+      <canvas id="checkout-canvas" style="display:none"></canvas>
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none">
+        <div style="width:160px;height:160px;border:2px solid #fff;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,0.4)"></div>
+      </div>
+    </div>
+    <div id="checkout-status" style="font-size:13px;color:var(--text2);margin-bottom:12px">Đang tìm mã QR...</div>
+    <button onclick="huyCheckout()" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer;color:var(--text2)">← Hủy</button>
   </div>
 </div>
 
