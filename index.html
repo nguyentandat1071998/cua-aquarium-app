@@ -1246,10 +1246,10 @@ function renderTaskAction(id, task, state) {
 
   if (isQS) {
     const coCaBenh = benhDanhSach.length > 0;
-    const daCapNhatHet = !coCaBenh || benhDanhSach.every(b => state.benhDaCapNhat?.[b.id]);
+    const daCapNhatHet = !coCaBenh || benhDanhSach.every(b => state.benhChon?.[b.id]);
     let html = `<div class="cl-btn-group">
       ${!coCaBenh ? `<button class="cl-btn ${state.ketqua==='ok'?'selected-ok':''}" onclick="clQuanSat('${id}','ok')">Bình thường</button>` : ''}
-      <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">Cá bệnh</button>
+      <button class="cl-btn ${state.ketqua==='benh'?'selected-benh':''}" onclick="clQuanSat('${id}','benh')">${coCaBenh ? 'Thêm cá bệnh' : 'Cá bệnh'}</button>
     </div>`;
     if (state.ketqua === 'benh') html += renderBenhForm(id, state, coCaBenh);
     if (!coCaBenh && state.ketqua === 'ok') {
@@ -1280,7 +1280,6 @@ function renderTaskAction(id, task, state) {
 function renderBenhForm(id, state, coCaBenh) {
   const benhList = state.benhList || [];
   return `<div class="cl-benh-form">
-    <div style="font-size:12px;font-weight:600;color:var(--red);margin-bottom:8px">Danh sách cá bệnh:</div>
     ${benhList.map((b, bi) => `
       <div class="cl-benh-row">
         <div class="sku-wrap" style="margin-bottom:6px">
@@ -1295,32 +1294,37 @@ function renderBenhForm(id, state, coCaBenh) {
           onchange="clUpdateBenh('${id}',${bi},'tinhtrang',this.value)">
         <button class="del-btn" style="margin-top:4px" onclick="clRemoveBenh('${id}',${bi})">✕ Xóa dòng</button>
       </div>`).join('')}
-    <button class="cl-btn" style="width:100%;margin-top:4px" onclick="clAddBenh('${id}')">+ Thêm cá bệnh</button>
+    <button type="button" style="background:none;border:none;color:var(--green);font-size:13px;font-weight:600;cursor:pointer;padding:6px 0;text-align:left;display:block" onclick="clAddBenh('${id}')">+ Thêm dòng</button>
     ${(!coCaBenh && benhList.length > 0) ? `<button class="btn-blue" style="margin-top:8px" onclick="clHoanThanhQuanSat('${id}')">Hoàn thành</button>` : ''}
   </div>`;
 }
 
 function renderBenhDanhSach(taskId) {
   if (!benhDanhSach.length) return '';
+  const chon = checklistState[taskId]?.benhChon || {};
   return `<div style="background:#FDF0EE;border-radius:var(--radius);padding:13px;margin-bottom:10px;border-left:3px solid var(--red)">
     <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:10px">Danh sách cá/tép đang bệnh (${benhDanhSach.length})</div>
-    ${benhDanhSach.map(b => `
+    ${benhDanhSach.map(b => {
+      const daChon = chon[b.id];
+      const lichSuMoiNhat = (b.lichSu||[]).slice(-3).reverse();
+      return `
       <div style="background:#fff;border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
         <div style="font-weight:600;font-size:13px">${escHtml(b.ten)}</div>
         <div style="font-size:12px;color:var(--text2);margin:4px 0">Tình trạng: ${escHtml(b.tinhtrang||'')}</div>
         <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Phát hiện: ${b.phatHienLuc||''}</div>
         <div class="cl-tick-group">
-          <button class="cl-tick ok" onclick="clCapNhatBenh('${taskId}','${b.id}','on_hon')">Ổn hơn</button>
-          <button class="cl-tick nang" onclick="clCapNhatBenh('${taskId}','${b.id}','nang_hon')">Nặng hơn</button>
-          <button class="cl-tick vay" onclick="clCapNhatBenh('${taskId}','${b.id}','vay_vay')">↔ Vẫn vậy</button>
-          <button class="cl-tick het" onclick="clCapNhatBenh('${taskId}','${b.id}','het_benh')">Hết bệnh</button>
+          <button class="cl-tick ok ${daChon==='on_hon'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','on_hon')">Ổn hơn</button>
+          <button class="cl-tick nang ${daChon==='nang_hon'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','nang_hon')">Nặng hơn</button>
+          <button class="cl-tick vay ${daChon==='vay_vay'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','vay_vay')">↔ Vẫn vậy</button>
+          <button class="cl-tick het ${daChon==='het_benh'?'chosen':''}" onclick="clCapNhatBenh('${taskId}','${b.id}','het_benh')">Hết bệnh</button>
         </div>
-        ${b.showXuLy ? `<input type="text" placeholder="Xử lý: đánh thuốc lúc mấy giờ..." style="margin-top:6px"
-          onchange="clSaveXuLy('${b.id}',this.value)">` : ''}
-        ${b.lichSu?.length ? `<div style="font-size:11px;color:var(--text2);margin-top:6px">
-          Lịch sử: ${b.lichSu.slice(-3).map(h=>`${h.trangThai} (${h.nv} ${h.gio})`).join(' → ')}
+        ${(daChon && daChon!=='het_benh') ? `<input type="text" placeholder="Xử lý: đánh thuốc lúc mấy giờ..." style="margin-top:6px"
+          onchange="clStageXuLy('${taskId}','${b.id}',this.value)">` : ''}
+        ${lichSuMoiNhat.length ? `<div style="font-size:11px;color:var(--text2);margin-top:6px">
+          Lịch sử: ${lichSuMoiNhat.map(h=>`${h.trangThai} (${h.nv} ${h.gio})`).join(' → ')}
         </div>` : ''}
-      </div>`).join('')}
+      </div>`;
+    }).join('')}
   </div>`;
 }
 
@@ -1382,14 +1386,18 @@ window.clUpdateBenh = function(id, idx, field, val) {
 window.clHoanThanhQuanSat = async function(id) {
   const state = checklistState[id] || {};
   const coCaBenh = benhDanhSach.length > 0;
+  const benhChon = state.benhChon || {};
+  const benhXuLy = state.benhXuLy || {};
 
-  // Nếu đang có cá/tép bệnh sẵn, bắt buộc cập nhật tình trạng hết mới cho hoàn thành
+  // Nếu đang có cá/tép bệnh sẵn, bắt buộc chọn tình trạng cho tất cả mới cho hoàn thành
   if (coCaBenh) {
-    const daCapNhatHet = benhDanhSach.every(b => state.benhDaCapNhat?.[b.id]);
-    if (!daCapNhatHet) {
-      showToast('Vui lòng cập nhật tình trạng cho tất cả cá/tép đang bệnh', true);
+    const daChonHet = benhDanhSach.every(b => benhChon[b.id]);
+    if (!daChonHet) {
+      showToast('Vui lòng chọn tình trạng cho tất cả cá/tép đang bệnh', true);
       return;
     }
+    const soHetBenh = benhDanhSach.filter(b => benhChon[b.id] === 'het_benh').length;
+    if (soHetBenh > 0 && !confirm(`Xác nhận ${soHetBenh} con đã hết bệnh?`)) return;
   }
 
   // Nếu có nhập cá bệnh mới thì lưu lại
@@ -1407,12 +1415,29 @@ window.clHoanThanhQuanSat = async function(id) {
           ca: currentCa, ngay: now.toISOString().slice(0,10)
         });
       }
-      await loadBenhDanhSach();
     } else if (!coCaBenh) {
       showToast('Vui lòng nhập tên cá bệnh', true);
       return;
     }
   }
+
+  // Lưu tổng thể tất cả cập nhật tình trạng cá bệnh đã chọn (chỉ tới lúc này mới ghi Firestore)
+  if (coCaBenh) {
+    for (const b of benhDanhSach) {
+      const trangThai = benhChon[b.id];
+      if (!trangThai) continue;
+      if (trangThai === 'het_benh') {
+        await updateDoc(doc(db,'ca_benh',b.id), { hetBenh: true });
+      } else {
+        const tenTT = {on_hon:'Ổn hơn', nang_hon:'Nặng hơn', vay_vay:'Vẫn vậy'}[trangThai];
+        const lichSuEntry = { trangThai: tenTT, nv: currentUserData.ten, gio: fmtDate(new Date()), xuly: benhXuLy[b.id] || '' };
+        const lichSuMoi = [...(b.lichSu||[]), lichSuEntry];
+        await updateDoc(doc(db,'ca_benh',b.id), { lichSu: lichSuMoi });
+      }
+    }
+  }
+
+  if (coCaBenh || state.ketqua === 'benh') await loadBenhDanhSach();
 
   checklistState[id] = { ...(checklistState[id]||{}), done: true, doneAt: fmtDate(new Date()) };
   expandedTask = null;
@@ -1432,37 +1457,18 @@ window.clHoanThanh = async function(id) {
   renderChecklist();
 };
 
-window.clCapNhatBenh = async function(taskId, benhId, trangThai) {
-  const b = benhDanhSach.find(x => x.id === benhId);
-  if (!b) return;
-  b.showXuLy = trangThai !== 'het_benh';
-
-  if (trangThai === 'het_benh') {
-    if (!confirm(`Xác nhận ${b.ten} đã hết bệnh?`)) return;
-    await updateDoc(doc(db,'ca_benh',benhId), { hetBenh: true });
-    showToast(`${b.ten} đã hết bệnh `);
-  } else {
-    const tenTT = {on_hon:'Ổn hơn', nang_hon:'Nặng hơn', vay_vay:'Vẫn vậy'}[trangThai];
-    const lichSuEntry = { trangThai: tenTT, nv: currentUserData.ten, gio: fmtDate(new Date()), xuly: '' };
-    b.lichSu = [...(b.lichSu||[]), lichSuEntry];
-    await updateDoc(doc(db,'ca_benh',benhId), { lichSu: b.lichSu });
-  }
-
-  if (taskId && taskId !== 'null' && taskId !== 'undefined') {
-    if (!checklistState[taskId]) checklistState[taskId] = {};
-    if (!checklistState[taskId].benhDaCapNhat) checklistState[taskId].benhDaCapNhat = {};
-    checklistState[taskId].benhDaCapNhat[benhId] = true;
-  }
-
-  await loadBenhDanhSach();
+window.clCapNhatBenh = function(taskId, benhId, trangThai) {
+  if (!taskId || taskId === 'null' || taskId === 'undefined') return;
+  if (!checklistState[taskId]) checklistState[taskId] = {};
+  if (!checklistState[taskId].benhChon) checklistState[taskId].benhChon = {};
+  checklistState[taskId].benhChon[benhId] = trangThai;
   renderChecklist();
 };
 
-window.clSaveXuLy = async function(benhId, xuly) {
-  const b = benhDanhSach.find(x => x.id === benhId);
-  if (!b || !b.lichSu?.length) return;
-  b.lichSu[b.lichSu.length-1].xuly = xuly;
-  await updateDoc(doc(db,'ca_benh',benhId), { lichSu: b.lichSu });
+window.clStageXuLy = function(taskId, benhId, xuly) {
+  if (!checklistState[taskId]) checklistState[taskId] = {};
+  if (!checklistState[taskId].benhXuLy) checklistState[taskId].benhXuLy = {};
+  checklistState[taskId].benhXuLy[benhId] = xuly;
 };
 
 // ===== QR ADMIN =====
@@ -3059,11 +3065,16 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 .cl-benh-form{margin-top:10px;padding:10px;background:#FDF0EE;border-radius:8px}
 .cl-benh-row{background:#fff;border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)}
 .cl-tick-group{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
-.cl-tick{padding:5px 10px;border:1.5px solid var(--border);border-radius:20px;background:#fff;font-size:11px;cursor:pointer;font-weight:500}
+.cl-tick{padding:5px 10px;border:1.5px solid var(--border);border-radius:20px;background:#fff;font-size:11px;cursor:pointer;font-weight:500;transition:all .15s}
 .cl-tick.ok{background:#E6F5EC;border-color:#1B7A3E;color:#1B7A3E}
 .cl-tick.nang{background:var(--red-bg);border-color:var(--red);color:var(--red)}
 .cl-tick.vay{background:#FEF3C7;border-color:#B45309;color:#B45309}
 .cl-tick.het{background:#EDE9FE;border-color:#7C3AED;color:#7C3AED}
+.cl-tick.chosen{padding:7px 13px;font-size:12px;font-weight:700;transform:scale(1.05)}
+.cl-tick.ok.chosen{background:#1B7A3E;color:#fff}
+.cl-tick.nang.chosen{background:var(--red);color:#fff}
+.cl-tick.vay.chosen{background:#B45309;color:#fff}
+.cl-tick.het.chosen{background:#7C3AED;color:#fff}
 .cl-done-badge{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:#1B7A3E;font-weight:500}
 
 /* BAOCA CAMERA FULLSCREEN */
@@ -3170,7 +3181,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v55</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v57</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3224,7 +3235,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v55</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v57</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3244,7 +3255,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v55</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v57</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
