@@ -994,6 +994,11 @@ async function loadBenhDanhSach() {
 }
 
 // ===== AUTH =====
+// Tự làm mới checklist mỗi phút để khóa/mở task đúng giờ và cập nhật đồng hồ đếm ngược
+setInterval(() => {
+  if (activeModule === 'checklist' && currentCa) renderChecklist();
+}, 60000);
+
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     currentUser = user;
@@ -1237,11 +1242,56 @@ document.addEventListener('click', e => {
 // ===== CHECKLIST =====
 let expandedTask = null;
 
+// Đổi "8h30" -> số phút trong ngày (510)
+function parseGioPhut(gio) {
+  const m = String(gio).match(/(\d+)h(\d+)?/);
+  return parseInt(m[1]) * 60 + (parseInt(m[2]) || 0);
+}
+
+// Tính khung giờ được phép làm 1 task: {moTuPhut, dongPhut}
+function getTaskTimeWindow(task) {
+  const isQS = TASK_QUANSAT.includes(task.loai);
+  const g = parseGioPhut(task.gio);
+
+  if (task.gio === '14h00') return { moTuPhut: -Infinity, dongPhut: Infinity }; // luôn mở
+
+  let moTuPhut;
+  if (isQS) moTuPhut = g - 30; // task quan sát mở sớm 30p trước giờ
+  else if (task.gio === '8h50') moTuPhut = g; // vệ sinh cửa hàng: đúng giờ mới mở (còn phải chờ 8h30 xong)
+  else moTuPhut = -Infinity; // các task thường (10h30, 11h30, 17h00...) không cần chờ đúng giờ mới mở
+
+  let dongPhut;
+  if (task.gio === '8h30') dongPhut = g + 30;
+  else if (task.gio === '8h50') dongPhut = g + 20;
+  else if (task.loai === 'chamcay_quansat') dongPhut = Infinity; // 21h05 không khóa
+  else if (isQS) dongPhut = g + 60;
+  else dongPhut = g + 90;
+
+  return { moTuPhut, dongPhut };
+}
+
+// Lý do khóa 1 task hiện tại (null nếu không bị khóa): 'cho_task_truoc' | 'chua_toi_gio' | 'qua_gio'
+function getTaskLockReason(task, idx, tasks, nowPhut) {
+  const id = `task_${idx}`;
+  if (checklistState[id]?.done) return null;
+
+  if (task.gio === '8h50') {
+    const idx830 = tasks.findIndex(x => x.gio === '8h30');
+    if (idx830 !== -1 && !checklistState[`task_${idx830}`]?.done) return 'cho_task_truoc';
+  }
+
+  const win = getTaskTimeWindow(task);
+  if (nowPhut < win.moTuPhut) return 'chua_toi_gio';
+  if (nowPhut >= win.dongPhut) return 'qua_gio';
+  return null;
+}
+
 function renderChecklist() {
   if (!currentCa) return;
   const ca = currentCa === 'sang' ? CA_SANG : currentCa === 'chieu' ? CA_CHIEU : CA_FULL;
   const tasks = getTasksForCa(currentCa);
   const now = new Date();
+  const nowPhut = now.getHours() * 60 + now.getMinutes();
   const thuTen = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][now.getDay()];
 
   document.getElementById('cl-ca-label').textContent = `${ca.ten} — ${thuTen}`;
@@ -1260,19 +1310,32 @@ function renderChecklist() {
     const id = `task_${idx}`;
     const state = checklistState[id] || {};
     const isDone = state.done;
-    const isExpanded = expandedTask === id;
     const isQS = TASK_QUANSAT.includes(t.loai);
-    // Nếu task quan sát và có cá bệnh đang theo dõi thì hiện badge
     const benhCount = benhDanhSach.length;
 
-    return `<div class="cl-task ${isDone ? 'done' : ''}" id="cltask-${id}">
+    const lockReason = getTaskLockReason(t, idx, tasks, nowPhut);
+    const isExpanded = expandedTask === id && !lockReason;
+    const win = getTaskTimeWindow(t);
+
+    let trangThaiHtml;
+    if (isDone) {
+      trangThaiHtml = `<span style="color:var(--green);font-size:12px;font-weight:600">Đã xong</span><span class="cl-done-badge"></span>`;
+    } else if (lockReason) {
+      trangThaiHtml = ''; // chưa tới giờ / đã khóa / chờ task trước — không cho mở, không cần báo gì
+    } else if (win.dongPhut !== Infinity) {
+      trangThaiHtml = `<span style="color:#B45309;font-size:11px;font-weight:600">${win.dongPhut - nowPhut}p!!!</span>`;
+    } else {
+      trangThaiHtml = '';
+    }
+
+    return `<div class="cl-task ${isDone ? 'done' : ''} ${lockReason ? 'locked' : ''}" id="cltask-${id}">
       <div class="cl-task-header" onclick="toggleTask('${id}')" style="cursor:pointer">
         <div style="display:flex;align-items:center;gap:8px">
           <span class="cl-gio">${t.gio}</span>
           <span class="cl-task-name" style="margin:0">${t.task}${isQS && benhCount > 0 && !isDone ? `<span style="background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;margin-left:6px">${benhCount} bệnh</span>` : ''}</span>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
-          ${isDone ? '<span class="cl-done-badge"></span>' : ''}
+          ${trangThaiHtml}
           <span style="color:var(--text3);font-size:16px">${isExpanded ? '▲' : '▼'}</span>
         </div>
       </div>
@@ -1283,6 +1346,15 @@ function renderChecklist() {
 }
 
 window.toggleTask = function(id) {
+  const tasks = getTasksForCa(currentCa);
+  const idx = parseInt(id.replace('task_',''));
+  const t = tasks[idx];
+  if (t && expandedTask !== id) {
+    const now = new Date();
+    const nowPhut = now.getHours() * 60 + now.getMinutes();
+    const lockReason = getTaskLockReason(t, idx, tasks, nowPhut);
+    if (lockReason) return; // task đang khóa (chưa tới giờ / quá giờ / chờ task trước) — không cho mở, không cần báo
+  }
   expandedTask = expandedTask === id ? null : id;
   renderChecklist();
 };
@@ -3224,6 +3296,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 /* CHECKLIST */
 .cl-task{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px;border-left:3px solid #E5E7EB;transition:border-color .2s}
 .cl-task.done{border-left-color:#1B7A3E;opacity:0.7}
+.cl-task.locked{border-left-color:#D1D5DB;opacity:0.6}
 .cl-task.active{border-left-color:#7C3AED}
 .cl-task-header{display:flex;justify-content:space-between;align-items:center}
 .cl-gio{font-size:12px;font-weight:600;color:#7C3AED;background:#EDE9FE;padding:2px 8px;border-radius:20px}
@@ -3354,7 +3427,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v74</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v76</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3408,7 +3481,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v74</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v76</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3428,7 +3501,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v74</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v76</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
