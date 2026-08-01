@@ -1309,6 +1309,7 @@ function renderBenhForm(id, state, coCaBenh) {
         </div>
         <input type="text" value="${escHtml(b.tinhtrang||'')}" placeholder="Tình trạng (Nấm, Thối thân, Túm lắc...)"
           onchange="clUpdateBenh('${id}',${bi},'tinhtrang',this.value)">
+        ${b.trung ? `<div style="font-size:11.5px;color:#B45309;background:#FEF3C7;border-radius:6px;padding:7px 9px;margin-top:6px;line-height:1.4">${escHtml(b.ten)} đang có trong danh sách bệnh — tình trạng bạn ghi sẽ được nối thêm vào tình trạng hiện có (không lặp lại cụm đã trùng)</div>` : ''}
         <button class="del-btn" style="margin-top:4px" onclick="clRemoveBenh('${id}',${bi})">✕ Xóa dòng</button>
       </div>`).join('')}
     <button type="button" style="background:none;border:none;color:var(--green);font-size:13px;font-weight:600;cursor:pointer;padding:6px 0;text-align:left;display:block" onclick="clAddBenh('${id}')">+ Thêm dòng</button>
@@ -1323,7 +1324,6 @@ function renderBenhDanhSach(taskId) {
     <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:10px">Danh sách cá/tép đang bệnh (${benhDanhSach.length})</div>
     ${benhDanhSach.map(b => {
       const daChon = chon[b.id];
-      const lichSuMoiNhat = (b.lichSu||[]).slice(-3).reverse();
       return `
       <div style="background:#fff;border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
         <div style="font-weight:600;font-size:13px">${escHtml(b.ten)}</div>
@@ -1335,9 +1335,6 @@ function renderBenhDanhSach(taskId) {
           <button class="cl-tick vay ${daChon==='vay_vay'?'chosen':(daChon?'dim':'')}" onclick="clCapNhatBenh('${taskId}','${b.id}','vay_vay')">↔ Vẫn vậy</button>
           <button class="cl-tick het ${daChon==='het_benh'?'chosen':(daChon?'dim':'')}" onclick="clCapNhatBenh('${taskId}','${b.id}','het_benh')">Hết bệnh</button>
         </div>
-        ${lichSuMoiNhat.length ? `<div style="font-size:11px;color:var(--text2);margin-top:6px">
-          Lịch sử: ${lichSuMoiNhat.map(h=>`${h.trangThai} (${h.nv} ${h.gio})`).join(' → ')}
-        </div>` : ''}
       </div>`;
     }).join('')}
   </div>`;
@@ -1396,6 +1393,11 @@ window.clRemoveBenh = function(id, idx) {
 window.clUpdateBenh = function(id, idx, field, val) {
   if (!checklistState[id]?.benhList?.[idx]) return;
   checklistState[id].benhList[idx][field] = val;
+  if (field === 'ten') {
+    const trung = benhDanhSach.some(b => b.ten.trim().toLowerCase() === val.trim().toLowerCase());
+    checklistState[id].benhList[idx].trung = trung;
+    renderChecklist();
+  }
 };
 
 window.clHoanThanhQuanSat = async function(id) {
@@ -1423,24 +1425,37 @@ window.clHoanThanhQuanSat = async function(id) {
       showToast('Vui lòng ghi tình trạng cho: ' + thieuTinhTrang.map(b=>b.ten).join(', '), true);
       return;
     }
-    const tenDaCo = new Set(benhDanhSach.map(b => b.ten.trim().toLowerCase()));
-    const trung = benhList.filter(b => tenDaCo.has(b.ten.trim().toLowerCase()));
-    benhList = benhList.filter(b => !tenDaCo.has(b.ten.trim().toLowerCase()));
 
-    // Trùng nhau ngay trong các dòng vừa nhập — chỉ giữ dòng đầu tiên
-    const seen = new Set();
-    const trungTrongDong = [];
-    benhList = benhList.filter(b => {
+    // Trùng nhau ngay trong các dòng vừa nhập — gộp tình trạng vào 1 dòng duy nhất
+    const gopTrongDong = new Map(); // key tên (lowercase) -> dòng đã gộp
+    for (const b of benhList) {
       const key = b.ten.trim().toLowerCase();
-      if (seen.has(key)) { trungTrongDong.push(b); return false; }
-      seen.add(key);
-      return true;
-    });
+      if (gopTrongDong.has(key)) {
+        const existing = gopTrongDong.get(key);
+        existing.tinhtrang = mergeTinhTrang(existing.tinhtrang, b.tinhtrang);
+      } else {
+        gopTrongDong.set(key, { ten: b.ten.trim(), tinhtrang: b.tinhtrang.trim() });
+      }
+    }
+    benhList = [...gopTrongDong.values()];
 
-    const canhBaoTrung = [];
-    if (trung.length) canhBaoTrung.push(`${trung.map(b=>b.ten).join(', ')} đã có trong danh sách`);
-    if (trungTrongDong.length) canhBaoTrung.push(`trùng dòng: ${trungTrongDong.map(b=>b.ten).join(', ')} (chỉ giữ 1 dòng)`);
-    if (canhBaoTrung.length) canhBaoCuoi = canhBaoTrung.join(' · ') + ' — không thêm lại. ';
+    // Trùng với cá/tép đã có sẵn trong danh sách — nối thêm tình trạng mới vào bản ghi cũ, không tạo dòng mới
+    const tenDaCoMap = new Map(benhDanhSach.map(b => [b.ten.trim().toLowerCase(), b]));
+    const trung = benhList.filter(b => tenDaCoMap.has(b.ten.trim().toLowerCase()));
+    benhList = benhList.filter(b => !tenDaCoMap.has(b.ten.trim().toLowerCase()));
+
+    if (trung.length) {
+      for (const b of trung) {
+        const existing = tenDaCoMap.get(b.ten.trim().toLowerCase());
+        const tinhTrangMoi = mergeTinhTrang(existing.tinhtrang, b.tinhtrang);
+        if (tinhTrangMoi !== existing.tinhtrang) {
+          await updateDoc(doc(db,'ca_benh', existing.id), { tinhtrang: tinhTrangMoi });
+          existing.tinhtrang = tinhTrangMoi;
+        }
+      }
+      canhBaoCuoi = `Đã gộp tình trạng: ${trung.map(b=>`${b.ten} → ${tenDaCoMap.get(b.ten.trim().toLowerCase()).tinhtrang}`).join(', ')}. `;
+    }
+
     if (benhList.length) {
       const now = new Date();
       const phatHienLuc = fmtDate(now);
@@ -2878,6 +2893,19 @@ function fmtMonth(date) {
   return `${(date.getMonth()+1).toString().padStart(2,'0')}/${date.getFullYear().toString().slice(-2)}`;
 }
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Nối chuỗi tình trạng, không lặp lại cụm đã có (không phân biệt hoa/thường)
+function mergeTinhTrang(oldStr, newStr) {
+  const oldTokens = (oldStr||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const newTokens = (newStr||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const seen = new Set(oldTokens.map(t=>t.toLowerCase()));
+  const merged = [...oldTokens];
+  for (const t of newTokens) {
+    const key = t.toLowerCase();
+    if (!seen.has(key)) { merged.push(t); seen.add(key); }
+  }
+  return merged.join(', ');
+}
 function showToast(msg, isErr=false) {
   document.activeElement?.blur();
   const t=document.getElementById('toast');
@@ -3226,7 +3254,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v65</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v67</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3280,7 +3308,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v65</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v67</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3300,7 +3328,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v65</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v67</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
