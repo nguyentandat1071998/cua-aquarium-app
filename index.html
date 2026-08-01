@@ -277,6 +277,18 @@ async function startQRScan() {
 }
 
 // Tìm/khởi tạo phiếu ca hôm nay trong lich_ca (theo lịch xếp ca đã sắp sẵn) rồi ghi nhận check-in
+function chonCaNgoaiLich() {
+  return new Promise(resolve => {
+    document.getElementById('qr-status').textContent = 'Vui lòng chọn ca làm việc...';
+    document.getElementById('chonca-modal').style.display = 'flex';
+    window._chonCaResolve = resolve;
+  });
+}
+window.clickChonCa = function(loai) {
+  document.getElementById('chonca-modal').style.display = 'none';
+  if (window._chonCaResolve) { window._chonCaResolve(loai); window._chonCaResolve = null; }
+};
+
 async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
   const ngay = getTodayISO();
   const shiftId = `${ngay}_${currentUser.uid}`;
@@ -299,10 +311,10 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
     });
   } else {
     // Không có lịch xếp trước — vẫn cho check-in, đánh dấu ngoài lịch để Admin/Quản lý biết
-    // Suy ra ca theo giờ check-in thực tế (check-in từ 13h trở đi tính ca chiều), tránh báo trễ giờ vô lý
+    // Trước 13h: chưa rõ làm nửa buổi hay cả ngày -> hỏi nhân viên chọn. Từ 13h trở đi: chắc chắn là ca chiều.
     const nowLocal = new Date();
     const checkinPhut = nowLocal.getHours()*60 + nowLocal.getMinutes();
-    const loaiCaSuyRa = checkinPhut >= 13*60 ? 'chieu' : 'sang';
+    const loaiCaSuyRa = checkinPhut < 13*60 ? await chonCaNgoaiLich() : 'chieu';
     await setDoc(shiftRef, {
       ngay, uid: currentUser.uid, ten: currentUserData?.ten || '',
       loaiCa: loaiCaSuyRa, ngoaiLich: true,
@@ -2861,7 +2873,9 @@ function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 function showToast(msg, isErr=false) {
   const t=document.getElementById('toast');
   t.textContent=msg; t.className='toast'+(isErr?' err':'');
-  t.style.display='block'; setTimeout(()=>t.style.display='none', 2800);
+  t.style.display='block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>t.style.display='none', isErr ? 5500 : 3200);
 }
 window.viewPhoto = function(src) {
   document.getElementById('viewer-img').src=src;
@@ -3145,6 +3159,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 #camera-modal{display:none;position:fixed;inset:0;background:#000;z-index:1000;flex-direction:column;align-items:center;justify-content:center}
 #checkout-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2200;align-items:center;justify-content:center;padding:1rem}
 #xemlich-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2200;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto}
+#chonca-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2400;align-items:center;justify-content:center;padding:1rem}
 #camera-video{width:100%;max-width:480px}
 #camera-canvas{display:none}
 .cam-actions{display:flex;gap:16px;margin-top:16px}
@@ -3164,7 +3179,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 #photo-viewer button{margin-top:14px;padding:10px 24px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:8px;cursor:pointer}
 
 /* TOAST */
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1A2340;color:#fff;padding:9px 16px;border-radius:8px;font-size:13px;z-index:3000;display:none;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.2)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1A2340;color:#fff;padding:11px 18px;border-radius:8px;font-size:13px;line-height:1.45;z-index:3000;display:none;white-space:normal;word-wrap:break-word;width:calc(100% - 40px);max-width:380px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.2)}
 .toast.err{background:var(--red)}
 .empty-msg{padding:20px;text-align:center;color:var(--text3);font-size:13px}
 .loading{padding:24px;text-align:center;color:var(--text3)}
@@ -3201,7 +3216,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v61</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v62</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3255,7 +3270,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v61</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v62</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3275,7 +3290,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v61</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v62</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3649,6 +3664,18 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
       <button onclick="dongXemLich()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1">✕</button>
     </div>
     <div id="xemlich-content"><div class="loading">Đang tải...</div></div>
+  </div>
+</div>
+
+<!-- CHỌN CA KHI CHECK-IN NGOÀI LỊCH (trước 13h) -->
+<div id="chonca-modal">
+  <div style="background:var(--surface);border-radius:var(--radius);padding:20px;width:100%;max-width:340px;text-align:center">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:6px">Chưa có lịch xếp hôm nay</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Bạn muốn check-in theo ca nào?</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button onclick="clickChonCa('sang')" style="padding:14px;background:#C2792F;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Ca sáng (8h30–16h30)</button>
+      <button onclick="clickChonCa('full')" style="padding:14px;background:#6B5B95;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer">Ca Full (8h30–21h30)</button>
+    </div>
   </div>
 </div>
 
