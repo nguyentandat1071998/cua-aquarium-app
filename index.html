@@ -140,6 +140,39 @@ function getTasksForCa(ca) {
   return tasks; // 'full' — làm cả ngày, hiển thị toàn bộ task trong ngày
 }
 
+// Lưu/khôi phục tiến độ checklist vào phiếu ca (lich_ca), để refresh trang không mất task đã hoàn thành.
+// Không lưu ảnh (dataURL) vì dễ vượt giới hạn dung lượng document Firestore — task đã "done" thì không cần
+// hiện lại ảnh nữa nên bỏ qua an toàn.
+function checklistStateChoLuu() {
+  const out = {};
+  for (const k in checklistState) {
+    const v = checklistState[k] || {};
+    out[k] = {
+      done: !!v.done,
+      doneAt: v.doneAt || null,
+      ketqua: v.ketqua || null,
+      benhChon: v.benhChon || null
+    };
+  }
+  return out;
+}
+
+async function saveChecklistState() {
+  if (!currentShiftDocId) return;
+  try {
+    await updateDoc(doc(db, 'lich_ca', currentShiftDocId), { checklistData: checklistStateChoLuu() });
+  } catch(e) { console.error('Lưu tiến độ checklist lỗi:', e); }
+}
+
+async function loadChecklistState(shiftId) {
+  try {
+    const snap = await getDoc(doc(db, 'lich_ca', shiftId));
+    checklistState = snap.exists() && snap.data().checklistData ? { ...snap.data().checklistData } : {};
+  } catch(e) {
+    checklistState = {};
+  }
+}
+
 function getTaskById(id) {
   const idx = parseInt(String(id).replace('task_',''));
   return getTasksForCa(currentCa)[idx];
@@ -299,10 +332,11 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
     const data = snap.data();
     loaiCa = data.loaiCa || 'full';
     if (data.vaoLuc) {
-      // Đã check-in ca này trước đó rồi (mở lại app) — không ghi đè giờ vào
+      // Đã check-in ca này trước đó rồi (mở lại app) — không ghi đè giờ vào, khôi phục tiến độ checklist đã lưu
       currentShiftDocId = shiftId;
       currentShiftNgay = ngay;
       currentCa = loaiCa;
+      await loadChecklistState(shiftId);
       return;
     }
     await updateDoc(shiftRef, {
@@ -326,6 +360,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
   currentShiftDocId = shiftId;
   currentShiftNgay = ngay;
   currentCa = loaiCa;
+  checklistState = {};
 }
 
 // Chụp ảnh timestamp từ camera QR rồi checkin luôn
@@ -389,7 +424,6 @@ async function chupAnhQRVaCheckin() {
     showToast('Check-in thành công!');
   }
 
-  checklistState = {};
   await loadBenhDanhSach();
   showApp();
   switchModule('checklist');
@@ -1000,7 +1034,7 @@ async function tryResumeShift() {
         currentShiftDocId = shiftId;
         currentShiftNgay = ngay;
         currentCa = data.loaiCa || 'full';
-        checklistState = {};
+        checklistState = data.checklistData ? { ...data.checklistData } : {};
         await loadBenhDanhSach();
         showApp();
         switchModule('checklist');
@@ -1552,6 +1586,7 @@ window.clHoanThanhQuanSat = async function(id) {
   expandedTask = null;
   showToast(canhBaoCuoi ? (canhBaoCuoi + 'Đã hoàn thành task') : 'Hoàn thành task');
   renderChecklistGiuScroll();
+  await saveChecklistState();
 };
 
 window.clChupAnh = function(id, label) {
@@ -1574,6 +1609,7 @@ window.clHoanThanh = async function(id) {
   expandedTask = null;
   showToast('Hoàn thành task');
   renderChecklistGiuScroll();
+  await saveChecklistState();
 };
 
 // Re-render checklist mà không để trang giật/nhảy vị trí cuộn khi task thu gọn lại
@@ -3318,7 +3354,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v73</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v74</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3372,7 +3408,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v73</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v74</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3392,7 +3428,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v73</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v74</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
