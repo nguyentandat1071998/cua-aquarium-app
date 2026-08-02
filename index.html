@@ -12,6 +12,7 @@
 <title>CUA Aquarium v2</title>
 
 <script src="https://unpkg.com/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -1251,11 +1252,75 @@ async function renderHangHoaTab() {
   await loadSKUs();
   el.innerHTML = `
     <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:10px">
-    <button class="btn-g" style="width:100%;margin-bottom:12px" onclick="moFormThemHangHoa()">+ Thêm hàng hóa</button>
+    <button class="btn-g" style="width:100%;margin-bottom:8px" onclick="moFormThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-form"></div>
+    <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
+    <div id="hanghoa-import-form"></div>
+    <button class="btn-outline" style="width:100%;margin-bottom:12px" onclick="moFormImportAnhHangLoat()">Upload ảnh hàng loạt</button>
+    <div id="hanghoa-anh-form"></div>
     <div id="hanghoa-list"></div>`;
   renderHangHoaList();
 }
+
+window.moFormImportAnhHangLoat = function() {
+  const el = document.getElementById('hanghoa-anh-form');
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="admin-block" style="margin-bottom:12px">
+      <p class="info-note"><b>Tên file ảnh phải trùng với mã SKU</b> (ví dụ: file <code>MULTITHUOCTIM100G.jpg</code> sẽ tự gán cho đúng SKU đó). Chọn nhiều ảnh cùng lúc.</p>
+      <input type="file" accept="image/*" multiple onchange="importAnhHangLoat(this)">
+      <div id="hanghoa-anh-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
+    </div>`;
+};
+
+window.importAnhHangLoat = async function(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  const resultEl = document.getElementById('hanghoa-anh-result');
+
+  await loadSKUs();
+  const skuMap = new Map(allSKUs.filter(s => s.sku).map(s => [s.sku.trim().toLowerCase(), s]));
+
+  let ok = 0;
+  const khongKhop = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    if (resultEl) resultEl.textContent = `Đang xử lý ${i+1}/${files.length}...`;
+    const tenFile = file.name.replace(/\.[^.]+$/, '').trim().toLowerCase();
+    const matched = skuMap.get(tenFile);
+    if (!matched) { khongKhop.push(file.name); continue; }
+    try {
+      const blob = await nenAnhSanPham(file);
+      const up = await uploadAnhSanPham(blob, matched.sku);
+      await updateDoc(doc(db,'skus', matched.id), { anhFileId: up.fileId, anhUrl: up.viewUrl });
+      ok++;
+    } catch(e) {
+      khongKhop.push(`${file.name} (lỗi: ${e.message})`);
+    }
+  }
+
+  if (resultEl) {
+    resultEl.innerHTML = `Đã gán ảnh cho <b>${ok}</b> SKU.` +
+      (khongKhop.length ? `<br><span style="color:var(--red)">Không khớp/lỗi (${khongKhop.length}): ${khongKhop.map(escHtml).join(', ')}</span>` : '');
+  }
+  showToast(`Xong: ${ok} ảnh đã gán${khongKhop.length ? `, ${khongKhop.length} không khớp` : ''}`);
+  await loadSKUs();
+  if (document.getElementById('hanghoa-list')) renderHangHoaList();
+  input.value = '';
+};
+
+window.moFormImportExcel = function() {
+  const el = document.getElementById('hanghoa-import-form');
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="admin-block" style="margin-bottom:12px">
+      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, và cột ảnh (vd "Hình ảnh (url1,url2...)") — app tự tải ảnh đầu tiên trong cột đó về</p>
+      <input type="file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
+      <div id="hanghoa-import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
+    </div>`;
+};
 
 function renderHangHoaList() {
   const el = document.getElementById('hanghoa-list');
@@ -1288,7 +1353,7 @@ window.moFormThemHangHoa = function() {
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:12px">
       <input type="text" id="hh-ten" placeholder="Tên sản phẩm" style="margin-bottom:8px">
-      <input type="text" id="hh-sku" placeholder="Mã SKU (không bắt buộc)" style="margin-bottom:8px">
+      <input type="text" id="hh-sku" placeholder="Mã SKU (bắt buộc, mã chính)" style="margin-bottom:8px">
       <input type="number" id="hh-gia" placeholder="Giá" style="margin-bottom:8px">
       <div id="hh-anh-preview" style="margin-bottom:8px"></div>
       <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhHangHoa(this)" style="margin-bottom:8px">
@@ -1318,7 +1383,7 @@ window.luuHangHoa = async function() {
   const ten = document.getElementById('hh-ten').value.trim();
   const sku = document.getElementById('hh-sku').value.trim();
   const gia = parseFloat(document.getElementById('hh-gia').value) || 0;
-  if (!ten) { showToast('Vui lòng nhập tên sản phẩm', true); return; }
+  if (!sku) { showToast('Vui lòng nhập mã SKU (bắt buộc)', true); return; }
 
   showToast('Đang lưu...');
   let anhFileId = '', anhUrl = '';
@@ -2178,6 +2243,25 @@ async function doUploadAfterStop(chunks) {
 
 let backgroundUploadPromise = null;
 let backgroundUploadResult = null;
+
+// Tải ảnh từ URL bên ngoài (Shopee/KiotViet...) và upload lên Drive qua Worker — Worker tải hộ để tránh lỗi CORS
+async function uploadAnhTuUrl(sourceUrl, tenGoi) {
+  const tenSafe = (tenGoi||'anh').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
+  const filename = `sku_${tenSafe}_${Date.now()}.jpg`;
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'from-url', 'x-source-url': sourceUrl, 'x-filename': filename },
+    body: ''
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.error || 'Tải ảnh từ URL lỗi');
+  return { fileId: data.fileId, viewUrl: data.viewUrl, fullUrl: data.fullUrl };
+}
+
+// Chuẩn hoá tên cột (bỏ dấu, thường hoá) để nhận diện cột ảnh linh hoạt
+function chuanHoaTenCot(s) {
+  return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase().trim();
+}
 
 // Nén ảnh sản phẩm về kích thước nhỏ trước khi upload (giảm dung lượng, load nhanh hơn)
 function nenAnhSanPham(file, maxWidth = 500, quality = 0.8) {
@@ -3227,8 +3311,8 @@ async function loadAdminPanel() {
     </div>
     <div class="admin-block" style="margin-top:1rem">
       <h3>Import SKU từ KiotViet</h3>
-      <p class="info-note">File CSV gồm cột: <b>sku, ten, gia</b></p>
-      <input type="file" id="sku-file" accept=".csv" onchange="importSKU(this)">
+      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, và cột ảnh (vd "Hình ảnh (url1,url2...)") — app tự tải ảnh đầu tiên trong cột đó về</p>
+      <input type="file" id="sku-file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
       <div id="import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
     </div>
     <div class="admin-block" style="margin-top:1rem">
@@ -3250,24 +3334,82 @@ window.addUser = async function() {
 
 window.importSKU = async function(input) {
   const file = input.files[0]; if (!file) return;
-  let text = await file.text();
-  if (text.includes('\uFFFD') || text.split('').some(c=>c.charCodeAt(0)>127&&c.charCodeAt(0)<160)) {
-    text = await new Promise(res => { const r=new FileReader(); r.onload=e=>res(e.target.result); r.readAsText(file,'windows-1258'); });
+  const resultEl = document.getElementById('import-result') || document.getElementById('hanghoa-import-result');
+  if (resultEl) resultEl.textContent = 'Đang xử lý...';
+
+  const ext = file.name.split('.').pop().toLowerCase();
+  let rows = []; // mảng các hàng, mỗi hàng là mảng ô (hàng đầu là tiêu đề cột)
+
+  try {
+    if (ext === 'xlsx' || ext === 'xls') {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    } else {
+      let text = await file.text();
+      if (text.includes('\uFFFD') || text.split('').some(c=>c.charCodeAt(0)>127&&c.charCodeAt(0)<160)) {
+        text = await new Promise(res => { const r=new FileReader(); r.onload=e=>res(e.target.result); r.readAsText(file,'windows-1258'); });
+      }
+      rows = text.trim().split('\n').map(line => line.split(',').map(c => c.trim().replace(/"/g,'')));
+    }
+  } catch(e) {
+    showToast('Không đọc được file: ' + e.message, true);
+    return;
   }
-  const lines = text.trim().split('\n');
-  const hdr = lines[0].split(',').map(h=>h.trim().replace(/"/g,'').toLowerCase());
-  const skuIdx=hdr.indexOf('sku'), tenIdx=hdr.indexOf('ten'), giaIdx=hdr.indexOf('gia');
-  if (tenIdx===-1) { showToast('CSV thiếu cột "ten"',true); return; }
-  let count=0;
-  for (let i=1;i<lines.length;i++) {
-    const cols=lines[i].split(',').map(c=>c.trim().replace(/"/g,''));
-    if (!cols[tenIdx]) continue;
-    await addDoc(collection(db,'skus'), { ten:cols[tenIdx], sku:skuIdx>=0?cols[skuIdx]:'', gia:giaIdx>=0?parseFloat(cols[giaIdx].replace(/[^0-9.]/g,''))||0:0 });
-    count++;
-  }
-  document.getElementById('import-result').textContent = `Đã import ${count} SKU`;
+
+  if (!rows.length) { showToast('File trống', true); return; }
+  const hdrRaw = rows[0];
+  const hdr = hdrRaw.map(h => chuanHoaTenCot(h));
+  const skuIdx = hdr.indexOf('sku'), tenIdx = hdr.indexOf('ten'), giaIdx = hdr.indexOf('gia');
+  const anhIdx = hdr.findIndex(h => h.includes('anh') || h.includes('image') || h.includes('url') || h.includes('hinh'));
+  if (skuIdx === -1) { showToast('File thiếu cột "sku" (mã chính, bắt buộc)', true); return; }
+
   await loadSKUs();
-  showToast(`Import xong ${count} SKU`);
+  const skuMap = new Map(allSKUs.filter(s => s.sku).map(s => [s.sku.trim().toLowerCase(), s]));
+
+  const rowsData = rows.slice(1).filter(r => r && String(r[skuIdx] ?? '').trim());
+  let themMoi = 0, capNhat = 0, anhOk = 0, anhLoi = 0;
+
+  for (let i = 0; i < rowsData.length; i++) {
+    const cols = rowsData[i];
+    if (resultEl) resultEl.textContent = `Đang xử lý ${i+1}/${rowsData.length}...`;
+    const sku = String(cols[skuIdx] ?? '').trim();
+    const ten = tenIdx >= 0 ? String(cols[tenIdx] ?? '').trim() : '';
+    const giaRaw = giaIdx >= 0 ? cols[giaIdx] : 0;
+    const gia = typeof giaRaw === 'number' ? giaRaw : parseFloat(String(giaRaw ?? '').replace(/[^0-9.]/g,'')) || 0;
+
+    let anhFileId = '', anhUrl = '';
+    if (anhIdx >= 0) {
+      const anhCell = String(cols[anhIdx] ?? '').trim();
+      const firstUrl = anhCell.split(',')[0].trim(); // chỉ lấy ảnh đầu tiên (url1)
+      if (firstUrl.startsWith('http')) {
+        try {
+          const up = await uploadAnhTuUrl(firstUrl, sku);
+          anhFileId = up.fileId; anhUrl = up.viewUrl;
+          anhOk++;
+        } catch(e) { anhLoi++; }
+      }
+    }
+
+    const existing = skuMap.get(sku.toLowerCase());
+    if (existing) {
+      const updateData = { ten: ten || existing.ten, gia: giaIdx>=0 ? gia : existing.gia };
+      if (anhFileId) { updateData.anhFileId = anhFileId; updateData.anhUrl = anhUrl; }
+      await updateDoc(doc(db,'skus', existing.id), updateData);
+      capNhat++;
+    } else {
+      await addDoc(collection(db,'skus'), { ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp() });
+      themMoi++;
+    }
+  }
+  const count = themMoi + capNhat;
+  const anhInfo = anhIdx >= 0 ? ` · Ảnh: ${anhOk} thành công${anhLoi ? `, ${anhLoi} lỗi` : ''}` : '';
+  if (resultEl) resultEl.textContent = `Đã import: ${themMoi} SKU mới, ${capNhat} SKU cập nhật${anhInfo}`;
+  await loadSKUs();
+  showToast(`Import xong ${count} SKU${anhInfo}`);
+  input.value = '';
+  if (document.getElementById('hanghoa-list')) renderHangHoaList();
 };
 
 window.loadDeletedList = async function() {
@@ -3655,7 +3797,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v85</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v88</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3709,7 +3851,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v85</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v88</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3730,7 +3872,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v85</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v88</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
