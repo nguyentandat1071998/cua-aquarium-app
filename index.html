@@ -1132,6 +1132,9 @@ function showApp() {
   document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
   if (currentUserData.role === 'admin') {
     document.getElementById('mod-admin').style.display = 'flex';
+    document.getElementById('mod-hanghoa').style.display = 'flex';
+    const shh = document.getElementById('sidebar-hanghoa');
+    if (shh) shh.style.display = 'flex';
   }
   const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
   if (canExport) {
@@ -1178,6 +1181,15 @@ window.switchModule = function(mod) {
     document.getElementById('panel-chamcong-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderChamCongTab();
+    return;
+  }
+  if (mod === 'hanghoa') {
+    document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('mod-hanghoa').classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-hanghoa-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderHangHoaTab();
     return;
   }
   document.getElementById('sub-tab-bar').style.display = 'flex';
@@ -1229,9 +1241,123 @@ window.switchAdmin = function() {
 };
 
 // ===== SKU =====
+// ===== DANH SÁCH HÀNG HÓA (Admin) =====
+let hangHoaSearchQuery = '';
+let hangHoaAnhBlob = null;
+
+async function renderHangHoaTab() {
+  const el = document.getElementById('hanghoa-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  await loadSKUs();
+  el.innerHTML = `
+    <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:10px">
+    <button class="btn-g" style="width:100%;margin-bottom:12px" onclick="moFormThemHangHoa()">+ Thêm hàng hóa</button>
+    <div id="hanghoa-form"></div>
+    <div id="hanghoa-list"></div>`;
+  renderHangHoaList();
+}
+
+function renderHangHoaList() {
+  const el = document.getElementById('hanghoa-list');
+  if (!el) return;
+  const q = hangHoaSearchQuery.trim().toLowerCase();
+  const list = allSKUs.filter(s => !q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q));
+  el.innerHTML = list.map(s => `
+    <div style="display:flex;gap:10px;align-items:center;background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
+      ${s.anhFileId
+        ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+        : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text3);text-align:center">Không ảnh</div>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}</div>
+        <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')} · ${fmt(s.gia||0)}đ</div>
+      </div>
+      <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>
+    </div>`).join('') || `<p class="info-note">Không có hàng hóa nào.</p>`;
+}
+
+window.filterHangHoaList = function(v) {
+  hangHoaSearchQuery = v;
+  renderHangHoaList();
+};
+
+window.moFormThemHangHoa = function() {
+  const el = document.getElementById('hanghoa-form');
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; hangHoaAnhBlob = null; return; }
+  el.innerHTML = `
+    <div class="admin-block" style="margin-bottom:12px">
+      <input type="text" id="hh-ten" placeholder="Tên sản phẩm" style="margin-bottom:8px">
+      <input type="text" id="hh-sku" placeholder="Mã SKU (không bắt buộc)" style="margin-bottom:8px">
+      <input type="number" id="hh-gia" placeholder="Giá" style="margin-bottom:8px">
+      <div id="hh-anh-preview" style="margin-bottom:8px"></div>
+      <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhHangHoa(this)" style="margin-bottom:8px">
+      <div style="display:flex;gap:8px">
+        <button class="btn-g" style="flex:1" onclick="luuHangHoa()">Lưu</button>
+        <button class="btn-outline" onclick="document.getElementById('hanghoa-form').innerHTML='';hangHoaAnhBlob=null">Hủy</button>
+      </div>
+    </div>`;
+};
+
+window.xemTruocAnhHangHoa = async function(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const prev = document.getElementById('hh-anh-preview');
+  prev.innerHTML = '<div class="loading">Đang nén ảnh...</div>';
+  try {
+    hangHoaAnhBlob = await nenAnhSanPham(file);
+    const url = URL.createObjectURL(hangHoaAnhBlob);
+    prev.innerHTML = `<img src="${url}" style="width:120px;height:120px;object-fit:cover;border-radius:8px">`;
+  } catch(e) {
+    prev.innerHTML = '';
+    showToast('Lỗi xử lý ảnh: ' + e.message, true);
+  }
+};
+
+window.luuHangHoa = async function() {
+  const ten = document.getElementById('hh-ten').value.trim();
+  const sku = document.getElementById('hh-sku').value.trim();
+  const gia = parseFloat(document.getElementById('hh-gia').value) || 0;
+  if (!ten) { showToast('Vui lòng nhập tên sản phẩm', true); return; }
+
+  showToast('Đang lưu...');
+  let anhFileId = '', anhUrl = '';
+  if (hangHoaAnhBlob) {
+    try {
+      const up = await uploadAnhSanPham(hangHoaAnhBlob, ten);
+      anhFileId = up.fileId;
+      anhUrl = up.viewUrl;
+    } catch(e) {
+      showToast('Upload ảnh lỗi: ' + e.message, true);
+      return;
+    }
+  }
+
+  await addDoc(collection(db,'skus'), {
+    ten, sku, gia, anhFileId, anhUrl, deleted: false,
+    createdAt: serverTimestamp(),
+    createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
+  });
+  showToast('Đã thêm hàng hóa');
+  hangHoaAnhBlob = null;
+  document.getElementById('hanghoa-form').innerHTML = '';
+  await loadSKUs();
+  renderHangHoaList();
+};
+
+window.xoaHangHoa = async function(id) {
+  if (!confirm('Xóa hàng hóa này?')) return;
+  await updateDoc(doc(db,'skus', id), {
+    deleted: true, deletedAt: serverTimestamp(),
+    deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
+  });
+  showToast('Đã xóa hàng hóa');
+  await loadSKUs();
+  renderHangHoaList();
+};
+
 async function loadSKUs() {
   const snap = await getDocs(collection(db, 'skus'));
-  allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
 }
 
 function makeSKUSearch(inputId, dropdownId, giaId) {
@@ -2051,6 +2177,64 @@ async function doUploadAfterStop(chunks) {
 
 let backgroundUploadPromise = null;
 let backgroundUploadResult = null;
+
+// Nén ảnh sản phẩm về kích thước nhỏ trước khi upload (giảm dung lượng, load nhanh hơn)
+function nenAnhSanPham(file, maxWidth = 500, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Nén ảnh lỗi')), 'image/jpeg', quality);
+      };
+      img.onerror = () => reject(new Error('Không đọc được ảnh'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Không đọc được file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Upload 1 ảnh (đã nén) lên Google Drive qua Cloudflare Worker sẵn có
+async function uploadAnhSanPham(blob, tenGoi) {
+  const tenSafe = (tenGoi||'anh').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
+  const filename = `sku_${tenSafe}_${Date.now()}.jpg`;
+  const totalSize = blob.size;
+
+  const initRes = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const initData = await initRes.json();
+  if (!initData.success) throw new Error('Init: ' + initData.error);
+
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: {
+      'x-action': 'chunk',
+      'x-upload-url': initData.uploadUrl,
+      'x-range-start': '0',
+      'x-total-size': String(totalSize),
+      'x-is-last': 'true',
+      'Content-Type': 'image/jpeg',
+    },
+    body: blob
+  });
+  const data = await res.json();
+  if (data.status !== 'done') throw new Error(data.error || 'Upload ảnh lỗi');
+  return { fileId: data.fileId, viewUrl: data.viewUrl, fullUrl: data.fullUrl };
+}
+
+// URL ảnh nhỏ (thumbnail) để hiển thị nhanh trong danh sách
+function anhThumbUrl(fileId, size = 300) {
+  return fileId ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w${size}` : '';
+}
 
 async function startChunkedUpload(chunks, mimeType) {
   backgroundUploadResult = null;
@@ -3469,7 +3653,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v80</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v81</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3523,7 +3707,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v80</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v81</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3531,6 +3715,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
     <button class="mod-btn teal" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="display:none;color:#0369A1">Báo cá mới về</button>
     <button class="mod-btn" id="sidebar-chamcong" onclick="switchModule('chamcong');updateSidebar('chamcong')" style="display:none;color:#B45309">Chấm công</button>
+    <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
     <div class="sidebar-user">
       <div class="uname" id="sidebar-uname"></div>
@@ -3543,7 +3728,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v80</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v81</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3558,6 +3743,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
       <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
       <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
       <button class="mod-btn" id="mod-chamcong" onclick="switchModule('chamcong')" style="display:none;background:var(--bg);color:#B45309">Chấm công</button>
+      <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
       <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
     </div>
 
@@ -3834,6 +4020,11 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
       <!-- CHẤM CÔNG (Admin/Quản lý) -->
       <div class="panel" id="panel-chamcong-main">
         <div id="chamcong-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- DANH SÁCH HÀNG HÓA (Admin) -->
+      <div class="panel" id="panel-hanghoa-main">
+        <div id="hanghoa-content"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- ADMIN / QR CHECKIN -->
