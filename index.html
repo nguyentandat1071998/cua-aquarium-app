@@ -1251,14 +1251,52 @@ async function renderHangHoaTab() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   await loadSKUs();
   el.innerHTML = `
-    <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:10px">
+    <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:8px">
+    <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
     <button class="btn-g" style="width:100%;margin-bottom:8px" onclick="moFormThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-form"></div>
     <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>
     <div id="hanghoa-list"></div>`;
+  renderHangHoaNhomFilters();
   renderHangHoaList();
 }
+
+function renderHangHoaNhomFilters() {
+  const el = document.getElementById('hanghoa-nhom-filters');
+  if (!el) return;
+  const nhom1List = [...new Set(allSKUs.map(s => s.nhom1).filter(Boolean))].sort();
+  if (!nhom1List.length) { el.innerHTML = ''; return; }
+
+  const nhom2List = hangHoaNhom1Filter
+    ? [...new Set(allSKUs.filter(s => s.nhom1 === hangHoaNhom1Filter).map(s => s.nhom2).filter(Boolean))].sort()
+    : [];
+  const nhom3List = hangHoaNhom2Filter
+    ? [...new Set(allSKUs.filter(s => s.nhom1 === hangHoaNhom1Filter && s.nhom2 === hangHoaNhom2Filter).map(s => s.nhom3).filter(Boolean))].sort()
+    : [];
+
+  el.innerHTML = `
+    <select onchange="filterHangHoaNhom(1,this.value)" style="margin-bottom:6px">
+      <option value="">-- Tất cả nhóm hàng (cấp 1) --</option>
+      ${nhom1List.map(n => `<option value="${escHtml(n)}" ${n===hangHoaNhom1Filter?'selected':''}>${escHtml(n)}</option>`).join('')}
+    </select>
+    ${nhom2List.length ? `<select onchange="filterHangHoaNhom(2,this.value)" style="margin-bottom:6px">
+      <option value="">-- Tất cả nhóm cấp 2 --</option>
+      ${nhom2List.map(n => `<option value="${escHtml(n)}" ${n===hangHoaNhom2Filter?'selected':''}>${escHtml(n)}</option>`).join('')}
+    </select>` : ''}
+    ${nhom3List.length ? `<select onchange="filterHangHoaNhom(3,this.value)" style="margin-bottom:6px">
+      <option value="">-- Tất cả nhóm cấp 3 --</option>
+      ${nhom3List.map(n => `<option value="${escHtml(n)}" ${n===hangHoaNhom3Filter?'selected':''}>${escHtml(n)}</option>`).join('')}
+    </select>` : ''}`;
+}
+
+window.filterHangHoaNhom = function(cap, v) {
+  if (cap === 1) { hangHoaNhom1Filter = v; hangHoaNhom2Filter = ''; hangHoaNhom3Filter = ''; }
+  else if (cap === 2) { hangHoaNhom2Filter = v; hangHoaNhom3Filter = ''; }
+  else { hangHoaNhom3Filter = v; }
+  renderHangHoaNhomFilters();
+  renderHangHoaList();
+};
 
 window.moFormImportExcel = function() {
   const el = document.getElementById('hanghoa-import-form');
@@ -1266,7 +1304,7 @@ window.moFormImportExcel = function() {
   if (el.innerHTML) { el.innerHTML = ''; return; }
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:12px">
-      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, và cột ảnh (vd "Hình ảnh (url1,url2...)") — app tự tải ảnh đầu tiên trong cột đó về</p>
+      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, cột ảnh (vd "Hình ảnh (url1,url2...)"), và cột <b>Nhóm hàng</b> (3 cấp, phân cách bằng <code>&gt;&gt;</code>, vd: Cá, Tép, Ốc &amp; Chăm sóc&gt;&gt;Cá cảnh)</p>
       <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="taiFileMauImport()">Tải file mẫu</button>
       <input type="file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
       <div id="hanghoa-import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
@@ -1275,9 +1313,9 @@ window.moFormImportExcel = function() {
 
 window.taiFileMauImport = function() {
   const data = [
-    ['sku', 'ten', 'gia', 'Hình ảnh (url1,url2...)'],
-    ['MULTITHUOCTIM100G', 'Multi Thuốc Tím - 100g', 119000, 'https://cdn2-retail-images.kiotviet.vn/2026/07/27/cuaaquarium/anh1.jpg'],
-    ['ABC123', 'Tên sản phẩm mẫu', 50000, ''],
+    ['sku', 'ten', 'gia', 'Hình ảnh (url1,url2...)', 'Nhóm hàng'],
+    ['MULTITHUOCTIM100G', 'Multi Thuốc Tím - 100g', 119000, 'https://cdn2-retail-images.kiotviet.vn/2026/07/27/cuaaquarium/anh1.jpg', 'Cá, Tép, Ốc & Chăm sóc>>Thuốc & Xử lý nước'],
+    ['ABC123', 'Tên sản phẩm mẫu', 50000, '', 'Cá, Tép, Ốc & Chăm sóc>>Cá cảnh>>Cá 7 màu'],
   ];
   const ws = XLSX.utils.aoa_to_sheet(data);
   const wb = XLSX.utils.book_new();
@@ -1285,11 +1323,20 @@ window.taiFileMauImport = function() {
   XLSX.writeFile(wb, 'mau_import_sku.xlsx');
 };
 
+let hangHoaNhom1Filter = '';
+let hangHoaNhom2Filter = '';
+let hangHoaNhom3Filter = '';
+
 function renderHangHoaList() {
   const el = document.getElementById('hanghoa-list');
   if (!el) return;
   const q = hangHoaSearchQuery.trim().toLowerCase();
-  const list = allSKUs.filter(s => !q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q));
+  const list = allSKUs.filter(s =>
+    (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q)) &&
+    (!hangHoaNhom1Filter || s.nhom1 === hangHoaNhom1Filter) &&
+    (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
+    (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter)
+  );
   el.innerHTML = list.map(s => `
     <div style="display:flex;gap:10px;align-items:center;background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       ${s.anhFileId
@@ -1298,6 +1345,7 @@ function renderHangHoaList() {
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}</div>
         <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')} · ${fmt(s.gia||0)}đ</div>
+        ${s.nhomFull ? `<div style="font-size:10.5px;color:#7C3AED">${escHtml(s.nhomFull)}</div>` : ''}
         ${s.anhFileId ? `<a href="${anhThumbUrl(s.anhFileId,900)}" target="_blank" style="font-size:10px;color:#0369A1">Mở link ảnh (debug)</a>` : ''}
       </div>
       <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>
@@ -1318,6 +1366,7 @@ window.moFormThemHangHoa = function() {
       <input type="text" id="hh-ten" placeholder="Tên sản phẩm" style="margin-bottom:8px">
       <input type="text" id="hh-sku" placeholder="Mã SKU (bắt buộc, mã chính)" style="margin-bottom:8px">
       <input type="number" id="hh-gia" placeholder="Giá" style="margin-bottom:8px">
+      <input type="text" id="hh-nhom" placeholder="Nhóm hàng (vd: Cá, Tép, Ốc & Chăm sóc>>Cá cảnh)" style="margin-bottom:8px">
       <div id="hh-anh-preview" style="margin-bottom:8px"></div>
       <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhHangHoa(this)" style="margin-bottom:8px">
       <div style="display:flex;gap:8px">
@@ -1346,6 +1395,7 @@ window.luuHangHoa = async function() {
   const ten = document.getElementById('hh-ten').value.trim();
   const sku = document.getElementById('hh-sku').value.trim();
   const gia = parseFloat(document.getElementById('hh-gia').value) || 0;
+  const nhom = tachNhomHang(document.getElementById('hh-nhom').value);
   if (!sku) { showToast('Vui lòng nhập mã SKU (bắt buộc)', true); return; }
 
   showToast('Đang lưu...');
@@ -1362,7 +1412,7 @@ window.luuHangHoa = async function() {
   }
 
   await addDoc(collection(db,'skus'), {
-    ten, sku, gia, anhFileId, anhUrl, deleted: false,
+    ten, sku, gia, anhFileId, anhUrl, ...nhom, deleted: false,
     createdAt: serverTimestamp(),
     createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
@@ -2224,6 +2274,17 @@ async function uploadAnhTuUrl(sourceUrl, tenGoi) {
 // Chuẩn hoá tên cột (bỏ dấu, thường hoá) để nhận diện cột ảnh linh hoạt
 function chuanHoaTenCot(s) {
   return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').toLowerCase().trim();
+}
+
+// Tách nhóm hàng 3 cấp, phân cách bằng ">>": "Cá, Tép, Ốc & Chăm sóc>>Cá cảnh" -> {nhom1,nhom2,nhom3,nhomFull}
+function tachNhomHang(raw) {
+  const parts = String(raw||'').split('>>').map(s => s.trim()).filter(Boolean).slice(0,3);
+  return {
+    nhom1: parts[0] || '',
+    nhom2: parts[1] || '',
+    nhom3: parts[2] || '',
+    nhomFull: parts.join(' > ')
+  };
 }
 
 // Nén ảnh sản phẩm về kích thước nhỏ trước khi upload (giảm dung lượng, load nhanh hơn)
@@ -3274,7 +3335,7 @@ async function loadAdminPanel() {
     </div>
     <div class="admin-block" style="margin-top:1rem">
       <h3>Import SKU từ KiotViet</h3>
-      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, và cột ảnh (vd "Hình ảnh (url1,url2...)") — app tự tải ảnh đầu tiên trong cột đó về</p>
+      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, cột ảnh (vd "Hình ảnh (url1,url2...)"), và cột <b>Nhóm hàng</b> (3 cấp, phân cách bằng <code>&gt;&gt;</code>, vd: Cá, Tép, Ốc &amp; Chăm sóc&gt;&gt;Cá cảnh)</p>
       <input type="file" id="sku-file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
       <div id="import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
     </div>
@@ -3326,6 +3387,7 @@ window.importSKU = async function(input) {
   const hdr = hdrRaw.map(h => chuanHoaTenCot(h));
   const skuIdx = hdr.indexOf('sku'), tenIdx = hdr.indexOf('ten'), giaIdx = hdr.indexOf('gia');
   const anhIdx = hdr.findIndex(h => h.includes('anh') || h.includes('image') || h.includes('url') || h.includes('hinh'));
+  const nhomIdx = hdr.findIndex(h => h.includes('nhom') || h.includes('danhmuc') || h.includes('category') || h.includes('group'));
   if (skuIdx === -1) { showToast('File thiếu cột "sku" (mã chính, bắt buộc)', true); return; }
 
   await loadSKUs();
@@ -3355,14 +3417,19 @@ window.importSKU = async function(input) {
       }
     }
 
+    const nhom = nhomIdx >= 0 ? tachNhomHang(cols[nhomIdx]) : null;
+
     const existing = skuMap.get(sku.toLowerCase());
     if (existing) {
       const updateData = { ten: ten || existing.ten, gia: giaIdx>=0 ? gia : existing.gia };
       if (anhFileId) { updateData.anhFileId = anhFileId; updateData.anhUrl = anhUrl; }
+      if (nhom && nhom.nhomFull) Object.assign(updateData, nhom);
       await updateDoc(doc(db,'skus', existing.id), updateData);
       capNhat++;
     } else {
-      await addDoc(collection(db,'skus'), { ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp() });
+      const newData = { ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp() };
+      if (nhom) Object.assign(newData, nhom);
+      await addDoc(collection(db,'skus'), newData);
       themMoi++;
     }
   }
@@ -3372,7 +3439,7 @@ window.importSKU = async function(input) {
   await loadSKUs();
   showToast(`Import xong ${count} SKU${anhInfo}`);
   input.value = '';
-  if (document.getElementById('hanghoa-list')) renderHangHoaList();
+  if (document.getElementById('hanghoa-list')) { renderHangHoaNhomFilters(); renderHangHoaList(); }
 };
 
 window.loadDeletedList = async function() {
@@ -3760,7 +3827,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v89</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v91</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3814,7 +3881,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v89</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v91</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3835,7 +3902,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v89</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v91</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
