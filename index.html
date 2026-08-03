@@ -2773,11 +2773,12 @@ function renderNhapItems() {
 
 window.submitNhap = async function() {
   if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
+  if (!currentNhap.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
   const btn = document.getElementById('btn-nhap-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
     const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
-    await addDoc(collection(db, 'phieu_nhap'), {
+    await addDoc(collection(db, 'phieu_chuyenkho'), {
       items: currentNhap.items,
       photos: currentNhap.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
       tongGia: total,
@@ -2789,9 +2790,9 @@ window.submitNhap = async function() {
     currentNhap = { items: [], photos: [] };
     renderNhapItems();
     renderNhapPhotos();
-    showToast('Đã lưu phiếu nhập');
+    showToast('Đã lưu phiếu chuyển kho');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
-  btn.disabled = false; btn.textContent = 'Lưu phiếu nhập';
+  btn.disabled = false; btn.textContent = 'Lưu phiếu chuyển kho';
 };
 
 function renderNhapPhotos() {
@@ -2961,7 +2962,7 @@ window.closeCamera = function() {
 window.loadNhapList = async function(filter={}) {
   const el = document.getElementById('nhap-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const snap = await getDocs(query(collection(db, 'phieu_nhap'), orderBy('createdAt','desc')));
+  const snap = await getDocs(query(collection(db, 'phieu_chuyenkho'), orderBy('createdAt','desc')));
   let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
   // Populate NV filter
   const nvSet = [...new Set(docs.map(d => d.nguoiTao?.ten).filter(Boolean))];
@@ -2992,16 +2993,16 @@ window.loadNhapList = async function(filter={}) {
         <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
-      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
+      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
-      <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="g bold">${fmt(p.tongGia)}₫</span></div>
+      <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span></div>
     </div>`;
   }).join('');
 }
 
 window.deleteNhap = async function(id) {
-  if (!confirm('Xóa phiếu nhập này?')) return;
-  await updateDoc(doc(db,'phieu_nhap',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
+  if (!confirm('Xóa phiếu chuyển kho này?')) return;
+  await updateDoc(doc(db,'phieu_chuyenkho',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   showToast('Đã xóa'); loadNhapList();
 };
 
@@ -3101,9 +3102,9 @@ window.saveEdit = async function() {
 async function loadNhapStats() {
   const el = document.getElementById('nhap-stats-content');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const snap = await getDocs(query(collection(db,'phieu_nhap'), orderBy('createdAt','desc')));
+  const snap = await getDocs(query(collection(db,'phieu_chuyenkho'), orderBy('createdAt','desc')));
   const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
-  el.innerHTML = buildStatsHTML(all, 'green');
+  el.innerHTML = buildStatsHTML(all, 'green', false);
 }
 
 async function loadXuatStats() {
@@ -3114,7 +3115,7 @@ async function loadXuatStats() {
   el.innerHTML = buildStatsHTML(all, 'red');
 }
 
-function buildStatsHTML(all, color) {
+function buildStatsHTML(all, color, showGia = true) {
   const byMonth={}, byDay={};
   all.forEach(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
@@ -3126,11 +3127,11 @@ function buildStatsHTML(all, color) {
   });
   const cls = color==='green'?'g':'r';
   const tbl = (rows) => `<table class="stats-tbl">
-    <thead><tr><th>Ngày/Tháng</th><th>Phiếu</th><th>SL</th><th>Giá trị</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="4" class="empty-msg">Chưa có dữ liệu</td></tr>'}</tbody>
+    <thead><tr><th>Ngày/Tháng</th><th>Phiếu</th><th>SL</th>${showGia?'<th>Giá trị</th>':''}</tr></thead>
+    <tbody>${rows||`<tr><td colspan="${showGia?4:3}" class="empty-msg">Chưa có dữ liệu</td></tr>`}</tbody>
   </table>`;
-  const mRows = Object.entries(byMonth).map(([m,v])=>`<tr><td>${m}</td><td>${v.phieu}</td><td>${v.sl}</td><td class="${cls} bold">${fmt(v.gia)}₫</td></tr>`).join('');
-  const dRows = Object.entries(byDay).slice(0,30).map(([d,v])=>`<tr><td>${d}</td><td>${v.phieu}</td><td>${v.sl}</td><td class="${cls} bold">${fmt(v.gia)}₫</td></tr>`).join('');
+  const mRows = Object.entries(byMonth).map(([m,v])=>`<tr><td>${m}</td><td>${v.phieu}</td><td>${v.sl}</td>${showGia?`<td class="${cls} bold">${fmt(v.gia)}₫</td>`:''}</tr>`).join('');
+  const dRows = Object.entries(byDay).slice(0,30).map(([d,v])=>`<tr><td>${d}</td><td>${v.phieu}</td><td>${v.sl}</td>${showGia?`<td class="${cls} bold">${fmt(v.gia)}₫</td>`:''}</tr>`).join('');
   return `<h3 class="stats-h">Theo tháng</h3>${tbl(mRows)}<h3 class="stats-h" style="margin-top:1.5rem">Theo ngày (30 ngày gần nhất)</h3>${tbl(dRows)}`;
 }
 
@@ -3163,7 +3164,7 @@ function renderSummary(mod, docs, type) {
     <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
       <span><b>${totalPhieu}</b> phiếu</span>
       <span><b>${totalSL}</b> sản phẩm</span>
-      ${totalGia ? `<span><b>${fmt(totalGia)}₫</b></span>` : ''}
+      ${totalGia && mod !== 'nhap' ? `<span><b>${fmt(totalGia)}₫</b></span>` : ''}
     </div>
     <div style="font-size:12px;color:var(--text2)">Top mặt hàng: ${top5.map(s => `${escHtml(s.ten)} (${s.sl})`).join(' · ')}</div>
   `;
@@ -3220,7 +3221,7 @@ window.exportNhapCSV = async function() {
   const from = document.getElementById('nhap-filter-from')?.value;
   const to = document.getElementById('nhap-filter-to')?.value;
   const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
-  const snap = await getDocs(query(collection(db,'phieu_nhap'), orderBy('createdAt','desc')));
+  const snap = await getDocs(query(collection(db,'phieu_chuyenkho'), orderBy('createdAt','desc')));
   let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
   allDocs = allDocs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
@@ -3239,7 +3240,7 @@ window.exportNhapCSV = async function() {
   }));
   downloadCSV(Object.values(map), 'nhap-kho', 'Số lượng nhập');
   // Đánh dấu đã xuất
-  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_nhap',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
+  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_chuyenkho',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
   showToast(`Đã xuất CSV ${allDocs.length} phiếu`);
   loadNhapList();
 };
@@ -3844,7 +3845,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v96</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v98</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3898,10 +3899,10 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v96</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v98</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
-    <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
+    <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
     <button class="mod-btn teal" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="display:none;color:#0369A1">Báo cá mới về</button>
@@ -3919,7 +3920,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v96</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v98</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3929,7 +3930,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
     <!-- Module tabs (mobile) -->
     <div class="mod-bar">
       <button class="mod-btn purple" id="mod-checklist" onclick="switchModule('checklist')">Checklist</button>
-      <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Nhập hàng</button>
+      <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Chuyển kho</button>
       <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
       <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
       <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
@@ -3983,7 +3984,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
           <button class="btn-outline" style="margin-top:10px" onclick="openCamera('nhap')">Chụp ảnh</button>
         </div>
 
-        <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">Lưu phiếu nhập</button>
+        <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">Lưu phiếu chuyển kho</button>
       </div>
 
       <!-- NHẬP / DANH SÁCH -->
