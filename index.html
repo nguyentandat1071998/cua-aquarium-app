@@ -1338,17 +1338,22 @@ function renderHangHoaList() {
     (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter)
   );
   el.innerHTML = list.map(s => `
-    <div style="display:flex;gap:10px;align-items:center;background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
-      ${s.anhFileId
-        ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
-        : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text3);text-align:center">Không ảnh</div>`}
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}</div>
-        <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')} · ${fmt(s.gia||0)}đ</div>
-        ${s.nhomFull ? `<div style="font-size:10.5px;color:#7C3AED">${escHtml(s.nhomFull)}</div>` : ''}
-        ${s.anhFileId ? `<a href="${anhThumbUrl(s.anhFileId,900)}" target="_blank" style="font-size:10px;color:#0369A1">Mở link ảnh (debug)</a>` : ''}
+    <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
+      <div style="display:flex;gap:10px;align-items:center">
+        ${s.anhFileId
+          ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+          : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text3);text-align:center">Không ảnh</div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}</div>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')} · ${fmt(s.gia||0)}đ</div>
+          ${s.nhomFull ? `<div style="font-size:10.5px;color:#7C3AED">${escHtml(s.nhomFull)}</div>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
+          <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>
+        </div>
       </div>
-      <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>
+      <div id="hh-sua-${s.id}"></div>
     </div>`).join('') || `<p class="info-note">Không có hàng hóa nào.</p>`;
 }
 
@@ -1420,6 +1425,83 @@ window.luuHangHoa = async function() {
   hangHoaAnhBlob = null;
   document.getElementById('hanghoa-form').innerHTML = '';
   await loadSKUs();
+  renderHangHoaList();
+};
+
+let hangHoaSuaAnhBlob = null;
+
+window.moFormSuaHangHoa = function(id) {
+  // Đóng các form sửa khác đang mở (chỉ mở 1 cái tại 1 thời điểm)
+  document.querySelectorAll('[id^="hh-sua-"]').forEach(e => { if (e.id !== `hh-sua-${id}`) e.innerHTML = ''; });
+  const el = document.getElementById(`hh-sua-${id}`);
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; hangHoaSuaAnhBlob = null; return; }
+
+  const s = allSKUs.find(x => x.id === id);
+  if (!s) return;
+  hangHoaSuaAnhBlob = null;
+  const nhomRaw = [s.nhom1, s.nhom2, s.nhom3].filter(Boolean).join('>>');
+
+  el.innerHTML = `
+    <div class="admin-block" style="margin-top:10px">
+      <input type="text" id="hhs-ten-${id}" placeholder="Tên sản phẩm" value="${escHtml(s.ten||'')}" style="margin-bottom:8px">
+      <input type="text" id="hhs-sku-${id}" placeholder="Mã SKU (bắt buộc)" value="${escHtml(s.sku||'')}" style="margin-bottom:8px">
+      <input type="number" id="hhs-gia-${id}" placeholder="Giá" value="${s.gia||0}" style="margin-bottom:8px">
+      <input type="text" id="hhs-nhom-${id}" placeholder="Nhóm hàng (vd: Cá, Tép, Ốc & Chăm sóc>>Cá cảnh)" value="${escHtml(nhomRaw)}" style="margin-bottom:8px">
+      <div id="hhs-anh-preview-${id}" style="margin-bottom:8px">
+        ${s.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId,300)}" style="width:100px;height:100px;object-fit:cover;border-radius:8px">` : ''}
+      </div>
+      <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhSuaHangHoa(this,'${id}')" style="margin-bottom:8px">
+      <div style="display:flex;gap:8px">
+        <button class="btn-g" style="flex:1" onclick="luuSuaHangHoa('${id}')">Lưu thay đổi</button>
+        <button class="btn-outline" onclick="document.getElementById('hh-sua-${id}').innerHTML=''">Hủy</button>
+      </div>
+    </div>`;
+};
+
+window.xemTruocAnhSuaHangHoa = async function(input, id) {
+  const file = input.files[0];
+  if (!file) return;
+  const prev = document.getElementById(`hhs-anh-preview-${id}`);
+  prev.innerHTML = '<div class="loading">Đang nén ảnh...</div>';
+  try {
+    hangHoaSuaAnhBlob = await nenAnhSanPham(file);
+    const url = URL.createObjectURL(hangHoaSuaAnhBlob);
+    prev.innerHTML = `<img src="${url}" style="width:100px;height:100px;object-fit:cover;border-radius:8px">`;
+  } catch(e) {
+    prev.innerHTML = '';
+    showToast('Lỗi xử lý ảnh: ' + e.message, true);
+  }
+};
+
+window.luuSuaHangHoa = async function(id) {
+  const ten = document.getElementById(`hhs-ten-${id}`).value.trim();
+  const sku = document.getElementById(`hhs-sku-${id}`).value.trim();
+  const gia = parseFloat(document.getElementById(`hhs-gia-${id}`).value) || 0;
+  const nhom = tachNhomHang(document.getElementById(`hhs-nhom-${id}`).value);
+  if (!sku) { showToast('Vui lòng nhập mã SKU (bắt buộc)', true); return; }
+
+  showToast('Đang lưu...');
+  const updateData = { ten, sku, gia, ...nhom };
+
+  if (hangHoaSuaAnhBlob) {
+    try {
+      const up = await uploadAnhSanPham(hangHoaSuaAnhBlob, sku);
+      updateData.anhFileId = up.fileId;
+      updateData.anhUrl = up.viewUrl;
+    } catch(e) {
+      showToast('Upload ảnh lỗi: ' + e.message, true);
+      return;
+    }
+  }
+
+  await updateDoc(doc(db,'skus', id), updateData);
+  showToast('Đã cập nhật hàng hóa');
+  hangHoaSuaAnhBlob = null;
+  const el = document.getElementById(`hh-sua-${id}`);
+  if (el) el.innerHTML = '';
+  await loadSKUs();
+  renderHangHoaNhomFilters();
   renderHangHoaList();
 };
 
@@ -3852,7 +3934,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v99</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v100</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3906,7 +3988,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v99</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v100</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -3927,7 +4009,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v99</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v100</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
