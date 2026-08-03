@@ -428,7 +428,7 @@ async function chupAnhQRVaCheckin() {
   await xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData);
 
   if (!gpsOk) {
-    showToast(`Check-in thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+    showToast(`Quét mã ngoài khu vực cửa hàng!!! (${gpsInfo})`, true);
   } else {
     showToast('Check-in thành công!');
   }
@@ -986,7 +986,7 @@ async function xuLyCheckout() {
   }
 
   if (!gpsOk) {
-    showToast(`Check-out thành công nhưng GPS ngoài phạm vi (${gpsInfo})`, true);
+    showToast(`Quét mã ngoài khu vực cửa hàng!!! (${gpsInfo})`, true);
   } else {
     showToast('Check-out thành công!');
   }
@@ -1439,14 +1439,21 @@ async function loadSKUs() {
   allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
 }
 
-function makeSKUSearch(inputId, dropdownId, giaId) {
+// Xuất hủy chỉ cho phép chọn SKU thuộc các nhóm hàng sống (không cho xuất hủy phụ kiện/thiết bị)
+const XUAT_HUY_NHOM_CHO_PHEP = ['Cá cảnh', 'Cây thủy sinh', 'Tép, Tôm cảnh', 'Ốc'];
+
+function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
   const input = document.getElementById(inputId);
   const box = document.getElementById(dropdownId);
   if (!input || !box) return;
   input.addEventListener('input', function() {
     const val = this.value;
     if (!val) { box.style.display = 'none'; return; }
-    const results = allSKUs.filter(s =>
+    let pool = allSKUs;
+    if (chiNhom) {
+      pool = pool.filter(s => XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom1) || XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom2) || XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom3));
+    }
+    const results = pool.filter(s =>
       s.ten.toLowerCase().includes(val.toLowerCase()) ||
       (s.sku && s.sku.toLowerCase().includes(val.toLowerCase()))
     ).slice(0, 8);
@@ -3511,7 +3518,7 @@ document.addEventListener('input', e => {
 
 document.addEventListener('DOMContentLoaded', () => {
   makeSKUSearch('nhap-item-ten','nhap-sku-drop','nhap-item-gia');
-  makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia');
+  makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia', true);
   makeSKUSearch('baoca-item-ten','baoca-sku-drop','baoca-dummy-gia');
 });
 </script>
@@ -3827,7 +3834,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v91</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v93</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3881,7 +3888,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v91</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v93</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3902,7 +3909,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v91</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v93</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -4012,6 +4019,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
       <div class="panel" id="panel-xuat-tao">
         <div class="card">
           <div class="card-title">Tìm hàng hóa</div>
+          <p class="info-note">Chỉ tìm được: Cá cảnh, Cây thủy sinh, Tép/Tôm cảnh, Ốc</p>
           <div class="field sku-wrap">
             <label>Tên hàng / SKU</label>
             <input type="text" id="xuat-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
