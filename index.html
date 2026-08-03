@@ -1459,9 +1459,14 @@ function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
     ).slice(0, 8);
     if (!results.length) { box.style.display = 'none'; return; }
     box.innerHTML = results.map(s =>
-      `<div class="sku-item" onmousedown="event.preventDefault();selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten)}',${s.gia||0},'${escHtml(s.sku||'')}')">
-        <span class="sku-name">${escHtml(s.ten)}</span>
-        <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&s.gia?' · ':''}${s.gia?fmt(s.gia)+'₫':''}</span>
+      `<div class="sku-item" onmousedown="event.preventDefault();selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten)}',${s.gia||0},'${escHtml(s.sku||'')}')" style="display:flex;gap:8px;align-items:center">
+        ${s.anhFileId
+          ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,80)}" style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0">`
+          : `<div style="width:32px;height:32px;border-radius:5px;background:var(--bg);flex-shrink:0"></div>`}
+        <div style="min-width:0">
+          <span class="sku-name">${escHtml(s.ten)}</span>
+          <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&s.gia?' · ':''}${s.gia?fmt(s.gia)+'₫':''}</span>
+        </div>
       </div>`
     ).join('');
     box.style.display = 'block';
@@ -2743,9 +2748,14 @@ function renderNhapItems() {
     return;
   }
   const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
-  el.innerHTML = currentNhap.items.map((item,idx) => `
+  el.innerHTML = currentNhap.items.map((item,idx) => {
+    const skuObj = item.skuId ? allSKUs.find(s => s.id === item.skuId) : null;
+    return `
     <div class="item-row">
-      <div class="item-left">
+      <div class="item-left" style="display:flex;gap:8px;align-items:flex-start">
+        ${skuObj?.anhFileId
+          ? `<img loading="lazy" src="${anhThumbUrl(skuObj.anhFileId,100)}" onclick="viewPhoto('${anhThumbUrl(skuObj.anhFileId,900)}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+          : `<div style="width:40px;height:40px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
         <span class="item-name">${escHtml(item.ten)}</span>
       </div>
       <div class="item-right">
@@ -2754,10 +2764,10 @@ function renderNhapItems() {
           <input type="number" value="${item.sl}" onchange="setNhapQty(${idx},this.value)">
           <button onclick="adjNhapQty(${idx},1)">+</button>
         </div>
-        <span class="item-total g">${fmt(item.tong)}₫</span>
         <button class="del-btn" onclick="removeNhapItem(${idx})">✕</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   totalEl.textContent = fmt(total) + '₫';
 }
 
@@ -3834,7 +3844,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v93</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v96</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -3888,7 +3898,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v93</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v96</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Nhập hàng</button>
@@ -3909,7 +3919,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v93</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v96</span></div>
       <div class="header-right">
         <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
         <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
@@ -3948,7 +3958,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
             <div class="sku-drop" id="nhap-sku-drop"></div>
           </div>
           <div class="row2">
-            <div class="field">
+            <div class="field" style="flex:1">
               <label>Số lượng</label>
               <div class="qty-ctrl">
                 <button onclick="document.getElementById('nhap-item-sl').value=Math.max(1,(parseInt(document.getElementById('nhap-item-sl').value)||1)-1)">−</button>
@@ -3956,10 +3966,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
                 <button onclick="document.getElementById('nhap-item-sl').value=(parseInt(document.getElementById('nhap-item-sl').value)||0)+1">+</button>
               </div>
             </div>
-            <div class="field">
-              <label>Giá (₫)</label>
-              <input type="number" id="nhap-item-gia" readonly style="background:#f8f8f8">
-            </div>
+            <input type="number" id="nhap-item-gia" readonly style="display:none">
           </div>
           <button class="btn-g" style="background:var(--green-mid)" onclick="addNhapItem()">+ Thêm vào phiếu</button>
         </div>
@@ -3967,7 +3974,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
         <div class="card">
           <div class="card-title">Hàng trong phiếu</div>
           <div class="items-list-wrap" id="nhap-items-list"><div class="empty-msg">Chưa có hàng nào.</div></div>
-          <div class="total-bar"><span>Tổng giá trị nhập</span><span id="nhap-total" class="g">0₫</span></div>
+          <div class="total-bar" style="display:none"><span>Tổng giá trị nhập</span><span id="nhap-total" class="g">0₫</span></div>
         </div>
 
         <div class="card">
@@ -4019,7 +4026,6 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
       <div class="panel" id="panel-xuat-tao">
         <div class="card">
           <div class="card-title">Tìm hàng hóa</div>
-          <p class="info-note">Chỉ tìm được: Cá cảnh, Cây thủy sinh, Tép/Tôm cảnh, Ốc</p>
           <div class="field sku-wrap">
             <label>Tên hàng / SKU</label>
             <input type="text" id="xuat-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
