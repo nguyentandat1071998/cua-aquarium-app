@@ -1181,7 +1181,7 @@ function showApp() {
 }
 
 function roleLabel(r) {
-  return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên';
+  return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên bán hàng';
 }
 
 window.switchModule = function(mod) {
@@ -1286,10 +1286,26 @@ async function renderHangHoaTab() {
     <div id="hanghoa-form"></div>
     <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px">
+      <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
+      <select onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
+        <option value="30">30</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="300">300</option>
+      </select>
+    </div>
     <div id="hanghoa-list"></div>`;
+  document.querySelector('#hanghoa-content select').value = String(hangHoaPageSize);
   renderHangHoaNhomFilters();
   renderHangHoaList();
 }
+
+window.doiSoLuongTrangHangHoa = function(v) {
+  hangHoaPageSize = parseInt(v) || 30;
+  hangHoaPage = 1;
+  renderHangHoaList();
+};
 
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
@@ -1323,6 +1339,7 @@ window.filterHangHoaNhom = function(cap, v) {
   if (cap === 1) { hangHoaNhom1Filter = v; hangHoaNhom2Filter = ''; hangHoaNhom3Filter = ''; }
   else if (cap === 2) { hangHoaNhom2Filter = v; hangHoaNhom3Filter = ''; }
   else { hangHoaNhom3Filter = v; }
+  hangHoaPage = 1;
   renderHangHoaNhomFilters();
   renderHangHoaList();
 };
@@ -1355,6 +1372,8 @@ window.taiFileMauImport = function() {
 let hangHoaNhom1Filter = '';
 let hangHoaNhom2Filter = '';
 let hangHoaNhom3Filter = '';
+let hangHoaPage = 1;
+let hangHoaPageSize = 30;
 
 function renderHangHoaList() {
   const el = document.getElementById('hanghoa-list');
@@ -1366,7 +1385,10 @@ function renderHangHoaList() {
     (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
     (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter)
   );
-  el.innerHTML = list.map(s => `
+  const totalPages = Math.max(1, Math.ceil(list.length / hangHoaPageSize));
+  if (hangHoaPage > totalPages) hangHoaPage = totalPages;
+  const pageList = list.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
+  el.innerHTML = pageList.map(s => `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
         ${s.anhFileId
@@ -1383,11 +1405,14 @@ function renderHangHoaList() {
         </div>
       </div>
       <div id="hh-sua-${s.id}"></div>
-    </div>`).join('') || `<p class="info-note">Không có hàng hóa nào.</p>`;
+    </div>`).join('') + renderPagination(hangHoaPage, list.length, hangHoaPageSize, 'doiTrangHangHoa') || `<p class="info-note">Không có hàng hóa nào.</p>`;
 }
+
+window.doiTrangHangHoa = function(p) { hangHoaPage = p; renderHangHoaList(); };
 
 window.filterHangHoaList = function(v) {
   hangHoaSearchQuery = v;
+  hangHoaPage = 1;
   renderHangHoaList();
 };
 
@@ -2736,6 +2761,8 @@ window.submitBaoCa = async function() {
   btn.disabled = false; btn.textContent = 'Lưu phiếu báo cá';
 };
 
+let baocaDsPage = 1;
+
 window.loadBaoCaList = async function() {
   const el = document.getElementById('baoca-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -2754,8 +2781,11 @@ window.loadBaoCaList = async function() {
   });
   renderSummary('baoca', docs);
   if (!docs.length) { el.innerHTML='<div class="empty-msg">Chưa có phiếu nào.</div>'; return; }
+  const totalPages = Math.max(1, Math.ceil(docs.length / 20));
+  if (baocaDsPage > totalPages) baocaDsPage = totalPages;
+  const pageDocs = docs.slice((baocaDsPage-1)*20, baocaDsPage*20);
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
-  el.innerHTML = docs.map(p => {
+  el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-baoca">
       <div class="phieu-top">
@@ -2783,8 +2813,11 @@ window.loadBaoCaList = async function() {
           </div>`).join('')}
       </div>
     </div>`;
-  }).join('');
+  }).join('') + renderPagination(baocaDsPage, docs.length, 20, 'doiTrangBaoCa');
 }
+
+window.doiTrangBaoCa = function(p) { baocaDsPage = p; loadBaoCaList(); };
+window.applyBaocaFilter = function() { baocaDsPage = 1; loadBaoCaList(); };
 
 window.deleteBaoCa = async function(id) {
   if (!confirm('Xóa phiếu này?')) return;
@@ -2794,6 +2827,7 @@ window.deleteBaoCa = async function(id) {
 
 window.clearBaocaFilter = function() {
   ['baoca-filter-from','baoca-filter-to'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  baocaDsPage = 1;
   loadBaoCaList();
 };
 
@@ -3077,6 +3111,9 @@ window.closeCamera = function() {
 };
 
 // ===== DANH SÁCH NHẬP =====
+let nhapDsPage = 1;
+const DS_PAGE_SIZE = 20;
+
 window.loadNhapList = async function(filter={}) {
   const el = document.getElementById('nhap-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -3102,8 +3139,11 @@ window.loadNhapList = async function(filter={}) {
   });
   renderSummary('nhap', docs);
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
+  const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
+  if (nhapDsPage > totalPages) nhapDsPage = totalPages;
+  const pageDocs = docs.slice((nhapDsPage-1)*DS_PAGE_SIZE, nhapDsPage*DS_PAGE_SIZE);
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
-  el.innerHTML = docs.map(p => {
+  el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card green">
       <div class="phieu-top">
@@ -3115,8 +3155,10 @@ window.loadNhapList = async function(filter={}) {
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span></div>
     </div>`;
-  }).join('');
+  }).join('') + renderPagination(nhapDsPage, docs.length, DS_PAGE_SIZE, 'doiTrangNhap');
 }
+
+window.doiTrangNhap = function(p) { nhapDsPage = p; loadNhapList(); };
 
 window.deleteNhap = async function(id) {
   if (!confirm('Xóa phiếu chuyển kho này?')) return;
@@ -3124,14 +3166,17 @@ window.deleteNhap = async function(id) {
   showToast('Đã xóa'); loadNhapList();
 };
 
-window.applyNhapFilter = function() { loadNhapList(); };
+window.applyNhapFilter = function() { nhapDsPage = 1; loadNhapList(); };
 window.clearNhapFilter = function() {
   ['nhap-filter-from','nhap-filter-to'].forEach(id => document.getElementById(id).value='');
   document.getElementById('nhap-filter-nv').value='';
+  nhapDsPage = 1;
   loadNhapList();
 };
 
 // ===== DANH SÁCH XUẤT =====
+let xuatDsPage = 1;
+
 window.loadXuatList = async function(filter={}) {
   const el = document.getElementById('xuat-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -3155,8 +3200,11 @@ window.loadXuatList = async function(filter={}) {
   });
   renderSummary('xuat', docs);
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
+  const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
+  if (xuatDsPage > totalPages) xuatDsPage = totalPages;
+  const pageDocs = docs.slice((xuatDsPage-1)*DS_PAGE_SIZE, xuatDsPage*DS_PAGE_SIZE);
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
-  el.innerHTML = docs.map(p => {
+  el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card red">
       <div class="phieu-top">
@@ -3169,8 +3217,10 @@ window.loadXuatList = async function(filter={}) {
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
       ${p.versions?.length?`<div class="ver-toggle" onclick="toggleVer('${p.id}')">${p.versions.length} lần sửa</div><div id="ver-${p.id}" style="display:none" class="ver-list">${p.versions.map((v,i)=>`<div class="ver-row">Lần ${i+1} · ${v.editedBy?.ten} · ${v.editedAt?fmtDate(new Date(v.editedAt.seconds*1000)):''}</div>`).join('')}</div>`:''} 
     </div>`;
-  }).join('');
+  }).join('') + renderPagination(xuatDsPage, docs.length, DS_PAGE_SIZE, 'doiTrangXuat');
 }
+
+window.doiTrangXuat = function(p) { xuatDsPage = p; loadXuatList(); };
 
 window.softDeleteXuat = async function(id) {
   if (!confirm('Xóa phiếu này? Vẫn lưu trong mục Đã xóa.')) return;
@@ -3178,10 +3228,11 @@ window.softDeleteXuat = async function(id) {
   showToast('Đã xóa phiếu'); loadXuatList();
 };
 
-window.applyXuatFilter = function() { loadXuatList(); };
+window.applyXuatFilter = function() { xuatDsPage = 1; loadXuatList(); };
 window.clearXuatFilter = function() {
   ['xuat-filter-from','xuat-filter-to'].forEach(id => document.getElementById(id).value='');
   document.getElementById('xuat-filter-nv').value='';
+  xuatDsPage = 1;
   loadXuatList();
 };
 
@@ -3254,6 +3305,17 @@ function buildStatsHTML(all, color, showGia = true) {
 }
 
 // ===== SUMMARY =====
+// Thanh điều hướng trang dùng chung cho các Danh sách
+function renderPagination(page, totalItems, pageSize, fnName) {
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  if (totalPages <= 1) return '';
+  return `<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:14px;padding-top:10px">
+    <button class="btn-xs" ${page<=1?'disabled':''} onclick="${fnName}(${page-1})">← Trước</button>
+    <span style="font-size:12px;color:var(--text2)">Trang ${page}/${totalPages} (${totalItems} phiếu)</span>
+    <button class="btn-xs" ${page>=totalPages?'disabled':''} onclick="${fnName}(${page+1})">Sau →</button>
+  </div>`;
+}
+
 function renderSummary(mod, docs, type) {
   const el = document.getElementById(mod + '-summary');
   const content = document.getElementById(mod + '-summary-content');
@@ -3470,7 +3532,7 @@ async function loadAdminPanel() {
         <input id="new-ten" placeholder="Tên nhân viên">
         <input id="new-email" type="email" placeholder="Email đăng nhập" autocomplete="off">
         <input id="new-password" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="new-password">
-        <select id="new-role"><option value="nhan_vien">Nhân viên</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
+        <select id="new-role"><option value="nhan_vien">Nhân viên bán hàng</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
         <button class="btn-g" onclick="taoTaiKhoanMoi()">Tạo tài khoản</button>
       </div>
     </div>
@@ -4114,7 +4176,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v109</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v111</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4168,7 +4230,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v109</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v111</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4197,7 +4259,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v109</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v111</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4449,7 +4511,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
             </select>
           </div>
           <div class="filter-actions">
-            <button class="btn-apply-blue" onclick="loadBaoCaList()">Lọc</button>
+            <button class="btn-apply-blue" onclick="applyBaocaFilter()">Lọc</button>
             <button class="btn-clear" onclick="clearBaocaFilter()">Xóa lọc</button>
           </div>
           <div id="baoca-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
