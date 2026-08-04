@@ -3456,17 +3456,40 @@ async function loadAdminPanel() {
     </div>`;
 }
 
-window.capLaiMatKhau = async function(uid, ten) {
-  if (!confirm(`Đặt lại mật khẩu về mặc định "123456" cho "${ten}"?\n\nNhớ báo lại cho nhân viên đổi mật khẩu ngay sau khi đăng nhập.`)) return;
+let capMkUid = null;
+
+window.capLaiMatKhau = function(uid, ten) {
+  capMkUid = uid;
+  document.getElementById('capmk-ten').textContent = ten;
+  document.getElementById('capmk-moi').value = '';
+  document.getElementById('capmk-xacnhan').value = '';
+  document.getElementById('capmk-modal').style.display = 'flex';
+};
+
+window.dongCapLaiMatKhau = function() {
+  document.getElementById('capmk-modal').style.display = 'none';
+  capMkUid = null;
+};
+
+window.luuCapLaiMatKhau = async function() {
+  const moi = document.getElementById('capmk-moi').value;
+  const xacnhan = document.getElementById('capmk-xacnhan').value;
+  const ten = document.getElementById('capmk-ten').textContent;
+
+  if (!moi || !xacnhan) { showToast('Vui lòng nhập đủ mật khẩu', true); return; }
+  if (moi.length < 6) { showToast('Mật khẩu cần tối thiểu 6 ký tự', true); return; }
+  if (moi !== xacnhan) { showToast('Mật khẩu nhập lại không khớp', true); return; }
+
   showToast('Đang xử lý...');
   try {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
-      headers: { 'x-action': 'set-password', 'x-uid': uid, 'x-new-password': '123456' }
+      headers: { 'x-action': 'set-password', 'x-uid': capMkUid, 'x-new-password': moi }
     });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Lỗi không xác định');
-    showToast(`Đã đặt lại mật khẩu về "123456" cho ${ten}`);
+    dongCapLaiMatKhau();
+    showToast(`Đã cấp lại mật khẩu cho ${ten}`);
   } catch(e) {
     showToast('Lỗi cấp lại mật khẩu: ' + (e.message || 'Không xác định'), true);
   }
@@ -4006,6 +4029,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 #xemlich-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2200;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto}
 #chonca-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2400;align-items:center;justify-content:center;padding:1rem}
 #doimk-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2400;align-items:center;justify-content:center;padding:1rem}
+#capmk-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:2400;align-items:center;justify-content:center;padding:1rem}
 #camera-video{width:100%;max-width:480px}
 #camera-canvas{display:none}
 .cam-actions{display:flex;gap:16px;margin-top:16px}
@@ -4062,7 +4086,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v106</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v107</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4116,7 +4140,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v106</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v107</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4145,7 +4169,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v106</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v107</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4554,6 +4578,20 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div style="display:flex;gap:8px">
       <button class="btn-g" style="flex:1" onclick="luuDoiMatKhau()">Đổi mật khẩu</button>
       <button class="btn-outline" style="flex:1;width:auto" onclick="dongDoiMatKhau()">Hủy</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN CẤP LẠI MẬT KHẨU CHO NHÂN VIÊN -->
+<div id="capmk-modal">
+  <div style="background:var(--surface);border-radius:var(--radius);padding:20px;width:100%;max-width:340px">
+    <h3 style="font-size:15px;font-weight:600;margin-bottom:4px">Cấp lại mật khẩu</h3>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:14px">Cho: <b id="capmk-ten"></b></p>
+    <input type="password" id="capmk-moi" placeholder="Mật khẩu mới (tối thiểu 6 ký tự)" autocomplete="new-password" style="margin-bottom:8px">
+    <input type="password" id="capmk-xacnhan" placeholder="Nhập lại mật khẩu mới" autocomplete="new-password" style="margin-bottom:14px">
+    <div style="display:flex;gap:8px">
+      <button class="btn-g" style="flex:1" onclick="luuCapLaiMatKhau()">Cấp lại mật khẩu</button>
+      <button class="btn-outline" style="flex:1;width:auto" onclick="dongCapLaiMatKhau()">Hủy</button>
     </div>
   </div>
 </div>
