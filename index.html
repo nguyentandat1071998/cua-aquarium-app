@@ -15,8 +15,8 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -3428,36 +3428,26 @@ async function loadAdminPanel() {
       <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
     </div>
     <div class="admin-block" style="margin-top:1rem">
-      <h3>Tài khoản nhân viên</h3>
+      <h3>Danh sách nhân viên</h3>
       <div class="user-list">${users.map(u=>`
-        <div class="user-row">
-          <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
+        <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:6px">
+          <div style="display:flex;justify-content:space-between;width:100%">
+            <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
+          </div>
           <span class="uemail">${u.email||''}</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn-xs" onclick="capLaiMatKhau('${escHtml(u.email||'')}')">Cấp lại mật khẩu</button>
+            <button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>
+          </div>
         </div>`).join('')}</div>
       <div class="admin-form">
         <h4>Tạo tài khoản mới</h4>
-        <p class="info-note">Tạo trực tiếp trong app — không cần mở Firebase Console.</p>
         <input id="new-ten" placeholder="Tên nhân viên">
         <input id="new-email" type="email" placeholder="Email đăng nhập" autocomplete="off">
         <input id="new-password" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="new-password">
         <select id="new-role"><option value="nhan_vien">Nhân viên</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
         <button class="btn-g" onclick="taoTaiKhoanMoi()">Tạo tài khoản</button>
       </div>
-      <div class="admin-form" style="margin-top:12px">
-        <h4>Liên kết tài khoản có sẵn</h4>
-        <p class="info-note">Nếu đã tạo user trong Firebase Auth từ trước, dán UID vào đây để liên kết.</p>
-        <input id="new-uid" placeholder="UID từ Firebase Auth">
-        <input id="link-ten" placeholder="Tên nhân viên">
-        <input id="link-email" placeholder="Email">
-        <select id="link-role"><option value="nhan_vien">Nhân viên</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
-        <button class="btn-outline" onclick="addUser()">Liên kết tài khoản</button>
-      </div>
-    </div>
-    <div class="admin-block" style="margin-top:1rem">
-      <h3>Import SKU từ KiotViet</h3>
-      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, cột ảnh (vd "Hình ảnh (url1,url2...)"), và cột <b>Nhóm hàng</b> (3 cấp, phân cách bằng <code>&gt;&gt;</code>, vd: Cá, Tép, Ốc &amp; Chăm sóc&gt;&gt;Cá cảnh)</p>
-      <input type="file" id="sku-file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
-      <div id="import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
     </div>
     <div class="admin-block" style="margin-top:1rem">
       <h3>Phiếu đã xóa</h3>
@@ -3465,6 +3455,44 @@ async function loadAdminPanel() {
       <div id="deleted-list" style="margin-top:12px"></div>
     </div>`;
 }
+
+window.capLaiMatKhau = async function(email) {
+  if (!email) { showToast('Tài khoản này chưa có email', true); return; }
+  if (!confirm(`Gửi email đặt lại mật khẩu tới ${email}?`)) return;
+  try {
+    await sendPasswordResetEmail(auth, email);
+    showToast('Đã gửi email đặt lại mật khẩu tới ' + email);
+  } catch(e) {
+    let msg = e.message || 'Lỗi không xác định';
+    if (e.code === 'auth/user-not-found') msg = 'Không tìm thấy tài khoản đăng nhập với email này';
+    showToast('Lỗi: ' + msg, true);
+  }
+};
+
+window.xoaTaiKhoan = async function(uid, ten) {
+  if (!confirm(`Xóa tài khoản "${ten}"? Nhân viên này sẽ không đăng nhập được vào app nữa.`)) return;
+  try {
+    await deleteDoc(doc(db, 'users', uid));
+    showToast('Đã xóa tài khoản: ' + ten);
+    loadAdminPanel();
+  } catch(e) {
+    showToast('Lỗi xóa tài khoản: ' + (e.message || 'Không xác định'), true);
+  }
+};
+
+window.toggleUserMenu = function(which) {
+  const id = which === 'sidebar' ? 'sidebar-user-menu' : 'mobile-user-menu';
+  const menu = document.getElementById(id);
+  const isOpen = menu.classList.contains('open');
+  document.querySelectorAll('.user-menu-dropdown').forEach(m => m.classList.remove('open'));
+  if (!isOpen) menu.classList.add('open');
+};
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.user-menu-trigger') && !e.target.closest('.user-menu-dropdown')) {
+    document.querySelectorAll('.user-menu-dropdown').forEach(m => m.classList.remove('open'));
+  }
+});
 
 window.moDoiMatKhau = function() {
   document.getElementById('doimk-cu').value = '';
@@ -3530,16 +3558,6 @@ window.taoTaiKhoanMoi = async function() {
     else if (e.code === 'auth/weak-password') msg = 'Mật khẩu quá yếu';
     showToast('Tạo tài khoản lỗi: ' + msg, true);
   }
-};
-
-window.addUser = async function() {
-  const uid=document.getElementById('new-uid').value.trim();
-  const ten=document.getElementById('link-ten').value.trim();
-  const email=document.getElementById('link-email').value.trim();
-  const role=document.getElementById('link-role').value;
-  if (!uid||!ten) { showToast('Vui lòng nhập UID và tên',true); return; }
-  await setDoc(doc(db,'users',uid), { ten, email, role, createdAt:serverTimestamp() });
-  showToast('Đã thêm: '+ten); loadAdminPanel();
 };
 
 window.importSKU = async function(input) {
@@ -3748,6 +3766,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .uinfo .uname{font-size:13px;font-weight:600;text-align:right}
 .uinfo .urole{font-size:11px;color:var(--text2);text-align:right}
 .btn-logout{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--text2)}
+.user-menu-trigger{display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:8px;padding:4px 6px;transition:background .15s}
+.user-menu-trigger:hover{background:var(--bg)}
+.user-menu-caret{font-size:9px;color:var(--text3);flex-shrink:0}
+.user-menu-dropdown{display:none;position:absolute;left:0;top:100%;margin-top:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);min-width:150px;z-index:80;overflow:hidden}
+.user-menu-dropdown.open{display:block}
+.user-menu-dropdown button{display:block;width:100%;text-align:left;padding:10px 14px;font-size:13px;background:none;border:none;cursor:pointer;color:var(--text)}
+.user-menu-dropdown button:hover{background:var(--bg)}
+.user-menu-dropdown button:not(:last-child){border-bottom:1px solid var(--border)}
 
 /* MODULE TABS */
 .mod-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:8px 10px;gap:6px;overflow-x:auto}
@@ -4003,10 +4029,9 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   .sidebar .mod-btn.green:not(.active){background:var(--bg);color:var(--green)}
   .sidebar .mod-btn.red:not(.active){background:var(--bg);color:var(--red)}
   .sidebar .mod-btn.admin-btn:not(.active){background:var(--bg);color:#5B21B6}
-  .sidebar-user{margin-top:auto;padding-top:12px;border-top:1px solid var(--border)}
+  .sidebar-user{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);position:relative}
   .sidebar-user .uname{font-size:13px;font-weight:600}
   .sidebar-user .urole{font-size:11px;color:var(--text2)}
-  .sidebar-user .btn-logout{margin-top:8px;width:100%;text-align:center}
   .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
   .app-header{display:none}
   .mod-bar{display:none}
@@ -4025,7 +4050,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v103</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v104</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4079,7 +4104,7 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v103</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v104</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4089,11 +4114,18 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
     <button class="mod-btn" id="sidebar-chamcong" onclick="switchModule('chamcong');updateSidebar('chamcong')" style="display:none;color:#B45309">Chấm công</button>
     <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
-    <div class="sidebar-user">
-      <div class="uname" id="sidebar-uname"></div>
-      <div class="urole" id="sidebar-urole"></div>
-      <button class="btn-logout" onclick="moDoiMatKhau()" style="margin-bottom:6px">Đổi mật khẩu</button>
-      <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
+    <div class="sidebar-user" style="position:relative">
+      <div class="user-menu-trigger" onclick="toggleUserMenu('sidebar')">
+        <div>
+          <div class="uname" id="sidebar-uname"></div>
+          <div class="urole" id="sidebar-urole"></div>
+        </div>
+        <span class="user-menu-caret">▾</span>
+      </div>
+      <div class="user-menu-dropdown" id="sidebar-user-menu">
+        <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
+        <button onclick="doLogout()">Đăng xuất</button>
+      </div>
     </div>
   </div>
 
@@ -4101,11 +4133,17 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v103</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v104</span></div>
       <div class="header-right">
-        <div class="uinfo"><div class="uname" id="user-name"></div><div class="urole" id="user-role"></div></div>
-        <button class="btn-logout" onclick="moDoiMatKhau()">Đổi MK</button>
-        <button class="btn-logout" onclick="doLogout()">Đăng xuất</button>
+        <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
+          <div class="uname" id="user-name"></div>
+          <div class="urole" id="user-role"></div>
+          <span class="user-menu-caret">▾</span>
+          <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
+            <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
+            <button onclick="doLogout()">Đăng xuất</button>
+          </div>
+        </div>
       </div>
     </header>
 
