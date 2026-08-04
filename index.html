@@ -16,7 +16,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -1045,6 +1045,9 @@ setInterval(() => {
   checkNhacNho();
 }, 60000);
 
+let unsubscribeUserDoc = null;
+let myLastPwChangeMs = 0; // đánh dấu lần đổi mật khẩu do chính tab này thực hiện, tránh tự đăng xuất mình ngay sau khi đổi
+
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     currentUser = user;
@@ -1052,6 +1055,27 @@ onAuthStateChanged(auth, async (user) => {
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
         currentUserData = userDoc.data();
+
+        // Theo dõi thời gian thực hồ sơ của chính mình:
+        // - Hồ sơ bị xóa -> đăng xuất ngay
+        // - Mật khẩu vừa bị đổi ở nơi khác (không phải do chính tab này) -> đăng xuất ngay
+        if (unsubscribeUserDoc) unsubscribeUserDoc();
+        unsubscribeUserDoc = onSnapshot(doc(db, 'users', user.uid), (snap) => {
+          if (!snap.exists() && currentUser) {
+            showToast('Tài khoản của bạn đã bị xóa khỏi hệ thống', true);
+            signOut(auth);
+            return;
+          }
+          const pwUpdatedAt = snap.data()?.pwUpdatedAt;
+          if (pwUpdatedAt?.toMillis && currentUser) {
+            const changedAtMs = pwUpdatedAt.toMillis();
+            if (changedAtMs > myLastPwChangeMs + 5000) {
+              showToast('Mật khẩu vừa được thay đổi — vui lòng đăng nhập lại', true);
+              signOut(auth);
+            }
+          }
+        });
+
         // Admin tự vào app luôn, nhân viên phải check-in
         if (currentUserData.role === 'admin') {
           showApp();
@@ -1069,6 +1093,7 @@ onAuthStateChanged(auth, async (user) => {
     }
   } else {
     currentUser = null; currentUserData = null;
+    if (unsubscribeUserDoc) { unsubscribeUserDoc(); unsubscribeUserDoc = null; }
     showLogin();
   }
 });
@@ -3488,6 +3513,7 @@ window.luuCapLaiMatKhau = async function() {
     });
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Lỗi không xác định');
+    await updateDoc(doc(db, 'users', capMkUid), { pwUpdatedAt: serverTimestamp() });
     dongCapLaiMatKhau();
     showToast(`Đã cấp lại mật khẩu cho ${ten}`);
   } catch(e) {
@@ -3552,6 +3578,8 @@ window.luuDoiMatKhau = async function() {
     const cred = EmailAuthProvider.credential(currentUser.email, cu);
     await reauthenticateWithCredential(currentUser, cred);
     await updatePassword(currentUser, moi);
+    myLastPwChangeMs = Date.now();
+    await updateDoc(doc(db, 'users', currentUser.uid), { pwUpdatedAt: serverTimestamp() });
     dongDoiMatKhau();
     showToast('Đã đổi mật khẩu thành công');
   } catch(e) {
@@ -4086,7 +4114,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v107</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v109</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4140,7 +4168,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v107</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v109</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4169,7 +4197,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v107</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v109</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
