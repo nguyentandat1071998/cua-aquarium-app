@@ -15,7 +15,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -3436,7 +3436,7 @@ async function loadAdminPanel() {
           </div>
           <span class="uemail">${u.email||''}</span>
           <div style="display:flex;gap:8px">
-            <button class="btn-xs" onclick="capLaiMatKhau('${escHtml(u.email||'')}')">Cấp lại mật khẩu</button>
+            <button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${escHtml(u.ten||u.email||'')}')">Cấp lại mật khẩu</button>
             <button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>
           </div>
         </div>`).join('')}</div>
@@ -3456,22 +3456,32 @@ async function loadAdminPanel() {
     </div>`;
 }
 
-window.capLaiMatKhau = async function(email) {
-  if (!email) { showToast('Tài khoản này chưa có email', true); return; }
-  if (!confirm(`Gửi email đặt lại mật khẩu tới ${email}?`)) return;
+window.capLaiMatKhau = async function(uid, ten) {
+  if (!confirm(`Đặt lại mật khẩu về mặc định "123456" cho "${ten}"?\n\nNhớ báo lại cho nhân viên đổi mật khẩu ngay sau khi đăng nhập.`)) return;
+  showToast('Đang xử lý...');
   try {
-    await sendPasswordResetEmail(auth, email);
-    showToast('Đã gửi email đặt lại mật khẩu tới ' + email);
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'set-password', 'x-uid': uid, 'x-new-password': '123456' }
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Lỗi không xác định');
+    showToast(`Đã đặt lại mật khẩu về "123456" cho ${ten}`);
   } catch(e) {
-    let msg = e.message || 'Lỗi không xác định';
-    if (e.code === 'auth/user-not-found') msg = 'Không tìm thấy tài khoản đăng nhập với email này';
-    showToast('Lỗi: ' + msg, true);
+    showToast('Lỗi cấp lại mật khẩu: ' + (e.message || 'Không xác định'), true);
   }
 };
 
 window.xoaTaiKhoan = async function(uid, ten) {
-  if (!confirm(`Xóa tài khoản "${ten}"? Nhân viên này sẽ không đăng nhập được vào app nữa.`)) return;
+  if (!confirm(`Xóa vĩnh viễn tài khoản "${ten}"? Không thể khôi phục lại được.`)) return;
+  showToast('Đang xóa...');
   try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'delete-user', 'x-uid': uid }
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Lỗi không xác định');
     await deleteDoc(doc(db, 'users', uid));
     showToast('Đã xóa tài khoản: ' + ten);
     loadAdminPanel();
@@ -4052,7 +4062,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v105</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v106</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4106,7 +4116,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v105</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v106</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4135,7 +4145,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v105</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v106</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
