@@ -1172,9 +1172,9 @@ function showApp() {
   }
   const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
   if (canExport) {
-    document.getElementById('mod-chamcong').style.display = 'flex';
-    const scc = document.getElementById('sidebar-chamcong');
-    if (scc) scc.style.display = 'flex';
+    document.getElementById('mod-nhanvien-wrap').style.display = 'block';
+    const snv = document.getElementById('sidebar-nhanvien-wrap');
+    if (snv) snv.style.display = 'block';
   }
   // Lưu quyền xuất file vào biến global
   window._canExport = canExport;
@@ -1208,13 +1208,23 @@ window.switchModule = function(mod) {
     renderLichCaTab();
     return;
   }
-  if (mod === 'chamcong') {
+  if (mod === 'danhsachnv' || mod === 'chamcong' || mod === 'luongnv') {
     document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('mod-chamcong').classList.add('active');
+    const trigMobile = document.getElementById('mod-nhanvien');
+    const trigSidebar = document.getElementById('sidebar-nhanvien');
+    if (trigMobile) trigMobile.classList.add('active');
+    if (trigSidebar) trigSidebar.classList.add('active');
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
-    document.getElementById('panel-chamcong-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
-    renderChamCongTab();
+    if (mod === 'danhsachnv') {
+      document.getElementById('panel-danhsachnv-main').style.display = 'block';
+      loadDanhSachNV();
+    } else if (mod === 'chamcong') {
+      document.getElementById('panel-chamcong-main').style.display = 'block';
+      renderChamCongTab();
+    } else {
+      document.getElementById('panel-luongnv-main').style.display = 'block';
+    }
     return;
   }
   if (mod === 'hanghoa') {
@@ -3506,19 +3516,16 @@ function downloadCSV(rows, filename, slLabel) {
   showToast('Đã xuất CSV');
 }
 
-// ===== ADMIN =====
-async function loadAdminPanel() {
-  const el = document.getElementById('admin-content');
+// ===== NHÂN VIÊN =====
+async function loadDanhSachNV() {
+  const el = document.getElementById('danhsachnv-content');
+  if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const uSnap = await getDocs(collection(db,'users'));
   const users = uSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const canManage = currentUserData.role === 'admin';
   el.innerHTML = `
     <div class="admin-block">
-      <h3>Check-in cửa hàng</h3>
-      <p class="info-note">Xem & in mã QR để nhân viên quét check-in tại quầy.</p>
-      <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
-    </div>
-    <div class="admin-block" style="margin-top:1rem">
       <h3>Danh sách nhân viên</h3>
       <div class="user-list">${users.map(u=>`
         <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:6px">
@@ -3526,19 +3533,31 @@ async function loadAdminPanel() {
             <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
           </div>
           <span class="uemail">${u.email||''}</span>
-          <div style="display:flex;gap:8px">
+          ${canManage ? `<div style="display:flex;gap:8px">
             <button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${escHtml(u.ten||u.email||'')}')">Cấp lại mật khẩu</button>
             <button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>
-          </div>
+          </div>` : ''}
         </div>`).join('')}</div>
-      <div class="admin-form">
+      ${canManage ? `<div class="admin-form">
         <h4>Tạo tài khoản mới</h4>
         <input id="new-ten" placeholder="Tên nhân viên">
         <input id="new-email" type="email" placeholder="Email đăng nhập" autocomplete="off">
         <input id="new-password" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="new-password">
         <select id="new-role"><option value="nhan_vien">Nhân viên bán hàng</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
         <button class="btn-g" onclick="taoTaiKhoanMoi()">Tạo tài khoản</button>
-      </div>
+      </div>` : ''}
+    </div>`;
+}
+
+// ===== ADMIN =====
+async function loadAdminPanel() {
+  const el = document.getElementById('admin-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  el.innerHTML = `
+    <div class="admin-block">
+      <h3>Check-in cửa hàng</h3>
+      <p class="info-note">Xem & in mã QR để nhân viên quét check-in tại quầy.</p>
+      <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
     </div>
     <div class="admin-block" style="margin-top:1rem">
       <h3>Phiếu đã xóa</h3>
@@ -3613,8 +3632,22 @@ window.toggleUserMenu = function(which) {
   if (!isOpen) menu.classList.add('open');
 };
 
+window.toggleNVMenu = function(which) {
+  const id = which === 'sidebar' ? 'nv-menu-sidebar' : 'nv-menu-mobile';
+  const menu = document.getElementById(id);
+  const isOpen = menu.classList.contains('open');
+  document.querySelectorAll('.user-menu-dropdown').forEach(m => m.classList.remove('open'));
+  if (!isOpen) menu.classList.add('open');
+};
+
+window.moNVTab = function(mod) {
+  document.querySelectorAll('.user-menu-dropdown').forEach(m => m.classList.remove('open'));
+  switchModule(mod);
+};
+
 document.addEventListener('click', e => {
-  if (!e.target.closest('.user-menu-trigger') && !e.target.closest('.user-menu-dropdown')) {
+  if (!e.target.closest('.user-menu-trigger') && !e.target.closest('.user-menu-dropdown') &&
+      !e.target.closest('#sidebar-nhanvien') && !e.target.closest('#mod-nhanvien')) {
     document.querySelectorAll('.user-menu-dropdown').forEach(m => m.classList.remove('open'));
   }
 });
@@ -4180,7 +4213,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v112</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v113</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4234,14 +4267,21 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v112</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v113</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
     <button class="mod-btn teal" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="display:none;color:#0369A1">Báo cá mới về</button>
-    <button class="mod-btn" id="sidebar-chamcong" onclick="switchModule('chamcong');updateSidebar('chamcong')" style="display:none;color:#B45309">Chấm công</button>
+    <div id="sidebar-nhanvien-wrap" style="display:none;position:relative">
+      <button class="mod-btn" id="sidebar-nhanvien" onclick="toggleNVMenu('sidebar')" style="color:#B45309;width:100%">Nhân viên</button>
+      <div class="user-menu-dropdown" id="nv-menu-sidebar">
+        <button onclick="moNVTab('danhsachnv')">Danh sách nhân viên</button>
+        <button onclick="moNVTab('chamcong')">Chấm công</button>
+        <button onclick="moNVTab('luongnv')">Bảng lương</button>
+      </div>
+    </div>
     <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
     <div class="sidebar-user" style="position:relative">
@@ -4263,7 +4303,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v112</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v113</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4284,7 +4324,14 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
       <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
       <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
-      <button class="mod-btn" id="mod-chamcong" onclick="switchModule('chamcong')" style="display:none;background:var(--bg);color:#B45309">Chấm công</button>
+      <div id="mod-nhanvien-wrap" style="display:none;position:relative;flex:1">
+        <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="background:var(--bg);color:#B45309;width:100%">Nhân viên</button>
+        <div class="user-menu-dropdown" id="nv-menu-mobile">
+          <button onclick="moNVTab('danhsachnv')">Danh sách nhân viên</button>
+          <button onclick="moNVTab('chamcong')">Chấm công</button>
+          <button onclick="moNVTab('luongnv')">Bảng lương</button>
+        </div>
+      </div>
       <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
       <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
     </div>
@@ -4559,6 +4606,19 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <!-- CHẤM CÔNG (Admin/Quản lý) -->
       <div class="panel" id="panel-chamcong-main">
         <div id="chamcong-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- DANH SÁCH NHÂN VIÊN (Admin/Quản lý) -->
+      <div class="panel" id="panel-danhsachnv-main">
+        <div id="danhsachnv-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- BẢNG LƯƠNG (đang phát triển) -->
+      <div class="panel" id="panel-luongnv-main">
+        <div class="admin-block" style="text-align:center;padding:2rem 1rem">
+          <h3 style="margin-bottom:8px">Bảng lương</h3>
+          <p class="info-note" style="display:inline-block">Tính năng đang được xây dựng — sẽ sớm ra mắt.</p>
+        </div>
       </div>
 
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
