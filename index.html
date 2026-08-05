@@ -1208,7 +1208,7 @@ window.switchModule = function(mod) {
     renderLichCaTab();
     return;
   }
-  if (mod === 'danhsachnv' || mod === 'chamcong' || mod === 'luongnv') {
+  if (mod === 'danhsachnv' || mod === 'chamcong' || mod === 'luongnv' || mod === 'thietlapluong') {
     document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
     const trigMobile = document.getElementById('mod-nhanvien');
     const trigSidebar = document.getElementById('sidebar-nhanvien');
@@ -1222,6 +1222,9 @@ window.switchModule = function(mod) {
     } else if (mod === 'chamcong') {
       document.getElementById('panel-chamcong-main').style.display = 'block';
       renderChamCongTab();
+    } else if (mod === 'thietlapluong') {
+      document.getElementById('panel-thietlapluong-main').style.display = 'block';
+      renderThietLapLuong();
     } else {
       document.getElementById('panel-luongnv-main').style.display = 'block';
     }
@@ -3517,6 +3520,12 @@ function downloadCSV(rows, filename, slLabel) {
 }
 
 // ===== NHÂN VIÊN =====
+// Lấy cấu hình lương theo giờ + cấp bậc (dùng chung cho Danh sách nhân viên & Thiết lập bảng lương)
+async function getLuongConfig() {
+  const snap = await getDoc(doc(db, 'settings', 'luong_theo_gio'));
+  return snap.exists() ? snap.data() : {};
+}
+
 async function loadDanhSachNV() {
   const el = document.getElementById('danhsachnv-content');
   if (!el) return;
@@ -3524,20 +3533,32 @@ async function loadDanhSachNV() {
   const uSnap = await getDocs(collection(db,'users'));
   const users = uSnap.docs.map(d=>({id:d.id,...d.data()}));
   const canManage = currentUserData.role === 'admin';
+  const luongCfg = canManage ? await getLuongConfig() : {};
   el.innerHTML = `
     <div class="admin-block">
       <h3>Danh sách nhân viên</h3>
-      <div class="user-list">${users.map(u=>`
+      <div class="user-list">${users.map(u=>{
+        const tiers = luongCfg[u.role]?.tiers || [];
+        return `
         <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:6px">
           <div style="display:flex;justify-content:space-between;width:100%">
             <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
           </div>
           <span class="uemail">${u.email||''}</span>
+          ${canManage && tiers.length ? `
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:11px;color:var(--text2)">Cấp bậc:</span>
+            <select onchange="doiCapBac('${u.id}',this.value)" style="width:auto;padding:4px 8px;font-size:12px">
+              <option value="">Mặc định</option>
+              ${tiers.map(t => `<option value="${escHtml(t)}" ${u.capBac===t?'selected':''}>${escHtml(t)}</option>`).join('')}
+            </select>
+          </div>` : ''}
           ${canManage ? `<div style="display:flex;gap:8px">
             <button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${escHtml(u.ten||u.email||'')}')">Cấp lại mật khẩu</button>
             <button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>
           </div>` : ''}
-        </div>`).join('')}</div>
+        </div>`;
+      }).join('')}</div>
       ${canManage ? `<div class="admin-form">
         <h4>Tạo tài khoản mới</h4>
         <input id="new-ten" placeholder="Tên nhân viên">
@@ -3548,6 +3569,92 @@ async function loadDanhSachNV() {
       </div>` : ''}
     </div>`;
 }
+
+window.doiCapBac = async function(uid, capBac) {
+  await updateDoc(doc(db,'users',uid), { capBac: capBac || '' });
+  showToast('Đã cập nhật cấp bậc');
+};
+
+// ===== THIẾT LẬP BẢNG LƯƠNG (Cấp bậc + lương theo giờ) =====
+const LUONG_ROLES = [
+  { key: 'nhan_vien', label: 'Nhân viên bán hàng' },
+  { key: 'quan_ly', label: 'Quản lý' },
+  { key: 'admin', label: 'Admin' },
+];
+
+async function renderThietLapLuong() {
+  const el = document.getElementById('thietlapluong-content');
+  if (!el) return;
+  if (currentUserData.role !== 'admin') {
+    el.innerHTML = `<p class="info-note">Chỉ Admin mới có quyền thiết lập bảng lương.</p>`;
+    return;
+  }
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const cfg = await getLuongConfig();
+
+  el.innerHTML = LUONG_ROLES.map(r => {
+    const roleCfg = cfg[r.key] || { tiers: [], rates: {} };
+    const tiers = roleCfg.tiers || [];
+    const rates = roleCfg.rates || {};
+    return `
+      <div class="admin-block" style="margin-bottom:1rem">
+        <h3>${r.label}</h3>
+        <div id="luong-tiers-${r.key}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="flex:1;font-size:13px;color:var(--text2)">Mặc định ${tiers.length?'(chưa gán cấp bậc)':'(áp dụng cho mọi người)'}</span>
+            <input type="number" id="luong-rate-${r.key}-" value="${rates['']||0}" placeholder="đ/giờ" style="width:120px">
+          </div>
+          ${tiers.map(t => `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span style="flex:1;font-size:13px">${escHtml(t)}</span>
+            <input type="number" id="luong-rate-${r.key}-${escHtml(t)}" value="${rates[t]||0}" placeholder="đ/giờ" style="width:120px">
+            <button class="btn-xs danger" onclick="xoaCapBac('${r.key}','${escHtml(t)}')">Xóa</button>
+          </div>`).join('')}
+        </div>
+        <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
+        <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu ${r.label}</button>
+      </div>`;
+  }).join('');
+}
+
+window.themCapBac = async function(roleKey) {
+  const ten = prompt('Tên cấp bậc mới (vd: Cấp 1, Cấp 2, Thử việc...)');
+  if (!ten || !ten.trim()) return;
+  const cfg = await getLuongConfig();
+  if (!cfg[roleKey]) cfg[roleKey] = { tiers: [], rates: {} };
+  if (!cfg[roleKey].tiers) cfg[roleKey].tiers = [];
+  if (cfg[roleKey].tiers.includes(ten.trim())) { showToast('Cấp bậc này đã tồn tại', true); return; }
+  cfg[roleKey].tiers.push(ten.trim());
+  await setDoc(doc(db,'settings','luong_theo_gio'), cfg);
+  showToast('Đã thêm cấp bậc');
+  renderThietLapLuong();
+};
+
+window.xoaCapBac = async function(roleKey, ten) {
+  if (!confirm(`Xóa cấp bậc "${ten}"? Nhân viên đang gán cấp này sẽ về mặc định.`)) return;
+  const cfg = await getLuongConfig();
+  if (cfg[roleKey]?.tiers) {
+    cfg[roleKey].tiers = cfg[roleKey].tiers.filter(t => t !== ten);
+    if (cfg[roleKey].rates) delete cfg[roleKey].rates[ten];
+  }
+  await setDoc(doc(db,'settings','luong_theo_gio'), cfg);
+  showToast('Đã xóa cấp bậc');
+  renderThietLapLuong();
+};
+
+window.luuBangLuong = async function(roleKey) {
+  const cfg = await getLuongConfig();
+  if (!cfg[roleKey]) cfg[roleKey] = { tiers: [], rates: {} };
+  if (!cfg[roleKey].rates) cfg[roleKey].rates = {};
+  const tiers = cfg[roleKey].tiers || [];
+  cfg[roleKey].rates[''] = parseFloat(document.getElementById(`luong-rate-${roleKey}-`).value) || 0;
+  tiers.forEach(t => {
+    const inp = document.getElementById(`luong-rate-${roleKey}-${t}`);
+    if (inp) cfg[roleKey].rates[t] = parseFloat(inp.value) || 0;
+  });
+  await setDoc(doc(db,'settings','luong_theo_gio'), cfg);
+  showToast('Đã lưu bảng lương');
+};
 
 // ===== ADMIN =====
 async function loadAdminPanel() {
@@ -4213,7 +4320,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v113</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v114</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4267,7 +4374,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v113</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v114</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4280,6 +4387,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <button onclick="moNVTab('danhsachnv')">Danh sách nhân viên</button>
         <button onclick="moNVTab('chamcong')">Chấm công</button>
         <button onclick="moNVTab('luongnv')">Bảng lương</button>
+        <button onclick="moNVTab('thietlapluong')">Thiết lập bảng lương</button>
       </div>
     </div>
     <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
@@ -4303,7 +4411,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="main-content">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v113</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v114</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4330,6 +4438,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
           <button onclick="moNVTab('danhsachnv')">Danh sách nhân viên</button>
           <button onclick="moNVTab('chamcong')">Chấm công</button>
           <button onclick="moNVTab('luongnv')">Bảng lương</button>
+          <button onclick="moNVTab('thietlapluong')">Thiết lập bảng lương</button>
         </div>
       </div>
       <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
@@ -4619,6 +4728,11 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
           <h3 style="margin-bottom:8px">Bảng lương</h3>
           <p class="info-note" style="display:inline-block">Tính năng đang được xây dựng — sẽ sớm ra mắt.</p>
         </div>
+      </div>
+
+      <!-- THIẾT LẬP BẢNG LƯƠNG (Admin) -->
+      <div class="panel" id="panel-thietlapluong-main">
+        <div id="thietlapluong-content"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
