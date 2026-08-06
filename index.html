@@ -1195,6 +1195,12 @@ function showApp() {
     modBar.style.display = 'none';
     void modBar.offsetHeight; // ép reflow
     modBar.style.display = 'flex';
+    modBar.scrollLeft = 0;
+    capNhatNutChuyenTrang();
+    if (!modBar.dataset.pagingBound) {
+      modBar.addEventListener('scroll', capNhatNutChuyenTrang);
+      modBar.dataset.pagingBound = '1';
+    }
   }
 
   loadSKUs();
@@ -3750,6 +3756,21 @@ window.xoaTaiKhoan = async function(uid, ten) {
   }
 };
 
+window.mobTabPage = function(dir) {
+  const bar = document.getElementById('mod-bar');
+  if (!bar) return;
+  bar.scrollBy({ left: dir * bar.clientWidth * 0.85, behavior: 'smooth' });
+};
+
+function capNhatNutChuyenTrang() {
+  const bar = document.getElementById('mod-bar');
+  const prev = document.getElementById('mod-page-prev');
+  const next = document.getElementById('mod-page-next');
+  if (!bar || !prev || !next) return;
+  prev.disabled = bar.scrollLeft <= 2;
+  next.disabled = bar.scrollLeft >= bar.scrollWidth - bar.clientWidth - 2;
+}
+
 window.toggleUserMenu = function(which) {
   const id = which === 'sidebar' ? 'sidebar-user-menu' : 'mobile-user-menu';
   const menu = document.getElementById(id);
@@ -4072,8 +4093,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .user-menu-dropdown button:not(:last-child){border-bottom:1px solid var(--border)}
 
 /* MODULE TABS */
-.mod-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border);padding:8px 10px;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch}
-.mod-btn{flex:1;padding:8px 6px;border:none;border-radius:8px;font-size:11.5px;font-weight:600;cursor:pointer;background:var(--bg);color:var(--text2);transition:all .15s;white-space:nowrap}
+.mod-bar{display:flex;background:var(--surface);padding:8px 6px;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;flex:1;min-width:0}
+.mod-btn{flex:1;padding:9px 7px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:var(--bg);color:var(--text2);transition:all .15s;white-space:nowrap}
+.mobile-sticky-top{position:sticky;top:0;z-index:70;background:var(--surface)}
+.mod-bar-row{display:flex;align-items:stretch;background:var(--surface);border-bottom:1px solid var(--border)}
+.mod-page-btn{flex-shrink:0;width:30px;border:none;background:var(--surface);color:var(--text2);font-size:20px;font-weight:700;cursor:pointer}
+.mod-page-btn:disabled{opacity:0.25;cursor:default}
 .mod-btn.green{color:var(--green)}
 .mod-btn.green.active{background:var(--green);color:#fff}
 .mod-btn.red{color:var(--red)}
@@ -4334,6 +4359,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
   .app-header{display:none}
   .mod-bar{display:none}
+  .mod-bar-row{display:none}
   .sub-tab-bar{position:sticky;top:0;z-index:50}
   .app-body{max-width:720px}
 }
@@ -4349,7 +4375,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v119</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v120</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4403,7 +4429,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v119</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v120</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4438,9 +4464,11 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- MAIN -->
   <div class="main-content">
+    <!-- Vùng ghim cố định: Header + Tab chính + Tab phụ (không cuộn theo nội dung) -->
+    <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v119</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v120</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4454,16 +4482,20 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
     </header>
 
-    <!-- Module tabs (mobile) -->
-    <div class="mod-bar">
-      <button class="mod-btn purple" id="mod-checklist" onclick="switchModule('checklist')">Checklist</button>
-      <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Chuyển kho</button>
-      <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
-      <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
-      <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
-      <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:var(--bg);color:#B45309">Nhân viên</button>
-      <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
-      <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
+    <!-- Module tabs (mobile) — có nút chuyển trang thay vì chỉ vuốt -->
+    <div class="mod-bar-row">
+      <button class="mod-page-btn" id="mod-page-prev" onclick="mobTabPage(-1)">‹</button>
+      <div class="mod-bar" id="mod-bar">
+        <button class="mod-btn purple" id="mod-checklist" onclick="switchModule('checklist')">Checklist</button>
+        <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Chuyển kho</button>
+        <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
+        <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
+        <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
+        <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:#FEF3C7;color:#B45309">Nhân viên ▾</button>
+        <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
+        <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
+      </div>
+      <button class="mod-page-btn" id="mod-page-next" onclick="mobTabPage(1)">›</button>
     </div>
 
     <!-- Dropdown Nhân viên (mobile) — đặt ngoài thanh cuộn ngang để không bị cắt -->
@@ -4479,6 +4511,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <button class="stab" id="stab-tao" onclick="switchSub('tao')">Tạo phiếu</button>
       <button class="stab" id="stab-ds" onclick="switchSub('ds')">Danh sách</button>
       <button class="stab" id="stab-thongke" onclick="switchSub('thongke')">Thống kê</button>
+    </div>
     </div>
 
     <!-- PANELS -->
