@@ -1317,6 +1317,12 @@ let hangHoaAnhBlob = null;
 
 async function renderHangHoaTab() {
   const el = document.getElementById('hanghoa-content');
+  // Reset bộ lọc mỗi khi vào lại tab — tránh lệch giữa ô tìm kiếm (mới, trống) và dữ liệu lọc (cũ, còn giữ)
+  hangHoaSearchQuery = '';
+  hangHoaNhom1Filter = '';
+  hangHoaNhom2Filter = '';
+  hangHoaNhom3Filter = '';
+  hangHoaPage = 1;
   if (!allSKUs.length) {
     el.innerHTML = '<div class="loading">Đang tải...</div>';
     await loadSKUs();
@@ -1622,12 +1628,19 @@ function batDauTheoDoiSKU() {
   if (skusUnsub) return; // đã theo dõi rồi, tránh gắn trùng
   skusUnsub = onSnapshot(collection(db, 'skus'), (snap) => {
     allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
-    // Nếu đang mở đúng tab hàng hóa, vẽ lại ngay cho khớp dữ liệu mới nhất
-    if (document.getElementById('hanghoa-list')) {
+    // Chỉ vẽ lại nếu đang mở đúng tab VÀ không có ai đang gõ dở/sửa dở — tránh làm gián đoạn thao tác đang làm
+    if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) {
       renderHangHoaNhomFilters();
       renderHangHoaList();
     }
   }, (err) => console.error('Lỗi theo dõi SKU:', err));
+}
+
+function dangThaoTacHangHoa() {
+  if (document.getElementById('hanghoa-form')?.innerHTML.trim()) return true; // form thêm mới đang mở
+  if (Array.from(document.querySelectorAll('[id^="hh-sua-"]')).some(el => el.innerHTML.trim())) return true; // form sửa đang mở
+  if (document.activeElement?.id === 'hanghoa-search') return true; // đang gõ tìm kiếm
+  return false;
 }
 
 let usersUnsub = null;
@@ -1635,8 +1648,18 @@ function batDauTheoDoiNhanVien() {
   if (usersUnsub) return;
   usersUnsub = onSnapshot(collection(db, 'users'), (snap) => {
     allUsersCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (document.getElementById('danhsachnv-content')) loadDanhSachNV();
+    if (document.getElementById('danhsachnv-content') && !dangThaoTacNhanVien()) loadDanhSachNV();
   }, (err) => console.error('Lỗi theo dõi nhân viên:', err));
+}
+
+function dangThaoTacNhanVien() {
+  const ten = document.getElementById('new-ten')?.value;
+  const email = document.getElementById('new-email')?.value;
+  const pass = document.getElementById('new-password')?.value;
+  if (ten || email || pass) return true; // đang gõ dở form tạo tài khoản mới
+  const activeIds = ['new-ten', 'new-email', 'new-password'];
+  if (activeIds.includes(document.activeElement?.id)) return true;
+  return false;
 }
 
 // Xuất hủy chỉ cho phép chọn SKU thuộc các nhóm hàng sống (không cho xuất hủy phụ kiện/thiết bị)
@@ -4408,7 +4431,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v124</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v126</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4462,7 +4485,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v124</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v126</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4501,7 +4524,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v124</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v126</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
