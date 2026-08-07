@@ -1203,7 +1203,7 @@ function showApp() {
     }
   }
 
-  loadSKUs();
+  batDauTheoDoiSKU();
   switchModule('nhap');
 }
 
@@ -1317,8 +1317,10 @@ let hangHoaAnhBlob = null;
 
 async function renderHangHoaTab() {
   const el = document.getElementById('hanghoa-content');
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  await loadSKUs();
+  if (!allSKUs.length) {
+    el.innerHTML = '<div class="loading">Đang tải...</div>';
+    await loadSKUs();
+  }
   el.innerHTML = `
     <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:8px">
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
@@ -1613,6 +1615,28 @@ window.xoaHangHoa = async function(id) {
 async function loadSKUs() {
   const snap = await getDocs(collection(db, 'skus'));
   allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
+}
+
+let skusUnsub = null;
+function batDauTheoDoiSKU() {
+  if (skusUnsub) return; // đã theo dõi rồi, tránh gắn trùng
+  skusUnsub = onSnapshot(collection(db, 'skus'), (snap) => {
+    allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
+    // Nếu đang mở đúng tab hàng hóa, vẽ lại ngay cho khớp dữ liệu mới nhất
+    if (document.getElementById('hanghoa-list')) {
+      renderHangHoaNhomFilters();
+      renderHangHoaList();
+    }
+  }, (err) => console.error('Lỗi theo dõi SKU:', err));
+}
+
+let usersUnsub = null;
+function batDauTheoDoiNhanVien() {
+  if (usersUnsub) return;
+  usersUnsub = onSnapshot(collection(db, 'users'), (snap) => {
+    allUsersCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (document.getElementById('danhsachnv-content')) loadDanhSachNV();
+  }, (err) => console.error('Lỗi theo dõi nhân viên:', err));
 }
 
 // Xuất hủy chỉ cho phép chọn SKU thuộc các nhóm hàng sống (không cho xuất hủy phụ kiện/thiết bị)
@@ -3549,12 +3573,17 @@ async function getLuongConfig() {
   return snap.exists() ? snap.data() : {};
 }
 
+let allUsersCache = [];
+
 async function loadDanhSachNV() {
   const el = document.getElementById('danhsachnv-content');
   if (!el) return;
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const uSnap = await getDocs(collection(db,'users'));
-  const users = uSnap.docs.map(d=>({id:d.id,...d.data()}));
+  if (!allUsersCache.length) {
+    el.innerHTML = '<div class="loading">Đang tải...</div>';
+  }
+  batDauTheoDoiNhanVien(); // tự khởi động theo dõi thời gian thực (chỉ chạy 1 lần, các lần sau bỏ qua)
+  const users = allUsersCache;
+  if (!users.length) return; // đang chờ dữ liệu đầu tiên từ listener, nó sẽ tự gọi lại loadDanhSachNV() khi có
   const canManage = currentUserData.role === 'admin';
   const luongCfg = canManage ? await getLuongConfig() : {};
   el.innerHTML = `
@@ -4379,7 +4408,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v121</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v124</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4433,7 +4462,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v121</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v124</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4472,7 +4501,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v121</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v124</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
