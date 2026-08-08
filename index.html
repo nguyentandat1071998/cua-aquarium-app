@@ -1187,6 +1187,11 @@ function showApp() {
     const snv = document.getElementById('sidebar-nhanvien-wrap');
     if (snv) snv.style.display = 'block';
   }
+  if (currentUserData.role === 'admin') {
+    document.getElementById('mod-baocao').style.display = 'flex';
+    const sbc = document.getElementById('sidebar-baocao');
+    if (sbc) sbc.style.display = 'flex';
+  }
   // Lưu quyền xuất file vào biến global
   window._canExport = canExport;
   if (!canExport) document.body.classList.add('hide-export');
@@ -1264,6 +1269,18 @@ window.switchModule = function(mod) {
     document.getElementById('panel-hanghoa-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderHangHoaTab();
+    return;
+  }
+  if (mod === 'baocao') {
+    document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+    const bcMobile = document.getElementById('mod-baocao');
+    const bcSidebar = document.getElementById('sidebar-baocao');
+    if (bcMobile) bcMobile.classList.add('active');
+    if (bcSidebar) bcSidebar.classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-baocao-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderBaoCaoTab();
     return;
   }
   document.getElementById('sub-tab-bar').style.display = 'flex';
@@ -4101,6 +4118,147 @@ window.restoreXuat = async function(id) {
   showToast('Đã khôi phục'); loadDeletedList();
 };
 
+// ===== BÁO CÁO CHẤM CÔNG + CHECKLIST (Admin/Quản lý) =====
+let baoCaoNgayChon = getTodayISO();
+
+function getThuKeyChoNgay(ngayISO) {
+  const [y, m, d] = ngayISO.split('-').map(Number);
+  const dow = new Date(y, m - 1, d).getDay();
+  return ["chunhat","thu2","thu3","thu4","thu5","thu6","thu7"][dow];
+}
+
+async function renderBaoCaoTab() {
+  const el = document.getElementById('baocao-content');
+  if (!el) return;
+  if (currentUserData.role !== 'admin') {
+    el.innerHTML = `<p class="info-note">Chỉ Admin mới có quyền xem Báo cáo.</p>`;
+    return;
+  }
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  batDauTheoDoiNhanVien();
+  if (!allUsersCache.length) await new Promise(r => setTimeout(r, 700));
+
+  const snap = await getDocs(query(collection(db, 'lich_ca'), where('ngay', '==', baoCaoNgayChon)));
+  const caTheoUid = {};
+  snap.docs.forEach(d => { caTheoUid[d.data().uid] = { id: d.id, ...d.data() }; });
+
+  const nhanVien = allUsersCache.filter(u => u.role === 'nhan_vien' || u.role === 'quan_ly');
+
+  el.innerHTML = `
+    <div class="admin-block">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+        <h3 style="margin:0">Báo cáo chấm công &amp; checklist</h3>
+        <input type="date" id="baocao-ngay-input" value="${baoCaoNgayChon}" onchange="doiNgayBaoCao(this.value)" style="width:auto">
+      </div>
+      <div id="baocao-list">
+        ${nhanVien.map(u => renderBaoCaoRow(u, caTheoUid[u.id])).join('') || '<p class="info-note">Chưa có nhân viên nào.</p>'}
+      </div>
+    </div>
+    <div id="baocao-detail-modal"></div>`;
+}
+
+window.doiNgayBaoCao = function(ngay) {
+  baoCaoNgayChon = ngay;
+  renderBaoCaoTab();
+};
+
+function renderBaoCaoRow(u, ca) {
+  const tt = tinhTrangThaiChamCong(ca);
+  let noiDungHtml;
+  if (tt.loai === 'nghi') {
+    noiDungHtml = `<span class="baocao-badge" style="background:#F3F4F6;color:#6B7280">Nghỉ</span>`;
+  } else if (tt.loai === 'dotxuat') {
+    noiDungHtml = `<span class="baocao-badge" style="background:#DBEAFE;color:#1D4ED8">Đi làm đột xuất (ngoài lịch)</span>`;
+  } else if (tt.loai === 'nghidotxuat') {
+    noiDungHtml = `<span class="baocao-badge" style="background:#FEE2E2;color:#DC2626">Nghỉ đột xuất</span>`;
+  } else {
+    const caInfo = CA_GIO[ca.loaiCa] || CA_GIO.full;
+    const vao = tinhTrangGio(ca.vaoLuc, caInfo.batDau, 'vao');
+    const ra = ca.thoatLuc ? tinhTrangGio(ca.thoatLuc, caInfo.ketThuc, 'ra')
+      : (ca.khongCheckout ? { label: 'Không check-out', mau: '#DC2626', bg: '#FEE2E2' } : { label: 'Đang trong ca', mau: '#6B7280', bg: '#F3F4F6' });
+    noiDungHtml = `
+      <span class="baocao-badge" style="background:${vao.bg};color:${vao.mau}">Vào: ${vao.label}</span>
+      <span class="baocao-badge" style="background:${ra.bg};color:${ra.mau}">Ra: ${ra.label}</span>`;
+  }
+  const coTheXem = !!ca;
+  return `
+    <div class="baocao-row" ${coTheXem ? `onclick="moChiTietBaoCao('${u.id}','${escHtml(u.ten || u.email)}')"` : ''}
+      style="display:flex;align-items:center;gap:10px;padding:12px;border-bottom:1px solid var(--border);flex-wrap:wrap${coTheXem ? ';cursor:pointer' : ''}">
+      <div style="flex:1;min-width:120px"><b>${escHtml(u.ten || u.email)}</b></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${noiDungHtml}</div>
+    </div>`;
+}
+
+// So sánh giờ thực tế với giờ chuẩn (đơn vị: số phút trong ngày), trả về nhãn + màu.
+// loai: 'vao' (check-in) hoặc 'ra' (check-out). Ngưỡng cố định 5 phút.
+function tinhTrangGio(timestamp, chuanPhut, loai) {
+  if (!timestamp?.seconds || chuanPhut == null) return { label: '—', mau: '#6B7280', bg: '#F3F4F6' };
+  const d = new Date(timestamp.seconds * 1000);
+  const thucTePhut = d.getHours() * 60 + d.getMinutes();
+  const lech = thucTePhut - chuanPhut; // dương = trễ hơn giờ chuẩn, âm = sớm hơn
+  const NGUONG = 5;
+  const gioStr = `${d.getHours().toString().padStart(2, '0')}h${d.getMinutes().toString().padStart(2, '0')}`;
+
+  if (loai === 'vao') {
+    if (lech > NGUONG) return { label: `Đi trễ ${lech}p (${gioStr})`, mau: '#DC2626', bg: '#FEE2E2' };
+    if (lech < -NGUONG) return { label: `Đi sớm ${-lech}p (${gioStr})`, mau: '#16A34A', bg: '#DCFCE7' };
+    return { label: `Đúng giờ (${gioStr})`, mau: '#16A34A', bg: '#DCFCE7' };
+  } else {
+    if (lech < -NGUONG) return { label: `Về sớm ${-lech}p (${gioStr})`, mau: '#DC2626', bg: '#FEE2E2' };
+    if (lech > NGUONG) return { label: `Làm thêm ${lech}p (${gioStr})`, mau: '#CA8A04', bg: '#FEF9C3' };
+    return { label: `Đúng giờ (${gioStr})`, mau: '#16A34A', bg: '#DCFCE7' };
+  }
+}
+
+// Xác định trạng thái tổng quát của 1 nhân viên trong ngày: nghi / dotxuat / nghidotxuat / binhthuong
+function tinhTrangThaiChamCong(ca) {
+  if (!ca) return { loai: 'nghi' };
+  if (ca.ngoaiLich) return { loai: 'dotxuat' };
+  if (!ca.vaoLuc) return { loai: 'nghidotxuat' };
+  return { loai: 'binhthuong' };
+}
+
+window.moChiTietBaoCao = async function(uid, ten) {
+  const modal = document.getElementById('baocao-detail-modal');
+  const overlayStyle = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2400;display:flex;align-items:center;justify-content:center;padding:1rem';
+  modal.innerHTML = `<div style="${overlayStyle}" onclick="if(event.target===this)document.getElementById('baocao-detail-modal').innerHTML=''">
+    <div style="background:var(--surface);border-radius:var(--radius);padding:20px;width:100%;max-width:500px">
+      <div class="loading">Đang tải...</div>
+    </div>
+  </div>`;
+
+  const shiftId = `${baoCaoNgayChon}_${uid}`;
+  const snap = await getDoc(doc(db, 'lich_ca', shiftId));
+  if (!snap.exists()) { modal.innerHTML = ''; return; }
+  const ca = snap.data();
+  const thuKey = getThuKeyChoNgay(baoCaoNgayChon);
+  const dsTask = CHECKLIST[thuKey] || [];
+  const checklistData = ca.checklistData || {};
+
+  const taskHtml = dsTask.map((t, i) => {
+    const st = checklistData[`task_${i}`] || {};
+    const xong = !!st.done;
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);gap:10px">
+        <div>
+          <div style="font-size:13px">${escHtml(t.task)} <span style="color:var(--text2);font-size:11px">(${t.gio})</span></div>
+          ${st.doneAt ? `<div style="font-size:11px;color:var(--text2)">Tích lúc: ${escHtml(st.doneAt)}</div>` : ''}
+          ${st.ketqua === 'benh' ? `<div style="font-size:11px;color:#DC2626">⚠️ Có báo cáo bệnh</div>` : ''}
+        </div>
+        <span style="font-size:16px;flex-shrink:0">${xong ? '✅' : '⬜'}</span>
+      </div>`;
+  }).join('');
+
+  modal.innerHTML = `<div style="${overlayStyle}" onclick="if(event.target===this)document.getElementById('baocao-detail-modal').innerHTML=''">
+    <div style="background:var(--surface);border-radius:var(--radius);padding:20px;width:100%;max-width:500px;max-height:80vh;overflow-y:auto">
+      <h3 style="margin-bottom:4px">${escHtml(ten)}</h3>
+      <p class="info-note" style="margin-bottom:12px">Checklist ngày ${baoCaoNgayChon}</p>
+      ${taskHtml || '<p class="info-note">Không có task nào trong ngày này.</p>'}
+      <button class="btn-outline" style="width:100%;margin-top:12px" onclick="document.getElementById('baocao-detail-modal').innerHTML=''">Đóng</button>
+    </div>
+  </div>`;
+};
+
 // ===== UTILS =====
 function fmt(n) { return Math.round(n).toLocaleString('vi-VN'); }
 function fmtDate(date) {
@@ -4334,6 +4492,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
 /* ADMIN */
 .admin-block{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+.baocao-badge{font-size:11px;font-weight:600;padding:4px 8px;border-radius:6px;white-space:nowrap}
+.baocao-row:hover{background:var(--bg)}
 .admin-block h3{font-size:14px;font-weight:600;margin-bottom:12px}
 .admin-block h4{font-size:13px;font-weight:600;margin:12px 0 8px;padding-top:12px;border-top:1px solid var(--border)}
 .user-list{margin-bottom:12px}
@@ -4484,7 +4644,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v130</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v132</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4538,13 +4698,14 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v130</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v132</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
     <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
     <button class="mod-btn teal" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="display:none;color:#0369A1">Báo cá mới về</button>
+    <button class="mod-btn" id="sidebar-baocao" onclick="switchModule('baocao');updateSidebar('baocao')" style="display:none;color:#4F46E5">Báo cáo</button>
     <div id="sidebar-nhanvien-wrap" style="display:none;position:relative">
       <button class="mod-btn" id="sidebar-nhanvien" onclick="toggleNVMenu('sidebar')" style="color:#B45309;width:100%">Nhân viên</button>
       <div class="user-menu-dropdown nv-dropdown" id="nv-menu-sidebar">
@@ -4577,7 +4738,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v130</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v132</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4600,6 +4761,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
         <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
         <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
+        <button class="mod-btn" id="mod-baocao" onclick="switchModule('baocao')" style="display:none;background:var(--bg);color:#4F46E5">Báo cáo</button>
         <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:#FEF3C7;color:#B45309">Nhân viên ▾</button>
         <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
         <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
@@ -4909,6 +5071,11 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
       <div class="panel" id="panel-hanghoa-main">
         <div id="hanghoa-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- BÁO CÁO CHẤM CÔNG + CHECKLIST (Admin/Quản lý) -->
+      <div class="panel" id="panel-baocao-main">
+        <div id="baocao-content"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- ADMIN / QR CHECKIN -->
