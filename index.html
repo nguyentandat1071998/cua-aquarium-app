@@ -1546,25 +1546,30 @@ function renderHangHoaList() {
   const totalPages = Math.max(1, Math.ceil(list.length / hangHoaPageSize));
   if (hangHoaPage > totalPages) hangHoaPage = totalPages;
   const pageList = list.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
-  el.innerHTML = pageList.map(s => `
+  el.innerHTML = pageList.map(s => {
+    const ton = s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon ?? 0);
+    const canhBaoTon = ton <= 0 ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
+    return `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
         ${s.anhFileId
-          ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
-          : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text3);text-align:center">Không ảnh</div>`}
+          ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+          : `<div style="width:64px;height:64px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3);text-align:center">Không ảnh</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}</div>
-          <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')}${currentUserData.role === 'admin' ? ` · Vốn: ${fmt(s.giaVon||0)}đ` : ''} · ${fmt(s.gia||0)}đ · Tồn: ${s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon ?? 0)}</div>
-          ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:10.5px;color:var(--text3)">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
-          ${s.nhomFull ? `<div style="font-size:10.5px;color:#7C3AED">${escHtml(s.nhomFull)}</div>` : ''}
+          <div style="font-weight:700;font-size:15px;margin-bottom:2px">${escHtml(s.ten||'')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ - ` : ''}Bán: ${fmt(s.gia||0)}đ</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">Tồn: ${ton}${canhBaoTon ? ' - ' + canhBaoTon : ''}</div>
+          ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
+          ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
           <button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
           <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>
         </div>
       </div>
-      <div id="hh-sua-${s.id}"></div>
-    </div>`).join('') + renderPagination(hangHoaPage, list.length, hangHoaPageSize, 'doiTrangHangHoa') || `<p class="info-note">Không có hàng hóa nào.</p>`;
+      <div id="hh-sua-${s.id}"></div>`;
+  }).join('') + renderPagination(hangHoaPage, list.length, hangHoaPageSize, 'doiTrangHangHoa') || `<p class="info-note">Không có hàng hóa nào.</p>`;
 }
 
 window.doiTrangHangHoa = function(p) { hangHoaPage = p; renderHangHoaList(); };
@@ -5533,7 +5538,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v161</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v164</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5587,7 +5592,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v161</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v164</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5627,7 +5632,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v161</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v164</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
