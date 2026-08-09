@@ -16,7 +16,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -247,6 +247,20 @@ let lichCaWeekOffset = 0;
 let lichCaUsersCache = null;
 let lichCaShiftsCache = null;
 let lichCaVaoLucCache = null; // {shiftId: true} — chỉ dùng để khóa sửa/xóa lịch đã check-in, không lưu chi tiết riêng tư
+
+// Sinh mã phiếu tự động tăng dần kiểu KiotViet (PCK00001, PXH00001, PBC00001...)
+// Dùng transaction để tránh 2 người tạo phiếu cùng lúc bị trùng số.
+async function layMaPhieuMoi(prefix, counterField) {
+  const counterRef = doc(db, 'dem_phieu', 'counters');
+  let soMoi;
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(counterRef);
+    const hienTai = snap.exists() ? (snap.data()[counterField] || 0) : 0;
+    soMoi = hienTai + 1;
+    tx.set(counterRef, { [counterField]: soMoi }, { merge: true });
+  });
+  return prefix + String(soMoi).padStart(5, '0');
+}
 let lichCaDatesCache = null;
 let chamCongWeekOffset = 0;
 
@@ -2902,14 +2916,17 @@ window.submitBaoCa = async function() {
   const btn = document.getElementById('btn-baoca-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
+    const maPhieu = await layMaPhieuMoi('PBC', 'pbc');
     await addDoc(collection(db, 'phieu_baoca'), {
+      maPhieu,
       tenLo,
       rows: currentBaoCa.rows.map(r => ({ ten: r.ten, sku: r.sku||'', sl: r.sl, videoUrl: r.videoUrl||'', fullUrl: r.fullUrl||'', fileId: r.fileId||'', startTime: r.startTime||'' })),
       tongSL: currentBaoCa.rows.reduce((s,r) => s+r.sl, 0),
       tongDong: currentBaoCa.rows.length,
       nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
       createdAt: serverTimestamp(),
-      deleted: false
+      deleted: false,
+      versions: []
     });
     currentBaoCa = { tenLo: '', rows: [] };
     renderBaocaRows();
@@ -2926,19 +2943,23 @@ window.loadBaoCaList = async function() {
   const el = document.getElementById('baoca-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const snap = await getDocs(query(collection(db, 'phieu_baoca'), orderBy('createdAt','desc')));
-  let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
+  let docs = snap.docs.map(d => ({id:d.id,...d.data()}));
   const from = document.getElementById('baoca-filter-from')?.value;
   const to = document.getElementById('baoca-filter-to')?.value;
   const filterXB = document.getElementById('baoca-filter-xuat')?.value || 'all';
-  if (from||to||filterXB!=='all') docs = docs.filter(d => {
+  const filterTT = document.getElementById('baoca-filter-trangthai')?.value || 'all';
+  if (from||to||filterXB!=='all'||filterTT!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds<from) return false;
     if (to && ds>to) return false;
     if (filterXB === 'chua' && d.daXuat) return false;
     if (filterXB === 'da' && !d.daXuat) return false;
+    if (filterTT === 'daxoa' && !d.deleted) return false;
+    if (filterTT === 'dasua' && !(d.versions?.length)) return false;
+    if (filterTT === 'binhthuong' && (d.deleted || d.versions?.length)) return false;
     return true;
   });
-  renderSummary('baoca', docs);
+  renderSummary('baoca', docs.filter(d => !d.deleted)); // Thống kê KHÔNG tính phiếu đã xóa
   if (!docs.length) { el.innerHTML='<div class="empty-msg">Chưa có phiếu nào.</div>'; return; }
   const totalPages = Math.max(1, Math.ceil(docs.length / 20));
   if (baocaDsPage > totalPages) baocaDsPage = totalPages;
@@ -2946,14 +2967,14 @@ window.loadBaoCaList = async function() {
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
-    return `<div class="phieu-baoca">
+    return `<div class="phieu-baoca${p.deleted ? ' deleted' : ''}">
       <div class="phieu-top">
         <div>
-          <span class="phieu-date">${fmtDate(date)}</span>
+          <span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>
           ${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}
           <div style="font-size:14px;font-weight:600;margin-top:3px">${escHtml(p.tenLo||'')}</div>
         </div>
-        <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteBaoCa('${p.id}')">Xóa</button>`:''}</div>
+        <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditBaoCa('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="deleteBaoCa('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · ${p.tongDong} dòng · ${p.tongSL} con</div>
       <div style="margin-top:8px">
@@ -2971,6 +2992,7 @@ window.loadBaoCaList = async function() {
               : '<div class="empty-msg" style="padding:6px;font-size:12px">Chưa có video</div>'}
           </div>`).join('')}
       </div>
+      ${renderLichSuSuaPhieu(p)}
     </div>`;
   }).join('') + renderPagination(baocaDsPage, docs.length, 20, 'doiTrangBaoCa');
 }
@@ -2979,13 +3001,15 @@ window.doiTrangBaoCa = function(p) { baocaDsPage = p; loadBaoCaList(); };
 window.applyBaocaFilter = function() { baocaDsPage = 1; loadBaoCaList(); };
 
 window.deleteBaoCa = async function(id) {
-  if (!confirm('Xóa phiếu này?')) return;
-  await updateDoc(doc(db,'phieu_baoca',id), { deleted:true });
+  if (!confirm('Xóa phiếu này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
+  await updateDoc(doc(db,'phieu_baoca',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   showToast('Đã xóa'); loadBaoCaList();
 };
 
 window.clearBaocaFilter = function() {
   ['baoca-filter-from','baoca-filter-to'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('baoca-filter-xuat').value = 'all';
+  document.getElementById('baoca-filter-trangthai').value = 'all';
   baocaDsPage = 1;
   loadBaoCaList();
 };
@@ -3082,14 +3106,17 @@ window.submitNhap = async function() {
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
     const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
+    const maPhieu = await layMaPhieuMoi('PCK', 'pck');
     await addDoc(collection(db, 'phieu_chuyenkho'), {
+      maPhieu,
       items: currentNhap.items,
       photos: currentNhap.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
       tongGia: total,
       tongSL: currentNhap.items.reduce((s,i) => s+i.sl, 0),
       nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
       createdAt: serverTimestamp(),
-      deleted: false
+      deleted: false,
+      versions: []
     });
     currentNhap = { items: [], photos: [] };
     renderNhapItems();
@@ -3178,7 +3205,9 @@ window.submitXuat = async function() {
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
     const total = currentPhieu.items.reduce((s,i) => s+i.tong, 0);
+    const maPhieu = await layMaPhieuMoi('PXH', 'pxh');
     await addDoc(collection(db, 'phieu_huy'), {
+      maPhieu,
       items: currentPhieu.items,
       photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
       tongGia: total,
@@ -3277,9 +3306,9 @@ window.loadNhapList = async function(filter={}) {
   const el = document.getElementById('nhap-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const snap = await getDocs(query(collection(db, 'phieu_chuyenkho'), orderBy('createdAt','desc')));
-  let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
-  // Populate NV filter
-  const nvSet = [...new Set(docs.map(d => d.nguoiTao?.ten).filter(Boolean))];
+  let docs = snap.docs.map(d => ({id:d.id,...d.data()}));
+  // Populate NV filter (dựa trên phiếu chưa xóa, cho gọn danh sách chọn)
+  const nvSet = [...new Set(docs.filter(d=>!d.deleted).map(d => d.nguoiTao?.ten).filter(Boolean))];
   const sel = document.getElementById('nhap-filter-nv');
   if (sel) { const cur=sel.value; sel.innerHTML='<option value="">Tất cả</option>'+nvSet.map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join(''); }
   // Apply filters
@@ -3287,16 +3316,20 @@ window.loadNhapList = async function(filter={}) {
   const to = document.getElementById('nhap-filter-to')?.value;
   const nv = document.getElementById('nhap-filter-nv')?.value;
   const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
-  if (from||to||nv||filterX!=='all') docs = docs.filter(d => {
+  const filterTT = document.getElementById('nhap-filter-trangthai')?.value || 'all';
+  if (from||to||nv||filterX!=='all'||filterTT!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
     if (to && ds > to) return false;
     if (nv && d.nguoiTao?.ten !== nv) return false;
     if (filterX === 'chua' && d.daXuat) return false;
     if (filterX === 'da' && !d.daXuat) return false;
+    if (filterTT === 'daxoa' && !d.deleted) return false;
+    if (filterTT === 'dasua' && !(d.versions?.length)) return false;
+    if (filterTT === 'binhthuong' && (d.deleted || d.versions?.length)) return false;
     return true;
   });
-  renderSummary('nhap', docs);
+  renderSummary('nhap', docs.filter(d => !d.deleted)); // Thống kê KHÔNG tính phiếu đã xóa
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
   const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
   if (nhapDsPage > totalPages) nhapDsPage = totalPages;
@@ -3304,15 +3337,16 @@ window.loadNhapList = async function(filter={}) {
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
-    return `<div class="phieu-card green">
+    return `<div class="phieu-card green${p.deleted ? ' deleted' : ''}">
       <div class="phieu-top">
-        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
-        <div class="phieu-acts">${canEdit?`<button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
+        <div><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
+        <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditNhap('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span></div>
+      ${renderLichSuSuaPhieu(p)}
     </div>`;
   }).join('') + renderPagination(nhapDsPage, docs.length, DS_PAGE_SIZE, 'doiTrangNhap');
 }
@@ -3320,7 +3354,7 @@ window.loadNhapList = async function(filter={}) {
 window.doiTrangNhap = function(p) { nhapDsPage = p; loadNhapList(); };
 
 window.deleteNhap = async function(id) {
-  if (!confirm('Xóa phiếu chuyển kho này?')) return;
+  if (!confirm('Xóa phiếu chuyển kho này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
   await updateDoc(doc(db,'phieu_chuyenkho',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   showToast('Đã xóa'); loadNhapList();
 };
@@ -3329,6 +3363,8 @@ window.applyNhapFilter = function() { nhapDsPage = 1; loadNhapList(); };
 window.clearNhapFilter = function() {
   ['nhap-filter-from','nhap-filter-to'].forEach(id => document.getElementById(id).value='');
   document.getElementById('nhap-filter-nv').value='';
+  document.getElementById('nhap-filter-xuat').value='all';
+  document.getElementById('nhap-filter-trangthai').value='all';
   nhapDsPage = 1;
   loadNhapList();
 };
@@ -3340,24 +3376,28 @@ window.loadXuatList = async function(filter={}) {
   const el = document.getElementById('xuat-ds-list');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const snap = await getDocs(query(collection(db, 'phieu_huy'), orderBy('createdAt','desc')));
-  let docs = snap.docs.map(d => ({id:d.id,...d.data()})).filter(d => !d.deleted);
-  const nvSet = [...new Set(docs.map(d => d.nguoiTao?.ten).filter(Boolean))];
+  let docs = snap.docs.map(d => ({id:d.id,...d.data()}));
+  const nvSet = [...new Set(docs.filter(d=>!d.deleted).map(d => d.nguoiTao?.ten).filter(Boolean))];
   const sel = document.getElementById('xuat-filter-nv');
   if (sel) { const cur=sel.value; sel.innerHTML='<option value="">Tất cả</option>'+nvSet.map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join(''); }
   const from = document.getElementById('xuat-filter-from')?.value;
   const to = document.getElementById('xuat-filter-to')?.value;
   const nv = document.getElementById('xuat-filter-nv')?.value;
   const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
-  if (from||to||nv||filterX!=='all') docs = docs.filter(d => {
+  const filterTT = document.getElementById('xuat-filter-trangthai')?.value || 'all';
+  if (from||to||nv||filterX!=='all'||filterTT!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
     if (to && ds > to) return false;
     if (nv && d.nguoiTao?.ten !== nv) return false;
     if (filterX === 'chua' && d.daXuat) return false;
     if (filterX === 'da' && !d.daXuat) return false;
+    if (filterTT === 'daxoa' && !d.deleted) return false;
+    if (filterTT === 'dasua' && !(d.versions?.length)) return false;
+    if (filterTT === 'binhthuong' && (d.deleted || d.versions?.length)) return false;
     return true;
   });
-  renderSummary('xuat', docs);
+  renderSummary('xuat', docs.filter(d => !d.deleted)); // Thống kê KHÔNG tính phiếu đã xóa
   if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
   const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
   if (xuatDsPage > totalPages) xuatDsPage = totalPages;
@@ -3365,16 +3405,16 @@ window.loadXuatList = async function(filter={}) {
   const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
-    return `<div class="phieu-card red">
+    return `<div class="phieu-card red${p.deleted ? ' deleted' : ''}">
       <div class="phieu-top">
-        <div><span class="phieu-date">${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
-        <div class="phieu-acts">${canEdit?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
+        <div><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
+        <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
-      ${p.versions?.length?`<div class="ver-toggle" onclick="toggleVer('${p.id}')">${p.versions.length} lần sửa</div><div id="ver-${p.id}" style="display:none" class="ver-list">${p.versions.map((v,i)=>`<div class="ver-row">Lần ${i+1} · ${v.editedBy?.ten} · ${v.editedAt?fmtDate(new Date(v.editedAt.seconds*1000)):''}</div>`).join('')}</div>`:''} 
+      ${renderLichSuSuaPhieu(p)}
     </div>`;
   }).join('') + renderPagination(xuatDsPage, docs.length, DS_PAGE_SIZE, 'doiTrangXuat');
 }
@@ -3391,6 +3431,8 @@ window.applyXuatFilter = function() { xuatDsPage = 1; loadXuatList(); };
 window.clearXuatFilter = function() {
   ['xuat-filter-from','xuat-filter-to'].forEach(id => document.getElementById(id).value='');
   document.getElementById('xuat-filter-nv').value='';
+  document.getElementById('xuat-filter-xuat').value='all';
+  document.getElementById('xuat-filter-trangthai').value='all';
   xuatDsPage = 1;
   loadXuatList();
 };
@@ -3400,30 +3442,204 @@ window.toggleVer = function(id) {
   el.style.display = el.style.display==='none'?'block':'none';
 };
 
-// ===== EDIT XUẤT =====
-window.openEditXuat = async function(id) {
+window.toggleVerDetail = function(id, idx) {
+  const el = document.getElementById(`ver-detail-${id}-${idx}`);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+};
+
+// Vẽ HTML danh sách "Lịch sử sửa phiếu" — dùng chung cho cả Chuyển kho và Xuất hủy
+function renderLichSuSuaPhieu(p) {
+  if (!p.versions?.length) return '';
+  const rows = p.versions.map((v, i) => {
+    const t = v.editedAt ? new Date(v.editedAt.seconds ? v.editedAt.seconds*1000 : v.editedAt) : null;
+    const diffHtml = (v.diff||[]).map(d => {
+      if (d.loai === 'doi') return `<div class="ver-diff-row">${escHtml(d.ten)}: ${d.tu} → ${d.den}</div>`;
+      if (d.loai === 'them') return `<div class="ver-diff-row" style="color:var(--green)">Thêm ${escHtml(d.ten)}: ${d.sl}</div>`;
+      if (d.loai === 'xoa') return `<div class="ver-diff-row" style="color:var(--red)">Xóa ${escHtml(d.ten)}: ${d.sl}</div>`;
+      return '';
+    }).join('') || '<div class="ver-diff-row" style="color:var(--text2)">Không có chi tiết (phiên bản cũ)</div>';
+    return `
+      <div class="ver-row" onclick="toggleVerDetail('${p.id}',${i})" style="cursor:pointer">
+        Lần ${i+1} · ${escHtml(v.editedBy?.ten||'')} · ${t ? fmtDate(t) : ''}
+      </div>
+      <div id="ver-detail-${p.id}-${i}" class="ver-detail" style="display:none">${diffHtml}</div>`;
+  }).join('');
+  return `<div class="ver-toggle" onclick="toggleVer('${p.id}')">📝 Lịch sử sửa phiếu (${p.versions.length})</div>
+    <div id="ver-${p.id}" style="display:none" class="ver-list">${rows}</div>`;
+}
+
+// ===== SỬA PHIẾU (dùng chung cho Chuyển kho + Xuất hủy) =====
+let editState = { collection: '', items: [], showGia: true };
+
+window.openEditPhieu = async function(collectionName, id) {
   editingPhieuId = id;
-  const snap = await getDoc(doc(db,'phieu_huy',id));
+  editState.collection = collectionName;
+  const snap = await getDoc(doc(db, collectionName, id));
+  if (!snap.exists()) { showToast('Không tìm thấy phiếu', true); return; }
   const data = snap.data();
-  document.getElementById('edit-items').value = JSON.stringify(data.items, null, 2);
+  editState.items = JSON.parse(JSON.stringify(data.items || []));
+  editState.showGia = collectionName === 'phieu_huy';
+  document.getElementById('edit-modal-title').textContent = collectionName === 'phieu_huy' ? 'Chỉnh sửa phiếu xuất hủy' : 'Chỉnh sửa phiếu chuyển kho';
+  document.getElementById('edit-gia-wrap').style.display = editState.showGia ? '' : 'none';
+  document.getElementById('edit-add-section').style.display = '';
+  document.getElementById('edit-baoca-note').style.display = 'none';
+  document.getElementById('edit-item-ten').value = '';
+  document.getElementById('edit-item-sl').value = '1';
+  document.getElementById('edit-item-gia').value = '';
+  renderEditItems();
   document.getElementById('edit-modal').style.display = 'flex';
 };
-window.closeEdit = function() { document.getElementById('edit-modal').style.display='none'; editingPhieuId=null; };
+window.openEditXuat = function(id) { openEditPhieu('phieu_huy', id); };
+window.openEditNhap = function(id) { openEditPhieu('phieu_chuyenkho', id); };
+window.openEditBaoCa = async function(id) {
+  editingPhieuId = id;
+  editState.collection = 'phieu_baoca';
+  const snap = await getDoc(doc(db, 'phieu_baoca', id));
+  if (!snap.exists()) { showToast('Không tìm thấy phiếu', true); return; }
+  const data = snap.data();
+  editState.items = JSON.parse(JSON.stringify(data.rows || []));
+  editState.showGia = false;
+  document.getElementById('edit-modal-title').textContent = 'Chỉnh sửa phiếu báo cá';
+  document.getElementById('edit-gia-wrap').style.display = 'none';
+  document.getElementById('edit-add-section').style.display = 'none';
+  document.getElementById('edit-baoca-note').style.display = 'block';
+  renderEditItems();
+  document.getElementById('edit-modal').style.display = 'flex';
+};
+
+window.closeEdit = function() {
+  document.getElementById('edit-modal').style.display = 'none';
+  editingPhieuId = null;
+  editState = { collection: '', items: [], showGia: true };
+};
+
+window.themVaoEditPhieu = function() {
+  const tenEl = document.getElementById('edit-item-ten');
+  const ten = tenEl.value.trim();
+  const sku = tenEl.dataset.sku || '';
+  const skuId = tenEl.dataset.skuId || '';
+  const sl = parseInt(document.getElementById('edit-item-sl').value) || 0;
+  const gia = parseFloat(document.getElementById('edit-item-gia').value) || 0;
+  if (!ten) { showToast('Vui lòng chọn hàng hóa', true); return; }
+  if (sl < 1) { showToast('Số lượng phải lớn hơn 0', true); return; }
+  const key = sku || ten;
+  const existed = editState.items.find(i => (i.sku || i.ten) === key);
+  if (existed) {
+    existed.sl += sl;
+    existed.tong = existed.sl * (existed.gia || 0);
+  } else {
+    editState.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
+  }
+  tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
+  document.getElementById('edit-item-sl').value = '1';
+  document.getElementById('edit-item-gia').value = '';
+  renderEditItems();
+};
+
+window.xoaKhoiEditPhieu = function(i) { editState.items.splice(i,1); renderEditItems(); };
+window.suaSLEditPhieu = function(i, d) {
+  editState.items[i].sl = Math.max(1, editState.items[i].sl + d);
+  editState.items[i].tong = editState.items[i].sl * (editState.items[i].gia||0);
+  renderEditItems();
+};
+window.setSLEditPhieu = function(i, v) {
+  editState.items[i].sl = Math.max(1, parseInt(v)||1);
+  editState.items[i].tong = editState.items[i].sl * (editState.items[i].gia||0);
+  renderEditItems();
+};
+
+function renderEditItems() {
+  const el = document.getElementById('edit-items-list');
+  const totalWrap = document.getElementById('edit-total-wrap');
+  const totalEl = document.getElementById('edit-total');
+  if (!editState.items.length) {
+    el.innerHTML = '<div class="empty-msg">Chưa có hàng nào.</div>';
+    totalWrap.style.display = 'none';
+    return;
+  }
+  const total = editState.items.reduce((s,i) => s + (i.tong||0), 0);
+  el.innerHTML = editState.items.map((item, idx) => {
+    const skuObj = item.skuId ? allSKUs.find(s => s.id === item.skuId) : null;
+    return `
+    <div class="item-row">
+      <div class="item-left" style="display:flex;gap:8px;align-items:flex-start">
+        ${skuObj?.anhFileId
+          ? `<img loading="lazy" src="${anhThumbUrl(skuObj.anhFileId,100)}" onclick="viewPhoto('${anhThumbUrl(skuObj.anhFileId,900)}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+          : `<div style="width:40px;height:40px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
+        <span class="item-name">${escHtml(item.ten)}</span>
+      </div>
+      <div class="item-right">
+        <div class="qty-ctrl">
+          <button onclick="suaSLEditPhieu(${idx},-1)">−</button>
+          <input type="number" value="${item.sl}" onchange="setSLEditPhieu(${idx},this.value)">
+          <button onclick="suaSLEditPhieu(${idx},1)">+</button>
+        </div>
+        ${editState.showGia ? `<span class="item-total r">${fmt(item.tong||0)}₫</span>` : ''}
+        <button class="del-btn" onclick="xoaKhoiEditPhieu(${idx})">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+  if (editState.showGia) {
+    totalWrap.style.display = '';
+    totalEl.textContent = fmt(total) + '₫';
+  } else {
+    totalWrap.style.display = 'none';
+  }
+}
+
+// So sánh hàng cũ và hàng mới -> danh sách thay đổi cụ thể, dùng để lưu & hiện lịch sử sửa phiếu
+function tinhDiffPhieu(oldItems, newItems) {
+  const oldMap = {}; (oldItems||[]).forEach(i => { oldMap[i.sku || i.ten] = i; });
+  const newMap = {}; (newItems||[]).forEach(i => { newMap[i.sku || i.ten] = i; });
+  const allKeys = new Set([...Object.keys(oldMap), ...Object.keys(newMap)]);
+  const diff = [];
+  allKeys.forEach(k => {
+    const o = oldMap[k], n = newMap[k];
+    if (o && n) {
+      if (o.sl !== n.sl) diff.push({ loai: 'doi', ten: n.ten, tu: o.sl, den: n.sl });
+    } else if (!o && n) {
+      diff.push({ loai: 'them', ten: n.ten, sl: n.sl });
+    } else if (o && !n) {
+      diff.push({ loai: 'xoa', ten: o.ten, sl: o.sl });
+    }
+  });
+  return diff;
+}
+
 window.saveEdit = async function() {
+  if (!editState.items.length) { showToast('Phiếu phải có ít nhất 1 hàng hóa', true); return; }
   try {
-    const snap = await getDoc(doc(db,'phieu_huy',editingPhieuId));
+    const collectionName = editState.collection;
+    const snap = await getDoc(doc(db, collectionName, editingPhieuId));
     const old = snap.data();
-    const newItems = JSON.parse(document.getElementById('edit-items').value);
-    const version = { items:old.items, tongGia:old.tongGia, editedBy:{uid:currentUser.uid,ten:currentUserData.ten}, editedAt:new Date() };
+    const newItems = editState.items;
+    const oldItemsField = collectionName === 'phieu_baoca' ? old.rows : old.items;
+    const diff = tinhDiffPhieu(oldItemsField, newItems);
+    if (!diff.length) { showToast('Không có gì thay đổi'); closeEdit(); return; }
+    const version = { diff, editedBy: { uid: currentUser.uid, ten: currentUserData.ten }, editedAt: new Date() };
     const versions = [...(old.versions||[]), version];
-    const total = newItems.reduce((s,i) => s+(i.sl*i.gia), 0);
-    await updateDoc(doc(db,'phieu_huy',editingPhieuId), {
-      items: newItems.map(i=>({...i,tong:i.sl*i.gia})),
-      tongGia: total, tongSL: newItems.reduce((s,i)=>s+i.sl,0),
-      versions, lastEditedBy:{uid:currentUser.uid,ten:currentUserData.ten}, lastEditedAt:serverTimestamp()
-    });
-    closeEdit(); showToast('Đã cập nhật phiếu'); loadXuatList();
-  } catch(e) { showToast('Lỗi: '+e.message, true); }
+
+    if (collectionName === 'phieu_baoca') {
+      await updateDoc(doc(db, collectionName, editingPhieuId), {
+        rows: newItems,
+        tongSL: newItems.reduce((s,i) => s+i.sl, 0),
+        tongDong: newItems.length,
+        versions, lastEditedBy: { uid: currentUser.uid, ten: currentUserData.ten }, lastEditedAt: serverTimestamp()
+      });
+    } else {
+      const total = newItems.reduce((s,i) => s + (i.sl*(i.gia||0)), 0);
+      await updateDoc(doc(db, collectionName, editingPhieuId), {
+        items: newItems.map(i => ({...i, tong: i.sl*(i.gia||0)})),
+        tongGia: total, tongSL: newItems.reduce((s,i) => s+i.sl, 0),
+        versions, lastEditedBy: { uid: currentUser.uid, ten: currentUserData.ten }, lastEditedAt: serverTimestamp()
+      });
+    }
+    closeEdit();
+    showToast('Đã cập nhật phiếu');
+    if (collectionName === 'phieu_huy') loadXuatList();
+    else if (collectionName === 'phieu_baoca') loadBaoCaList();
+    else loadNhapList();
+  } catch(e) { showToast('Lỗi: ' + e.message, true); }
 };
 
 // ===== THỐNG KÊ =====
@@ -4156,7 +4372,7 @@ window.loadDeletedList = async function() {
   el.innerHTML = docs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card red" style="opacity:0.7">
-      <div class="phieu-top"><span class="phieu-date">${fmtDate(date)}</span>
+      <div class="phieu-top"><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>
       <button class="btn-xs" onclick="restoreXuat('${p.id}')">Khôi phục</button></div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
@@ -4359,6 +4575,7 @@ document.addEventListener('DOMContentLoaded', () => {
   makeSKUSearch('nhap-item-ten','nhap-sku-drop','nhap-item-gia');
   makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia', true);
   makeSKUSearch('baoca-item-ten','baoca-sku-drop','baoca-dummy-gia');
+  makeSKUSearch('edit-item-ten','edit-sku-drop','edit-item-gia', true);
 });
 </script>
 
@@ -4501,7 +4718,14 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .badge-xuat{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;margin-left:6px;font-weight:600}
 .badge-xuat.da{background:#E6F5EC;color:#1B7A3E}
 .badge-xuat.chua{background:#FEF3C7;color:#B45309}
-.phieu-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px}
+.phieu-card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px;position:relative}
+.phieu-card.deleted,.phieu-baoca.deleted{opacity:0.55;filter:grayscale(70%)}
+.phieu-card.deleted::before,.phieu-baoca.deleted::before{content:'';position:absolute;inset:0;border-radius:var(--radius);
+  background:linear-gradient(to bottom right,transparent calc(50% - 1.5px),#DC2626 calc(50% - 1.5px),#DC2626 calc(50% + 1.5px),transparent calc(50% + 1.5px));
+  pointer-events:none;z-index:5}
+.phieu-card.deleted::after,.phieu-baoca.deleted::after{content:'ĐÃ XÓA';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-10deg);
+  font-size:18px;font-weight:900;color:#DC2626;background:rgba(255,255,255,0.9);padding:4px 14px;border-radius:6px;
+  border:2px solid #DC2626;z-index:6;pointer-events:none;letter-spacing:1px}
 .phieu-card.green{border-left:3px solid var(--green)}
 .phieu-card.red{border-left:3px solid var(--red)}
 .phieu-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px}
@@ -4516,6 +4740,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .ver-toggle{font-size:12px;color:var(--text2);cursor:pointer;margin-top:8px;padding-top:8px;border-top:1px dotted var(--border)}
 .ver-list{margin-top:6px}
 .ver-row{font-size:12px;color:var(--text2);padding:3px 0;border-bottom:1px dashed var(--border)}
+.ver-detail{background:var(--bg);border-radius:8px;padding:8px 10px;margin:4px 0 8px}
+.ver-diff-row{font-size:12px;padding:2px 0}
 
 /* FILTER */
 .filter-bar{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px;margin-bottom:12px}
@@ -4624,7 +4850,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .upload-status{font-size:12px;color:var(--text2);margin-top:6px;display:flex;align-items:center;gap:4px}
 .upload-status.done{color:var(--green)}
 .upload-status.err{color:var(--red)}
-.phieu-baoca{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px;border-left:3px solid var(--blue)}
+.phieu-baoca{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:13px;margin-bottom:10px;border-left:3px solid var(--blue);position:relative}
 .btn-view-full{display:block;text-align:center;margin-top:6px;padding:7px;background:var(--blue-bg);color:var(--blue);border-radius:6px;font-size:12px;font-weight:500;text-decoration:none}
 .btn-view-full:hover{background:var(--blue);color:#fff}
 .baoca-ds-row{border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px}
@@ -4695,7 +4921,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v136</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v138</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4749,7 +4975,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v136</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v138</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4789,7 +5015,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v136</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v138</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -4893,6 +5119,14 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
               <option value="da">Đã xuất</option>
             </select>
           </div>
+          <div class="field"><label>Trạng thái phiếu</label>
+            <select id="nhap-filter-trangthai">
+              <option value="all">Tất cả</option>
+              <option value="binhthuong">Bình thường</option>
+              <option value="dasua">Đã chỉnh sửa</option>
+              <option value="daxoa">Đã xóa</option>
+            </select>
+          </div>
           <div class="filter-actions">
             <button class="btn-apply-g" onclick="applyNhapFilter()">Lọc</button>
             <button class="btn-clear" onclick="clearNhapFilter()">Xóa lọc</button>
@@ -4968,6 +5202,14 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
               <option value="all">Tất cả</option>
               <option value="chua">Chưa xuất</option>
               <option value="da">Đã xuất</option>
+            </select>
+          </div>
+          <div class="field"><label>Trạng thái phiếu</label>
+            <select id="xuat-filter-trangthai">
+              <option value="all">Tất cả</option>
+              <option value="binhthuong">Bình thường</option>
+              <option value="dasua">Đã chỉnh sửa</option>
+              <option value="daxoa">Đã xóa</option>
             </select>
           </div>
           <div class="filter-actions">
@@ -5052,6 +5294,14 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
               <option value="all">Tất cả</option>
               <option value="chua">Chưa xuất</option>
               <option value="da">Đã xuất</option>
+            </select>
+          </div>
+          <div class="field"><label>Trạng thái phiếu</label>
+            <select id="baoca-filter-trangthai">
+              <option value="all">Tất cả</option>
+              <option value="binhthuong">Bình thường</option>
+              <option value="dasua">Đã chỉnh sửa</option>
+              <option value="daxoa">Đã xóa</option>
             </select>
           </div>
           <div class="filter-actions">
@@ -5265,10 +5515,37 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
 <!-- EDIT MODAL -->
 <div id="edit-modal">
-  <div class="edit-card">
-    <h3>Chỉnh sửa phiếu</h3>
-    <textarea id="edit-items" placeholder="JSON danh sách hàng..."></textarea>
-    <div class="edit-btns">
+  <div class="edit-card" style="max-height:88vh;overflow-y:auto">
+    <h3 id="edit-modal-title">Chỉnh sửa phiếu</h3>
+    <div id="edit-add-section">
+      <div class="field sku-wrap">
+        <label>Thêm hàng hóa</label>
+        <input type="text" id="edit-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
+        <div class="sku-drop" id="edit-sku-drop"></div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label>Số lượng</label>
+          <div class="qty-ctrl">
+            <button onclick="document.getElementById('edit-item-sl').value=Math.max(1,(parseInt(document.getElementById('edit-item-sl').value)||1)-1)">−</button>
+            <input type="number" id="edit-item-sl" value="1" min="1">
+            <button onclick="document.getElementById('edit-item-sl').value=(parseInt(document.getElementById('edit-item-sl').value)||0)+1">+</button>
+          </div>
+        </div>
+        <div class="field" id="edit-gia-wrap">
+          <label>Giá (₫)</label>
+          <input type="number" id="edit-item-gia" readonly style="background:#f8f8f8">
+        </div>
+      </div>
+      <button class="btn-outline" style="width:100%;margin-top:6px" onclick="themVaoEditPhieu()">+ Thêm vào phiếu</button>
+    </div>
+    <p id="edit-baoca-note" class="info-note" style="display:none;margin-top:6px">Chỉ sửa được số lượng hoặc xóa dòng — muốn thêm dòng mới, tạo phiếu mới (cần quay video).</p>
+
+    <div class="card-title" style="margin-top:16px">Hàng trong phiếu</div>
+    <div class="items-list-wrap" id="edit-items-list"><div class="empty-msg">Chưa có hàng nào.</div></div>
+    <div class="total-bar" id="edit-total-wrap" style="display:none"><span>Tổng</span><span id="edit-total" class="r">0₫</span></div>
+
+    <div class="edit-btns" style="margin-top:14px">
       <button class="btn-r" style="flex:1" onclick="saveEdit()">Lưu thay đổi</button>
       <button class="btn-outline" style="flex:none;width:80px" onclick="closeEdit()">Hủy</button>
     </div>
