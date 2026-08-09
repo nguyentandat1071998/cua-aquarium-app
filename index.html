@@ -3110,8 +3110,23 @@ window.submitNhap = async function() {
   if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
   if (!currentNhap.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
   const btn = document.getElementById('btn-nhap-submit');
-  btn.disabled = true; btn.textContent = 'Đang lưu...';
+  btn.disabled = true; btn.textContent = 'Đang đồng bộ KiotViet...';
   try {
+    // Đồng bộ sang KiotViet TRƯỚC — nếu có SKU không tìm thấy hoặc lỗi, DỪNG LUÔN, không lưu vào app
+    const idToken = await currentUser.getIdToken();
+    const kvRes = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'create-purchase-order', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: currentNhap.items })
+    });
+    const kvData = await kvRes.json();
+    if (!kvData.success) {
+      showToast('Chưa lưu được — ' + (kvData.error || 'Lỗi đồng bộ KiotViet'), true);
+      btn.disabled = false; btn.textContent = 'Lưu phiếu chuyển kho';
+      return;
+    }
+
+    btn.textContent = 'Đang lưu...';
     const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
     const maPhieu = await layMaPhieuMoi('PCK', 'pck');
     await setDoc(doc(db, 'phieu_chuyenkho', maPhieu), {
@@ -3123,12 +3138,13 @@ window.submitNhap = async function() {
       nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
       createdAt: serverTimestamp(),
       deleted: false,
-      versions: []
+      versions: [],
+      kiotvietCode: kvData.kiotvietCode || null
     });
     currentNhap = { items: [], photos: [] };
     renderNhapItems();
     renderNhapPhotos();
-    showToast('Đã lưu phiếu chuyển kho');
+    showToast('Đã lưu phiếu chuyển kho + đồng bộ KiotViet');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu chuyển kho';
 };
@@ -3350,6 +3366,7 @@ window.loadNhapList = async function(filter={}) {
         <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditNhap('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
+      ${p.kiotvietCode ? `<div style="font-size:11px;color:var(--text2)">KiotViet: ${escHtml(p.kiotvietCode)}</div>` : ''}
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span></div>
@@ -4940,7 +4957,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v142</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v143</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4994,7 +5011,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v142</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v143</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5034,7 +5051,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v142</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v143</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
