@@ -1431,8 +1431,6 @@ async function renderHangHoaTab() {
     <div id="hanghoa-form"></div>
     <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>
-    ${currentUserData.role === 'admin' ? `<button id="btn-doiten-sku" class="btn-outline" style="width:100%;margin-bottom:8px" onclick="doiTenTaiLieuSKUTheoMa()">🔄 Đổi tên tài liệu SKU theo mã (chỉ cần bấm 1 lần)</button>
-    <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="khoiTaoNhomHangTuSKU()">🔄 Khởi tạo Nhóm hàng từ dữ liệu SKU (chỉ cần bấm 1 lần)</button>` : ''}
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px">
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
       <select onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
@@ -1457,35 +1455,22 @@ window.doiSoLuongTrangHangHoa = function(v) {
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
   if (!el) return;
-  const nhom1List = [...new Set(allSKUs.map(s => s.nhom1).filter(Boolean))].sort();
-  if (!nhom1List.length) { el.innerHTML = ''; return; }
-
-  const nhom2List = hangHoaNhom1Filter
-    ? [...new Set(allSKUs.filter(s => s.nhom1 === hangHoaNhom1Filter).map(s => s.nhom2).filter(Boolean))].sort()
-    : [];
-  const nhom3List = hangHoaNhom2Filter
-    ? [...new Set(allSKUs.filter(s => s.nhom1 === hangHoaNhom1Filter && s.nhom2 === hangHoaNhom2Filter).map(s => s.nhom3).filter(Boolean))].sort()
-    : [];
-
+  const parts = [hangHoaNhom1Filter, hangHoaNhom2Filter, hangHoaNhom3Filter].filter(Boolean);
   el.innerHTML = `
-    <select onchange="filterHangHoaNhom(1,this.value)" style="margin-bottom:6px">
-      <option value="">-- Tất cả nhóm hàng (cấp 1) --</option>
-      ${nhom1List.map(n => `<option value="${escHtml(n)}" ${n===hangHoaNhom1Filter?'selected':''}>${escHtml(n)}</option>`).join('')}
-    </select>
-    ${nhom2List.length ? `<select onchange="filterHangHoaNhom(2,this.value)" style="margin-bottom:6px">
-      <option value="">-- Tất cả nhóm cấp 2 --</option>
-      ${nhom2List.map(n => `<option value="${escHtml(n)}" ${n===hangHoaNhom2Filter?'selected':''}>${escHtml(n)}</option>`).join('')}
-    </select>` : ''}
-    ${nhom3List.length ? `<select onchange="filterHangHoaNhom(3,this.value)" style="margin-bottom:6px">
-      <option value="">-- Tất cả nhóm cấp 3 --</option>
-      ${nhom3List.map(n => `<option value="${escHtml(n)}" ${n===hangHoaNhom3Filter?'selected':''}>${escHtml(n)}</option>`).join('')}
-    </select>` : ''}`;
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <button type="button" id="hanghoa-filter-nhom-display" onclick="moModalChonNhomHang('hanghoa-filter')"
+        style="flex:1;text-align:left;background:#fff;border:1.5px solid var(--border);padding:10px 12px;border-radius:8px;font-size:13px;font-weight:500;color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span>${parts.length ? escHtml(parts.join(' > ')) : 'Lọc theo nhóm hàng'}</span><span style="color:var(--text2)">▾</span>
+      </button>
+      ${parts.length ? `<button type="button" class="btn-outline" style="width:auto;padding:0 12px" onclick="xoaLocNhomHangHoa()">✕</button>` : ''}
+    </div>
+    <input type="hidden" id="hanghoa-filter-nhom1-val" value="${escHtml(hangHoaNhom1Filter)}">
+    <input type="hidden" id="hanghoa-filter-nhom2-val" value="${escHtml(hangHoaNhom2Filter)}">
+    <input type="hidden" id="hanghoa-filter-nhom3-val" value="${escHtml(hangHoaNhom3Filter)}">`;
 }
 
-window.filterHangHoaNhom = function(cap, v) {
-  if (cap === 1) { hangHoaNhom1Filter = v; hangHoaNhom2Filter = ''; hangHoaNhom3Filter = ''; }
-  else if (cap === 2) { hangHoaNhom2Filter = v; hangHoaNhom3Filter = ''; }
-  else { hangHoaNhom3Filter = v; }
+window.xoaLocNhomHangHoa = function() {
+  hangHoaNhom1Filter = ''; hangHoaNhom2Filter = ''; hangHoaNhom3Filter = '';
   hangHoaPage = 1;
   renderHangHoaNhomFilters();
   renderHangHoaList();
@@ -1587,8 +1572,8 @@ window.moFormThemHangDon = async function() {
     <div class="admin-block" style="margin-bottom:12px">
       <h4 style="margin-bottom:10px">Thêm hàng hóa</h4>
       ${truongCoNhan('Tên hàng hóa', `<input type="text" id="hh-ten" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Mã SKU (bắt buộc, mã chính)', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
-      ${laAdmin ? truongCoNhan('Giá vốn (chỉ Admin thấy)', `<input type="number" id="hh-giavon" placeholder="Ô nhập liệu">`) : ''}
+      ${truongCoNhan('Mã SKU', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
+      ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hh-giavon" placeholder="Ô nhập liệu">`) : ''}
       ${truongCoNhan('Giá bán', `<input type="number" id="hh-gia" placeholder="Ô nhập liệu">`)}
       ${truongCoNhan('Số lượng tồn', `<input type="number" id="hh-soluong" placeholder="0" value="0">`)}
       ${renderNhomHangSelector('hh')}
@@ -1620,7 +1605,7 @@ window.moFormThemHangCombo = async function() {
     <div class="admin-block" style="margin-bottom:12px">
       <h4 style="margin-bottom:10px">Thêm combo hàng hóa</h4>
       ${truongCoNhan('Tên combo', `<input type="text" id="hh-ten" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Mã SKU Combo (bắt buộc, không trùng SKU khác)', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
+      ${truongCoNhan('Mã SKU Combo', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
       ${truongCoNhan('Giá bán', `<input type="number" id="hh-gia" placeholder="Ô nhập liệu">`)}
       <div style="margin-bottom:8px">
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
@@ -1785,17 +1770,14 @@ window.moFormSuaHangHoa = async function(id) {
 
   el.innerHTML = `
     <div class="admin-block" style="margin-top:10px">
+      ${s.laCombo ? `<p class="info-note" style="margin-bottom:8px">📦 Đây là SKU Combo</p>` : ''}
       ${truongCoNhan('Tên hàng hóa', `<input type="text" id="hhs-ten-${id}" placeholder="Ô nhập liệu" value="${escHtml(s.ten||'')}">`)}
-      ${truongCoNhan('Mã SKU (bắt buộc)', `<input type="text" id="hhs-sku-${id}" placeholder="Ô nhập liệu" value="${escHtml(s.sku||'')}">`)}
-      ${laAdmin ? truongCoNhan('Giá vốn (chỉ Admin thấy)', `<input type="number" id="hhs-giavon-${id}" placeholder="Ô nhập liệu" value="${s.giaVon||0}">`) : ''}
+      ${truongCoNhan('Mã SKU', `<input type="text" id="hhs-sku-${id}" placeholder="Ô nhập liệu" value="${escHtml(s.sku||'')}">`)}
+      ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hhs-giavon-${id}" placeholder="Ô nhập liệu" value="${s.giaVon||0}">`) : ''}
       ${truongCoNhan('Giá bán', `<input type="number" id="hhs-gia-${id}" placeholder="Ô nhập liệu" value="${s.gia||0}">`)}
-      <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px;cursor:pointer">
-        <input type="checkbox" id="hhs-la-combo-${id}" ${s.laCombo?'checked':''} onchange="toggleComboFormSua('${id}')"> Đây là SKU Combo (gộp nhiều SKU thành 1 mã bán)
-      </label>
-      <div id="hhs-soluong-wrap-${id}" style="display:${s.laCombo?'none':''}">
-        ${truongCoNhan('Số lượng tồn', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${s.soLuongTon||0}">`)}
-      </div>
-      <div id="hhs-combo-wrap-${id}" style="display:${s.laCombo?'':'none'};margin-bottom:8px">
+      <input type="hidden" id="hhs-la-combo-${id}" value="${s.laCombo ? '1':'0'}">
+      ${!s.laCombo ? `${truongCoNhan('Số lượng tồn', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${s.soLuongTon||0}">`)}` : `
+      <div style="margin-bottom:8px">
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
         <div class="field sku-wrap">
           <input type="text" id="hhs-${id}-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
@@ -1810,7 +1792,7 @@ window.moFormSuaHangHoa = async function(id) {
           <button class="btn-outline" onclick="themThanhPhanCombo('hhs-${id}')">+ Thêm thành phần</button>
         </div>
         <div id="hhs-${id}-combo-list"></div>
-      </div>
+      </div>`}
       ${renderNhomHangSelector(`hhs-${id}`)}
       <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
       <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -1829,15 +1811,9 @@ window.moFormSuaHangHoa = async function(id) {
         <button class="btn-outline" onclick="document.getElementById('hh-sua-${id}').innerHTML='';comboThanhPhan=[]">Hủy</button>
       </div>
     </div>`;
-  makeSKUSearch(`hhs-${id}-combo-item-ten`, `hhs-${id}-combo-sku-drop`, null);
+  if (s.laCombo) makeSKUSearch(`hhs-${id}-combo-item-ten`, `hhs-${id}-combo-sku-drop`, null);
   renderThanhPhanCombo(`hhs-${id}`);
   veNhomHangSelector(`hhs-${id}`, s.nhom1||'', s.nhom2||'', s.nhom3||'');
-};
-
-window.toggleComboFormSua = function(id) {
-  const checked = document.getElementById(`hhs-la-combo-${id}`).checked;
-  document.getElementById(`hhs-soluong-wrap-${id}`).style.display = checked ? 'none' : '';
-  document.getElementById(`hhs-combo-wrap-${id}`).style.display = checked ? '' : 'none';
 };
 
 window.xemTruocAnhSuaHangHoa = async function(input, id) {
@@ -1872,7 +1848,7 @@ window.luuSuaHangHoa = async function(id) {
     canNang: parseFloat(document.getElementById(`hhs-cannang-${id}`)?.value) || 0
   };
   const s = allSKUs.find(x => x.id === id);
-  const laCombo = document.getElementById(`hhs-la-combo-${id}`)?.checked || false;
+  const laCombo = document.getElementById(`hhs-la-combo-${id}`)?.value === '1';
   if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
   updateData.soLuongTon = laCombo ? 0 : (parseInt(document.getElementById(`hhs-soluong-${id}`)?.value) || 0);
   updateData.laCombo = laCombo;
@@ -2074,6 +2050,7 @@ window.moModalChonNhomHang = async function(prefix) {
   };
   document.getElementById('nhomhang-modal').style.display = 'flex';
   veCotNhomHang(1); veCotNhomHang(2); veCotNhomHang(3);
+  capNhatTrangThaiXacNhan();
 };
 
 window.dongModalNhomHang = function() {
@@ -2085,16 +2062,34 @@ function timIdTheoTen(ten, chaId) {
   return allNhomHang.find(n => n.ten === ten && (n.chaId||null) === (chaId||null))?.id || null;
 }
 
+// Tìm id của nhóm được chọn sâu nhất hiện tại (null nếu chưa chọn gì)
+function layIdNhomChonSauCung() {
+  const { nhom1, nhom2, nhom3 } = nhomHangModalState;
+  if (nhom3) return timIdTheoTen(nhom3, timIdTheoTen(nhom2, timIdTheoTen(nhom1, null)));
+  if (nhom2) return timIdTheoTen(nhom2, timIdTheoTen(nhom1, null));
+  if (nhom1) return timIdTheoTen(nhom1, null);
+  return null;
+}
+
+// Bật/tắt nút Xác nhận: chặn trước nếu nhóm đang chọn còn nhóm con bên trong (trừ khi đang ở chế độ lọc)
+function capNhatTrangThaiXacNhan() {
+  const btn = document.getElementById('nhomhang-modal-xacnhan-btn');
+  if (!btn) return;
+  if (nhomHangModalState.prefix === 'hanghoa-filter') { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; return; }
+  const idSauCung = layIdNhomChonSauCung();
+  const conNhomCon = idSauCung && layConCuaNhom(idSauCung).length > 0;
+  btn.disabled = conNhomCon;
+  btn.style.opacity = conNhomCon ? '0.5' : '';
+  btn.style.cursor = conNhomCon ? 'not-allowed' : '';
+}
+
 function veCotNhomHang(cap) {
   const el = document.getElementById(`nhomhang-modal-cap${cap}`);
   if (!el) return;
   let chaId = null;
   if (cap === 2) chaId = timIdTheoTen(nhomHangModalState.nhom1, null);
   if (cap === 3) chaId = timIdTheoTen(nhomHangModalState.nhom2, timIdTheoTen(nhomHangModalState.nhom1, null));
-  if (cap > 1 && !nhomHangModalState[`nhom${cap-1}`]) {
-    el.innerHTML = `<p class="info-note" style="padding:8px;font-size:12px">Chọn cấp ${cap-1} trước</p>`;
-    return;
-  }
+  if (cap > 1 && !nhomHangModalState[`nhom${cap-1}`]) { el.innerHTML = ''; return; }
   const items = layConCuaNhom(chaId);
   const chonVal = nhomHangModalState[`nhom${cap}`];
   const dsHtml = items.map(n => {
@@ -2119,6 +2114,7 @@ window.chonCotNhomHang = function(cap, ten) {
   if (cap === 1) { nhomHangModalState.nhom2 = ''; nhomHangModalState.nhom3 = ''; }
   if (cap === 2) { nhomHangModalState.nhom3 = ''; }
   veCotNhomHang(1); veCotNhomHang(2); veCotNhomHang(3);
+  capNhatTrangThaiXacNhan();
 };
 
 window.moThemMoiTrongCot = function(cap) {
@@ -2147,14 +2143,18 @@ window.luuNhomMoiTrongCot = async function(cap) {
 window.xacNhanChonNhomHang = function() {
   const { prefix, nhom1, nhom2, nhom3 } = nhomHangModalState;
 
-  // Bắt buộc chọn tới đúng nhóm cuối cùng (không còn nhóm con) — nếu không, phân cấp sẽ vô nghĩa
-  let idSauCung = null;
-  if (nhom3) idSauCung = timIdTheoTen(nhom3, timIdTheoTen(nhom2, timIdTheoTen(nhom1, null)));
-  else if (nhom2) idSauCung = timIdTheoTen(nhom2, timIdTheoTen(nhom1, null));
-  else if (nhom1) idSauCung = timIdTheoTen(nhom1, null);
+  if (prefix !== 'hanghoa-filter') {
+    // Bắt buộc chọn tới đúng nhóm cuối cùng (không còn nhóm con) — nếu không, phân cấp sẽ vô nghĩa
+    const idSauCung = layIdNhomChonSauCung();
+    if (idSauCung && layConCuaNhom(idSauCung).length > 0) return; // nút đã bị khóa từ trước, phòng hờ
+  }
 
-  if (idSauCung && layConCuaNhom(idSauCung).length > 0) {
-    showToast('Nhóm này còn nhóm con bên trong — chọn tiếp tới nhóm cuối cùng (không còn nhóm con) mới xác nhận được', true);
+  if (prefix === 'hanghoa-filter') {
+    hangHoaNhom1Filter = nhom1; hangHoaNhom2Filter = nhom2; hangHoaNhom3Filter = nhom3;
+    hangHoaPage = 1;
+    renderHangHoaNhomFilters();
+    renderHangHoaList();
+    dongModalNhomHang();
     return;
   }
 
@@ -5428,7 +5428,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v154</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v155</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5482,7 +5482,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v154</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v155</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5522,7 +5522,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v154</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v155</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -6030,7 +6030,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <div id="nhomhang-modal-cap3" style="flex:1;overflow-y:auto;padding:8px"></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn-g" style="flex:1" onclick="xacNhanChonNhomHang()">Xác nhận</button>
+      <button class="btn-g" id="nhomhang-modal-xacnhan-btn" style="flex:1" onclick="xacNhanChonNhomHang()">Xác nhận</button>
       <button class="btn-outline" style="flex:none;width:80px" onclick="dongModalNhomHang()">Hủy</button>
     </div>
   </div>
