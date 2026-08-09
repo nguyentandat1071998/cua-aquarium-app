@@ -246,6 +246,7 @@ const CA_GIO = {
 let lichCaWeekOffset = 0;
 let lichCaUsersCache = null;
 let lichCaShiftsCache = null;
+let lichCaVaoLucCache = null; // {shiftId: true} — chỉ dùng để khóa sửa/xóa lịch đã check-in, không lưu chi tiết riêng tư
 let lichCaDatesCache = null;
 let chamCongWeekOffset = 0;
 
@@ -752,7 +753,8 @@ window.luuXepCa = async function(ngay) {
   const user = (lichCaUsersCache||[]).find(u => u.id === uid);
   const shiftId = `${ngay}_${uid}`;
   const existingSnap = await getDoc(doc(db,'lich_ca', shiftId));
-  if (existingSnap.exists() && existingSnap.data().vaoLuc) {
+  const daTonTai = existingSnap.exists() && !existingSnap.data().deleted;
+  if (daTonTai && existingSnap.data().vaoLuc) {
     showToast('Nhân viên đã check-in ca này, không thể sửa lịch', true);
     return;
   }
@@ -761,8 +763,8 @@ window.luuXepCa = async function(ngay) {
     loaiCa, ngoaiLich: false, deleted: false,
     xepBoi: { uid: currentUser.uid, ten: currentUserData.ten },
     createdAt: serverTimestamp(),
-    vaoLuc: existingSnap.exists() ? (existingSnap.data().vaoLuc || null) : null,
-    thoatLuc: existingSnap.exists() ? (existingSnap.data().thoatLuc || null) : null
+    vaoLuc: daTonTai ? (existingSnap.data().vaoLuc || null) : null,
+    thoatLuc: daTonTai ? (existingSnap.data().thoatLuc || null) : null
   }, { merge: true });
   await ghiLichCongKhai(shiftId, { ngay, uid, ten: user?.ten || user?.email || '', loaiCa });
   showToast('Đã xếp ca cho ' + (user?.ten || ''));
@@ -789,6 +791,12 @@ window.moFormXepCaTuan = async function() {
     const uSnap = await getDocs(collection(db,'users'));
     lichCaUsersCache = uSnap.docs.map(d => ({id:d.id, ...d.data()}));
   }
+  // Đọc thêm lich_ca (Admin/Quản lý mới có quyền) chỉ để biết CHÍNH XÁC ai đã check-in —
+  // tránh vô tình sửa/xóa lịch của người đang làm (lich_cong_khai không lưu vaoLuc).
+  const dates = lichCaDatesCache || getWeekDatesISO(lichCaWeekOffset);
+  const vlSnap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',dates[0]), where('ngay','<=',dates[6])));
+  lichCaVaoLucCache = {};
+  vlSnap.docs.forEach(d => { if (d.data().vaoLuc) lichCaVaoLucCache[d.id] = true; });
   renderXepCaTuanForm();
 };
 
@@ -815,7 +823,8 @@ function renderXepCaTuanForm() {
       const boxes = lichCaUsersCache.map(u => {
         const cur = byUid[u.id];
         const checked = cur && cur.loaiCa === ca.key;
-        const locked = !!(cur && cur.vaoLuc);
+        const shiftId = `${ngay}_${u.id}`;
+        const locked = !!(lichCaVaoLucCache && lichCaVaoLucCache[shiftId]);
         return `<label style="display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0">
           <input type="checkbox" id="xtc-${ngay}-${ca.key}-${u.id}" data-ngay="${ngay}" data-ca="${ca.key}" data-uid="${u.id}"
             ${checked ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="xtcToggle(this)">
@@ -879,7 +888,8 @@ window.luuXepCaTuan = async function() {
       } else {
         // Không tick ca nào cho NV này ngày này — nếu trước đó có xếp mà chưa check-in thì gỡ
         const existing = (lichCaShiftsCache||[]).find(s => s.ngay === ngay && s.uid === u.id);
-        if (existing && !existing.vaoLuc && !existing.deleted) {
+        const daCheckin = !!(lichCaVaoLucCache && lichCaVaoLucCache[shiftId]);
+        if (existing && !daCheckin && !existing.deleted) {
           tasks.push(updateDoc(doc(db,'lich_ca', shiftId), {
             deleted: true, deletedAt: serverTimestamp(), deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
           }));
@@ -1155,7 +1165,7 @@ async function tryResumeShift() {
     const ngay = getTodayISO();
     const shiftId = `${ngay}_${currentUser.uid}`;
     const snap = await getDoc(doc(db, 'lich_ca', shiftId));
-    if (snap.exists()) {
+    if (snap.exists() && !snap.data().deleted) {
       const data = snap.data();
       if (data.vaoLuc && !data.thoatLuc && !data.khongCheckout) {
         currentShiftDocId = shiftId;
@@ -4176,7 +4186,7 @@ async function renderBaoCaoTab() {
 
   const snap = await getDocs(query(collection(db, 'lich_ca'), where('ngay', '==', baoCaoNgayChon)));
   const caTheoUid = {};
-  snap.docs.forEach(d => { caTheoUid[d.data().uid] = { id: d.id, ...d.data() }; });
+  snap.docs.forEach(d => { if (!d.data().deleted) caTheoUid[d.data().uid] = { id: d.id, ...d.data() }; });
 
   const nhanVien = allUsersCache.filter(u => u.role === 'nhan_vien' || u.role === 'quan_ly');
 
@@ -4265,7 +4275,7 @@ window.moChiTietBaoCao = async function(uid, ten) {
 
   const shiftId = `${baoCaoNgayChon}_${uid}`;
   const snap = await getDoc(doc(db, 'lich_ca', shiftId));
-  if (!snap.exists()) { modal.innerHTML = ''; return; }
+  if (!snap.exists() || snap.data().deleted) { modal.innerHTML = ''; return; }
   const ca = snap.data();
   const thuKey = getThuKeyChoNgay(baoCaoNgayChon);
   const dsTask = CHECKLIST[thuKey] || [];
@@ -4680,7 +4690,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v134</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v135</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4734,7 +4744,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v134</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v135</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4774,7 +4784,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v134</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v135</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
