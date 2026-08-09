@@ -1483,7 +1483,7 @@ window.moFormImportExcel = function() {
   if (el.innerHTML) { el.innerHTML = ''; return; }
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:12px">
-      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, gia_von, so_luong_ton, cột ảnh (vd "Hình ảnh (url1,url2...)"), <b>Nhóm hàng</b> (3 cấp, phân cách bằng <code>&gt;&gt;</code>, vd: Cá, Tép, Ốc &amp; Chăm sóc&gt;&gt;Cá cảnh), dai_cm, rong_cm, cao_cm, can_nang_gram. Cột nào trống thì giữ nguyên giá trị cũ (nếu SKU đã có sẵn).</p>
+      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, gia_von, so_luong_ton, cột ảnh (vd "Hình ảnh (url1,url2...)"), <b>Nhóm hàng</b> (3 cấp, phân cách bằng <code>&gt;&gt;</code>, vd: Cá, Tép, Ốc &amp; Chăm sóc&gt;&gt;Cá cảnh), dai_cm, rong_cm, cao_cm, can_nang_gram. Cột nào trống thì giữ nguyên giá trị cũ (nếu SKU đã có sẵn).<br>Để tạo/sửa <b>SKU Combo</b>, dùng cột <b>thanh_phan_combo</b> dạng <code>MãSKUcon1:tỉ_lệ,MãSKUcon2:tỉ_lệ</code> (vd: <code>ABC123:1,MULTITHUOCTIM100G:2</code>) — các mã SKU con phải đã tồn tại (hoặc nằm ở dòng phía trên trong cùng file).</p>
       <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="taiFileMauImport()">Tải file mẫu</button>
       <input type="file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
       <div id="hanghoa-import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
@@ -1492,9 +1492,10 @@ window.moFormImportExcel = function() {
 
 window.taiFileMauImport = function() {
   const data = [
-    ['sku', 'ten', 'gia', 'gia_von', 'so_luong_ton', 'Hình ảnh (url1,url2...)', 'Nhóm hàng', 'dai_cm', 'rong_cm', 'cao_cm', 'can_nang_gram'],
-    ['MULTITHUOCTIM100G', 'Multi Thuốc Tím - 100g', 119000, 90000, 50, 'https://cdn2-retail-images.kiotviet.vn/2026/07/27/cuaaquarium/anh1.jpg', 'Cá, Tép, Ốc & Chăm sóc>>Thuốc & Xử lý nước', 10, 5, 5, 100],
-    ['ABC123', 'Tên sản phẩm mẫu', 50000, 35000, 20, '', 'Cá, Tép, Ốc & Chăm sóc>>Cá cảnh>>Cá 7 màu', '', '', '', ''],
+    ['sku', 'ten', 'gia', 'gia_von', 'so_luong_ton', 'Hình ảnh (url1,url2...)', 'Nhóm hàng', 'dai_cm', 'rong_cm', 'cao_cm', 'can_nang_gram', 'thanh_phan_combo'],
+    ['MULTITHUOCTIM100G', 'Multi Thuốc Tím - 100g', 119000, 90000, 50, 'https://cdn2-retail-images.kiotviet.vn/2026/07/27/cuaaquarium/anh1.jpg', 'Cá, Tép, Ốc & Chăm sóc>>Thuốc & Xử lý nước', 10, 5, 5, 100, ''],
+    ['ABC123', 'Tên sản phẩm mẫu', 50000, 35000, 20, '', 'Cá, Tép, Ốc & Chăm sóc>>Cá cảnh>>Cá 7 màu', '', '', '', '', ''],
+    ['COMBO_ABC_MULTI', 'Combo mẫu (1 ABC123 + 2 Multi Thuốc Tím)', 150000, '', '', '', '', '', '', '', '', 'ABC123:1,MULTITHUOCTIM100G:2'],
   ];
   const ws = XLSX.utils.aoa_to_sheet(data);
   const wb = XLSX.utils.book_new();
@@ -1506,7 +1507,7 @@ window.exportDanhSachHangHoaExcel = async function() {
   showToast('Đang xuất file...');
   await loadSKUs();
   const laAdmin = currentUserData.role === 'admin';
-  const header = ['sku','ten','gia', ...(laAdmin ? ['gia_von'] : []), 'so_luong_ton','trang_thai_anh','url_anh','nhom_cap_1','nhom_cap_2','nhom_cap_3','dai_cm','rong_cm','cao_cm','can_nang_gram','la_combo'];
+  const header = ['sku','ten','gia', ...(laAdmin ? ['gia_von'] : []), 'so_luong_ton','trang_thai_anh','url_anh','nhom_cap_1','nhom_cap_2','nhom_cap_3','dai_cm','rong_cm','cao_cm','can_nang_gram','thanh_phan_combo'];
   const rows = allSKUs.map(s => [
     s.sku||'', s.ten||'', s.gia||0,
     ...(laAdmin ? [s.giaVon||0] : []),
@@ -1516,7 +1517,7 @@ window.exportDanhSachHangHoaExcel = async function() {
     s.nhom1||'', s.nhom2||'', s.nhom3||'',
     s.kichThuoc?.dai||'', s.kichThuoc?.rong||'', s.kichThuoc?.cao||'',
     s.canNang||'',
-    s.laCombo ? 'Có' : ''
+    s.laCombo ? (s.thanhPhanCombo||[]).map(t => `${t.sku}:${t.tyLe}`).join(',') : ''
   ]);
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
   ws['!cols'] = header.map(() => ({ wch: 16 }));
@@ -4836,6 +4837,7 @@ window.importSKU = async function(input) {
   const canNangIdx = hdr.findIndex(h => h.includes('cannang') || h === 'can_nang_gram' || h.includes('weight'));
   const anhIdx = hdr.findIndex(h => h.includes('anh') || h.includes('image') || h.includes('url') || h.includes('hinh'));
   const nhomIdx = hdr.findIndex(h => h.includes('nhom') || h.includes('danhmuc') || h.includes('category') || h.includes('group'));
+  const thanhPhanIdx = hdr.findIndex(h => h.includes('thanhphan') || h.includes('combo'));
   if (skuIdx === -1) { showToast('File thiếu cột "sku" (mã chính, bắt buộc)', true); return; }
 
   await loadSKUs();
@@ -4868,6 +4870,23 @@ window.importSKU = async function(input) {
 
     const nhom = nhomIdx >= 0 ? tachNhomHang(cols[nhomIdx]) : null;
 
+    // Cột "thành phần combo" dạng: MASKUCON1:2,MASKUCON2:1 (mã:tỉ_lệ, cách nhau bằng dấu phẩy)
+    let thanhPhanComboMoi = null; // null = không đổi gì (giữ nguyên nếu đang sửa); [] hoặc mảng thật nếu có cột này
+    const thanhPhanKhongTim = [];
+    if (thanhPhanIdx >= 0) {
+      const raw = String(cols[thanhPhanIdx] ?? '').trim();
+      if (raw) {
+        thanhPhanComboMoi = [];
+        raw.split(',').forEach(cap => {
+          const [maCon, tyLeStr] = cap.split(':').map(s => (s||'').trim());
+          if (!maCon) return;
+          const conObj = skuMap.get(maCon.toLowerCase());
+          if (!conObj) { thanhPhanKhongTim.push(maCon); return; }
+          thanhPhanComboMoi.push({ skuId: conObj.id, sku: conObj.sku, ten: conObj.ten, tyLe: parseInt(tyLeStr)||1 });
+        });
+      }
+    }
+
     // Đọc số từ ô, giữ nguyên giá trị cũ nếu ô trống (không ép về 0)
     function docOSo(idx) {
       if (idx < 0) return { co: false, val: 0 };
@@ -4894,7 +4913,13 @@ window.importSKU = async function(input) {
         if (anhFileId) { updateData.anhFileId = anhFileId; updateData.anhUrl = anhUrl; }
         if (nhom && nhom.nhomFull) Object.assign(updateData, nhom);
         if (currentUserData.role === 'admin' && giaVonO.co) updateData.giaVon = giaVonO.val;
-        if (!existing.laCombo && soLuongO.co) updateData.soLuongTon = soLuongO.val;
+        if (thanhPhanComboMoi !== null) {
+          // Cột combo có nội dung -> đánh dấu là combo, dùng đúng danh sách thành phần mới
+          updateData.laCombo = true;
+          updateData.thanhPhanCombo = thanhPhanComboMoi;
+        } else if (!existing.laCombo && soLuongO.co) {
+          updateData.soLuongTon = soLuongO.val;
+        }
         if (daiO.co || rongO.co || caoO.co) {
           const ktCu = existing.kichThuoc || {};
           updateData.kichThuoc = {
@@ -4905,19 +4930,25 @@ window.importSKU = async function(input) {
         }
         if (canNangO.co) updateData.canNang = canNangO.val;
         await updateDoc(doc(db,'skus', existing.id), updateData);
+        skuMap.set(sku.toLowerCase(), { ...existing, ...updateData, id: existing.id });
         capNhat++;
       } else {
+        const laCombo = thanhPhanComboMoi !== null && thanhPhanComboMoi.length > 0;
         const newData = {
           ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp(),
           giaVon: currentUserData.role === 'admin' ? giaVonO.val : 0,
-          soLuongTon: soLuongO.val,
+          soLuongTon: laCombo ? 0 : soLuongO.val,
           kichThuoc: { dai: daiO.val, rong: rongO.val, cao: caoO.val },
           canNang: canNangO.val,
-          laCombo: false, thanhPhanCombo: []
+          laCombo, thanhPhanCombo: laCombo ? thanhPhanComboMoi : []
         };
         if (nhom) Object.assign(newData, nhom);
         await setDoc(doc(db, 'skus', sku), newData);
+        skuMap.set(sku.toLowerCase(), { id: sku, ...newData });
         themMoi++;
+      }
+      if (thanhPhanKhongTim.length) {
+        loiGhi.push({ sku, error: `Không tìm thấy mã SKU con: ${thanhPhanKhongTim.join(', ')}` });
       }
     } catch(e) {
       loiGhi.push({ sku, error: e.message || 'Lỗi không xác định' });
@@ -5493,7 +5524,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v156</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v157</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5547,7 +5578,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v156</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v157</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5587,7 +5618,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v156</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v157</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
