@@ -1427,6 +1427,7 @@ async function renderHangHoaTab() {
     <div id="hanghoa-form"></div>
     <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>
+    ${currentUserData.role === 'admin' ? `<button id="btn-doiten-sku" class="btn-outline" style="width:100%;margin-bottom:8px" onclick="doiTenTaiLieuSKUTheoMa()">🔄 Đổi tên tài liệu SKU theo mã (chỉ cần bấm 1 lần)</button>` : ''}
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px">
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
       <select onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
@@ -1699,7 +1700,10 @@ window.luuHangHoa = async function() {
   const laCombo = document.getElementById('hh-la-combo')?.checked || false;
   if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
 
-  await addDoc(collection(db,'skus'), {
+  const daTonTai = await getDoc(doc(db, 'skus', sku));
+  if (daTonTai.exists()) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể tạo trùng`, true); return; }
+
+  await setDoc(doc(db, 'skus', sku), {
     ten, sku, gia, anhFileId, anhUrl, ...nhom, deleted: false,
     soLuongTon: laCombo ? 0 : (parseInt(document.getElementById('hh-soluong')?.value) || 0),
     giaVon: currentUserData.role === 'admin' ? (parseFloat(document.getElementById('hh-giavon')?.value) || 0) : 0,
@@ -1849,7 +1853,15 @@ window.luuSuaHangHoa = async function(id) {
     }
   }
 
-  await updateDoc(doc(db,'skus', id), updateData);
+  if (sku !== id) {
+    // Mã SKU đã đổi -> tên tài liệu phải đổi theo. Kiểm tra không trùng mã khác trước khi đổi.
+    const daTonTai = await getDoc(doc(db, 'skus', sku));
+    if (daTonTai.exists()) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể đổi trùng`, true); return; }
+    await setDoc(doc(db, 'skus', sku), { ...(s||{}), ...updateData });
+    await deleteDoc(doc(db, 'skus', id));
+  } else {
+    await updateDoc(doc(db,'skus', id), updateData);
+  }
   showToast('Đã cập nhật hàng hóa');
   hangHoaSuaAnhBlob = null;
   comboThanhPhan = [];
@@ -1858,6 +1870,46 @@ window.luuSuaHangHoa = async function(id) {
   await loadSKUs();
   renderHangHoaNhomFilters();
   renderHangHoaList();
+};
+
+// Chạy 1 lần: đổi tên toàn bộ tài liệu SKU hiện có cho khớp đúng mã SKU (dùng làm tên tài liệu chuẩn)
+window.doiTenTaiLieuSKUTheoMa = async function() {
+  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới đổi được', true); return; }
+  if (!confirm('Đổi tên toàn bộ tài liệu SKU cho khớp mã SKU? Có thể mất vài phút với nhiều SKU, không đóng trang giữa chừng.')) return;
+  const btn = document.getElementById('btn-doiten-sku');
+  if (btn) { btn.disabled = true; btn.textContent = 'Đang xử lý...'; }
+  try {
+    const snap = await getDocs(collection(db, 'skus'));
+    const docs = snap.docs.map(d => ({ id: d.id, data: d.data() }));
+
+    // Kiểm tra trùng mã trước — tránh mất dữ liệu nếu 2 tài liệu cùng chung 1 mã SKU
+    const maCount = {};
+    docs.forEach(d => { const ma = (d.data.sku||'').trim(); if (ma) maCount[ma] = (maCount[ma]||0)+1; });
+    const trung = Object.entries(maCount).filter(([,c]) => c > 1).map(([ma]) => ma);
+    if (trung.length) {
+      showToast(`Phát hiện ${trung.length} mã SKU bị trùng, cần sửa trước: ${trung.slice(0,5).join(', ')}${trung.length>5?'...':''}`, true);
+      return;
+    }
+
+    let thanhCong = 0, boQua = 0;
+    const loi = [];
+    for (const d of docs) {
+      const ma = (d.data.sku||'').trim();
+      if (!ma) { loi.push(`${d.id}: thiếu mã SKU`); continue; }
+      if (d.id === ma) { boQua++; continue; }
+      try {
+        await setDoc(doc(db, 'skus', ma), d.data);
+        await deleteDoc(doc(db, 'skus', d.id));
+        thanhCong++;
+      } catch(e) { loi.push(`${ma}: ${e.message}`); }
+    }
+    showToast(`Xong: ${thanhCong} đã đổi tên, ${boQua} đã đúng sẵn` + (loi.length ? `, ${loi.length} lỗi (xem Console)` : ''));
+    if (loi.length) console.error('Lỗi đổi tên SKU:', loi);
+    await loadSKUs();
+    renderHangHoaList();
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Đổi tên tài liệu SKU theo mã (chỉ cần bấm 1 lần)'; }
+  }
 };
 
 window.xoaHangHoa = async function(id) {
@@ -4555,7 +4607,7 @@ window.importSKU = async function(input) {
       } else {
         const newData = { ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp() };
         if (nhom) Object.assign(newData, nhom);
-        await addDoc(collection(db,'skus'), newData);
+        await setDoc(doc(db, 'skus', sku), newData);
         themMoi++;
       }
     } catch(e) {
@@ -5132,7 +5184,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v147</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v148</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5186,7 +5238,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v147</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v148</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5226,7 +5278,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v147</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v148</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
