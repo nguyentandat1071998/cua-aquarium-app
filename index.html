@@ -1406,6 +1406,7 @@ window.switchAdmin = function() {
 // ===== DANH SÁCH HÀNG HÓA (Admin) =====
 let hangHoaSearchQuery = '';
 let hangHoaAnhBlob = null;
+let comboThanhPhan = []; // [{skuId, sku, ten, tyLe}] — thành phần đang xây dựng khi tạo/sửa SKU Combo
 
 async function renderHangHoaTab() {
   const el = document.getElementById('hanghoa-content');
@@ -1535,8 +1536,8 @@ function renderHangHoaList() {
           ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
           : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--text3);text-align:center">Không ảnh</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}</div>
-          <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')} · ${fmt(s.gia||0)}đ</div>
+          <div style="font-weight:600;font-size:13px">${escHtml(s.ten||'')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:10px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}</div>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(s.sku||'—')} · ${fmt(s.gia||0)}đ · Tồn: ${s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon ?? 0)}</div>
           ${s.nhomFull ? `<div style="font-size:10.5px;color:#7C3AED">${escHtml(s.nhomFull)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
@@ -1559,21 +1560,106 @@ window.filterHangHoaList = function(v) {
 window.moFormThemHangHoa = function() {
   const el = document.getElementById('hanghoa-form');
   if (!el) return;
-  if (el.innerHTML) { el.innerHTML = ''; hangHoaAnhBlob = null; return; }
+  if (el.innerHTML) { el.innerHTML = ''; hangHoaAnhBlob = null; comboThanhPhan = []; return; }
+  const laAdmin = currentUserData.role === 'admin';
+  comboThanhPhan = [];
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:12px">
       <input type="text" id="hh-ten" placeholder="Tên sản phẩm" style="margin-bottom:8px">
       <input type="text" id="hh-sku" placeholder="Mã SKU (bắt buộc, mã chính)" style="margin-bottom:8px">
-      <input type="number" id="hh-gia" placeholder="Giá" style="margin-bottom:8px">
+      <input type="number" id="hh-gia" placeholder="Giá bán" style="margin-bottom:8px">
       <input type="text" id="hh-nhom" placeholder="Nhóm hàng (vd: Cá, Tép, Ốc & Chăm sóc>>Cá cảnh)" style="margin-bottom:8px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="hh-la-combo" onchange="toggleComboFormMoi()"> Đây là SKU Combo (gộp nhiều SKU thành 1 mã bán)
+      </label>
+      <div id="hh-soluong-wrap">
+        <div class="row2" style="margin-bottom:8px">
+          <input type="number" id="hh-soluong" placeholder="Số lượng tồn" value="0">
+          ${laAdmin ? `<input type="number" id="hh-giavon" placeholder="Giá vốn (chỉ Admin thấy)">` : ''}
+        </div>
+      </div>
+      <div id="hh-combo-wrap" style="display:none;margin-bottom:8px">
+        <div class="card-title" style="font-size:12px">Thành phần Combo</div>
+        <div class="field sku-wrap">
+          <input type="text" id="hh-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
+          <div class="sku-drop" id="hh-combo-sku-drop"></div>
+        </div>
+        <div class="row2" style="margin:6px 0">
+          <div class="qty-ctrl">
+            <button onclick="document.getElementById('hh-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hh-combo-item-tyle').value)||1)-1)">−</button>
+            <input type="number" id="hh-combo-item-tyle" value="1" min="1">
+            <button onclick="document.getElementById('hh-combo-item-tyle').value=(parseInt(document.getElementById('hh-combo-item-tyle').value)||0)+1">+</button>
+          </div>
+          <button class="btn-outline" onclick="themThanhPhanCombo('hh')">+ Thêm thành phần</button>
+        </div>
+        <div id="hh-combo-list"></div>
+      </div>
+      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input type="number" id="hh-dai" placeholder="Dài">
+        <input type="number" id="hh-rong" placeholder="Rộng">
+        <input type="number" id="hh-cao" placeholder="Cao">
+      </div>
+      <input type="number" id="hh-cannang" placeholder="Cân nặng (gram)" style="margin-bottom:8px">
       <div id="hh-anh-preview" style="margin-bottom:8px"></div>
       <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhHangHoa(this)" style="margin-bottom:8px">
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuHangHoa()">Lưu</button>
-        <button class="btn-outline" onclick="document.getElementById('hanghoa-form').innerHTML='';hangHoaAnhBlob=null">Hủy</button>
+        <button class="btn-outline" onclick="document.getElementById('hanghoa-form').innerHTML='';hangHoaAnhBlob=null;comboThanhPhan=[]">Hủy</button>
       </div>
     </div>`;
+  makeSKUSearch('hh-combo-item-ten','hh-combo-sku-drop', null);
 };
+
+window.toggleComboFormMoi = function() {
+  const checked = document.getElementById('hh-la-combo').checked;
+  document.getElementById('hh-soluong-wrap').style.display = checked ? 'none' : '';
+  document.getElementById('hh-combo-wrap').style.display = checked ? '' : 'none';
+};
+
+// prefix: 'hh' (thêm mới) hoặc 'hhs-{id}' (sửa) — dùng chung ID input giữa 2 form
+window.themThanhPhanCombo = function(prefix) {
+  const tenEl = document.getElementById(`${prefix}-combo-item-ten`);
+  const ten = tenEl.value.trim();
+  const skuId = tenEl.dataset.skuId || '';
+  const sku = tenEl.dataset.sku || '';
+  const tyLe = parseInt(document.getElementById(`${prefix}-combo-item-tyle`).value) || 1;
+  if (!ten || !skuId) { showToast('Vui lòng chọn hàng hóa từ danh sách gợi ý', true); return; }
+  if (comboThanhPhan.some(t => t.skuId === skuId)) { showToast('SKU này đã có trong combo rồi', true); return; }
+  comboThanhPhan.push({ skuId, sku, ten, tyLe });
+  tenEl.value = ''; tenEl.dataset.skuId = ''; tenEl.dataset.sku = '';
+  document.getElementById(`${prefix}-combo-item-tyle`).value = '1';
+  renderThanhPhanCombo(prefix);
+};
+
+window.xoaThanhPhanCombo = function(idx, prefix) {
+  comboThanhPhan.splice(idx, 1);
+  renderThanhPhanCombo(prefix);
+};
+
+function renderThanhPhanCombo(prefix) {
+  const el = document.getElementById(`${prefix}-combo-list`);
+  if (!el) return;
+  if (!comboThanhPhan.length) { el.innerHTML = '<p class="info-note">Chưa có thành phần nào.</p>'; return; }
+  el.innerHTML = comboThanhPhan.map((t, idx) => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--border);font-size:13px">
+      <span>${escHtml(t.ten)} <span style="color:var(--text2)">(${escHtml(t.sku)})</span> × <b>${t.tyLe}</b></span>
+      <button class="del-btn" onclick="xoaThanhPhanCombo(${idx},'${prefix}')">✕</button>
+    </div>`).join('');
+}
+
+// Tính tồn kho thực tế của 1 SKU Combo dựa trên tồn của các SKU con (không lưu tĩnh, luôn tính lại từ dữ liệu mới nhất)
+function tinhTonKhoCombo(sku) {
+  if (!sku?.laCombo || !sku.thanhPhanCombo?.length) return 0;
+  let min = Infinity;
+  for (const tp of sku.thanhPhanCombo) {
+    const con = allSKUs.find(s => s.id === tp.skuId);
+    const tonCon = con ? (con.laCombo ? tinhTonKhoCombo(con) : (con.soLuongTon || 0)) : 0;
+    const kha = Math.floor(tonCon / (tp.tyLe || 1));
+    if (kha < min) min = kha;
+  }
+  return min === Infinity ? 0 : min;
+}
 
 window.xemTruocAnhHangHoa = async function(input) {
   const file = input.files[0];
@@ -1610,11 +1696,25 @@ window.luuHangHoa = async function() {
     }
   }
 
+  const laCombo = document.getElementById('hh-la-combo')?.checked || false;
+  if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
+
   await addDoc(collection(db,'skus'), {
     ten, sku, gia, anhFileId, anhUrl, ...nhom, deleted: false,
+    soLuongTon: laCombo ? 0 : (parseInt(document.getElementById('hh-soluong')?.value) || 0),
+    giaVon: currentUserData.role === 'admin' ? (parseFloat(document.getElementById('hh-giavon')?.value) || 0) : 0,
+    kichThuoc: {
+      dai: parseFloat(document.getElementById('hh-dai')?.value) || 0,
+      rong: parseFloat(document.getElementById('hh-rong')?.value) || 0,
+      cao: parseFloat(document.getElementById('hh-cao')?.value) || 0
+    },
+    canNang: parseFloat(document.getElementById('hh-cannang')?.value) || 0,
+    laCombo,
+    thanhPhanCombo: laCombo ? comboThanhPhan : [],
     createdAt: serverTimestamp(),
     createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
+  comboThanhPhan = [];
   showToast('Đã thêm hàng hóa');
   hangHoaAnhBlob = null;
   document.getElementById('hanghoa-form').innerHTML = '';
@@ -1635,22 +1735,65 @@ window.moFormSuaHangHoa = function(id) {
   if (!s) return;
   hangHoaSuaAnhBlob = null;
   const nhomRaw = [s.nhom1, s.nhom2, s.nhom3].filter(Boolean).join('>>');
+  const laAdmin = currentUserData.role === 'admin';
+  const kt = s.kichThuoc || {};
+  comboThanhPhan = s.laCombo ? JSON.parse(JSON.stringify(s.thanhPhanCombo||[])) : [];
 
   el.innerHTML = `
     <div class="admin-block" style="margin-top:10px">
       <input type="text" id="hhs-ten-${id}" placeholder="Tên sản phẩm" value="${escHtml(s.ten||'')}" style="margin-bottom:8px">
       <input type="text" id="hhs-sku-${id}" placeholder="Mã SKU (bắt buộc)" value="${escHtml(s.sku||'')}" style="margin-bottom:8px">
-      <input type="number" id="hhs-gia-${id}" placeholder="Giá" value="${s.gia||0}" style="margin-bottom:8px">
+      <input type="number" id="hhs-gia-${id}" placeholder="Giá bán" value="${s.gia||0}" style="margin-bottom:8px">
       <input type="text" id="hhs-nhom-${id}" placeholder="Nhóm hàng (vd: Cá, Tép, Ốc & Chăm sóc>>Cá cảnh)" value="${escHtml(nhomRaw)}" style="margin-bottom:8px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:8px;cursor:pointer">
+        <input type="checkbox" id="hhs-la-combo-${id}" ${s.laCombo?'checked':''} onchange="toggleComboFormSua('${id}')"> Đây là SKU Combo (gộp nhiều SKU thành 1 mã bán)
+      </label>
+      <div id="hhs-soluong-wrap-${id}" style="display:${s.laCombo?'none':''}">
+        <div class="row2" style="margin-bottom:8px">
+          <input type="number" id="hhs-soluong-${id}" placeholder="Số lượng tồn" value="${s.soLuongTon||0}">
+          ${laAdmin ? `<input type="number" id="hhs-giavon-${id}" placeholder="Giá vốn (chỉ Admin thấy)" value="${s.giaVon||0}">` : ''}
+        </div>
+      </div>
+      <div id="hhs-combo-wrap-${id}" style="display:${s.laCombo?'':'none'};margin-bottom:8px">
+        <div class="card-title" style="font-size:12px">Thành phần Combo</div>
+        <div class="field sku-wrap">
+          <input type="text" id="hhs-${id}-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
+          <div class="sku-drop" id="hhs-${id}-combo-sku-drop"></div>
+        </div>
+        <div class="row2" style="margin:6px 0">
+          <div class="qty-ctrl">
+            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||1)-1)">−</button>
+            <input type="number" id="hhs-${id}-combo-item-tyle" value="1" min="1">
+            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||0)+1">+</button>
+          </div>
+          <button class="btn-outline" onclick="themThanhPhanCombo('hhs-${id}')">+ Thêm thành phần</button>
+        </div>
+        <div id="hhs-${id}-combo-list"></div>
+      </div>
+      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input type="number" id="hhs-dai-${id}" placeholder="Dài" value="${kt.dai||''}">
+        <input type="number" id="hhs-rong-${id}" placeholder="Rộng" value="${kt.rong||''}">
+        <input type="number" id="hhs-cao-${id}" placeholder="Cao" value="${kt.cao||''}">
+      </div>
+      <input type="number" id="hhs-cannang-${id}" placeholder="Cân nặng (gram)" value="${s.canNang||''}" style="margin-bottom:8px">
       <div id="hhs-anh-preview-${id}" style="margin-bottom:8px">
         ${s.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId,300)}" style="width:100px;height:100px;object-fit:cover;border-radius:8px">` : ''}
       </div>
       <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhSuaHangHoa(this,'${id}')" style="margin-bottom:8px">
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuSuaHangHoa('${id}')">Lưu thay đổi</button>
-        <button class="btn-outline" onclick="document.getElementById('hh-sua-${id}').innerHTML=''">Hủy</button>
+        <button class="btn-outline" onclick="document.getElementById('hh-sua-${id}').innerHTML='';comboThanhPhan=[]">Hủy</button>
       </div>
     </div>`;
+  makeSKUSearch(`hhs-${id}-combo-item-ten`, `hhs-${id}-combo-sku-drop`, null);
+  renderThanhPhanCombo(`hhs-${id}`);
+};
+
+window.toggleComboFormSua = function(id) {
+  const checked = document.getElementById(`hhs-la-combo-${id}`).checked;
+  document.getElementById(`hhs-soluong-wrap-${id}`).style.display = checked ? 'none' : '';
+  document.getElementById(`hhs-combo-wrap-${id}`).style.display = checked ? '' : 'none';
 };
 
 window.xemTruocAnhSuaHangHoa = async function(input, id) {
@@ -1676,7 +1819,24 @@ window.luuSuaHangHoa = async function(id) {
   if (!sku) { showToast('Vui lòng nhập mã SKU (bắt buộc)', true); return; }
 
   showToast('Đang lưu...');
-  const updateData = { ten, sku, gia, ...nhom };
+  const updateData = { ten, sku, gia, ...nhom,
+    kichThuoc: {
+      dai: parseFloat(document.getElementById(`hhs-dai-${id}`)?.value) || 0,
+      rong: parseFloat(document.getElementById(`hhs-rong-${id}`)?.value) || 0,
+      cao: parseFloat(document.getElementById(`hhs-cao-${id}`)?.value) || 0
+    },
+    canNang: parseFloat(document.getElementById(`hhs-cannang-${id}`)?.value) || 0
+  };
+  const s = allSKUs.find(x => x.id === id);
+  const laCombo = document.getElementById(`hhs-la-combo-${id}`)?.checked || false;
+  if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
+  updateData.soLuongTon = laCombo ? 0 : (parseInt(document.getElementById(`hhs-soluong-${id}`)?.value) || 0);
+  updateData.laCombo = laCombo;
+  updateData.thanhPhanCombo = laCombo ? comboThanhPhan : [];
+  if (currentUserData.role === 'admin') {
+    const giaVonEl = document.getElementById(`hhs-giavon-${id}`);
+    if (giaVonEl) updateData.giaVon = parseFloat(giaVonEl.value) || 0;
+  }
 
   if (hangHoaSuaAnhBlob) {
     try {
@@ -1692,6 +1852,7 @@ window.luuSuaHangHoa = async function(id) {
   await updateDoc(doc(db,'skus', id), updateData);
   showToast('Đã cập nhật hàng hóa');
   hangHoaSuaAnhBlob = null;
+  comboThanhPhan = [];
   const el = document.getElementById(`hh-sua-${id}`);
   if (el) el.innerHTML = '';
   await loadSKUs();
@@ -4971,7 +5132,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v146</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v147</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5025,7 +5186,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v146</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v147</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5065,7 +5226,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v146</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v147</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
