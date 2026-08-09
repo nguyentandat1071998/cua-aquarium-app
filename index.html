@@ -2029,87 +2029,133 @@ window.khoiTaoNhomHangTuSKU = async function() {
   showToast(`Đã khởi tạo ${allNhomHang.length - truocDo} nhóm hàng mới từ dữ liệu SKU`);
 };
 
-// ===== BỘ CHỌN NHÓM HÀNG XẾP TẦNG (dùng chung cho các form) =====
+// ===== BỘ CHỌN NHÓM HÀNG KIỂU MEGA-MENU (cha trái, con phải, tô màu khi chọn) =====
+let nhomHangModalState = { prefix: '', nhom1: '', nhom2: '', nhom3: '' };
+
 function renderNhomHangSelector(prefix) {
-  return `<div id="${prefix}-nhomhang-wrap"></div>`;
+  return `
+    <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nhóm hàng</label>
+    <button type="button" id="${prefix}-nhom-display" onclick="moModalChonNhomHang('${prefix}')"
+      style="text-align:left;background:var(--bg);border:1px solid var(--border);width:100%;padding:10px 12px;border-radius:8px;font-size:13px;color:var(--text2);margin-bottom:8px">
+      -- Chưa chọn nhóm hàng --
+    </button>
+    <input type="hidden" id="${prefix}-nhom1-val">
+    <input type="hidden" id="${prefix}-nhom2-val">
+    <input type="hidden" id="${prefix}-nhom3-val">`;
 }
 
+// Gọi sau khi HTML đã chèn vào trang, để set giá trị ban đầu (khi sửa hàng hóa đã có sẵn nhóm)
 function veNhomHangSelector(prefix, nhom1Val, nhom2Val, nhom3Val) {
-  const wrap = document.getElementById(`${prefix}-nhomhang-wrap`);
-  if (!wrap) return;
-  const capCon1 = layConCuaNhom(null);
-  const nhom1Obj = capCon1.find(n => n.ten === nhom1Val);
-  const capCon2 = nhom1Obj ? layConCuaNhom(nhom1Obj.id) : [];
-  const nhom2Obj = capCon2.find(n => n.ten === nhom2Val);
-  const capCon3 = nhom2Obj ? layConCuaNhom(nhom2Obj.id) : [];
-
-  wrap.innerHTML = `
-    <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nhóm hàng — cấp 1</label>
-    <select id="${prefix}-nhom1" onchange="chonNhomHang('${prefix}',1,this.value)" style="margin-bottom:8px">
-      <option value="">-- Chọn nhóm cấp 1 --</option>
-      ${capCon1.map(n => `<option value="${escHtml(n.ten)}" ${n.ten===nhom1Val?'selected':''}>${escHtml(n.ten)}</option>`).join('')}
-    </select>
-    ${nhom1Val ? `<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nhóm hàng — cấp 2 (không bắt buộc)</label>
-    <select id="${prefix}-nhom2" onchange="chonNhomHang('${prefix}',2,this.value)" style="margin-bottom:8px">
-      <option value="">-- Chọn nhóm cấp 2 --</option>
-      ${capCon2.map(n => `<option value="${escHtml(n.ten)}" ${n.ten===nhom2Val?'selected':''}>${escHtml(n.ten)}</option>`).join('')}
-    </select>` : ''}
-    ${nhom2Val ? `<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nhóm hàng — cấp 3 (không bắt buộc)</label>
-    <select id="${prefix}-nhom3" onchange="chonNhomHang('${prefix}',3,this.value)" style="margin-bottom:8px">
-      <option value="">-- Chọn nhóm cấp 3 --</option>
-      ${capCon3.map(n => `<option value="${escHtml(n.ten)}" ${n.ten===nhom3Val?'selected':''}>${escHtml(n.ten)}</option>`).join('')}
-    </select>` : ''}
-    <button type="button" class="btn-outline" style="width:100%;font-size:12px;padding:6px;margin-bottom:8px" onclick="moThemNhomMoi('${prefix}')">+ Thêm nhóm mới</button>
-    <div id="${prefix}-them-nhom-form"></div>`;
+  document.getElementById(`${prefix}-nhom1-val`).value = nhom1Val || '';
+  document.getElementById(`${prefix}-nhom2-val`).value = nhom2Val || '';
+  document.getElementById(`${prefix}-nhom3-val`).value = nhom3Val || '';
+  capNhatHienThiNhomHang(prefix);
 }
 
-window.chonNhomHang = function(prefix, cap, val) {
-  const nhom1 = cap===1 ? val : (document.getElementById(`${prefix}-nhom1`)?.value || '');
-  const nhom2 = cap===2 ? val : (cap===1 ? '' : (document.getElementById(`${prefix}-nhom2`)?.value || ''));
-  const nhom3 = cap===3 ? val : (cap<=2 ? '' : (document.getElementById(`${prefix}-nhom3`)?.value || ''));
-  veNhomHangSelector(prefix, nhom1, nhom2, nhom3);
+function capNhatHienThiNhomHang(prefix) {
+  const btn = document.getElementById(`${prefix}-nhom-display`);
+  if (!btn) return;
+  const parts = [
+    document.getElementById(`${prefix}-nhom1-val`)?.value,
+    document.getElementById(`${prefix}-nhom2-val`)?.value,
+    document.getElementById(`${prefix}-nhom3-val`)?.value
+  ].filter(Boolean);
+  if (parts.length) {
+    btn.textContent = parts.join(' > ');
+    btn.style.color = 'var(--text)';
+  } else {
+    btn.textContent = '-- Chưa chọn nhóm hàng --';
+    btn.style.color = 'var(--text2)';
+  }
+}
+
+window.moModalChonNhomHang = async function(prefix) {
+  if (!allNhomHang.length) await loadNhomHang();
+  nhomHangModalState = {
+    prefix,
+    nhom1: document.getElementById(`${prefix}-nhom1-val`)?.value || '',
+    nhom2: document.getElementById(`${prefix}-nhom2-val`)?.value || '',
+    nhom3: document.getElementById(`${prefix}-nhom3-val`)?.value || ''
+  };
+  document.getElementById('nhomhang-modal').style.display = 'flex';
+  veCotNhomHang(1); veCotNhomHang(2); veCotNhomHang(3);
 };
 
-window.moThemNhomMoi = function(prefix) {
-  const el = document.getElementById(`${prefix}-them-nhom-form`);
+window.dongModalNhomHang = function() {
+  document.getElementById('nhomhang-modal').style.display = 'none';
+};
+
+function timIdTheoTen(ten, chaId) {
+  if (!ten) return null;
+  return allNhomHang.find(n => n.ten === ten && (n.chaId||null) === (chaId||null))?.id || null;
+}
+
+function veCotNhomHang(cap) {
+  const el = document.getElementById(`nhomhang-modal-cap${cap}`);
+  if (!el) return;
+  let chaId = null;
+  if (cap === 2) chaId = timIdTheoTen(nhomHangModalState.nhom1, null);
+  if (cap === 3) chaId = timIdTheoTen(nhomHangModalState.nhom2, timIdTheoTen(nhomHangModalState.nhom1, null));
+  if (cap > 1 && !nhomHangModalState[`nhom${cap-1}`]) {
+    el.innerHTML = `<p class="info-note" style="padding:8px;font-size:12px">Chọn cấp ${cap-1} trước</p>`;
+    return;
+  }
+  const items = layConCuaNhom(chaId);
+  const chonVal = nhomHangModalState[`nhom${cap}`];
+  el.innerHTML = (items.map(n => `
+    <div onclick="chonCotNhomHang(${cap},'${escHtml(n.ten).replace(/'/g,"\\'")}')"
+      style="padding:9px 10px;cursor:pointer;border-radius:6px;font-size:13px;margin-bottom:2px;${n.ten===chonVal?'background:var(--green-bg);color:var(--green);font-weight:600':''}">
+      ${escHtml(n.ten)}
+    </div>`).join('')) || `<p class="info-note" style="padding:8px;font-size:12px">Chưa có nhóm nào</p>`;
+}
+
+window.chonCotNhomHang = function(cap, ten) {
+  nhomHangModalState[`nhom${cap}`] = ten;
+  if (cap === 1) { nhomHangModalState.nhom2 = ''; nhomHangModalState.nhom3 = ''; }
+  if (cap === 2) { nhomHangModalState.nhom3 = ''; }
+  veCotNhomHang(1); veCotNhomHang(2); veCotNhomHang(3);
+};
+
+window.moThemNhomMoiModal = function() {
+  const el = document.getElementById('nhomhang-modal-them-form');
   if (el.innerHTML) { el.innerHTML = ''; return; }
-  const nhom1 = document.getElementById(`${prefix}-nhom1`)?.value || '';
-  const nhom2 = document.getElementById(`${prefix}-nhom2`)?.value || '';
+  const { nhom1, nhom2 } = nhomHangModalState;
   let chaLabel = '(cấp 1 - nhóm gốc)';
   if (nhom1 && !nhom2) chaLabel = `(cấp 2 - con của "${nhom1}")`;
   else if (nhom1 && nhom2) chaLabel = `(cấp 3 - con của "${nhom1} > ${nhom2}")`;
   el.innerHTML = `
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <input type="text" id="${prefix}-ten-nhom-moi" placeholder="Tên nhóm mới ${escHtml(chaLabel)}" style="flex:1">
-      <button class="btn-g" style="width:auto" onclick="luuNhomMoi('${prefix}')">Lưu</button>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input type="text" id="nhomhang-modal-them-ten" placeholder="Tên nhóm mới ${escHtml(chaLabel)}" style="flex:1">
+      <button class="btn-outline" style="width:auto" onclick="luuNhomMoiModal()">Lưu</button>
     </div>`;
 };
 
-window.luuNhomMoi = async function(prefix) {
-  const ten = document.getElementById(`${prefix}-ten-nhom-moi`).value.trim();
+window.luuNhomMoiModal = async function() {
+  const ten = document.getElementById('nhomhang-modal-them-ten').value.trim();
   if (!ten) { showToast('Nhập tên nhóm', true); return; }
-  const nhom1 = document.getElementById(`${prefix}-nhom1`)?.value || '';
-  const nhom2 = document.getElementById(`${prefix}-nhom2`)?.value || '';
+  const { nhom1, nhom2 } = nhomHangModalState;
   let chaId = null, cap = 1;
-  if (nhom1 && !nhom2) {
-    chaId = allNhomHang.find(n => n.ten === nhom1 && !n.chaId)?.id || null;
-    cap = 2;
-  } else if (nhom1 && nhom2) {
-    const cha1 = allNhomHang.find(n => n.ten === nhom1 && !n.chaId);
-    chaId = allNhomHang.find(n => n.ten === nhom2 && n.chaId === cha1?.id)?.id || null;
-    cap = 3;
-  }
+  if (nhom1 && !nhom2) { chaId = timIdTheoTen(nhom1, null); cap = 2; }
+  else if (nhom1 && nhom2) { chaId = timIdTheoTen(nhom2, timIdTheoTen(nhom1, null)); cap = 3; }
   await taoNhomMoiNeuChua(ten, chaId, cap);
   showToast('Đã thêm nhóm mới');
-  if (cap === 1) veNhomHangSelector(prefix, ten, '', '');
-  else if (cap === 2) veNhomHangSelector(prefix, nhom1, ten, '');
-  else veNhomHangSelector(prefix, nhom1, nhom2, ten);
+  document.getElementById('nhomhang-modal-them-form').innerHTML = '';
+  chonCotNhomHang(cap, ten);
+};
+
+window.xacNhanChonNhomHang = function() {
+  const { prefix, nhom1, nhom2, nhom3 } = nhomHangModalState;
+  document.getElementById(`${prefix}-nhom1-val`).value = nhom1;
+  document.getElementById(`${prefix}-nhom2-val`).value = nhom2;
+  document.getElementById(`${prefix}-nhom3-val`).value = nhom3;
+  capNhatHienThiNhomHang(prefix);
+  dongModalNhomHang();
 };
 
 function layGiaTriNhomHangDaChon(prefix) {
-  const nhom1 = document.getElementById(`${prefix}-nhom1`)?.value || '';
-  const nhom2 = document.getElementById(`${prefix}-nhom2`)?.value || '';
-  const nhom3 = document.getElementById(`${prefix}-nhom3`)?.value || '';
+  const nhom1 = document.getElementById(`${prefix}-nhom1-val`)?.value || '';
+  const nhom2 = document.getElementById(`${prefix}-nhom2-val`)?.value || '';
+  const nhom3 = document.getElementById(`${prefix}-nhom3-val`)?.value || '';
   return { nhom1, nhom2, nhom3, nhomFull: [nhom1,nhom2,nhom3].filter(Boolean).join(' > ') };
 }
 
@@ -5369,7 +5415,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v151</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v152</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5423,7 +5469,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v151</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v152</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5463,7 +5509,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v151</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v152</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -5958,6 +6004,24 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   <div class="cam-actions">
     <button class="btn-cam-cancel" onclick="closeCamera()">Hủy</button>
     <button class="btn-capture" onclick="capturePhoto()" title="Chụp"></button>
+  </div>
+</div>
+
+<!-- CHỌN NHÓM HÀNG (mega-menu: cha trái, con phải) -->
+<div id="nhomhang-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2400;align-items:center;justify-content:center;padding:1rem">
+  <div style="background:var(--surface);border-radius:var(--radius);padding:16px;width:100%;max-width:640px;max-height:82vh;display:flex;flex-direction:column">
+    <h3 style="margin-bottom:10px">Chọn nhóm hàng</h3>
+    <div style="display:flex;gap:0;flex:1;overflow:hidden;min-height:280px;border:1px solid var(--border);border-radius:8px">
+      <div id="nhomhang-modal-cap1" style="flex:1;overflow-y:auto;padding:8px;border-right:1px solid var(--border)"></div>
+      <div id="nhomhang-modal-cap2" style="flex:1;overflow-y:auto;padding:8px;border-right:1px solid var(--border)"></div>
+      <div id="nhomhang-modal-cap3" style="flex:1;overflow-y:auto;padding:8px"></div>
+    </div>
+    <button type="button" class="btn-outline" style="width:100%;margin-top:10px;font-size:12px;padding:8px" onclick="moThemNhomMoiModal()">+ Thêm nhóm mới</button>
+    <div id="nhomhang-modal-them-form"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn-g" style="flex:1" onclick="xacNhanChonNhomHang()">Xác nhận</button>
+      <button class="btn-outline" style="flex:none;width:80px" onclick="dongModalNhomHang()">Hủy</button>
+    </div>
   </div>
 </div>
 
