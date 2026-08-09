@@ -258,6 +258,19 @@ let benhDanhSach = []; // danh sách cá đang bệnh toàn cửa hàng
 
 function getTodayISO() { return toLocalISO(new Date()); }
 
+// Ghi/xóa bản ghi "lịch công khai" (chỉ tên + loại ca, KHÔNG có ảnh/GPS/giờ vào-ra) —
+// dùng để mọi nhân viên xem được lịch chung mà không lộ dữ liệu chấm công riêng tư.
+async function ghiLichCongKhai(shiftId, { ngay, uid, ten, loaiCa }) {
+  try {
+    await setDoc(doc(db, 'lich_cong_khai', shiftId), { ngay, uid, ten, loaiCa, deleted: false }, { merge: true });
+  } catch (e) { console.error('Lỗi ghi lịch công khai:', e); }
+}
+async function xoaLichCongKhai(shiftId) {
+  try {
+    await setDoc(doc(db, 'lich_cong_khai', shiftId), { deleted: true }, { merge: true });
+  } catch (e) { console.error('Lỗi xóa lịch công khai:', e); }
+}
+
 function showVaoCa() {
   const elLogin = document.getElementById('screen-login');
   const elVaoCa = document.getElementById('screen-vao-ca');
@@ -372,6 +385,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
       vaoLuc: serverTimestamp(), thoatLuc: null,
       gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
     });
+    await ghiLichCongKhai(shiftId, { ngay, uid: currentUser.uid, ten: currentUserData?.ten || '', loaiCa: loaiCaSuyRa });
     loaiCa = loaiCaSuyRa;
   }
   currentShiftDocId = shiftId;
@@ -499,7 +513,7 @@ async function renderLichCaTab() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const dates = getWeekDatesISO(lichCaWeekOffset);
   const start = dates[0], end = dates[6];
-  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)));
+  const snap = await getDocs(query(collection(db,'lich_cong_khai'), where('ngay','>=',start), where('ngay','<=',end)));
   const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
   lichCaShiftsCache = shifts;
   lichCaDatesCache = dates;
@@ -535,9 +549,27 @@ async function renderLichCaTab() {
     <div class="admin-block" style="margin-bottom:12px">
       <button class="btn-g" style="width:100%" onclick="moFormXepCaTuan()">Xếp ca cả tuần (tất cả nhân viên)</button>
       <div id="xepca-tuan-form"></div>
+      <button class="btn-outline" style="width:100%;margin-top:8px" onclick="dongBoLichCuSangCongKhai()">🔄 Đồng bộ lịch cũ (chỉ cần bấm 1 lần)</button>
     </div>` : ''}
     ${daysHtml}`;
 }
+
+// Chạy 1 lần sau khi tách collection: copy các ca đã xếp từ trước (còn hiệu lực, chưa xóa) sang lich_cong_khai
+window.dongBoLichCuSangCongKhai = async function() {
+  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới đồng bộ được', true); return; }
+  showToast('Đang đồng bộ...');
+  const todayISO = getTodayISO();
+  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',todayISO)));
+  const tasks = [];
+  snap.docs.forEach(d => {
+    const s = d.data();
+    if (s.deleted) return;
+    tasks.push(ghiLichCongKhai(d.id, { ngay: s.ngay, uid: s.uid, ten: s.ten || '', loaiCa: s.loaiCa || 'full' }));
+  });
+  await Promise.all(tasks);
+  showToast(`Đã đồng bộ ${tasks.length} ca`);
+  renderLichCaTab();
+};
 
 const CA_MAU = { sang: '#C2792F', chieu: '#3D6EA6', full: '#6B5B95' };
 
@@ -622,7 +654,7 @@ async function renderXemLichContent() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const dates = getWeekDatesISO(xemLichWeekOffset);
   const start = dates[0], end = dates[6];
-  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)));
+  const snap = await getDocs(query(collection(db,'lich_cong_khai'), where('ngay','>=',start), where('ngay','<=',end)));
   const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
   const today = getTodayISO();
   const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
@@ -732,6 +764,7 @@ window.luuXepCa = async function(ngay) {
     vaoLuc: existingSnap.exists() ? (existingSnap.data().vaoLuc || null) : null,
     thoatLuc: existingSnap.exists() ? (existingSnap.data().thoatLuc || null) : null
   }, { merge: true });
+  await ghiLichCongKhai(shiftId, { ngay, uid, ten: user?.ten || user?.email || '', loaiCa });
   showToast('Đã xếp ca cho ' + (user?.ten || ''));
   document.getElementById(`xepca-form-${ngay}`).innerHTML = '';
   renderLichCaTab();
@@ -742,6 +775,7 @@ window.xoaLichCa = async function(id) {
   await updateDoc(doc(db,'lich_ca', id), {
     deleted: true, deletedAt: serverTimestamp(), deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
+  await xoaLichCongKhai(id);
   showToast('Đã xóa lịch ca');
   renderLichCaTab();
 };
@@ -841,6 +875,7 @@ window.luuXepCaTuan = async function() {
           xepBoi: { uid: currentUser.uid, ten: currentUserData.ten },
           createdAt: serverTimestamp(), vaoLuc: null, thoatLuc: null
         }, { merge: true }));
+        tasks.push(ghiLichCongKhai(shiftId, { ngay, uid: u.id, ten: u.ten || u.email || '', loaiCa: checkedCa }));
       } else {
         // Không tick ca nào cho NV này ngày này — nếu trước đó có xếp mà chưa check-in thì gỡ
         const existing = (lichCaShiftsCache||[]).find(s => s.ngay === ngay && s.uid === u.id);
@@ -848,6 +883,7 @@ window.luuXepCaTuan = async function() {
           tasks.push(updateDoc(doc(db,'lich_ca', shiftId), {
             deleted: true, deletedAt: serverTimestamp(), deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
           }));
+          tasks.push(xoaLichCongKhai(shiftId));
         }
       }
     }
@@ -4644,7 +4680,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v132</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v133</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -4698,7 +4734,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v132</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v133</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -4738,7 +4774,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v132</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v133</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
