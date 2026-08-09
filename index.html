@@ -2036,8 +2036,8 @@ function renderNhomHangSelector(prefix) {
   return `
     <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Nhóm hàng</label>
     <button type="button" id="${prefix}-nhom-display" onclick="moModalChonNhomHang('${prefix}')"
-      style="text-align:left;background:var(--bg);border:1px solid var(--border);width:100%;padding:10px 12px;border-radius:8px;font-size:13px;color:var(--text2);margin-bottom:8px">
-      -- Chưa chọn nhóm hàng --
+      style="text-align:left;background:#fff;border:1.5px solid var(--border);width:100%;padding:10px 12px;border-radius:8px;font-size:13px;font-weight:500;color:var(--text);cursor:pointer;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span>-- Chưa chọn nhóm hàng --</span><span style="color:var(--text2)">▾</span>
     </button>
     <input type="hidden" id="${prefix}-nhom1-val">
     <input type="hidden" id="${prefix}-nhom2-val">
@@ -2055,18 +2055,13 @@ function veNhomHangSelector(prefix, nhom1Val, nhom2Val, nhom3Val) {
 function capNhatHienThiNhomHang(prefix) {
   const btn = document.getElementById(`${prefix}-nhom-display`);
   if (!btn) return;
+  const span = btn.querySelector('span');
   const parts = [
     document.getElementById(`${prefix}-nhom1-val`)?.value,
     document.getElementById(`${prefix}-nhom2-val`)?.value,
     document.getElementById(`${prefix}-nhom3-val`)?.value
   ].filter(Boolean);
-  if (parts.length) {
-    btn.textContent = parts.join(' > ');
-    btn.style.color = 'var(--text)';
-  } else {
-    btn.textContent = '-- Chưa chọn nhóm hàng --';
-    btn.style.color = 'var(--text2)';
-  }
+  if (span) span.textContent = parts.length ? parts.join(' > ') : '-- Chưa chọn nhóm hàng --';
 }
 
 window.moModalChonNhomHang = async function(prefix) {
@@ -2102,11 +2097,21 @@ function veCotNhomHang(cap) {
   }
   const items = layConCuaNhom(chaId);
   const chonVal = nhomHangModalState[`nhom${cap}`];
-  el.innerHTML = (items.map(n => `
+  const dsHtml = items.map(n => {
+    const coCon = layConCuaNhom(n.id).length > 0;
+    const dangChon = n.ten === chonVal;
+    return `
     <div onclick="chonCotNhomHang(${cap},'${escHtml(n.ten).replace(/'/g,"\\'")}')"
-      style="padding:9px 10px;cursor:pointer;border-radius:6px;font-size:13px;margin-bottom:2px;${n.ten===chonVal?'background:var(--green-bg);color:var(--green);font-weight:600':''}">
-      ${escHtml(n.ten)}
-    </div>`).join('')) || `<p class="info-note" style="padding:8px;font-size:12px">Chưa có nhóm nào</p>`;
+      style="padding:9px 10px;cursor:pointer;border-radius:6px;font-size:13px;margin-bottom:2px;display:flex;justify-content:space-between;align-items:center;gap:6px;${dangChon?'background:var(--green-bg);color:var(--green);font-weight:600':''}">
+      <span>${escHtml(n.ten)}</span>${coCon?'<span style="color:var(--text2);flex-shrink:0">›</span>':''}
+    </div>`;
+  }).join('');
+  const themMoiHtml = `
+    <div onclick="moThemMoiTrongCot(${cap})" style="padding:9px 10px;cursor:pointer;border-radius:6px;font-size:13px;color:var(--green);font-weight:600;border-top:1px dashed var(--border);margin-top:4px;padding-top:10px">
+      + Thêm mới
+    </div>
+    <div id="nhomhang-them-cap${cap}"></div>`;
+  el.innerHTML = dsHtml + themMoiHtml;
 }
 
 window.chonCotNhomHang = function(cap, ten) {
@@ -2116,35 +2121,43 @@ window.chonCotNhomHang = function(cap, ten) {
   veCotNhomHang(1); veCotNhomHang(2); veCotNhomHang(3);
 };
 
-window.moThemNhomMoiModal = function() {
-  const el = document.getElementById('nhomhang-modal-them-form');
+window.moThemMoiTrongCot = function(cap) {
+  const el = document.getElementById(`nhomhang-them-cap${cap}`);
   if (el.innerHTML) { el.innerHTML = ''; return; }
-  const { nhom1, nhom2 } = nhomHangModalState;
-  let chaLabel = '(cấp 1 - nhóm gốc)';
-  if (nhom1 && !nhom2) chaLabel = `(cấp 2 - con của "${nhom1}")`;
-  else if (nhom1 && nhom2) chaLabel = `(cấp 3 - con của "${nhom1} > ${nhom2}")`;
   el.innerHTML = `
-    <div style="display:flex;gap:6px;margin-top:8px">
-      <input type="text" id="nhomhang-modal-them-ten" placeholder="Tên nhóm mới ${escHtml(chaLabel)}" style="flex:1">
-      <button class="btn-outline" style="width:auto" onclick="luuNhomMoiModal()">Lưu</button>
+    <div style="display:flex;gap:6px;padding:6px 4px">
+      <input type="text" id="nhomhang-them-ten-cap${cap}" placeholder="Tên nhóm mới" style="flex:1;font-size:12px;padding:6px 8px">
+      <button class="btn-g" style="width:auto;padding:6px 10px;font-size:12px" onclick="luuNhomMoiTrongCot(${cap})">Lưu</button>
     </div>`;
+  document.getElementById(`nhomhang-them-ten-cap${cap}`).focus();
 };
 
-window.luuNhomMoiModal = async function() {
-  const ten = document.getElementById('nhomhang-modal-them-ten').value.trim();
+window.luuNhomMoiTrongCot = async function(cap) {
+  const input = document.getElementById(`nhomhang-them-ten-cap${cap}`);
+  const ten = input.value.trim();
   if (!ten) { showToast('Nhập tên nhóm', true); return; }
-  const { nhom1, nhom2 } = nhomHangModalState;
-  let chaId = null, cap = 1;
-  if (nhom1 && !nhom2) { chaId = timIdTheoTen(nhom1, null); cap = 2; }
-  else if (nhom1 && nhom2) { chaId = timIdTheoTen(nhom2, timIdTheoTen(nhom1, null)); cap = 3; }
+  let chaId = null;
+  if (cap === 2) chaId = timIdTheoTen(nhomHangModalState.nhom1, null);
+  if (cap === 3) chaId = timIdTheoTen(nhomHangModalState.nhom2, timIdTheoTen(nhomHangModalState.nhom1, null));
   await taoNhomMoiNeuChua(ten, chaId, cap);
   showToast('Đã thêm nhóm mới');
-  document.getElementById('nhomhang-modal-them-form').innerHTML = '';
   chonCotNhomHang(cap, ten);
 };
 
 window.xacNhanChonNhomHang = function() {
   const { prefix, nhom1, nhom2, nhom3 } = nhomHangModalState;
+
+  // Bắt buộc chọn tới đúng nhóm cuối cùng (không còn nhóm con) — nếu không, phân cấp sẽ vô nghĩa
+  let idSauCung = null;
+  if (nhom3) idSauCung = timIdTheoTen(nhom3, timIdTheoTen(nhom2, timIdTheoTen(nhom1, null)));
+  else if (nhom2) idSauCung = timIdTheoTen(nhom2, timIdTheoTen(nhom1, null));
+  else if (nhom1) idSauCung = timIdTheoTen(nhom1, null);
+
+  if (idSauCung && layConCuaNhom(idSauCung).length > 0) {
+    showToast('Nhóm này còn nhóm con bên trong — chọn tiếp tới nhóm cuối cùng (không còn nhóm con) mới xác nhận được', true);
+    return;
+  }
+
   document.getElementById(`${prefix}-nhom1-val`).value = nhom1;
   document.getElementById(`${prefix}-nhom2-val`).value = nhom2;
   document.getElementById(`${prefix}-nhom3-val`).value = nhom3;
@@ -5415,7 +5428,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v152</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v154</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5469,7 +5482,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v152</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v154</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5509,7 +5522,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v152</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v154</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -6016,8 +6029,6 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <div id="nhomhang-modal-cap2" style="flex:1;overflow-y:auto;padding:8px;border-right:1px solid var(--border)"></div>
       <div id="nhomhang-modal-cap3" style="flex:1;overflow-y:auto;padding:8px"></div>
     </div>
-    <button type="button" class="btn-outline" style="width:100%;margin-top:10px;font-size:12px;padding:8px" onclick="moThemNhomMoiModal()">+ Thêm nhóm mới</button>
-    <div id="nhomhang-modal-them-form"></div>
     <div style="display:flex;gap:8px;margin-top:10px">
       <button class="btn-g" style="flex:1" onclick="xacNhanChonNhomHang()">Xác nhận</button>
       <button class="btn-outline" style="flex:none;width:80px" onclick="dongModalNhomHang()">Hủy</button>
