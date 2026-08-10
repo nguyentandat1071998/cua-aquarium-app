@@ -1245,14 +1245,9 @@ function showApp() {
     document.getElementById('mod-hanghoa').style.display = 'flex';
     const shh = document.getElementById('sidebar-hanghoa');
     if (shh) shh.style.display = 'flex';
-  }
-  const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
-  if (canExport) {
     document.getElementById('mod-nhanvien').style.display = 'flex';
     const snv = document.getElementById('sidebar-nhanvien-wrap');
     if (snv) snv.style.display = 'block';
-  }
-  if (currentUserData.role === 'admin') {
     document.getElementById('mod-baocao').style.display = 'flex';
     const sbc = document.getElementById('sidebar-baocao');
     if (sbc) sbc.style.display = 'flex';
@@ -1262,6 +1257,7 @@ function showApp() {
     const ttl2 = document.getElementById('nv-menu-thietlapluong-mobile');
     if (ttl1) ttl1.style.display = 'none';
     if (ttl2) ttl2.style.display = 'none';
+    capNhatHienThiModuleTheoVaiTro(); // chạy nền — hiện đúng module theo Vai trò đã gán (hoặc hành vi cũ nếu chưa migrate)
   }
   // Lưu quyền xuất file vào biến global
   window._canExport = canExport;
@@ -2000,6 +1996,90 @@ async function loadSKUs() {
 
 // ===== NHÓM HÀNG (collection riêng, cây phân cấp tối đa 3 cấp) =====
 let allNhomHang = []; // [{id, ten, chaId, cap}]
+
+// ===== VAI TRÒ (phân quyền tùy chỉnh — module nào hiển thị cho từng vai trò) =====
+// Admin luôn full quyền, không cần gán vai trò (bypass toàn bộ hệ thống này).
+let allVaiTro = [];
+const DANH_SACH_MODULE = [
+  { key: 'checklist', ten: 'Checklist' },
+  { key: 'nhap', ten: 'Chuyển kho' },
+  { key: 'xuat', ten: 'Xuất hủy' },
+  { key: 'lichca', ten: 'Lịch làm việc' },
+  { key: 'baocao', ten: 'Báo cáo' },
+  { key: 'nhanvien', ten: 'Nhân viên' },
+  { key: 'hanghoa', ten: 'Danh sách hàng hóa' }
+];
+
+async function loadVaiTro() {
+  const snap = await getDocs(collection(db, 'vai_tro'));
+  allVaiTro = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+const ANH_XA_HIEN_MODULE = {
+  baocao: [['mod-baocao','flex'], ['sidebar-baocao','flex']],
+  nhanvien: [['mod-nhanvien','flex'], ['sidebar-nhanvien-wrap','block']],
+  hanghoa: [['mod-hanghoa','flex'], ['sidebar-hanghoa','flex']]
+  // checklist/nhap/xuat/lichca luôn hiện sẵn từ HTML mặc định, không cần xử lý ẩn/hiện
+};
+
+function hienModule(keys) {
+  keys.forEach(k => {
+    (ANH_XA_HIEN_MODULE[k]||[]).forEach(([id,disp]) => { const el = document.getElementById(id); if (el) el.style.display = disp; });
+  });
+}
+
+async function capNhatHienThiModuleTheoVaiTro() {
+  if (!currentUserData.vaiTroId) {
+    // Chưa được gán Vai trò mới (chưa migrate) -> giữ nguyên hành vi cũ theo role hiện tại, không đổi gì
+    if (currentUserData.role === 'quan_ly') hienModule(['nhanvien']);
+    return;
+  }
+  if (!allVaiTro.length) await loadVaiTro();
+  const vt = allVaiTro.find(v => v.id === currentUserData.vaiTroId);
+  if (!vt) return;
+  hienModule(Object.keys(vt.quyenModule||{}).filter(k => vt.quyenModule[k]));
+}
+
+// Chạy 1 lần: tạo sẵn 2 vai trò mặc định khớp đúng hành vi cũ (Quản lý/Nhân viên hiện có),
+// và gán vaiTroId cho user hiện có theo đúng role cũ của họ — đảm bảo không ai bị mất quyền khi chuyển hệ thống.
+window.khoiTaoVaiTroMacDinh = async function() {
+  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới làm được', true); return; }
+  await loadVaiTro();
+  const coQuanLy = allVaiTro.find(v => v.ten === 'Quản lý');
+  const coNhanVien = allVaiTro.find(v => v.ten === 'Nhân viên');
+  let idQuanLy = coQuanLy?.id, idNhanVien = coNhanVien?.id;
+
+  if (!coQuanLy) {
+    const ref = await addDoc(collection(db, 'vai_tro'), {
+      ten: 'Quản lý', capDo: 'quan_ly',
+      quyenModule: { checklist: true, nhap: true, xuat: true, lichca: true, baocao: false, nhanvien: true, hanghoa: false },
+      createdAt: serverTimestamp()
+    });
+    idQuanLy = ref.id;
+  }
+  if (!coNhanVien) {
+    const ref = await addDoc(collection(db, 'vai_tro'), {
+      ten: 'Nhân viên', capDo: 'nhan_vien',
+      quyenModule: { checklist: true, nhap: true, xuat: true, lichca: true, baocao: false, nhanvien: false, hanghoa: false },
+      createdAt: serverTimestamp()
+    });
+    idNhanVien = ref.id;
+  }
+
+  // Gán vaiTroId cho user chưa có (migrate êm, giữ nguyên hành vi cũ theo đúng role hiện tại của họ)
+  const usersSnap = await getDocs(collection(db, 'users'));
+  let daGan = 0;
+  for (const uDoc of usersSnap.docs) {
+    const u = uDoc.data();
+    if (u.vaiTroId || u.role === 'admin') continue;
+    const idPhuHop = u.role === 'quan_ly' ? idQuanLy : (u.role === 'nhan_vien' ? idNhanVien : null);
+    if (idPhuHop) { await updateDoc(doc(db, 'users', uDoc.id), { vaiTroId: idPhuHop }); daGan++; }
+  }
+  showToast(`Đã khởi tạo vai trò mặc định, gán cho ${daGan} người dùng`);
+  await loadVaiTro();
+};
+
+
 
 async function loadNhomHang() {
   const snap = await getDocs(collection(db, 'nhom_hang'));
@@ -4495,6 +4575,7 @@ async function loadDanhSachNV() {
   if (!users.length) return; // đang chờ dữ liệu đầu tiên từ listener, nó sẽ tự gọi lại loadDanhSachNV() khi có
   const canManage = currentUserData.role === 'admin';
   const luongCfg = canManage ? await getLuongConfig() : {};
+  if (canManage) await loadVaiTro();
   el.innerHTML = `
     <div class="admin-block">
       <h3>Danh sách nhân viên</h3>
@@ -4506,6 +4587,14 @@ async function loadDanhSachNV() {
             <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
           </div>
           <span class="uemail">${u.email||''}</span>
+          ${canManage && u.role !== 'admin' ? `
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:11px;color:var(--text2)">Vai trò:</span>
+            <select onchange="doiVaiTroNhanVien('${u.id}',this.value)" style="width:auto;padding:4px 8px;font-size:12px">
+              <option value="">-- Chưa gán --</option>
+              ${allVaiTro.map(v => `<option value="${v.id}" ${u.vaiTroId===v.id?'selected':''}>${escHtml(v.ten)}</option>`).join('')}
+            </select>
+          </div>` : ''}
           ${canManage && tiers.length ? `
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:11px;color:var(--text2)">Cấp bậc:</span>
@@ -4525,7 +4614,10 @@ async function loadDanhSachNV() {
         <input id="new-ten" placeholder="Tên nhân viên">
         <input id="new-email" type="email" placeholder="Email đăng nhập" autocomplete="off">
         <input id="new-password" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="new-password">
-        <select id="new-role"><option value="nhan_vien">Nhân viên bán hàng</option><option value="quan_ly">Quản lý</option><option value="admin">Admin</option></select>
+        <select id="new-vaitro">
+          <option value="admin">Admin</option>
+          ${allVaiTro.map(v => `<option value="${v.id}">${escHtml(v.ten)}</option>`).join('')}
+        </select>
         <button class="btn-g" onclick="taoTaiKhoanMoi()">Tạo tài khoản</button>
       </div>` : ''}
     </div>`;
@@ -4534,6 +4626,18 @@ async function loadDanhSachNV() {
 window.doiCapBac = async function(uid, capBac) {
   await updateDoc(doc(db,'users',uid), { capBac: capBac || '' });
   showToast('Đã cập nhật cấp bậc');
+};
+
+window.doiVaiTroNhanVien = async function(uid, vaiTroId) {
+  if (!vaiTroId) {
+    await updateDoc(doc(db,'users',uid), { vaiTroId: null });
+    showToast('Đã bỏ gán vai trò — người này sẽ không thấy module nào ngoài mặc định');
+    return;
+  }
+  const vt = allVaiTro.find(v => v.id === vaiTroId);
+  if (!vt) return;
+  await updateDoc(doc(db,'users',uid), { vaiTroId, role: vt.capDo });
+  showToast(`Đã gán vai trò "${vt.ten}"`);
 };
 
 // ===== THIẾT LẬP BẢNG LƯƠNG (Cấp bậc + lương theo giờ) =====
@@ -4628,11 +4732,124 @@ async function loadAdminPanel() {
       <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
     </div>
     <div class="admin-block" style="margin-top:1rem">
+      <h3>Quản lý vai trò</h3>
+      <p class="info-note">Tạo vai trò tùy chỉnh (VD: "Nhân viên kho"), chọn module hiển thị cho từng vai trò — gán cho nhân viên ở tab Nhân viên.</p>
+      <button class="btn-g" onclick="moFormThemVaiTro()">+ Thêm vai trò mới</button>
+      <div id="vaitro-form" style="margin-top:10px"></div>
+      <div id="vaitro-list" style="margin-top:12px"></div>
+    </div>
+    <div class="admin-block" style="margin-top:1rem">
       <h3>Phiếu đã xóa</h3>
       <button class="btn-outline" onclick="loadDeletedList()">Xem phiếu đã xóa</button>
       <div id="deleted-list" style="margin-top:12px"></div>
     </div>`;
+  renderVaiTroList();
 }
+
+async function renderVaiTroList() {
+  const el = document.getElementById('vaitro-list');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  await loadVaiTro();
+  if (!allVaiTro.length) {
+    el.innerHTML = `<p class="info-note">Chưa có vai trò nào. Bấm <button class="btn-outline" style="width:auto;padding:4px 10px;display:inline" onclick="khoiTaoVaiTroMacDinh().then(renderVaiTroList)">Khởi tạo vai trò mặc định</button> để bắt đầu từ 2 vai trò sẵn có (Quản lý/Nhân viên), hoặc tự thêm vai trò mới.</p>`;
+    return;
+  }
+  el.innerHTML = allVaiTro.map(v => {
+    const soModule = Object.values(v.quyenModule||{}).filter(Boolean).length;
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <b>${escHtml(v.ten)}</b>
+          <span style="font-size:11px;color:var(--text2);margin-left:6px">${v.capDo === 'quan_ly' ? 'Cấp Quản lý' : 'Cấp Nhân viên'} · ${soModule} module</span>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn-xs" onclick="moFormSuaVaiTro('${v.id}')">Sửa</button>
+          <button class="btn-xs danger" onclick="xoaVaiTro('${v.id}')">Xóa</button>
+        </div>
+      </div>
+      <div id="vaitro-sua-${v.id}"></div>
+    </div>`;
+  }).join('');
+}
+
+function renderFormVaiTro(prefix, v) {
+  const ten = v?.ten || '';
+  const capDo = v?.capDo || 'nhan_vien';
+  const quyen = v?.quyenModule || {};
+  return `
+    <div class="admin-block" style="margin-top:8px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Tên vai trò</label>
+      <input type="text" id="${prefix}-ten" placeholder="VD: Nhân viên kho" value="${escHtml(ten)}" style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Cấp độ quyền (quyết định các quyền sâu như Giá vốn, sửa Hàng hóa...)</label>
+      <select id="${prefix}-capdo" style="margin-bottom:10px">
+        <option value="nhan_vien" ${capDo==='nhan_vien'?'selected':''}>Nhân viên</option>
+        <option value="quan_ly" ${capDo==='quan_ly'?'selected':''}>Quản lý</option>
+      </select>
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Module hiển thị</label>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        ${DANH_SACH_MODULE.map(m => `
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" id="${prefix}-m-${m.key}" ${quyen[m.key]?'checked':''}> ${m.ten}
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-g" style="flex:1" onclick="luuVaiTro('${prefix}','${v?.id||''}')">Lưu</button>
+        <button class="btn-outline" onclick="dongFormVaiTro('${prefix}')">Hủy</button>
+      </div>
+    </div>`;
+}
+
+window.moFormThemVaiTro = function() {
+  const el = document.getElementById('vaitro-form');
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = renderFormVaiTro('vt-them', null);
+};
+
+window.moFormSuaVaiTro = function(id) {
+  document.querySelectorAll('[id^="vaitro-sua-"]').forEach(e => { if (e.id !== `vaitro-sua-${id}`) e.innerHTML = ''; });
+  const el = document.getElementById(`vaitro-sua-${id}`);
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  const v = allVaiTro.find(x => x.id === id);
+  if (!v) return;
+  el.innerHTML = renderFormVaiTro(`vt-sua-${id}`, v);
+};
+
+window.dongFormVaiTro = function(prefix) {
+  const el = document.getElementById(prefix === 'vt-them' ? 'vaitro-form' : `${prefix.replace('vt-sua-','vaitro-sua-')}`);
+  if (el) el.innerHTML = '';
+};
+
+window.luuVaiTro = async function(prefix, id) {
+  const ten = document.getElementById(`${prefix}-ten`).value.trim();
+  if (!ten) { showToast('Nhập tên vai trò', true); return; }
+  const capDo = document.getElementById(`${prefix}-capdo`).value;
+  const quyenModule = {};
+  DANH_SACH_MODULE.forEach(m => { quyenModule[m.key] = !!document.getElementById(`${prefix}-m-${m.key}`)?.checked; });
+
+  if (id) {
+    await updateDoc(doc(db, 'vai_tro', id), { ten, capDo, quyenModule });
+    showToast('Đã cập nhật vai trò');
+  } else {
+    await addDoc(collection(db, 'vai_tro'), { ten, capDo, quyenModule, createdAt: serverTimestamp() });
+    showToast('Đã thêm vai trò mới');
+  }
+  document.getElementById('vaitro-form').innerHTML = '';
+  renderVaiTroList();
+};
+
+window.xoaVaiTro = async function(id) {
+  const v = allVaiTro.find(x => x.id === id);
+  const dangDung = allUsersCache?.some(u => u.vaiTroId === id);
+  if (dangDung && !confirm(`Vai trò "${v?.ten}" đang được gán cho ít nhất 1 người dùng. Xóa vẫn được, nhưng người đó sẽ không thấy module nào cho tới khi bạn gán vai trò khác. Vẫn xóa?`)) return;
+  if (!dangDung && !confirm(`Xóa vai trò "${v?.ten}"?`)) return;
+  await deleteDoc(doc(db, 'vai_tro', id));
+  showToast('Đã xóa vai trò');
+  renderVaiTroList();
+};
+
 
 let capMkUid = null;
 
@@ -4881,17 +5098,27 @@ window.taoTaiKhoanMoi = async function() {
   const ten = document.getElementById('new-ten').value.trim();
   const email = document.getElementById('new-email').value.trim();
   const password = document.getElementById('new-password').value;
-  const role = document.getElementById('new-role').value;
+  const chonVaiTro = document.getElementById('new-vaitro').value;
 
   if (!ten || !email || !password) { showToast('Vui lòng nhập đủ tên, email, mật khẩu', true); return; }
   if (password.length < 6) { showToast('Mật khẩu cần tối thiểu 6 ký tự', true); return; }
+
+  let role, vaiTroId = null;
+  if (chonVaiTro === 'admin') {
+    role = 'admin';
+  } else {
+    const vt = allVaiTro.find(v => v.id === chonVaiTro);
+    if (!vt) { showToast('Vui lòng chọn vai trò hợp lệ', true); return; }
+    role = vt.capDo;
+    vaiTroId = vt.id;
+  }
 
   showToast('Đang tạo tài khoản...');
   try {
     // Tạo qua app Firebase phụ để không làm mất phiên đăng nhập Admin hiện tại
     const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
     const uid = cred.user.uid;
-    await setDoc(doc(db, 'users', uid), { ten, email, role, createdAt: serverTimestamp() });
+    await setDoc(doc(db, 'users', uid), { ten, email, role, vaiTroId, createdAt: serverTimestamp() });
     await signOut(secondaryAuth); // đóng phiên phụ, không ảnh hưởng phiên Admin chính
 
     document.getElementById('new-ten').value = '';
@@ -5641,7 +5868,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v169</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v170</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5695,7 +5922,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v169</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v170</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5735,7 +5962,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v169</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v170</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
