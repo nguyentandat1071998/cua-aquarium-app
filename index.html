@@ -531,7 +531,7 @@ async function renderLichCaTab() {
   const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
   lichCaShiftsCache = shifts;
   lichCaDatesCache = dates;
-  const canEdit = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
+  const canEdit = coQuyenXepCa();
   const today = getTodayISO();
   const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
 
@@ -1251,7 +1251,7 @@ function showApp() {
   document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
   if (currentUserData.role === 'admin') {
     document.getElementById('mod-admin').style.display = 'flex';
-    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:true, nhanvien:true, hanghoa:true };
+    quyenModuleHienTai = layQuyenFullAdmin();
     apDungHienThiModule(quyenModuleHienTai);
   } else {
     // Quản lý không được vào "Thiết lập bảng lương" -> ẩn hẳn khỏi menu, không chỉ chặn sau khi bấm
@@ -1293,7 +1293,8 @@ function roleLabel(r) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'baocao', hanghoa: 'hanghoa',
-  danhsachnv: 'nhanvien', chamcong: 'nhanvien', luongnv: 'nhanvien'
+  danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
+  // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
   // thietlapluong: kiểm tra riêng bên dưới (chỉ Admin, không thuộc quyền module "nhanvien" thông thường)
 };
 
@@ -1304,10 +1305,15 @@ window.switchModule = function(mod) {
       showToast('Chỉ Admin mới vào được mục này', true);
       return;
     }
-    const key = ANH_XA_QUYEN_THEO_MOD[mod];
-    if (key && !(quyenModuleHienTai && quyenModuleHienTai[key])) {
-      showToast('Bạn không có quyền truy cập mục này', true);
-      return;
+    if (mod === 'luongnv') {
+      const coXemLuong = !!(quyenModuleHienTai && (quyenModuleHienTai.nv_luong_minh || quyenModuleHienTai.nv_luong_tatca));
+      if (!coXemLuong) { showToast('Bạn không có quyền truy cập mục này', true); return; }
+    } else {
+      const key = ANH_XA_QUYEN_THEO_MOD[mod];
+      if (key && !(quyenModuleHienTai && quyenModuleHienTai[key])) {
+        showToast('Bạn không có quyền truy cập mục này', true);
+        return;
+      }
     }
   }
   activeModule = mod;
@@ -2028,17 +2034,52 @@ let allNhomHang = []; // [{id, ten, chaId, cap}]
 let allVaiTro = [];
 const DANH_SACH_MODULE = [
   { key: 'checklist', ten: 'Checklist' },
-  { key: 'nhap', ten: 'Chuyển kho' },
-  { key: 'xuat', ten: 'Xuất hủy' },
-  { key: 'lichca', ten: 'Lịch làm việc' },
+  { key: 'nhap', ten: 'Chuyển kho', con: [
+    { key: 'nhap_xuatfile', ten: 'Xuất file' }
+  ]},
+  { key: 'xuat', ten: 'Xuất hủy', con: [
+    { key: 'xuat_xuatfile', ten: 'Xuất file' }
+  ]},
+  { key: 'lichca', ten: 'Lịch làm việc', con: [
+    { key: 'lichca_xepca', ten: 'Xếp ca, chỉnh sửa ca' }
+  ]},
   { key: 'baocao', ten: 'Báo cáo' },
-  { key: 'nhanvien', ten: 'Nhân viên' },
+  { key: 'nhanvien', ten: 'Nhân viên', con: [
+    { key: 'nv_taotk', ten: 'Tạo tài khoản' },
+    { key: 'nv_capmk', ten: 'Cấp lại mật khẩu' },
+    { key: 'nv_xoatk', ten: 'Xóa tài khoản' },
+    { key: 'nv_ganvaitro', ten: 'Gán vai trò' },
+    { key: 'nv_chamcong', ten: 'Chấm công' },
+    { key: 'nv_luong_minh', ten: 'Bảng lương — chỉ xem của mình' },
+    { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
+  ]},
   { key: 'hanghoa', ten: 'Danh sách hàng hóa' }
 ];
 
 async function loadVaiTro() {
   const snap = await getDocs(collection(db, 'vai_tro'));
   allVaiTro = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+// Admin luôn full mọi quyền, kể cả quyền con — tính tự động từ DANH_SACH_MODULE, không cần liệt kê tay
+function layQuyenFullAdmin() {
+  const q = {};
+  DANH_SACH_MODULE.forEach(m => { q[m.key] = true; (m.con||[]).forEach(c => { q[c.key] = true; }); });
+  return q;
+}
+
+// User chưa được gán Vai trò mới (chưa migrate) -> khớp đúng hành vi CŨ trước khi có hệ thống Vai trò:
+// Quản lý full quyền các hành động (trừ quản lý tài khoản, vốn trước đây chỉ Admin làm được);
+// Nhân viên chỉ thấy 4 module chính, không có quyền hành động nào thêm.
+function layQuyenFallbackChuaMigrate() {
+  const laQuanLy = currentUserData.role === 'quan_ly';
+  return {
+    checklist:true, nhap:true, nhap_xuatfile:laQuanLy, xuat:true, xuat_xuatfile:laQuanLy,
+    lichca:true, lichca_xepca:laQuanLy, baocao:false,
+    nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
+    nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
+    hanghoa:false
+  };
 }
 
 const ANH_XA_HIEN_MODULE = {
@@ -2052,6 +2093,11 @@ const ANH_XA_HIEN_MODULE = {
 };
 
 // Áp dụng đủ cả 2 chiều: module được tick -> hiện đúng kiểu display gốc; module không tick -> ẩn hẳn
+// Admin luôn full quyền, Quản lý/Nhân viên khác thì theo đúng quyền con "lichca_xepca" của Vai trò
+function coQuyenXepCa() {
+  return currentUserData.role === 'admin' || !!(quyenModuleHienTai && quyenModuleHienTai.lichca_xepca);
+}
+
 function apDungHienThiModule(quyenModule) {
   DANH_SACH_MODULE.forEach(m => {
     const coQuyen = !!quyenModule[m.key];
@@ -2059,6 +2105,19 @@ function apDungHienThiModule(quyenModule) {
       const el = document.getElementById(id);
       if (el) el.style.display = coQuyen ? disp : 'none';
     });
+  });
+  // Quyền con "Xuất file" riêng cho Chuyển kho / Xuất hủy (Admin luôn có sẵn qua nhánh khác)
+  const nhapExport = document.getElementById('nhap-export-card');
+  if (nhapExport) nhapExport.style.display = quyenModule.nhap_xuatfile ? 'block' : 'none';
+  const xuatExport = document.getElementById('xuat-export-card');
+  if (xuatExport) xuatExport.style.display = quyenModule.xuat_xuatfile ? 'block' : 'none';
+  // Quyền con trong menu "Nhân viên": Chấm công, Bảng lương
+  const coXemLuong = !!(quyenModule.nv_luong_minh || quyenModule.nv_luong_tatca);
+  ['nv-menu-chamcong-sidebar','nv-menu-chamcong-mobile'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = quyenModule.nv_chamcong ? 'block' : 'none';
+  });
+  ['nv-menu-luongnv-sidebar','nv-menu-luongnv-mobile'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = coXemLuong ? 'block' : 'none';
   });
 }
 
@@ -2074,13 +2133,13 @@ async function apDungQuyenNgayLapTuc() {
   if (unsubscribeVaiTroDoc) { unsubscribeVaiTroDoc(); unsubscribeVaiTroDoc = null; }
 
   if (currentUserData.role === 'admin') {
-    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:true, nhanvien:true, hanghoa:true };
+    quyenModuleHienTai = layQuyenFullAdmin();
     apDungHienThiModule(quyenModuleHienTai);
     return;
   }
 
   if (!currentUserData.vaiTroId) {
-    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:false, nhanvien: currentUserData.role === 'quan_ly', hanghoa:false };
+    quyenModuleHienTai = layQuyenFallbackChuaMigrate();
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
     return;
@@ -2114,12 +2173,12 @@ function kiemTraModuleDangXemConHopLeKhong() {
 
 async function tinhQuyenModuleHienTai() {
   if (currentUserData.role === 'admin') {
-    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:true, nhanvien:true, hanghoa:true };
+    quyenModuleHienTai = layQuyenFullAdmin();
     return quyenModuleHienTai;
   }
   if (!currentUserData.vaiTroId) {
     // Chưa migrate -> giữ hành vi cũ
-    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:false, nhanvien: currentUserData.role === 'quan_ly', hanghoa:false };
+    quyenModuleHienTai = layQuyenFallbackChuaMigrate();
     return quyenModuleHienTai;
   }
   if (!allVaiTro.length) await loadVaiTro();
@@ -2153,7 +2212,13 @@ window.khoiTaoVaiTroMacDinh = async function() {
   if (!coQuanLy) {
     const ref = await addDoc(collection(db, 'vai_tro'), {
       ten: 'Quản lý', capDo: 'quan_ly',
-      quyenModule: { checklist: true, nhap: true, xuat: true, lichca: true, baocao: false, nhanvien: true, hanghoa: false },
+      quyenModule: {
+        checklist: true, nhap: true, nhap_xuatfile: true, xuat: true, xuat_xuatfile: true,
+        lichca: true, lichca_xepca: true, baocao: false,
+        nhanvien: true, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
+        nv_chamcong: true, nv_luong_minh: true, nv_luong_tatca: true,
+        hanghoa: false
+      },
       createdAt: serverTimestamp()
     });
     idQuanLy = ref.id;
@@ -2161,7 +2226,13 @@ window.khoiTaoVaiTroMacDinh = async function() {
   if (!coNhanVien) {
     const ref = await addDoc(collection(db, 'vai_tro'), {
       ten: 'Nhân viên', capDo: 'nhan_vien',
-      quyenModule: { checklist: true, nhap: true, xuat: true, lichca: true, baocao: false, nhanvien: false, hanghoa: false },
+      quyenModule: {
+        checklist: true, nhap: true, nhap_xuatfile: false, xuat: true, xuat_xuatfile: false,
+        lichca: true, lichca_xepca: false, baocao: false,
+        nhanvien: false, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
+        nv_chamcong: false, nv_luong_minh: false, nv_luong_tatca: false,
+        hanghoa: false
+      },
       createdAt: serverTimestamp()
     });
     idNhanVien = ref.id;
@@ -3642,7 +3713,7 @@ window.loadBaoCaList = async function() {
   const totalPages = Math.max(1, Math.ceil(docs.length / 20));
   if (baocaDsPage > totalPages) baocaDsPage = totalPages;
   const pageDocs = docs.slice((baocaDsPage-1)*20, baocaDsPage*20);
-  const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
+  const canEdit = coQuyenXepCa();
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-baoca${p.deleted ? ' deleted' : ''}">
@@ -4031,7 +4102,7 @@ window.loadNhapList = async function(filter={}) {
   const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
   if (nhapDsPage > totalPages) nhapDsPage = totalPages;
   const pageDocs = docs.slice((nhapDsPage-1)*DS_PAGE_SIZE, nhapDsPage*DS_PAGE_SIZE);
-  const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
+  const canEdit = coQuyenXepCa();
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card green${p.deleted ? ' deleted' : ''}">
@@ -4120,7 +4191,7 @@ window.loadXuatList = async function(filter={}) {
   const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
   if (xuatDsPage > totalPages) xuatDsPage = totalPages;
   const pageDocs = docs.slice((xuatDsPage-1)*DS_PAGE_SIZE, xuatDsPage*DS_PAGE_SIZE);
-  const canEdit = currentUserData.role==='admin'||currentUserData.role==='quan_ly';
+  const canEdit = coQuyenXepCa();
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card red${p.deleted ? ' deleted' : ''}">
@@ -4672,11 +4743,18 @@ async function loadDanhSachNV() {
     el.innerHTML = '<div class="loading">Đang tải...</div>';
   }
   batDauTheoDoiNhanVien(); // tự khởi động theo dõi thời gian thực (chỉ chạy 1 lần, các lần sau bỏ qua)
-  const users = allUsersCache;
+  const laAdmin = currentUserData.role === 'admin';
+  const q = quyenModuleHienTai || {};
+  const coQuyenTaoTk = laAdmin || !!q.nv_taotk;
+  const coQuyenCapMk = laAdmin || !!q.nv_capmk;
+  const coQuyenXoaTk = laAdmin || !!q.nv_xoatk;
+  const coQuyenGanVaiTro = laAdmin || !!q.nv_ganvaitro;
+  // Danh sách nhân viên không hiện tài khoản Admin (không thuộc phạm vi "nhân viên")
+  const users = allUsersCache.filter(u => u.role !== 'admin');
   if (!users.length) return; // đang chờ dữ liệu đầu tiên từ listener, nó sẽ tự gọi lại loadDanhSachNV() khi có
-  const canManage = currentUserData.role === 'admin';
+  const canManage = laAdmin; // Cấp bậc lương vẫn chỉ Admin cấu hình được (không thuộc phạm vi mở quyền lần này)
   const luongCfg = canManage ? await getLuongConfig() : {};
-  if (canManage) await loadVaiTro();
+  if (coQuyenGanVaiTro || coQuyenTaoTk) await loadVaiTro();
   el.innerHTML = `
     <div class="admin-block">
       <h3>Danh sách nhân viên</h3>
@@ -4688,7 +4766,7 @@ async function loadDanhSachNV() {
             <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
           </div>
           <span class="uemail">${u.email||''}</span>
-          ${canManage && u.role !== 'admin' ? `
+          ${coQuyenGanVaiTro ? `
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:11px;color:var(--text2)">Vai trò:</span>
             <select onchange="doiVaiTroNhanVien('${u.id}',this.value)" style="width:auto;padding:4px 8px;font-size:12px">
@@ -4704,13 +4782,13 @@ async function loadDanhSachNV() {
               ${tiers.map(t => `<option value="${escHtml(t)}" ${u.capBac===t?'selected':''}>${escHtml(t)}</option>`).join('')}
             </select>
           </div>` : ''}
-          ${canManage ? `<div style="display:flex;gap:8px">
-            <button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${escHtml(u.ten||u.email||'')}')">Cấp lại mật khẩu</button>
-            <button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>
+          ${(coQuyenCapMk || coQuyenXoaTk) ? `<div style="display:flex;gap:8px">
+            ${coQuyenCapMk ? `<button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${escHtml(u.ten||u.email||'')}')">Cấp lại mật khẩu</button>` : ''}
+            ${coQuyenXoaTk ? `<button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>` : ''}
           </div>` : ''}
         </div>`;
       }).join('')}</div>
-      ${canManage ? `<div class="admin-form">
+      ${coQuyenTaoTk ? `<div class="admin-form">
         <h4>Tạo tài khoản mới</h4>
         <input id="new-ten" placeholder="Tên nhân viên">
         <input id="new-email" type="email" placeholder="Email đăng nhập" autocomplete="off">
@@ -4857,7 +4935,7 @@ async function renderVaiTroList() {
     return;
   }
   el.innerHTML = allVaiTro.map(v => {
-    const soModule = Object.values(v.quyenModule||{}).filter(Boolean).length;
+    const soModule = DANH_SACH_MODULE.filter(m => v.quyenModule?.[m.key]).length;
     return `
     <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center">
@@ -4888,12 +4966,20 @@ function renderFormVaiTro(prefix, v) {
         <option value="nhan_vien" ${capDo==='nhan_vien'?'selected':''}>Nhân viên</option>
         <option value="quan_ly" ${capDo==='quan_ly'?'selected':''}>Quản lý</option>
       </select>
-      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Module hiển thị</label>
-      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Module hiển thị & quyền chi tiết</label>
+      <div style="display:flex;flex-direction:column;gap:2px;margin-bottom:10px">
         ${DANH_SACH_MODULE.map(m => `
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
-            <input type="checkbox" id="${prefix}-m-${m.key}" ${quyen[m.key]?'checked':''}> ${m.ten}
-          </label>`).join('')}
+          <div style="margin-bottom:4px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;font-weight:600">
+              <input type="checkbox" id="${prefix}-m-${m.key}" ${quyen[m.key]?'checked':''}> ${m.ten}
+            </label>
+            ${m.con ? `<div style="padding-left:26px;margin-top:4px;display:flex;flex-direction:column;gap:4px">
+              ${m.con.map(c => `
+                <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2);cursor:pointer">
+                  <input type="checkbox" id="${prefix}-m-${c.key}" ${quyen[c.key]?'checked':''}> ${c.ten}
+                </label>`).join('')}
+            </div>` : ''}
+          </div>`).join('')}
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuVaiTro('${prefix}','${v?.id||''}')">Lưu</button>
@@ -4928,7 +5014,10 @@ window.luuVaiTro = async function(prefix, id) {
   if (!ten) { showToast('Nhập tên vai trò', true); return; }
   const capDo = document.getElementById(`${prefix}-capdo`).value;
   const quyenModule = {};
-  DANH_SACH_MODULE.forEach(m => { quyenModule[m.key] = !!document.getElementById(`${prefix}-m-${m.key}`)?.checked; });
+  DANH_SACH_MODULE.forEach(m => {
+    quyenModule[m.key] = !!document.getElementById(`${prefix}-m-${m.key}`)?.checked;
+    (m.con||[]).forEach(c => { quyenModule[c.key] = !!document.getElementById(`${prefix}-m-${c.key}`)?.checked; });
+  });
 
   if (id) {
     await updateDoc(doc(db, 'vai_tro', id), { ten, capDo, quyenModule });
@@ -5969,7 +6058,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v176</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v177</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6023,7 +6112,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v176</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v177</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6035,8 +6124,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <button class="mod-btn" id="sidebar-nhanvien" onclick="toggleNVMenu('sidebar')" style="color:#B45309;width:100%">Nhân viên</button>
       <div class="user-menu-dropdown nv-dropdown" id="nv-menu-sidebar">
         <button onclick="moNVTab('danhsachnv')">Danh sách nhân viên</button>
-        <button onclick="moNVTab('chamcong')">Chấm công</button>
-        <button onclick="moNVTab('luongnv')">Bảng lương</button>
+        <button id="nv-menu-chamcong-sidebar" style="display:none" onclick="moNVTab('chamcong')">Chấm công</button>
+        <button id="nv-menu-luongnv-sidebar" style="display:none" onclick="moNVTab('luongnv')">Bảng lương</button>
         <button id="nv-menu-thietlapluong-sidebar" onclick="moNVTab('thietlapluong')">Thiết lập bảng lương</button>
       </div>
     </div>
@@ -6063,7 +6152,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v176</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v177</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -6097,8 +6186,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <!-- Dropdown Nhân viên (mobile) — đặt ngoài thanh cuộn ngang để không bị cắt -->
     <div class="user-menu-dropdown nv-dropdown" id="nv-menu-mobile" style="position:fixed;left:auto">
       <button onclick="moNVTab('danhsachnv')">Danh sách nhân viên</button>
-      <button onclick="moNVTab('chamcong')">Chấm công</button>
-      <button onclick="moNVTab('luongnv')">Bảng lương</button>
+      <button id="nv-menu-chamcong-mobile" style="display:none" onclick="moNVTab('chamcong')">Chấm công</button>
+      <button id="nv-menu-luongnv-mobile" style="display:none" onclick="moNVTab('luongnv')">Bảng lương</button>
       <button id="nv-menu-thietlapluong-mobile" onclick="moNVTab('thietlapluong')">Thiết lập bảng lương</button>
     </div>
 
