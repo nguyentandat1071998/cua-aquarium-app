@@ -472,7 +472,7 @@ async function chupAnhQRVaCheckin() {
 
   await loadBenhDanhSach();
   showApp();
-  switchModule('checklist');
+  moModuleMacDinhTheoQuyen();
   xinQuyenThongBao();
 }
 
@@ -1193,7 +1193,7 @@ async function tryResumeShift() {
         checklistState = data.checklistData ? { ...data.checklistData } : {};
         await loadBenhDanhSach();
         showApp();
-        switchModule('checklist');
+        moModuleMacDinhTheoQuyen();
         xinQuyenThongBao();
         return true;
       }
@@ -1242,22 +1242,15 @@ function showApp() {
   document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
   if (currentUserData.role === 'admin') {
     document.getElementById('mod-admin').style.display = 'flex';
-    document.getElementById('mod-hanghoa').style.display = 'flex';
-    const shh = document.getElementById('sidebar-hanghoa');
-    if (shh) shh.style.display = 'flex';
-    document.getElementById('mod-nhanvien').style.display = 'flex';
-    const snv = document.getElementById('sidebar-nhanvien-wrap');
-    if (snv) snv.style.display = 'block';
-    document.getElementById('mod-baocao').style.display = 'flex';
-    const sbc = document.getElementById('sidebar-baocao');
-    if (sbc) sbc.style.display = 'flex';
+    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:true, nhanvien:true, hanghoa:true };
+    apDungHienThiModule(quyenModuleHienTai);
   } else {
     // Quản lý không được vào "Thiết lập bảng lương" -> ẩn hẳn khỏi menu, không chỉ chặn sau khi bấm
     const ttl1 = document.getElementById('nv-menu-thietlapluong-sidebar');
     const ttl2 = document.getElementById('nv-menu-thietlapluong-mobile');
     if (ttl1) ttl1.style.display = 'none';
     if (ttl2) ttl2.style.display = 'none';
-    capNhatHienThiModuleTheoVaiTro(); // chạy nền — hiện đúng module theo Vai trò đã gán (hoặc hành vi cũ nếu chưa migrate)
+    capNhatHienThiModuleTheoVaiTro(); // chạy nền — hiện đúng module theo Vai trò đã gán (ẩn sẵn cho tới khi xác nhận có quyền, an toàn)
   }
   // Lưu quyền xuất file vào biến global
   const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
@@ -1288,7 +1281,26 @@ function roleLabel(r) {
   return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên bán hàng';
 }
 
+const ANH_XA_QUYEN_THEO_MOD = {
+  checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
+  baocao: 'baocao', hanghoa: 'hanghoa',
+  danhsachnv: 'nhanvien', chamcong: 'nhanvien', luongnv: 'nhanvien'
+  // thietlapluong: kiểm tra riêng bên dưới (chỉ Admin, không thuộc quyền module "nhanvien" thông thường)
+};
+
 window.switchModule = function(mod) {
+  // Chặn thật ở tầng hàm — không chỉ ẩn nút, còn chặn cả gọi trực tiếp qua Console
+  if (currentUserData.role !== 'admin') {
+    if (mod === 'thietlapluong') {
+      showToast('Chỉ Admin mới vào được mục này', true);
+      return;
+    }
+    const key = ANH_XA_QUYEN_THEO_MOD[mod];
+    if (key && !(quyenModuleHienTai && quyenModuleHienTai[key])) {
+      showToast('Bạn không có quyền truy cập mục này', true);
+      return;
+    }
+  }
   activeModule = mod;
   if (mod === 'checklist') {
     document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
@@ -1390,6 +1402,10 @@ window.switchSub = function(sub) {
 };
 
 window.switchAdmin = function() {
+  if (currentUserData.role !== 'admin') {
+    showToast('Chỉ Admin mới vào được mục này', true);
+    return;
+  }
   activeModule = 'admin';
   document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('mod-admin').classList.add('active');
@@ -2037,19 +2053,42 @@ function apDungHienThiModule(quyenModule) {
   });
 }
 
-async function capNhatHienThiModuleTheoVaiTro() {
+// Bộ nhớ đệm quyền module của người dùng đang đăng nhập — dùng để switchModule() tự kiểm tra,
+// chặn được cả trường hợp gọi trực tiếp qua Console (bỏ qua giao diện ẩn/hiện nút).
+let quyenModuleHienTai = null;
+
+async function tinhQuyenModuleHienTai() {
+  if (currentUserData.role === 'admin') {
+    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:true, nhanvien:true, hanghoa:true };
+    return quyenModuleHienTai;
+  }
   if (!currentUserData.vaiTroId) {
-    // Chưa được gán Vai trò mới (chưa migrate) -> giữ nguyên hành vi cũ theo role hiện tại, không đổi gì
-    if (currentUserData.role === 'quan_ly') {
-      const el1 = document.getElementById('mod-nhanvien'); if (el1) el1.style.display = 'flex';
-      const el2 = document.getElementById('sidebar-nhanvien-wrap'); if (el2) el2.style.display = 'block';
-    }
-    return;
+    // Chưa migrate -> giữ hành vi cũ
+    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:false, nhanvien: currentUserData.role === 'quan_ly', hanghoa:false };
+    return quyenModuleHienTai;
   }
   if (!allVaiTro.length) await loadVaiTro();
   const vt = allVaiTro.find(v => v.id === currentUserData.vaiTroId);
-  if (!vt) return;
-  apDungHienThiModule(vt.quyenModule || {});
+  quyenModuleHienTai = vt?.quyenModule || { checklist:true, nhap:true, xuat:true, lichca:true };
+  return quyenModuleHienTai;
+}
+
+async function capNhatHienThiModuleTheoVaiTro() {
+  const quyen = await tinhQuyenModuleHienTai();
+  apDungHienThiModule(quyen);
+}
+
+// Mở đúng module đầu tiên mà người dùng THỰC SỰ có quyền — không mở cứng "checklist" như trước
+// (an toàn: nếu 1 Vai trò tắt hẳn Checklist, không được phép mở nội dung đó ra dù chỉ là module mặc định)
+async function moModuleMacDinhTheoQuyen() {
+  const quyen = await tinhQuyenModuleHienTai();
+  const thuTuUuTien = [
+    ['checklist','checklist'], ['nhap','nhap'], ['xuat','xuat'], ['lichca','lichca'],
+    ['baocao','baocao'], ['nhanvien','danhsachnv'], ['hanghoa','hanghoa']
+  ];
+  const found = thuTuUuTien.find(([key]) => quyen[key]);
+  if (found) switchModule(found[1]);
+  // Nếu không có module nào được phép -> không mở gì cả, an toàn tuyệt đối (màn hình để trống)
 }
 
 // Chạy 1 lần: tạo sẵn 2 vai trò mặc định khớp đúng hành vi cũ (Quản lý/Nhân viên hiện có),
@@ -5880,7 +5919,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v172</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v174</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5934,12 +5973,12 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v172</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v174</span></div>
     <div class="sidebar-section">Module</div>
-    <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
-    <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
-    <button class="mod-btn red" id="sidebar-xuat" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
-    <button class="mod-btn teal" id="sidebar-lichca" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
+    <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
+    <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
+    <button class="mod-btn red" id="sidebar-xuat" style="display:none" onclick="switchModule('xuat');updateSidebar('xuat')">Xuất hủy</button>
+    <button class="mod-btn teal" id="sidebar-lichca" style="display:none" onclick="switchModule('lichca');updateSidebar('lichca')">Lịch làm việc</button>
     <button class="mod-btn" id="sidebar-baoca" onclick="switchModule('baoca');updateSidebar('baoca')" style="display:none;color:#0369A1">Báo cá mới về</button>
     <button class="mod-btn" id="sidebar-baocao" onclick="switchModule('baocao');updateSidebar('baocao')" style="display:none;color:#4F46E5">Báo cáo</button>
     <div id="sidebar-nhanvien-wrap" style="display:none;position:relative">
@@ -5974,7 +6013,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v172</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v174</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -5992,10 +6031,10 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mod-bar-row">
       <button class="mod-page-btn" id="mod-page-prev" onclick="mobTabPage(-1)">‹</button>
       <div class="mod-bar" id="mod-bar">
-        <button class="mod-btn purple" id="mod-checklist" onclick="switchModule('checklist')">Checklist</button>
-        <button class="mod-btn green" id="mod-nhap" onclick="switchModule('nhap')">Chuyển kho</button>
-        <button class="mod-btn red" id="mod-xuat" onclick="switchModule('xuat')">Xuất hủy</button>
-        <button class="mod-btn teal" id="mod-lichca" onclick="switchModule('lichca')">Lịch làm việc</button>
+        <button class="mod-btn purple" id="mod-checklist" style="display:none" onclick="switchModule('checklist')">Checklist</button>
+        <button class="mod-btn green" id="mod-nhap" style="display:none" onclick="switchModule('nhap')">Chuyển kho</button>
+        <button class="mod-btn red" id="mod-xuat" style="display:none" onclick="switchModule('xuat')">Xuất hủy</button>
+        <button class="mod-btn teal" id="mod-lichca" style="display:none" onclick="switchModule('lichca')">Lịch làm việc</button>
         <button class="mod-btn" id="mod-baoca" onclick="switchModule('baoca')" style="display:none;background:var(--bg);color:#0369A1">Báo cá</button>
         <button class="mod-btn" id="mod-baocao" onclick="switchModule('baocao')" style="display:none;background:var(--bg);color:#4F46E5">Báo cáo</button>
         <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:#FEF3C7;color:#B45309">Nhân viên ▾</button>
