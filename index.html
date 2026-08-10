@@ -4390,6 +4390,42 @@ window.exportXuatCSV = async function() {
   loadXuatList();
 };
 
+// Xuất Excel (.xlsx) đúng khớp định dạng file mẫu "Xuất hủy" của KiotViet — dùng để Import trực tiếp
+// (an toàn hơn CSV vì đúng phần mở rộng .xlsx mà công cụ Import của KiotViet mong đợi)
+window.exportXuatHuyExcelChoKiotViet = async function() {
+  const from = document.getElementById('xuat-filter-from')?.value;
+  const to = document.getElementById('xuat-filter-to')?.value;
+  const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
+  const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
+  let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
+  allDocs = allDocs.filter(d => {
+    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
+    if (from && ds<from) return false;
+    if (to && ds>to) return false;
+    if (filterX === 'chua' && d.daXuat) return false;
+    if (filterX === 'da' && !d.daXuat) return false;
+    return true;
+  });
+  if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
+  const map={};
+  allDocs.forEach(p => p.items.forEach(i => {
+    const k=i.sku||i.ten;
+    if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
+    map[k].sl+=i.sl;
+  }));
+  const rows = Object.values(map);
+  // Đúng khớp header file mẫu thật của KiotViet: Mã hàng | Tên hàng | Đơn vị tính | Số lượng hủy
+  const data = [['Mã hàng','Tên hàng','Đơn vị tính','Số lượng hủy'], ...rows.map(r => [r.ma, r.ten, '', r.sl])];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws['!cols'] = [{wch:18},{wch:32},{wch:12},{wch:14}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'XuatHuy');
+  XLSX.writeFile(wb, `xuat-huy-kiotviet-${new Date().toISOString().slice(0,10)}.xlsx`);
+  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_huy',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
+  showToast(`Đã xuất Excel ${allDocs.length} phiếu — vào KiotViet "Xuất hủy" chọn file này để import`);
+  loadXuatList();
+};
+
 function buildCSVHeader(loaiPhieu, docs) {
   const nguoiXuat = currentUserData?.ten || currentUser?.email || '';
   const now = new Date();
@@ -5605,7 +5641,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v168</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v169</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5659,7 +5695,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v168</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v169</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -5699,7 +5735,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v168</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v169</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -5901,7 +5937,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
             <button class="btn-clear" onclick="clearXuatFilter()">Xóa lọc</button>
           </div>
           <div id="xuat-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            <button class="btn-r" onclick="exportXuatCSV()" style="margin-top:0">Xuất CSV theo bộ lọc</button>
+            <button class="btn-r" onclick="exportXuatHuyExcelChoKiotViet()" style="margin-top:0;margin-bottom:8px">Xuất Excel để Import vào KiotViet</button>
+            <button class="btn-outline" onclick="exportXuatCSV()" style="margin-top:0">Xuất CSV theo bộ lọc (lưu nội bộ)</button>
           </div>
         </div>
         <div id="xuat-summary" style="display:none;background:var(--red-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
