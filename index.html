@@ -1127,6 +1127,7 @@ onAuthStateChanged(auth, async (user) => {
         // Theo dõi thời gian thực hồ sơ của chính mình:
         // - Hồ sơ bị xóa -> đăng xuất ngay
         // - Mật khẩu vừa bị đổi ở nơi khác (không phải do chính tab này) -> đăng xuất ngay
+        // - Vai trò/quyền vừa bị Admin đổi -> cập nhật quyền NGAY LẬP TỨC, không chờ đăng nhập lại
         if (unsubscribeUserDoc) unsubscribeUserDoc();
         let firstPwSnapshot = true;
         unsubscribeUserDoc = onSnapshot(doc(db, 'users', user.uid), (snap) => {
@@ -1135,17 +1136,26 @@ onAuthStateChanged(auth, async (user) => {
             signOut(auth);
             return;
           }
-          // Bỏ qua lần bắn đầu tiên — onSnapshot luôn tự bắn ngay với dữ liệu sẵn có lúc mới gắn theo dõi,
-          // không phải là 1 thay đổi mới xảy ra. Chỉ xét các lần bắn SAU đó.
-          if (firstPwSnapshot) { firstPwSnapshot = false; return; }
-          const pwUpdatedAt = snap.data()?.pwUpdatedAt;
-          if (pwUpdatedAt?.toMillis && currentUser) {
-            const changedAtMs = pwUpdatedAt.toMillis();
-            if (changedAtMs > myLastPwChangeMs + 5000) {
-              showToast('Mật khẩu vừa được thay đổi — vui lòng đăng nhập lại', true);
-              signOut(auth);
+          const duLieuMoi = snap.data();
+          // Bỏ qua kiểm tra đổi mật khẩu ở lần bắn đầu tiên — onSnapshot luôn tự bắn ngay với dữ liệu
+          // sẵn có lúc mới gắn theo dõi, không phải là 1 thay đổi mới xảy ra.
+          if (!firstPwSnapshot) {
+            const pwUpdatedAt = duLieuMoi?.pwUpdatedAt;
+            if (pwUpdatedAt?.toMillis && currentUser) {
+              const changedAtMs = pwUpdatedAt.toMillis();
+              if (changedAtMs > myLastPwChangeMs + 5000) {
+                showToast('Mật khẩu vừa được thay đổi — vui lòng đăng nhập lại', true);
+                signOut(auth);
+                return;
+              }
             }
           }
+          firstPwSnapshot = false;
+          // Cập nhật hồ sơ hiện tại rồi áp dụng quyền mới ngay — CẢ lần đầu lẫn các lần sau,
+          // để listener theo dõi Vai trò được gắn ngay từ đầu (bắt được cả khi Admin chỉ sửa
+          // nội dung Vai trò mà không đổi ai đang được gán vào — user doc lúc đó không đổi gì).
+          currentUserData = duLieuMoi;
+          apDungQuyenNgayLapTuc();
         }, (error) => {
           // Rules mới chặn đọc hồ sơ không còn tồn tại -> lỗi permission-denied ở đây
           // đồng nghĩa hồ sơ đã bị xóa. Xử lý giống trường hợp !snap.exists().
@@ -1173,6 +1183,7 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     currentUser = null; currentUserData = null;
     if (unsubscribeUserDoc) { unsubscribeUserDoc(); unsubscribeUserDoc = null; }
+    if (unsubscribeVaiTroDoc) { unsubscribeVaiTroDoc(); unsubscribeVaiTroDoc = null; }
     showLogin();
   }
 });
@@ -1248,7 +1259,7 @@ function showApp() {
     const ttl2 = document.getElementById('nv-menu-thietlapluong-mobile');
     if (ttl1) ttl1.style.display = 'none';
     if (ttl2) ttl2.style.display = 'none';
-    capNhatHienThiModuleTheoVaiTro(); // chạy nền — hiện đúng module theo Vai trò đã gán (ẩn sẵn cho tới khi xác nhận có quyền, an toàn)
+    // (Hiển thị module theo Vai trò đã được xử lý sớm hơn bởi apDungQuyenNgayLapTuc() qua theo dõi hồ sơ user)
   }
   // Lưu quyền xuất file vào biến global
   const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
@@ -2054,6 +2065,52 @@ function apDungHienThiModule(quyenModule) {
 // Bộ nhớ đệm quyền module của người dùng đang đăng nhập — dùng để switchModule() tự kiểm tra,
 // chặn được cả trường hợp gọi trực tiếp qua Console (bỏ qua giao diện ẩn/hiện nút).
 let quyenModuleHienTai = null;
+let unsubscribeVaiTroDoc = null;
+
+// Áp dụng quyền NGAY LẬP TỨC — gọi mỗi khi hồ sơ user thay đổi (role/vaiTroId).
+// Theo dõi thời gian thực đúng Vai trò đang được gán -> Admin sửa quyền của vai trò là nhân viên
+// thấy thay đổi ngay lập tức trên phiên đang đăng nhập, không cần đợi đăng nhập lại.
+async function apDungQuyenNgayLapTuc() {
+  if (unsubscribeVaiTroDoc) { unsubscribeVaiTroDoc(); unsubscribeVaiTroDoc = null; }
+
+  if (currentUserData.role === 'admin') {
+    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:true, nhanvien:true, hanghoa:true };
+    apDungHienThiModule(quyenModuleHienTai);
+    return;
+  }
+
+  if (!currentUserData.vaiTroId) {
+    quyenModuleHienTai = { checklist:true, nhap:true, xuat:true, lichca:true, baocao:false, nhanvien: currentUserData.role === 'quan_ly', hanghoa:false };
+    apDungHienThiModule(quyenModuleHienTai);
+    kiemTraModuleDangXemConHopLeKhong();
+    return;
+  }
+
+  unsubscribeVaiTroDoc = onSnapshot(doc(db, 'vai_tro', currentUserData.vaiTroId), (snap) => {
+    quyenModuleHienTai = snap.exists() ? (snap.data().quyenModule || {}) : { checklist:true, nhap:true, xuat:true, lichca:true };
+    apDungHienThiModule(quyenModuleHienTai);
+    kiemTraModuleDangXemConHopLeKhong();
+  }, () => {
+    // Không đọc được (vai trò bị xóa, hoặc mất quyền đọc) -> coi như không còn quyền gì, an toàn tuyệt đối
+    quyenModuleHienTai = {};
+    apDungHienThiModule(quyenModuleHienTai);
+    kiemTraModuleDangXemConHopLeKhong();
+  });
+}
+
+// Nếu module đang xem vừa bị Admin thu hồi quyền -> đóng ngay, không để đứng trong panel bị cấm nữa
+function kiemTraModuleDangXemConHopLeKhong() {
+  if (currentUserData.role === 'admin' || !activeModule) return;
+  const key = ANH_XA_QUYEN_THEO_MOD[activeModule] || activeModule;
+  const conDuocPhep = quyenModuleHienTai && quyenModuleHienTai[key];
+  if (!conDuocPhep) {
+    showToast('Quyền truy cập của bạn vừa được thay đổi', true);
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    activeModule = null;
+    moModuleMacDinhTheoQuyen();
+  }
+}
+
 
 async function tinhQuyenModuleHienTai() {
   if (currentUserData.role === 'admin') {
@@ -2069,11 +2126,6 @@ async function tinhQuyenModuleHienTai() {
   const vt = allVaiTro.find(v => v.id === currentUserData.vaiTroId);
   quyenModuleHienTai = vt?.quyenModule || { checklist:true, nhap:true, xuat:true, lichca:true };
   return quyenModuleHienTai;
-}
-
-async function capNhatHienThiModuleTheoVaiTro() {
-  const quyen = await tinhQuyenModuleHienTai();
-  apDungHienThiModule(quyen);
 }
 
 // Mở đúng module đầu tiên mà người dùng THỰC SỰ có quyền — không mở cứng "checklist" như trước
@@ -5917,7 +5969,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v175</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v176</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -5971,7 +6023,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v175</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v176</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6011,7 +6063,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v175</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v176</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
