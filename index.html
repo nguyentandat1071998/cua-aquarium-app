@@ -1448,18 +1448,19 @@ async function renderHangHoaTab() {
     el.innerHTML = '<div class="loading">Đang tải...</div>';
     await loadSKUs();
   }
+  const qHH = currentUserData.role === 'admin' ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
   el.innerHTML = `
     <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:8px">
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
-    <button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
+    ${qHH.hh_them ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-them-menu" class="user-menu-dropdown" style="display:none;position:static;margin-bottom:8px">
       <button onclick="moFormThemHangDon()">Thêm hàng hóa</button>
       <button onclick="moFormThemHangCombo()">Thêm combo hàng hóa</button>
     </div>
-    <div id="hanghoa-form"></div>
-    <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="exportDanhSachHangHoaExcel()">Xuất Excel danh sách hàng hóa</button>
-    <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
-    <div id="hanghoa-import-form"></div>
+    <div id="hanghoa-form"></div>` : ''}
+    ${qHH.hh_xuatfile ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="exportDanhSachHangHoaExcel()">Xuất Excel danh sách hàng hóa</button>` : ''}
+    ${(qHH.hh_them || qHH.hh_sua) ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
+    <div id="hanghoa-import-form"></div>` : ''}
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px">
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
       <select onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
@@ -1564,6 +1565,7 @@ let hangHoaPageSize = 30;
 function renderHangHoaList() {
   const el = document.getElementById('hanghoa-list');
   if (!el) return;
+  const qHH2 = currentUserData.role === 'admin' ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
   const q = hangHoaSearchQuery.trim().toLowerCase();
   const list = allSKUs.filter(s =>
     (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q)) &&
@@ -1591,10 +1593,10 @@ function renderHangHoaList() {
           ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
         </div>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
-          <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>
-        </div>
+        ${(qHH2.hh_sua || qHH2.hh_xoa) ? `<div style="display:flex;flex-direction:column;gap:6px">
+          ${qHH2.hh_sua ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>` : ''}
+          ${qHH2.hh_xoa ? `<button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
+        </div>` : ''}
       </div>
       <div id="hh-sua-${s.id}"></div>
     </div>`;
@@ -2053,7 +2055,12 @@ const DANH_SACH_MODULE = [
     { key: 'nv_luong_minh', ten: 'Bảng lương — chỉ xem của mình' },
     { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
   ]},
-  { key: 'hanghoa', ten: 'Danh sách hàng hóa' }
+  { key: 'hanghoa', ten: 'Danh sách hàng hóa', con: [
+    { key: 'hh_them', ten: 'Thêm' },
+    { key: 'hh_sua', ten: 'Sửa' },
+    { key: 'hh_xoa', ten: 'Xóa' },
+    { key: 'hh_xuatfile', ten: 'Xuất file' }
+  ]}
 ];
 
 async function loadVaiTro() {
@@ -2078,7 +2085,7 @@ function layQuyenFallbackChuaMigrate() {
     lichca:true, lichca_xepca:laQuanLy, baocao:false,
     nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
     nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
-    hanghoa:false
+    hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false
   };
 }
 
@@ -2217,7 +2224,7 @@ window.khoiTaoVaiTroMacDinh = async function() {
         lichca: true, lichca_xepca: true, baocao: false,
         nhanvien: true, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
         nv_chamcong: true, nv_luong_minh: true, nv_luong_tatca: true,
-        hanghoa: false
+        hanghoa: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
       },
       createdAt: serverTimestamp()
     });
@@ -2231,7 +2238,7 @@ window.khoiTaoVaiTroMacDinh = async function() {
         lichca: true, lichca_xepca: false, baocao: false,
         nhanvien: false, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
         nv_chamcong: false, nv_luong_minh: false, nv_luong_tatca: false,
-        hanghoa: false
+        hanghoa: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
       },
       createdAt: serverTimestamp()
     });
@@ -6058,7 +6065,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v177</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v178</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6112,7 +6119,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v177</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v178</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6152,7 +6159,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v177</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v178</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
