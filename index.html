@@ -16,7 +16,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot, runTransaction, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -1499,45 +1499,121 @@ window.moLienKetSanTab = async function() {
 };
 
 let sanPhamTMDTFilterSan = 'all';
+let sanPhamTMDTFilterLK = 'all';   // all | chua | mot_phan | xong
+let sanPhamTMDTTimKiem = '';
+let sanPhamTMDTPage = 1;
+const SPTMDT_MOI_TRANG = 30;
+
+// Trạng thái liên kết của 1 sản phẩm: 'xong' | 'mot_phan' | 'chua'
+function trangThaiLienKet(sp) {
+  const skuCon = sp.skuCon || [];
+  if (!skuCon.length) return 'chua';
+  const daLK = skuCon.filter(s => s.skuNoiBo).length;
+  if (daLK === 0) return 'chua';
+  return daLK === skuCon.length ? 'xong' : 'mot_phan';
+}
+
+window.doiFilterLKTMDT = function(tt) { sanPhamTMDTFilterLK = tt; sanPhamTMDTPage = 1; renderSanPhamTMDTList(); };
+window.doiTrangTMDT = function(p) { sanPhamTMDTPage = p; renderSanPhamTMDTList(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+window.timKiemTMDT = function(v) {
+  sanPhamTMDTTimKiem = v; sanPhamTMDTPage = 1;
+  clearTimeout(window._tmdtTimer);
+  window._tmdtTimer = setTimeout(() => {
+    renderSanPhamTMDTList();
+    const o = document.getElementById('tmdt-timkiem');
+    if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+  }, 300);
+};
+
+function locSanPhamTMDT() {
+  let ds = sanPhamTMDTFilterSan === 'all' ? allSanPhamDang : allSanPhamDang.filter(sp => sp.san === sanPhamTMDTFilterSan);
+  if (sanPhamTMDTFilterLK !== 'all') ds = ds.filter(sp => trangThaiLienKet(sp) === sanPhamTMDTFilterLK);
+  const tu = sanPhamTMDTTimKiem.trim().toLowerCase();
+  if (tu) ds = ds.filter(sp =>
+    String(sp.tenSanPham || '').toLowerCase().includes(tu) ||
+    String(sp.productIdSan || '').includes(tu) ||
+    (sp.skuCon || []).some(s => String(s.skuIdSan || '').toLowerCase().includes(tu))
+  );
+  return ds;
+}
 
 function renderSanPhamTMDTList() {
   const el = document.getElementById('hanghoa-content');
-  const dsHienTai = sanPhamTMDTFilterSan === 'all' ? allSanPhamDang : allSanPhamDang.filter(sp => sp.san === sanPhamTMDTFilterSan);
+  const dsLoc = locSanPhamTMDT();
+  const dsTheoSan = sanPhamTMDTFilterSan === 'all' ? allSanPhamDang : allSanPhamDang.filter(sp => sp.san === sanPhamTMDTFilterSan);
+  const demChua = dsTheoSan.filter(sp => trangThaiLienKet(sp) === 'chua').length;
+  const demMotPhan = dsTheoSan.filter(sp => trangThaiLienKet(sp) === 'mot_phan').length;
+  const demXong = dsTheoSan.filter(sp => trangThaiLienKet(sp) === 'xong').length;
+  const tongTrang = Math.max(1, Math.ceil(dsLoc.length / SPTMDT_MOI_TRANG));
+  if (sanPhamTMDTPage > tongTrang) sanPhamTMDTPage = tongTrang;
+  const dsHienTai = dsLoc.slice((sanPhamTMDTPage - 1) * SPTMDT_MOI_TRANG, sanPhamTMDTPage * SPTMDT_MOI_TRANG);
+  const nutLoc = (ma, nhan, so, mau) => `<button class="stab" style="flex:1;border:1.5px solid ${sanPhamTMDTFilterLK===ma?mau:'var(--border)'};border-radius:6px;padding:7px 4px;font-size:12px;background:${sanPhamTMDTFilterLK===ma?mau:'#fff'};color:${sanPhamTMDTFilterLK===ma?'#fff':'var(--text)'}" onclick="doiFilterLKTMDT('${ma}')">${nhan} (${so})</button>`;
+
   el.innerHTML = `
     <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderHangHoaTab()">← Quay lại Danh sách hàng hóa</button>
     <div class="admin-block" style="margin-bottom:10px">
       <p class="info-note">Sản phẩm được <b>đồng bộ tự động từ sàn về</b> — không tạo tay. Sau khi đồng bộ, liên kết từng SKU con với đúng SKU nội bộ để đồng bộ tồn kho.</p>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="stab ${sanPhamTMDTFilterSan==='all'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='all'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('all')">Tất cả (${allSanPhamDang.length})</button>
       <button class="stab ${sanPhamTMDTFilterSan==='lazada'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('lazada')">Lazada (${allSanPhamDang.filter(s=>s.san==='lazada').length})</button>
       <button class="stab ${sanPhamTMDTFilterSan==='tiktok'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('tiktok')">TikTok (${allSanPhamDang.filter(s=>s.san==='tiktok').length})</button>
       <button class="stab ${sanPhamTMDTFilterSan==='shopee'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='shopee'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('shopee')">Shopee (${allSanPhamDang.filter(s=>s.san==='shopee').length})</button>
     </div>
-    <button class="btn-g" style="width:100%;margin-bottom:10px" onclick="dongBoSanPhamTuSan('${sanPhamTMDTFilterSan}')">🔄 Đồng bộ sản phẩm ${sanPhamTMDTFilterSan==='all'?'(mọi sàn)':'('+(TEN_SAN[sanPhamTMDTFilterSan])+')'}</button>
-    <div id="lienket-list"></div>`;
+    <div style="display:flex;gap:5px;margin-bottom:8px">
+      ${nutLoc('all','Tất cả', dsTheoSan.length, 'var(--text2)')}
+      ${nutLoc('chua','Chưa LK', demChua, '#DC2626')}
+      ${nutLoc('mot_phan','Một phần', demMotPhan, '#D97706')}
+      ${nutLoc('xong','Xong', demXong, '#16A34A')}
+    </div>
+    <input type="text" id="tmdt-timkiem" placeholder="Tìm theo tên, Product ID hoặc mã SKU trên sàn..." value="${escHtml(sanPhamTMDTTimKiem)}" oninput="timKiemTMDT(this.value)" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:8px">
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="btn-g" style="flex:1" onclick="dongBoSanPhamTuSan('${sanPhamTMDTFilterSan}')">🔄 Đồng bộ ${sanPhamTMDTFilterSan==='all'?'(mọi sàn)':'('+(TEN_SAN[sanPhamTMDTFilterSan])+')'}</button>
+      <button class="btn-outline" style="flex:1" onclick="tuDongKhopToanBo()">⚡ Tự động khớp SKU</button>
+    </div>
+    <div id="lienket-list"></div>
+    <div id="lienket-phantrang"></div>`;
+
   const listEl = document.getElementById('lienket-list');
-  if (!dsHienTai.length) {
+  if (!allSanPhamDang.length) {
     listEl.innerHTML = '<p class="info-note">Chưa có sản phẩm nào — bấm "Đồng bộ sản phẩm" để kéo dữ liệu từ sàn về.</p>';
+    return;
+  }
+  if (!dsLoc.length) {
+    listEl.innerHTML = '<p class="info-note">Không có sản phẩm nào khớp bộ lọc hiện tại.</p>';
     return;
   }
   listEl.innerHTML = dsHienTai.map(sp => {
     const skuCon = sp.skuCon || [];
     const daLK = skuCon.filter(s => s.skuNoiBo).length;
+    const tt = trangThaiLienKet(sp);
+    const mauTT = tt === 'xong' ? '#16A34A' : (tt === 'mot_phan' ? '#D97706' : '#DC2626');
     return `
-    <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+    <div style="border:1px solid var(--border);border-left:3px solid ${mauTT};border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;gap:10px;align-items:center">
-        ${sp.anhUrl ? `<img src="${sp.anhUrl}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex-shrink:0">` : `<div style="width:44px;height:44px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
+        ${sp.anhUrl ? `<img src="${sp.anhUrl}" loading="lazy" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex-shrink:0">` : `<div style="width:44px;height:44px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
         <div style="flex:1;min-width:0">
           <span style="font-size:11px;background:var(--bg);padding:2px 8px;border-radius:4px;color:var(--text2)">${TEN_SAN[sp.san]||sp.san}</span>
           <b style="margin-left:6px">${escHtml(sp.tenSanPham)}</b>
-          <div style="font-size:11px;color:var(--text2);margin-top:2px">Product ID: ${escHtml(sp.productIdSan||'')} · ${daLK}/${skuCon.length} SKU đã liên kết</div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">Product ID: ${escHtml(sp.productIdSan||'')} · <span style="color:${mauTT};font-weight:600">${daLK}/${skuCon.length} SKU đã liên kết</span></div>
         </div>
         <button class="btn-xs" onclick="moLienKetSkuChoSanPham('${sp.id}')">Liên kết SKU</button>
       </div>
       <div id="lienket-sua-${sp.id}"></div>
     </div>`;
   }).join('');
+
+  const ptEl = document.getElementById('lienket-phantrang');
+  if (tongTrang > 1) {
+    ptEl.innerHTML = `
+      <div style="display:flex;gap:6px;align-items:center;justify-content:center;margin:12px 0">
+        <button class="btn-outline" style="width:auto;padding:6px 14px" ${sanPhamTMDTPage<=1?'disabled':''} onclick="doiTrangTMDT(${sanPhamTMDTPage-1})">←</button>
+        <span style="font-size:13px;color:var(--text2)">Trang ${sanPhamTMDTPage}/${tongTrang} · ${dsLoc.length} sản phẩm</span>
+        <button class="btn-outline" style="width:auto;padding:6px 14px" ${sanPhamTMDTPage>=tongTrang?'disabled':''} onclick="doiTrangTMDT(${sanPhamTMDTPage+1})">→</button>
+      </div>`;
+  } else {
+    ptEl.innerHTML = '';
+  }
 }
 
 window.doiFilterSanTMDT = function(san) {
@@ -1611,15 +1687,22 @@ function renderSkuConLienKet(prefix) {
   if (!el) return;
   const list = window[`_skuCon_${prefix}`] || [];
   if (!list.length) { el.innerHTML = '<p class="info-note" style="font-size:12px">Sản phẩm này chưa có dữ liệu SKU con (kiểm tra lại lúc đồng bộ).</p>'; return; }
-  el.innerHTML = list.map((s, i) => `
+  el.innerHTML = list.map((s, i) => {
+    const skuNB = allSKUs.find(sk => sk.sku === s.skuNoiBo);
+    const thongTinSan = (s.tonSan !== undefined) ? `<span style="font-size:10px;color:var(--text2)">tồn sàn: ${s.tonSan}</span>` : '';
+    return `
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding:6px;background:var(--bg);border-radius:6px">
-      <span style="font-size:12px;min-width:110px">${escHtml(s.skuIdSan)}</span>
+      <div style="min-width:110px">
+        <div style="font-size:12px">${escHtml(s.skuIdSan)}</div>
+        ${thongTinSan}
+      </div>
       <span style="font-size:12px">↔</span>
       <div class="field sku-wrap" style="flex:1">
-        <input type="text" id="${prefix}-sku-${i}" placeholder="Tìm SKU nội bộ..." value="${escHtml(s.tenNoiBo||s.skuNoiBo||'')}" autocomplete="off" style="font-size:12px">
+        <input type="text" id="${prefix}-sku-${i}" placeholder="Tìm SKU nội bộ..." value="${escHtml(skuNB ? skuNB.ten : (s.skuNoiBo || ''))}" autocomplete="off" style="font-size:12px">
         <div class="sku-drop" id="${prefix}-drop-${i}"></div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   list.forEach((s, i) => {
     makeSKUSearch(`${prefix}-sku-${i}`, `${prefix}-drop-${i}`, null);
     const inp = document.getElementById(`${prefix}-sku-${i}`);
@@ -1636,7 +1719,9 @@ window.luuLienKetSku = async function(prefix, id) {
   const skuConGoc = window[`_skuCon_${prefix}`] || [];
   const skuCon = skuConGoc.map((s, i) => {
     const inp = document.getElementById(`${prefix}-sku-${i}`);
-    return { skuIdSan: s.skuIdSan, skuNoiBo: inp?.dataset.sku || '' };
+    // Giữ nguyên toàn bộ trường gốc (skuIdGoc, tonSan, giaSan...) — chỉ thay skuNoiBo.
+    // Trước đây map lại thành {skuIdSan, skuNoiBo} nên mỗi lần lưu là xóa sạch dữ liệu worker vừa ghi.
+    return { ...s, skuNoiBo: inp?.dataset.sku || '' };
   });
   await updateDoc(doc(db, 'san_pham_dang', id), { skuCon });
   showToast('Đã lưu liên kết SKU');
@@ -1644,6 +1729,46 @@ window.luuLienKetSku = async function(prefix, id) {
   document.getElementById(`lienket-sua-${id}`).innerHTML = '';
   const spIdx = allSanPhamDang.findIndex(s => s.id === id);
   if (spIdx >= 0) allSanPhamDang[spIdx].skuCon = skuCon;
+  renderSanPhamTMDTList();
+};
+
+// ===== TỰ ĐỘNG KHỚP HÀNG LOẠT =====
+// Với 300+ sản phẩm, mở từng cái bấm Lưu là không khả thi. Hàm này quét toàn bộ
+// sản phẩm đang hiển thị, khớp những SKU con có mã trùng chính xác SKU nội bộ,
+// rồi ghi bằng writeBatch (mỗi lô 400 doc). CHỈ điền vào ô đang trống — không đè liên kết đã gán tay.
+window.tuDongKhopToanBo = async function() {
+  const ds = sanPhamTMDTFilterSan === 'all' ? allSanPhamDang : allSanPhamDang.filter(sp => sp.san === sanPhamTMDTFilterSan);
+  const banDoSKU = new Map(allSKUs.map(sk => [String(sk.sku).trim().toLowerCase(), sk.sku]));
+  const canGhi = [];
+  let soSkuKhop = 0;
+  for (const sp of ds) {
+    const skuCon = sp.skuCon || [];
+    let coThayDoi = false;
+    const moi = skuCon.map(s => {
+      if (s.skuNoiBo) return s; // đã liên kết — tuyệt đối không đè
+      const khop = banDoSKU.get(String(s.skuIdSan || '').trim().toLowerCase());
+      if (!khop) return s;
+      coThayDoi = true; soSkuKhop++;
+      return { ...s, skuNoiBo: khop };
+    });
+    if (coThayDoi) canGhi.push({ id: sp.id, skuCon: moi });
+  }
+
+  if (!canGhi.length) { alert('Không tìm thấy SKU nào khớp tự động được.\n\nCó thể mã SKU trên sàn đặt khác mã nội bộ — những trường hợp đó phải liên kết thủ công.'); return; }
+  if (!confirm(`Tìm thấy ${soSkuKhop} SKU con khớp mã chính xác, thuộc ${canGhi.length} sản phẩm.\n\nLiên kết đã gán tay trước đó sẽ được giữ nguyên, không bị đè.\n\nXác nhận lưu?`)) return;
+
+  showToast('Đang lưu liên kết...');
+  for (let i = 0; i < canGhi.length; i += 400) {
+    const lo = canGhi.slice(i, i + 400);
+    const batch = writeBatch(db);
+    lo.forEach(x => batch.update(doc(db, 'san_pham_dang', x.id), { skuCon: x.skuCon }));
+    await batch.commit();
+  }
+  canGhi.forEach(x => {
+    const idx = allSanPhamDang.findIndex(s => s.id === x.id);
+    if (idx >= 0) allSanPhamDang[idx].skuCon = x.skuCon;
+  });
+  showToast(`Đã liên kết ${soSkuKhop} SKU`);
   renderSanPhamTMDTList();
 };
 
@@ -6295,7 +6420,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v183</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v184</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6349,7 +6474,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v183</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v184</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6389,7 +6514,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v183</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v184</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
