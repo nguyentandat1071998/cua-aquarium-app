@@ -1487,7 +1487,7 @@ window.doiSoLuongTrangHangHoa = function(v) {
 
 // ===== LIÊN KẾT SÀN (Lazada/TikTok...) — sản phẩm đăng trên sàn + liên kết SKU chỉ để đồng bộ tồn kho =====
 let allSanPhamDang = [];
-const TEN_SAN = { lazada: 'Lazada', tiktok: 'TikTok Shop' };
+const TEN_SAN = { lazada: 'Lazada', tiktok: 'TikTok Shop', shopee: 'Shopee' };
 
 window.moLienKetSanTab = async function() {
   const el = document.getElementById('hanghoa-content');
@@ -1512,6 +1512,7 @@ function renderSanPhamTMDTList() {
       <button class="stab ${sanPhamTMDTFilterSan==='all'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='all'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('all')">Tất cả (${allSanPhamDang.length})</button>
       <button class="stab ${sanPhamTMDTFilterSan==='lazada'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('lazada')">Lazada (${allSanPhamDang.filter(s=>s.san==='lazada').length})</button>
       <button class="stab ${sanPhamTMDTFilterSan==='tiktok'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('tiktok')">TikTok (${allSanPhamDang.filter(s=>s.san==='tiktok').length})</button>
+      <button class="stab ${sanPhamTMDTFilterSan==='shopee'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='shopee'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('shopee')">Shopee (${allSanPhamDang.filter(s=>s.san==='shopee').length})</button>
     </div>
     <button class="btn-g" style="width:100%;margin-bottom:10px" onclick="dongBoSanPhamTuSan('${sanPhamTMDTFilterSan}')">🔄 Đồng bộ sản phẩm ${sanPhamTMDTFilterSan==='all'?'(mọi sàn)':'('+(TEN_SAN[sanPhamTMDTFilterSan])+')'}</button>
     <div id="lienket-list"></div>`;
@@ -5058,6 +5059,53 @@ window.luuBangLuong = async function(roleKey) {
 };
 
 // ===== ADMIN =====
+// ===== KẾT NỐI SÀN TMĐT — mỗi sàn có cơ chế ủy quyền (OAuth) hoàn toàn riêng, không dùng chung =====
+const CAU_HINH_KET_NOI_SAN = {
+  lazada: {
+    ten: 'Lazada',
+    layUrlKetNoi: () => `https://auth.lazada.com/oauth/authorize?response_type=code&force_auth=true&redirect_uri=${encodeURIComponent('https://cua-video-upload.nguyentandat1071998.workers.dev/lazada-oauth-callback')}&client_id=141013`
+  },
+  tiktok: {
+    ten: 'TikTok Shop',
+    // TikTok không cho tự dựng link ủy quyền — phải lấy đúng link "Copy authorization link" từ chính trang App trên Partner Center
+    huongDanRieng: 'Vào TikTok Shop Partner Center → App & Services → chọn app đã Publish → bấm "Copy authorization link" → mở link đó để ủy quyền.'
+  },
+  shopee: {
+    ten: 'Shopee',
+    chuaSan: true // chưa đăng ký app, chưa có gì để kết nối
+  }
+};
+
+async function renderKetNoiSanList() {
+  const el = document.getElementById('ketnoi-san-list');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const trangThai = {};
+  for (const san of Object.keys(CAU_HINH_KET_NOI_SAN)) {
+    try {
+      const snap = await getDoc(doc(db, 'settings', `${san}_oauth`));
+      trangThai[san] = snap.exists() ? snap.data() : null;
+    } catch(e) { trangThai[san] = null; }
+  }
+  el.innerHTML = Object.entries(CAU_HINH_KET_NOI_SAN).map(([san, cfg]) => {
+    const tt = trangThai[san];
+    const daKetNoi = !!tt?.accessToken;
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>${cfg.ten}</b>
+        <span style="font-size:11px;padding:2px 8px;border-radius:4px;background:${cfg.chuaSan?'var(--bg)':(daKetNoi?'var(--green-bg)':'var(--red-bg)')};color:${cfg.chuaSan?'var(--text2)':(daKetNoi?'var(--green)':'var(--red)')}">
+          ${cfg.chuaSan ? 'Chưa đăng ký app' : (daKetNoi ? 'Đã kết nối' : 'Chưa kết nối')}
+        </span>
+      </div>
+      ${daKetNoi ? `<div style="font-size:11px;color:var(--text2);margin-top:4px">Cập nhật lúc: ${tt.capNhatLuc ? new Date(tt.capNhatLuc.seconds ? tt.capNhatLuc.seconds*1000 : tt.capNhatLuc).toLocaleString('vi-VN') : '—'}</div>` : ''}
+      ${cfg.layUrlKetNoi ? `<button class="btn-outline" style="width:100%;margin-top:8px" onclick="window.open('${cfg.layUrlKetNoi()}','_blank')">${daKetNoi ? 'Kết nối lại' : 'Kết nối'}</button>` : ''}
+      ${cfg.huongDanRieng ? `<p class="info-note" style="margin-top:8px">${cfg.huongDanRieng}</p>` : ''}
+      ${cfg.chuaSan ? `<p class="info-note" style="margin-top:8px">Đang trong quá trình đăng ký app trên Shopee Open Platform.</p>` : ''}
+    </div>`;
+  }).join('');
+}
+
 async function loadAdminPanel() {
   const el = document.getElementById('admin-content');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -5066,6 +5114,11 @@ async function loadAdminPanel() {
       <h3>Check-in cửa hàng</h3>
       <p class="info-note">Xem & in mã QR để nhân viên quét check-in tại quầy.</p>
       <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
+    </div>
+    <div class="admin-block" style="margin-top:1rem">
+      <h3>Kết nối Sàn TMĐT</h3>
+      <p class="info-note">Quản lý kết nối/ủy quyền (OAuth) với từng sàn — riêng biệt cho từng sàn, không dùng chung cơ chế.</p>
+      <div id="ketnoi-san-list"></div>
     </div>
     <div class="admin-block" style="margin-top:1rem">
       <h3>Quản lý vai trò</h3>
@@ -5079,6 +5132,7 @@ async function loadAdminPanel() {
       <button class="btn-outline" onclick="loadDeletedList()">Xem phiếu đã xóa</button>
       <div id="deleted-list" style="margin-top:12px"></div>
     </div>`;
+  renderKetNoiSanList();
   renderVaiTroList();
 }
 
@@ -6215,7 +6269,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v180</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v181</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6269,7 +6323,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v180</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v181</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6309,7 +6363,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v180</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v181</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
