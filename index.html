@@ -1454,6 +1454,7 @@ async function renderHangHoaTab() {
       <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="flex:1">
       ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:auto;padding:0 14px;white-space:nowrap" onclick="moLienKetSanTab()">🔗 Sản phẩm TMĐT</button>` : ''}
     </div>
+    ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="moDayTonKhoTab()">📤 Đẩy tồn kho lên sàn</button>` : ''}
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
     ${qHH.hh_them ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-them-menu" class="user-menu-dropdown" style="display:none;position:static;margin-bottom:8px">
@@ -1771,6 +1772,207 @@ window.tuDongKhopToanBo = async function() {
   showToast(`Đã liên kết ${soSkuKhop} SKU`);
   renderSanPhamTMDTList();
 };
+
+// ==========================================================================
+// ===== ĐẨY TỒN KHO LÊN SÀN =====
+// Danh sách trắng: chỉ SKU được thêm vào đây (skus.dayTonKho === true) mới được đẩy.
+// Mọi SKU khác tuyệt đối không đụng tới tồn kho trên sàn.
+// ==========================================================================
+
+// Tồn thực tế của 1 SKU (combo thì tính động từ thành phần)
+function tonThucTe(s) {
+  return s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon || 0);
+}
+
+// Số thật sự đẩy lên sàn = tồn thực tế - đệm giữ lại, không âm.
+// Đệm dùng để chừa hàng phòng lệch kho / hàng hư, tránh bán quá.
+function tonSeDay(s) {
+  return Math.max(0, tonThucTe(s) - (s.demTonKho || 0));
+}
+
+window.moDayTonKhoTab = async function() {
+  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới vào được mục này', true); return; }
+  const el = document.getElementById('hanghoa-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  if (!allSKUs.length) await loadSKUs();
+  if (!allSanPhamDang.length) {
+    const snap = await getDocs(collection(db, 'san_pham_dang'));
+    allSanPhamDang = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  renderDayTonKhoTab();
+};
+
+// Đếm số đích trên sàn mà 1 SKU nội bộ đang liên kết tới (0 = đẩy sẽ không có tác dụng)
+function demDichTrenSan(maSku) {
+  let n = 0;
+  allSanPhamDang.forEach(sp => (sp.skuCon || []).forEach(s => { if (s.skuNoiBo === maSku) n++; }));
+  return n;
+}
+
+function renderDayTonKhoTab() {
+  const el = document.getElementById('hanghoa-content');
+  const ds = allSKUs.filter(s => s.dayTonKho);
+  const soThieuLienKet = ds.filter(s => demDichTrenSan(s.sku) === 0).length;
+
+  el.innerHTML = `
+    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderHangHoaTab()">← Quay lại Danh sách hàng hóa</button>
+    <div class="admin-block" style="margin-bottom:10px">
+      <p class="info-note"><b>Chỉ những SKU trong danh sách này mới được đẩy tồn kho lên sàn.</b> SKU không có trong đây sẽ không bao giờ bị đụng tới tồn kho bên sàn.<br>
+      Số đẩy lên = <b>tồn thực tế − đệm</b>. Đệm để chừa hàng phòng lệch kho, tránh bán quá.</p>
+    </div>
+
+    <div class="admin-block" style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Thêm SKU vào danh sách đẩy</label>
+      <div style="display:flex;gap:6px">
+        <div class="field sku-wrap" style="flex:1;margin:0">
+          <input type="text" id="dtk-them-sku" placeholder="Tìm mã hoặc tên SKU..." autocomplete="off">
+          <div class="sku-drop" id="dtk-them-drop"></div>
+        </div>
+        <button class="btn-g" style="width:auto;padding:0 18px" onclick="themSkuVaoDayTon()">Thêm</button>
+      </div>
+    </div>
+
+    ${ds.length ? `
+      ${soThieuLienKet ? `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:13px">
+        ⚠️ Có <b>${soThieuLienKet} SKU</b> chưa liên kết với sản phẩm nào trên sàn — đẩy sẽ không có tác dụng. Vào <b>🔗 Sản phẩm TMĐT</b> để liên kết trước.
+      </div>` : ''}
+      <button class="btn-g" style="width:100%;margin-bottom:10px" onclick="dayTonKhoNgay(null)">📤 Đẩy tất cả ${ds.length} SKU lên Lazada</button>
+    ` : ''}
+
+    <div id="dtk-list"></div>`;
+
+  makeSKUSearch('dtk-them-sku', 'dtk-them-drop', null);
+
+  const listEl = document.getElementById('dtk-list');
+  if (!ds.length) {
+    listEl.innerHTML = '<p class="info-note">Danh sách trống — chưa SKU nào được đẩy tồn kho lên sàn. Dùng ô tìm kiếm phía trên để thêm.</p>';
+    return;
+  }
+
+  listEl.innerHTML = ds.map(s => {
+    const soDich = demDichTrenSan(s.sku);
+    const log = s.dayTonKhoLog;
+    let trangThai = '<span style="color:var(--text2)">Chưa đẩy lần nào</span>';
+    if (log) {
+      const luc = log.luc?.toDate ? log.luc.toDate() : (log.luc ? new Date(log.luc) : null);
+      const gio = luc ? luc.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
+      trangThai = log.ok
+        ? `<span style="color:var(--green)">✓ Đã đẩy ${log.ton} lúc ${gio}</span>`
+        : `<span style="color:#DC2626">✕ Lỗi lúc ${gio}: ${escHtml(String(log.loi||'').slice(0,120))}</span>`;
+    }
+    return `
+    <div style="border:1px solid var(--border);border-left:3px solid ${soDich ? 'var(--green)' : '#D97706'};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;gap:10px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <b>${escHtml(s.ten || s.sku)}</b>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">
+            ${escHtml(s.sku)}${s.laCombo ? ' · <span style="color:#7C3AED">Combo</span>' : ''} ·
+            ${soDich ? `${soDich} đích trên sàn` : '<span style="color:#D97706">chưa liên kết sàn</span>'}
+          </div>
+          <div style="font-size:11px;margin-top:4px">${trangThai}</div>
+        </div>
+        <button class="btn-xs" onclick="dayTonKhoNgay('${escHtml(s.sku)}')">Đẩy ngay</button>
+        <button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="boSkuKhoiDayTon('${escHtml(s.sku)}')">Bỏ</button>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:12px">
+        <span>Tồn thực tế: <b>${tonThucTe(s)}</b></span>
+        <span style="display:flex;align-items:center;gap:4px">Đệm:
+          <input type="number" min="0" value="${s.demTonKho || 0}" onchange="doiDemTonKho('${escHtml(s.sku)}', this.value)"
+            style="width:60px;padding:4px 6px;font-size:12px;text-align:center">
+        </span>
+        <span style="margin-left:auto">Sẽ đẩy: <b style="color:var(--green);font-size:14px">${tonSeDay(s)}</b></span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.themSkuVaoDayTon = async function() {
+  const inp = document.getElementById('dtk-them-sku');
+  const ma = inp?.dataset.sku;
+  if (!ma) { showToast('Chọn 1 SKU từ danh sách gợi ý trước', true); return; }
+  const s = allSKUs.find(x => x.sku === ma);
+  if (!s) { showToast('Không tìm thấy SKU này', true); return; }
+  if (s.dayTonKho) { showToast('SKU này đã có trong danh sách rồi', true); return; }
+  await updateDoc(doc(db, 'skus', s.id), { dayTonKho: true });
+  s.dayTonKho = true;
+  inp.value = ''; delete inp.dataset.sku;
+  showToast(`Đã thêm ${ma} vào danh sách đẩy`);
+  renderDayTonKhoTab();
+};
+
+window.boSkuKhoiDayTon = async function(ma) {
+  const s = allSKUs.find(x => x.sku === ma);
+  if (!s) return;
+  if (!confirm(`Bỏ "${ma}" khỏi danh sách đẩy tồn kho?\n\nTồn kho hiện tại trên sàn sẽ giữ nguyên, không bị thay đổi — chỉ là từ nay không đẩy nữa.`)) return;
+  await updateDoc(doc(db, 'skus', s.id), { dayTonKho: false });
+  s.dayTonKho = false;
+  showToast(`Đã bỏ ${ma} khỏi danh sách`);
+  renderDayTonKhoTab();
+};
+
+window.doiDemTonKho = async function(ma, giaTri) {
+  const s = allSKUs.find(x => x.sku === ma);
+  if (!s) return;
+  const dem = Math.max(0, parseInt(giaTri, 10) || 0);
+  await updateDoc(doc(db, 'skus', s.id), { demTonKho: dem });
+  s.demTonKho = dem;
+  renderDayTonKhoTab();
+};
+
+// maSku = null -> đẩy toàn bộ danh sách; có mã -> chỉ đẩy đúng SKU đó
+window.dayTonKhoNgay = async function(maSku) {
+  if (!currentUser) return;
+  const ds = maSku ? allSKUs.filter(s => s.sku === maSku && s.dayTonKho) : allSKUs.filter(s => s.dayTonKho);
+  if (!ds.length) { showToast('Không có SKU nào để đẩy', true); return; }
+
+  if (!maSku && !confirm(`Đẩy tồn kho ${ds.length} SKU lên Lazada?\n\nTồn kho trên sàn của các SKU này sẽ bị ghi đè bằng số trong app.`)) return;
+
+  showToast('Đang đẩy tồn kho lên Lazada...');
+  const idToken = await currentUser.getIdToken();
+  const items = ds.map(s => ({ sku: s.sku, ton: tonSeDay(s) }));
+  try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'lazada-push-stock', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items })
+    });
+    const data = await res.json();
+    console.log('[đẩy tồn kho lazada]', data);
+    if (!data.success) { alert('Đẩy tồn kho lỗi:\n' + (data.error || 'không xác định')); return; }
+
+    let tb = `Đẩy xong: ${data.thanhCong} thành công`;
+    if (data.thatBai) tb += `, ${data.thatBai} lỗi`;
+    if (data.khongCoDich?.length) tb += `\n\nKhông đẩy được (chưa liên kết sàn):\n- ${data.khongCoDich.join('\n- ')}`;
+    const dsLoi = (data.chiTiet || []).filter(c => !c.ok);
+    if (dsLoi.length) tb += `\n\nChi tiết lỗi:\n- ${dsLoi.slice(0,5).map(c => `${c.sku}: ${c.loi}`).join('\n- ')}`;
+    if (data.thatBai || data.khongCoDich?.length) alert(tb); else showToast(tb);
+
+    await loadSKUs();
+    renderDayTonKhoTab();
+  } catch(e) {
+    alert('Đẩy tồn kho lỗi: ' + e.message);
+  }
+};
+
+// Đẩy ngầm 1 SKU sau khi sửa tồn kho trong app — đúng kiến trúc "App → Sàn: tự động, tức thời, chỉ SKU vừa sửa".
+// Không chặn luồng, không hiện lỗi ồn ào; kết quả xem ở tab Đẩy tồn kho.
+async function tuDongDayTonKhoSauKhiSua(maSku) {
+  try {
+    const s = allSKUs.find(x => x.sku === maSku);
+    if (!s || !s.dayTonKho) return;
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'lazada-push-stock', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ sku: s.sku, ton: tonSeDay(s) }] })
+    });
+    const data = await res.json();
+    console.log('[tự động đẩy tồn]', maSku, data);
+    if (data.success && data.thanhCong) showToast(`Đã đẩy tồn ${maSku} lên sàn`);
+  } catch(e) {
+    console.warn('Tự động đẩy tồn kho thất bại:', e);
+  }
+}
 
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
@@ -2237,6 +2439,8 @@ window.luuSuaHangHoa = async function(id) {
   const el = document.getElementById(`hh-sua-${id}`);
   if (el) el.innerHTML = '';
   await loadSKUs();
+  // Tồn kho vừa đổi -> đẩy ngay lên sàn, nhưng CHỈ khi SKU nằm trong danh sách "Đẩy tồn kho"
+  tuDongDayTonKhoSauKhiSua(sku);
   renderHangHoaNhomFilters();
   renderHangHoaList();
 };
@@ -6420,7 +6624,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v184</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v185</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6474,7 +6678,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v184</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v185</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6514,7 +6718,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v184</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v185</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
