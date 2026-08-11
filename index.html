@@ -1450,7 +1450,10 @@ async function renderHangHoaTab() {
   }
   const qHH = currentUserData.role === 'admin' ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
   el.innerHTML = `
-    <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="margin-bottom:8px">
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="flex:1">
+      ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:auto;padding:0 14px;white-space:nowrap" onclick="moLienKetSanTab()">🔗 Liên kết Sàn</button>` : ''}
+    </div>
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
     ${qHH.hh_them ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-them-menu" class="user-menu-dropdown" style="display:none;position:static;margin-bottom:8px">
@@ -1480,6 +1483,186 @@ window.doiSoLuongTrangHangHoa = function(v) {
   hangHoaPageSize = parseInt(v) || 30;
   hangHoaPage = 1;
   renderHangHoaList();
+};
+
+// ===== LIÊN KẾT SÀN (Lazada/TikTok...) — sản phẩm đăng trên sàn + liên kết SKU chỉ để đồng bộ tồn kho =====
+let allSanPhamDang = [];
+const TEN_SAN = { lazada: 'Lazada', tiktok: 'TikTok Shop' };
+
+window.moLienKetSanTab = async function() {
+  const el = document.getElementById('hanghoa-content');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const snap = await getDocs(collection(db, 'san_pham_dang'));
+  allSanPhamDang = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  renderLienKetSanList();
+};
+
+function renderLienKetSanList() {
+  const el = document.getElementById('hanghoa-content');
+  el.innerHTML = `
+    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderHangHoaTab()">← Quay lại Danh sách hàng hóa</button>
+    <div class="admin-block" style="margin-bottom:10px">
+      <p class="info-note">Liên kết SKU nội bộ với sản phẩm đã đăng trên sàn — <b>chỉ dùng để đồng bộ tồn kho</b>, không ảnh hưởng giá bán hay thông tin sản phẩm trên sàn.</p>
+    </div>
+    <button class="btn-g" style="width:100%;margin-bottom:10px" onclick="moFormThemSanPhamDang()">+ Thêm sản phẩm đăng trên sàn</button>
+    <div id="lienket-them-form"></div>
+    <div id="lienket-list"></div>`;
+  const listEl = document.getElementById('lienket-list');
+  if (!allSanPhamDang.length) {
+    listEl.innerHTML = '<p class="info-note">Chưa có sản phẩm nào được thêm.</p>';
+    return;
+  }
+  listEl.innerHTML = allSanPhamDang.map(sp => {
+    const skuCon = sp.skuCon || [];
+    const daLK = skuCon.filter(s => s.skuNoiBo).length;
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <span style="font-size:11px;background:var(--bg);padding:2px 8px;border-radius:4px;color:var(--text2)">${TEN_SAN[sp.san]||sp.san}</span>
+          <b style="margin-left:6px">${escHtml(sp.tenSanPham)}</b>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">Product ID: ${escHtml(sp.productIdSan||'')} · ${daLK}/${skuCon.length} SKU đã liên kết</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn-xs" onclick="moFormSuaSanPhamDang('${sp.id}')">Sửa</button>
+          <button class="btn-xs danger" onclick="xoaSanPhamDang('${sp.id}')">Xóa</button>
+        </div>
+      </div>
+      <div id="lienket-sua-${sp.id}"></div>
+      <div style="margin-top:8px;display:flex;flex-direction:column;gap:4px">
+        ${skuCon.map((s,i) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:4px 6px;background:var(--bg);border-radius:5px">
+            <span>Mã trên sàn: <b>${escHtml(s.skuIdSan)}</b></span>
+            <span style="color:${s.skuNoiBo?'var(--green)':'var(--red)'}">${s.skuNoiBo ? `↔ ${escHtml(s.skuNoiBo)}` : 'Chưa liên kết'}</span>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderFormSanPhamDang(prefix, sp) {
+  const skuCon = sp?.skuCon ? JSON.parse(JSON.stringify(sp.skuCon)) : [];
+  window[`_skuCon_${prefix}`] = skuCon;
+  return `
+    <div class="admin-block" style="margin-top:8px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Sàn</label>
+      <select id="${prefix}-san" style="margin-bottom:10px">
+        <option value="lazada" ${sp?.san==='lazada'?'selected':''}>Lazada</option>
+        <option value="tiktok" ${sp?.san==='tiktok'?'selected':''}>TikTok Shop</option>
+      </select>
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Tên sản phẩm (đúng như trên sàn)</label>
+      <input type="text" id="${prefix}-ten" value="${escHtml(sp?.tenSanPham||'')}" placeholder="VD: Bộ sản phẩm KOIKA" style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Product ID trên sàn</label>
+      <input type="text" id="${prefix}-productid" value="${escHtml(sp?.productIdSan||'')}" placeholder="VD: 13433476658" style="margin-bottom:10px">
+
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">SKU con trong sản phẩm này</label>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input type="text" id="${prefix}-skusan-moi" placeholder="Mã SKU/biến thể trên sàn" style="flex:1">
+        <button class="btn-outline" style="width:auto;padding:0 12px" onclick="themSkuConLienKet('${prefix}')">+ Thêm</button>
+      </div>
+      <div id="${prefix}-skucon-list"></div>
+
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn-g" style="flex:1" onclick="luuSanPhamDang('${prefix}','${sp?.id||''}')">Lưu</button>
+        <button class="btn-outline" onclick="dongFormSanPhamDang('${prefix}','${sp?.id||''}')">Hủy</button>
+      </div>
+    </div>`;
+}
+
+function renderSkuConLienKet(prefix) {
+  const el = document.getElementById(`${prefix}-skucon-list`);
+  if (!el) return;
+  const list = window[`_skuCon_${prefix}`] || [];
+  el.innerHTML = list.map((s, i) => `
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;padding:6px;background:var(--bg);border-radius:6px">
+      <span style="font-size:12px;min-width:110px">${escHtml(s.skuIdSan)}</span>
+      <span style="font-size:12px">↔</span>
+      <div class="field sku-wrap" style="flex:1">
+        <input type="text" id="${prefix}-sku-${i}" placeholder="Tìm SKU nội bộ..." value="${escHtml(s.tenNoiBo||s.skuNoiBo||'')}" autocomplete="off" style="font-size:12px">
+        <div class="sku-drop" id="${prefix}-drop-${i}"></div>
+      </div>
+      <button class="btn-xs danger" onclick="xoaSkuConLienKet('${prefix}',${i})">Xóa</button>
+    </div>`).join('') || '<p class="info-note" style="font-size:12px">Chưa có SKU con nào — thêm mã SKU trên sàn ở ô trên.</p>';
+  list.forEach((s, i) => {
+    makeSKUSearch(`${prefix}-sku-${i}`, `${prefix}-drop-${i}`, null);
+    const inp = document.getElementById(`${prefix}-sku-${i}`);
+    if (inp && s.skuNoiBo) inp.dataset.sku = s.skuNoiBo;
+  });
+}
+
+window.themSkuConLienKet = function(prefix) {
+  const input = document.getElementById(`${prefix}-skusan-moi`);
+  const maSan = input.value.trim();
+  if (!maSan) { showToast('Nhập mã SKU trên sàn', true); return; }
+  const list = window[`_skuCon_${prefix}`] || (window[`_skuCon_${prefix}`] = []);
+  if (list.some(s => s.skuIdSan === maSan)) { showToast('Mã này đã có trong danh sách', true); return; }
+  // Tự động khớp nếu mã trùng chính xác với 1 SKU nội bộ đang có
+  const khopTuDong = allSKUs.find(sk => sk.sku.toLowerCase() === maSan.toLowerCase());
+  list.push({ skuIdSan: maSan, skuNoiBo: khopTuDong?.sku || '', tenNoiBo: khopTuDong?.ten || '' });
+  input.value = '';
+  renderSkuConLienKet(prefix);
+  if (khopTuDong) showToast(`Đã tự động khớp với SKU nội bộ "${khopTuDong.sku}"`);
+};
+
+window.xoaSkuConLienKet = function(prefix, idx) {
+  const list = window[`_skuCon_${prefix}`] || [];
+  list.splice(idx, 1);
+  renderSkuConLienKet(prefix);
+};
+
+window.moFormThemSanPhamDang = function() {
+  const el = document.getElementById('lienket-them-form');
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = renderFormSanPhamDang('spd-them', null);
+  renderSkuConLienKet('spd-them');
+};
+
+window.moFormSuaSanPhamDang = function(id) {
+  document.querySelectorAll('[id^="lienket-sua-"]').forEach(e => { if (e.id !== `lienket-sua-${id}`) e.innerHTML = ''; });
+  const el = document.getElementById(`lienket-sua-${id}`);
+  if (!el) return;
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  const sp = allSanPhamDang.find(s => s.id === id);
+  if (!sp) return;
+  el.innerHTML = renderFormSanPhamDang(`spd-sua-${id}`, sp);
+  renderSkuConLienKet(`spd-sua-${id}`);
+};
+
+window.dongFormSanPhamDang = function(prefix, id) {
+  delete window[`_skuCon_${prefix}`];
+  const elId = id ? `lienket-sua-${id}` : 'lienket-them-form';
+  const el = document.getElementById(elId);
+  if (el) el.innerHTML = '';
+};
+
+window.luuSanPhamDang = async function(prefix, id) {
+  const san = document.getElementById(`${prefix}-san`).value;
+  const tenSanPham = document.getElementById(`${prefix}-ten`).value.trim();
+  const productIdSan = document.getElementById(`${prefix}-productid`).value.trim();
+  if (!tenSanPham || !productIdSan) { showToast('Nhập đủ tên sản phẩm và Product ID', true); return; }
+  const skuConGoc = window[`_skuCon_${prefix}`] || [];
+  const skuCon = skuConGoc.map((s, i) => {
+    const inp = document.getElementById(`${prefix}-sku-${i}`);
+    return { skuIdSan: s.skuIdSan, skuNoiBo: inp?.dataset.sku || '' };
+  });
+
+  if (id) {
+    await updateDoc(doc(db, 'san_pham_dang', id), { san, tenSanPham, productIdSan, skuCon });
+    showToast('Đã cập nhật');
+  } else {
+    await addDoc(collection(db, 'san_pham_dang'), { san, tenSanPham, productIdSan, skuCon, createdAt: serverTimestamp() });
+    showToast('Đã thêm sản phẩm đăng trên sàn');
+  }
+  delete window[`_skuCon_${prefix}`];
+  await moLienKetSanTab();
+};
+
+window.xoaSanPhamDang = async function(id) {
+  const sp = allSanPhamDang.find(s => s.id === id);
+  if (!confirm(`Xóa liên kết "${sp?.tenSanPham}"? (không xóa sản phẩm thật trên sàn, chỉ xóa liên kết trong app)`)) return;
+  await deleteDoc(doc(db, 'san_pham_dang', id));
+  showToast('Đã xóa');
+  await moLienKetSanTab();
 };
 
 function renderHangHoaNhomFilters() {
@@ -6065,7 +6248,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v178</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v179</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6119,7 +6302,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v178</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v179</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6159,7 +6342,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v178</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v179</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
