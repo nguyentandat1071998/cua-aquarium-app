@@ -1292,7 +1292,7 @@ function roleLabel(r) {
 
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
-  baocao: 'baocao', hanghoa: 'hanghoa',
+  baocao: 'baocao', hanghoa: 'hanghoa', tmdt: 'tmdt',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
   // thietlapluong: kiểm tra riêng bên dưới (chỉ Admin, không thuộc quyền module "nhanvien" thông thường)
@@ -1364,6 +1364,18 @@ window.switchModule = function(mod) {
     document.getElementById('panel-hanghoa-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderHangHoaTab();
+    return;
+  }
+  if (mod === 'tmdt') {
+    document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+    const tmMobile = document.getElementById('mod-tmdt');
+    const tmSidebar = document.getElementById('sidebar-tmdt');
+    if (tmMobile) tmMobile.classList.add('active');
+    if (tmSidebar) tmSidebar.classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-tmdt-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    moManHinhTMDT(manHinhTMDTHienTai);
     return;
   }
   if (mod === 'baocao') {
@@ -1452,9 +1464,7 @@ async function renderHangHoaTab() {
   el.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="flex:1">
-      ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:auto;padding:0 14px;white-space:nowrap" onclick="moLienKetSanTab()">🔗 Sản phẩm TMĐT</button>` : ''}
     </div>
-    ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="moDayTonKhoTab()">📤 Đẩy tồn kho lên sàn</button>` : ''}
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
     ${qHH.hh_them ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-them-menu" class="user-menu-dropdown" style="display:none;position:static;margin-bottom:8px">
@@ -1489,15 +1499,6 @@ window.doiSoLuongTrangHangHoa = function(v) {
 // ===== LIÊN KẾT SÀN (Lazada/TikTok...) — sản phẩm đăng trên sàn + liên kết SKU chỉ để đồng bộ tồn kho =====
 let allSanPhamDang = [];
 const TEN_SAN = { lazada: 'Lazada', tiktok: 'TikTok Shop', shopee: 'Shopee' };
-
-window.moLienKetSanTab = async function() {
-  const el = document.getElementById('hanghoa-content');
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const snap = await getDocs(collection(db, 'san_pham_dang'));
-  allSanPhamDang = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  sanPhamTMDTFilterSan = 'all';
-  renderSanPhamTMDTList();
-};
 
 let sanPhamTMDTFilterSan = 'all';
 let sanPhamTMDTFilterLK = 'all';   // all | chua | mot_phan | xong
@@ -1539,7 +1540,8 @@ function locSanPhamTMDT() {
 }
 
 function renderSanPhamTMDTList() {
-  const el = document.getElementById('hanghoa-content');
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
   const dsLoc = locSanPhamTMDT();
   const dsTheoSan = sanPhamTMDTFilterSan === 'all' ? allSanPhamDang : allSanPhamDang.filter(sp => sp.san === sanPhamTMDTFilterSan);
   const demChua = dsTheoSan.filter(sp => trangThaiLienKet(sp) === 'chua').length;
@@ -1551,10 +1553,6 @@ function renderSanPhamTMDTList() {
   const nutLoc = (ma, nhan, so, mau) => `<button class="stab" style="flex:1;border:1.5px solid ${sanPhamTMDTFilterLK===ma?mau:'var(--border)'};border-radius:6px;padding:7px 4px;font-size:12px;background:${sanPhamTMDTFilterLK===ma?mau:'#fff'};color:${sanPhamTMDTFilterLK===ma?'#fff':'var(--text)'}" onclick="doiFilterLKTMDT('${ma}')">${nhan} (${so})</button>`;
 
   el.innerHTML = `
-    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderHangHoaTab()">← Quay lại Danh sách hàng hóa</button>
-    <div class="admin-block" style="margin-bottom:10px">
-      <p class="info-note">Sản phẩm được <b>đồng bộ tự động từ sàn về</b> — không tạo tay. Sau khi đồng bộ, liên kết từng SKU con với đúng SKU nội bộ để đồng bộ tồn kho.</p>
-    </div>
     <div style="display:flex;gap:6px;margin-bottom:8px">
       <button class="stab ${sanPhamTMDTFilterSan==='all'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='all'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('all')">Tất cả (${allSanPhamDang.length})</button>
       <button class="stab ${sanPhamTMDTFilterSan==='lazada'?'active':''}" style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${sanPhamTMDTFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterSanTMDT('lazada')">Lazada (${allSanPhamDang.filter(s=>s.san==='lazada').length})</button>
@@ -1790,18 +1788,6 @@ function tonSeDay(s) {
   return Math.max(0, tonThucTe(s) - (s.demTonKho || 0));
 }
 
-window.moDayTonKhoTab = async function() {
-  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới vào được mục này', true); return; }
-  const el = document.getElementById('hanghoa-content');
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  if (!allSKUs.length) await loadSKUs();
-  if (!allSanPhamDang.length) {
-    const snap = await getDocs(collection(db, 'san_pham_dang'));
-    allSanPhamDang = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  }
-  renderDayTonKhoTab();
-};
-
 // Đếm số đích trên sàn mà 1 SKU nội bộ đang liên kết tới (0 = đẩy sẽ không có tác dụng)
 function demDichTrenSan(maSku) {
   let n = 0;
@@ -1810,12 +1796,12 @@ function demDichTrenSan(maSku) {
 }
 
 function renderDayTonKhoTab() {
-  const el = document.getElementById('hanghoa-content');
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
   const ds = allSKUs.filter(s => s.dayTonKho);
   const soThieuLienKet = ds.filter(s => demDichTrenSan(s.sku) === 0).length;
 
   el.innerHTML = `
-    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderHangHoaTab()">← Quay lại Danh sách hàng hóa</button>
     <div class="admin-block" style="margin-bottom:10px">
       <p class="info-note"><b>Chỉ những SKU trong danh sách này mới được đẩy tồn kho lên sàn.</b> SKU không có trong đây sẽ không bao giờ bị đụng tới tồn kho bên sàn.<br>
       Số đẩy lên = <b>tồn thực tế − đệm</b>. Đệm để chừa hàng phòng lệch kho, tránh bán quá.</p>
@@ -1972,6 +1958,133 @@ async function tuDongDayTonKhoSauKhiSua(maSku) {
   } catch(e) {
     console.warn('Tự động đẩy tồn kho thất bại:', e);
   }
+}
+
+// ==========================================================================
+// ===== BỘ KHUNG ĐIỀU HƯỚNG MODULE "SÀN TMĐT" =====
+//
+// Nguyên tắc: mỗi màn hình là 1 hàm độc lập, ghi vào #tmdt-than.
+// THÊM MÀN HÌNH MỚI = viết hàm render + thêm 1 dòng vào MAN_HINH_TMDT bên dưới
+//                     + thêm 1 dòng quyền con trong DANH_SACH_MODULE.
+// ĐỔI THỨ TỰ / GOM NHÓM / ĐỔI TÊN = chỉ sửa mảng này, KHÔNG đụng vào HTML.
+// Nhờ vậy sắp xếp lại giao diện về sau không phải bê template lớn đi chỗ khác
+// (việc dễ gây lỗi lồng thẻ mà kiểm tra syntax JS không bắt được).
+//
+// Mỗi mục gồm:
+//   key    — mã định danh, dùng để nhớ màn hình đang mở
+//   ten    — tên hiển thị trên menu
+//   icon   — biểu tượng
+//   moTa   — mô tả ngắn hiện ở màn hình menu chính
+//   quyen  — key quyền con; Admin luôn có đủ
+//   render — hàm vẽ nội dung; null = chưa làm, sẽ hiện nhãn "Sắp có"
+//   nhom   — tên nhóm để gom trên menu chính
+// ==========================================================================
+
+let manHinhTMDTHienTai = null; // null = đang ở màn hình menu chính
+
+const MAN_HINH_TMDT = [
+  { key: 'donhang',   ten: 'Đơn hàng',        icon: '📦', nhom: 'Vận hành',
+    moTa: 'Đồng bộ đơn từ sàn, xử lý và theo dõi trạng thái',
+    quyen: 'tmdt_donhang',   render: null },
+  { key: 'donggoi',   ten: 'Đóng gói',        icon: '🔍', nhom: 'Vận hành',
+    moTa: 'Quét mã vạch, ghi nhận thời gian đóng gói từng đơn',
+    quyen: 'tmdt_donhang',   render: null },
+  { key: 'inhdon',    ten: 'In đơn',          icon: '🖨️', nhom: 'Vận hành',
+    moTa: 'In phiếu giao hàng, gom in hàng loạt',
+    quyen: 'tmdt_donhang',   render: null },
+  { key: 'donhuy',    ten: 'Đơn hủy',         icon: '⛔', nhom: 'Vận hành',
+    moTa: 'Xác nhận và xử lý đơn bị hủy',
+    quyen: 'tmdt_donhang',   render: null },
+  { key: 'loinhuan',  ten: 'Lợi nhuận đơn',   icon: '💰', nhom: 'Phân tích',
+    moTa: 'Lợi nhuận tạm tính từng đơn theo giá vốn nội bộ',
+    quyen: 'tmdt_donhang',   render: null },
+  { key: 'sanpham',   ten: 'Sản phẩm trên sàn', icon: '🔗', nhom: 'Hàng hóa',
+    moTa: 'Đồng bộ sản phẩm từ sàn về, liên kết SKU nội bộ',
+    quyen: 'tmdt_sanpham',   render: () => renderSanPhamTMDTList() },
+  { key: 'daytonkho', ten: 'Đẩy tồn kho',     icon: '📤', nhom: 'Hàng hóa',
+    moTa: 'Danh sách SKU được phép đẩy tồn kho lên sàn',
+    quyen: 'tmdt_daytonkho', render: () => renderDayTonKhoTab() },
+  { key: 'ketnoi',    ten: 'Kết nối sàn',     icon: '🔌', nhom: 'Thiết lập',
+    moTa: 'Ủy quyền OAuth với Lazada, TikTok Shop, Shopee',
+    quyen: 'tmdt_ketnoi',    render: () => renderKetNoiSanTrongTMDT() },
+];
+
+function coQuyenTMDT(quyen) {
+  if (currentUserData.role === 'admin') return true;
+  return !!(quyenModuleHienTai && quyenModuleHienTai[quyen]);
+}
+
+// Điểm vào duy nhất của module. key = null -> menu chính.
+window.moManHinhTMDT = async function(key) {
+  const el = document.getElementById('tmdt-content');
+  if (!el) return;
+
+  if (!key) { manHinhTMDTHienTai = null; renderMenuTMDT(); return; }
+
+  const mh = MAN_HINH_TMDT.find(m => m.key === key);
+  if (!mh) { manHinhTMDTHienTai = null; renderMenuTMDT(); return; }
+
+  // Chặn thật ở tầng hàm — không chỉ ẩn nút trên menu, chặn cả khi gọi qua Console
+  if (!coQuyenTMDT(mh.quyen)) { showToast('Bạn không có quyền vào mục này', true); renderMenuTMDT(); return; }
+  if (!mh.render) { showToast(`"${mh.ten}" chưa làm xong`, true); renderMenuTMDT(); return; }
+
+  manHinhTMDTHienTai = key;
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <button class="btn-outline" style="width:auto;padding:7px 14px" onclick="moManHinhTMDT(null)">←</button>
+      <div style="flex:1;min-width:0">
+        <b style="font-size:15px">${mh.icon} ${escHtml(mh.ten)}</b>
+        <div style="font-size:11px;color:var(--text2)">${escHtml(mh.moTa)}</div>
+      </div>
+    </div>
+    <div id="tmdt-than"></div>`;
+
+  // Dữ liệu dùng chung cho nhiều màn hình — nạp 1 lần tại đây thay vì rải rác trong từng hàm
+  const than = document.getElementById('tmdt-than');
+  than.innerHTML = '<div class="loading">Đang tải...</div>';
+  if (!allSKUs.length) await loadSKUs();
+  if (!allSanPhamDang.length) {
+    const snap = await getDocs(collection(db, 'san_pham_dang'));
+    allSanPhamDang = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  await mh.render();
+};
+
+function renderMenuTMDT() {
+  const el = document.getElementById('tmdt-content');
+  if (!el) return;
+  const duocVao = MAN_HINH_TMDT.filter(m => coQuyenTMDT(m.quyen));
+  const nhomThuTu = [...new Set(duocVao.map(m => m.nhom))];
+
+  el.innerHTML = `
+    <div class="admin-block" style="margin-bottom:12px">
+      <p class="info-note">Quản lý bán hàng trên Lazada, TikTok Shop và Shopee. Mỗi sàn có API và cơ chế riêng — các màn hình bên dưới xử lý riêng cho từng sàn, không dùng chung một khuôn.</p>
+    </div>
+    ${nhomThuTu.map(nhom => `
+      <div style="margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:0.5px;margin-bottom:8px">${escHtml(nhom.toUpperCase())}</div>
+        ${duocVao.filter(m => m.nhom === nhom).map(m => `
+          <button onclick="moManHinhTMDT('${m.key}')" ${m.render ? '' : 'disabled'}
+            style="width:100%;display:flex;align-items:center;gap:12px;text-align:left;background:#fff;border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px;cursor:${m.render?'pointer':'not-allowed'};opacity:${m.render?'1':'0.5'}">
+            <span style="font-size:22px;flex-shrink:0">${m.icon}</span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font-weight:600;font-size:14px;color:var(--text)">${escHtml(m.ten)}${m.render ? '' : ' <span style="font-size:10px;font-weight:500;background:var(--bg);color:var(--text2);padding:2px 6px;border-radius:4px;margin-left:4px">Sắp có</span>'}</span>
+              <span style="display:block;font-size:11px;color:var(--text2);margin-top:2px">${escHtml(m.moTa)}</span>
+            </span>
+            <span style="color:var(--text2);flex-shrink:0">›</span>
+          </button>`).join('')}
+      </div>`).join('')}`;
+}
+
+// Bọc lại màn hình kết nối sàn (vốn nằm trong Admin panel) để dùng chung trong module TMĐT
+async function renderKetNoiSanTrongTMDT() {
+  const el = document.getElementById('tmdt-than');
+  el.innerHTML = `
+    <div class="admin-block">
+      <p class="info-note">Quản lý ủy quyền (OAuth) với từng sàn — riêng biệt cho từng sàn, không dùng chung cơ chế.</p>
+      <div id="ketnoi-san-list"></div>
+    </div>`;
+  await renderKetNoiSanList();
 }
 
 function renderHangHoaNhomFilters() {
@@ -2554,6 +2667,14 @@ const DANH_SACH_MODULE = [
     { key: 'hh_sua', ten: 'Sửa' },
     { key: 'hh_xoa', ten: 'Xóa' },
     { key: 'hh_xuatfile', ten: 'Xuất file' }
+  ]},
+  // Sàn TMĐT — mỗi màn hình con là 1 quyền riêng.
+  // Thêm màn hình mới: thêm 1 dòng ở đây + 1 dòng trong MAN_HINH_TMDT, không sửa gì khác.
+  { key: 'tmdt', ten: 'Sàn TMĐT', con: [
+    { key: 'tmdt_donhang', ten: 'Đơn hàng' },
+    { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
+    { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' },
+    { key: 'tmdt_ketnoi', ten: 'Kết nối sàn (OAuth)' }
   ]}
 ];
 
@@ -2579,7 +2700,8 @@ function layQuyenFallbackChuaMigrate() {
     lichca:true, lichca_xepca:laQuanLy, baocao:false,
     nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
     nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
-    hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false
+    hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
+    tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_ketnoi:false
   };
 }
 
@@ -2590,7 +2712,8 @@ const ANH_XA_HIEN_MODULE = {
   lichca: [['mod-lichca','flex'], ['sidebar-lichca','flex']],
   baocao: [['mod-baocao','flex'], ['sidebar-baocao','flex']],
   nhanvien: [['mod-nhanvien','flex'], ['sidebar-nhanvien-wrap','block']],
-  hanghoa: [['mod-hanghoa','flex'], ['sidebar-hanghoa','flex']]
+  hanghoa: [['mod-hanghoa','flex'], ['sidebar-hanghoa','flex']],
+  tmdt: [['mod-tmdt','flex'], ['sidebar-tmdt','flex']]
 };
 
 // Áp dụng đủ cả 2 chiều: module được tick -> hiện đúng kiểu display gốc; module không tick -> ẩn hẳn
@@ -5459,11 +5582,6 @@ async function loadAdminPanel() {
       <button class="btn-g" onclick="showQRAdmin()">Xem & In mã QR Check-in</button>
     </div>
     <div class="admin-block" style="margin-top:1rem">
-      <h3>Kết nối Sàn TMĐT</h3>
-      <p class="info-note">Quản lý kết nối/ủy quyền (OAuth) với từng sàn — riêng biệt cho từng sàn, không dùng chung cơ chế.</p>
-      <div id="ketnoi-san-list"></div>
-    </div>
-    <div class="admin-block" style="margin-top:1rem">
       <h3>Quản lý vai trò</h3>
       <p class="info-note">Tạo vai trò tùy chỉnh (VD: "Nhân viên kho"), chọn module hiển thị cho từng vai trò — gán cho nhân viên ở tab Nhân viên.</p>
       <button class="btn-g" onclick="moFormThemVaiTro()">+ Thêm vai trò mới</button>
@@ -5475,7 +5593,6 @@ async function loadAdminPanel() {
       <button class="btn-outline" onclick="loadDeletedList()">Xem phiếu đã xóa</button>
       <div id="deleted-list" style="margin-top:12px"></div>
     </div>`;
-  renderKetNoiSanList();
   renderVaiTroList();
 }
 
@@ -6624,7 +6741,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v185</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v186</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6678,7 +6795,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v185</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v186</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6696,6 +6813,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
     </div>
     <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
+    <button class="mod-btn" id="sidebar-tmdt" onclick="switchModule('tmdt');updateSidebar('tmdt')" style="display:none;color:#0D9488">Sàn TMĐT</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
     <div class="sidebar-user" style="position:relative">
       <div class="user-menu-trigger" onclick="toggleUserMenu('sidebar')">
@@ -6718,7 +6836,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v185</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v186</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -6744,6 +6862,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <button class="mod-btn" id="mod-baocao" onclick="switchModule('baocao')" style="display:none;background:var(--bg);color:#4F46E5">Báo cáo</button>
         <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:#FEF3C7;color:#B45309">Nhân viên ▾</button>
         <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
+        <button class="mod-btn" id="mod-tmdt" onclick="switchModule('tmdt')" style="display:none;background:var(--bg);color:#0D9488">Sàn TMĐT</button>
         <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
       </div>
       <button class="mod-page-btn" id="mod-page-next" onclick="mobTabPage(1)">›</button>
@@ -7076,6 +7195,11 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
       <div class="panel" id="panel-hanghoa-main">
         <div id="hanghoa-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- SÀN TMĐT — module riêng, các màn hình con đăng ký trong MAN_HINH_TMDT -->
+      <div class="panel" id="panel-tmdt-main">
+        <div id="tmdt-content"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- BÁO CÁO CHẤM CÔNG + CHECKLIST (Admin/Quản lý) -->
