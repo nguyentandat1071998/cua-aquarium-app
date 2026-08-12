@@ -2298,28 +2298,42 @@ window.keoDonVe = async function() {
   if (!currentUser) return;
   const soNgay = Number(document.getElementById('don-songay')?.value) || 3;
   const san = donFilterSan;
-  showToast(`Đang kéo đơn ${san === 'all' ? 'mọi sàn' : TEN_SAN[san]} (${soNgay} ngày)...`);
   const idToken = await currentUser.getIdToken();
-  try {
-    const res = await fetch(WORKER_URL, {
-      method: 'POST',
-      headers: { 'x-action': 'keo-don-hang-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ soNgay, san })
-    });
-    const data = await res.json();
-    console.log('[kéo đơn]', data);
-    if (!data.success) { alert('Lỗi kéo đơn:\n' + data.error); return; }
 
-    if (!data.soDonGhi) {
-      alert(`Không tìm thấy đơn nào.\n\n${data.ghiChu || ''}\n\nThử tăng số ngày lên rồi đồng bộ lại.`);
-      return;
+  // KiotViet không lọc theo sàn, mỗi lần chạy worker chỉ quét ~1000 hóa đơn.
+  // Với ~560 đơn/ngày thì phải gọi lặp nhiều vòng mới phủ hết khoảng ngày yêu cầu.
+  let viTri = 0, vong = 0, tongGhi = 0, tongMoi = 0, tongQuet = 0;
+  const gomTheoSan = {};
+  const MAX_VONG = 40; // chặn trên, tránh lặp vô hạn nếu API trả dữ liệu lạ
+
+  try {
+    while (vong < MAX_VONG) {
+      vong++;
+      showToast(`Đang quét... vòng ${vong} · ${tongQuet.toLocaleString('vi-VN')} hóa đơn · tìm được ${tongGhi} đơn ${san === 'all' ? '' : TEN_SAN[san]}`);
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'keo-don-hang-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ soNgay, san, viTri })
+      });
+      const data = await res.json();
+      console.log(`[kéo đơn] vòng ${vong}:`, data);
+      if (!data.success) { alert('Lỗi kéo đơn:\n' + data.error); break; }
+
+      tongGhi += data.soDonGhi || 0;
+      tongMoi += data.donMoi || 0;
+      tongQuet += data.tongQuet || 0;
+      Object.entries(data.theoSan || {}).forEach(([s, n]) => { gomTheoSan[s] = (gomTheoSan[s] || 0) + n; });
+
+      if (!data.conNua) break;
+      viTri = data.viTriTiepTheo;
     }
-    // Cảnh báo nếu KiotViet bỏ qua tham số lọc sàn — khi đó sàn ít đơn sẽ dễ bị sót
-    if (data.apiCoLocTheoSan === false) {
-      console.warn(`[kéo đơn] KiotViet KHÔNG lọc theo sàn phía server (đã bỏ qua ${data.soDonSaiSan} đơn sàn khác). Với sàn ít đơn nên tăng số ngày.`);
+
+    const moTaSan = Object.entries(gomTheoSan).map(([s, n]) => `${TEN_SAN[s] || s}: ${n}`).join(', ');
+    if (!tongGhi) {
+      alert(`Đã quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn trong ${soNgay} ngày nhưng không thấy đơn ${san === 'all' ? 'sàn' : TEN_SAN[san]} nào.`);
+    } else {
+      showToast(`Xong: ${tongGhi} đơn (${tongMoi} mới) — ${moTaSan}. Đã quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn qua ${vong} vòng.`);
     }
-    const theoSan = Object.entries(data.theoSan || {}).map(([s, n]) => `${TEN_SAN[s] || s}: ${n}`).join(', ');
-    showToast(`Đã đồng bộ ${data.soDonGhi} đơn (${data.donMoi} mới) — ${theoSan}`);
     await renderDonHangTab();
   } catch(e) { alert('Lỗi: ' + e.message); }
 };
@@ -7045,7 +7059,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v197</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v198</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7099,7 +7113,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v197</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v198</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7140,7 +7154,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v197</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v198</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
