@@ -1985,7 +1985,7 @@ let manHinhTMDTHienTai = null; // null = đang ở màn hình menu chính
 const MAN_HINH_TMDT = [
   { key: 'donhang',   ten: 'Đơn hàng',        icon: '📦', nhom: 'Vận hành',
     moTa: 'Đồng bộ đơn từ sàn, xử lý và theo dõi trạng thái',
-    quyen: 'tmdt_donhang',   render: null },
+    quyen: 'tmdt_donhang',   render: () => renderDonHangTab() },
   { key: 'donggoi',   ten: 'Đóng gói',        icon: '🔍', nhom: 'Vận hành',
     moTa: 'Quét mã vạch, ghi nhận thời gian đóng gói từng đơn',
     quyen: 'tmdt_donhang',   render: null },
@@ -2148,6 +2148,209 @@ window.thongKePhiSan = async function(soNgay = 30) {
   }
   console.log(JSON.stringify(data, null, 2));
   return data;
+};
+
+// ==========================================================================
+// ===== ĐƠN HÀNG SÀN TMĐT =====
+// Quy trình: moi -> cho_in -> da_in -> da_dong_goi
+// Đơn kéo về từ KiotViet (Public API), trạng thái nội bộ do app tự quản.
+// ==========================================================================
+
+let allDonHangSan = [];
+let donFilterSan = 'all';
+let donFilterTrangThai = 'all';
+let donTimKiem = '';
+let donPage = 1;
+const DON_MOI_TRANG = 25;
+
+const TRANG_THAI_NOI_BO = {
+  moi:          { ten: 'Đơn mới',      mau: '#2563EB' },
+  cho_in:       { ten: 'Chờ in',       mau: '#D97706' },
+  da_in:        { ten: 'Đã in',        mau: '#7C3AED' },
+  da_dong_goi:  { ten: 'Đã đóng gói',  mau: '#16A34A' }
+};
+
+async function renderDonHangTab() {
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải đơn hàng...</div>';
+  const snap = await getDocs(query(collection(db, 'don_hang_san'), orderBy('ngayDat', 'desc'), limit(1000)));
+  allDonHangSan = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  veDanhSachDon();
+}
+
+function locDon() {
+  let ds = allDonHangSan;
+  if (donFilterSan !== 'all') ds = ds.filter(d => d.san === donFilterSan);
+  if (donFilterTrangThai !== 'all') ds = ds.filter(d => (d.trangThaiNoiBo || 'moi') === donFilterTrangThai);
+  const tu = donTimKiem.trim().toLowerCase();
+  if (tu) ds = ds.filter(d =>
+    String(d.maHoaDon || '').toLowerCase().includes(tu) ||
+    String(d.maDonSan || '').toLowerCase().includes(tu) ||
+    String(d.maVanDon || '').toLowerCase().includes(tu) ||
+    (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu))
+  );
+  return ds;
+}
+
+window.doiFilterDonSan = function(s) { donFilterSan = s; donPage = 1; veDanhSachDon(); };
+window.doiFilterDonTT = function(t) { donFilterTrangThai = t; donPage = 1; veDanhSachDon(); };
+window.doiTrangDon = function(p) { donPage = p; veDanhSachDon(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+window.timKiemDon = function(v) {
+  donTimKiem = v; donPage = 1;
+  clearTimeout(window._donTimer);
+  window._donTimer = setTimeout(() => {
+    veDanhSachDon();
+    const o = document.getElementById('don-timkiem');
+    if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+  }, 300);
+};
+
+function veDanhSachDon() {
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
+  const ds = locDon();
+  const demTT = (t) => allDonHangSan.filter(d => (d.trangThaiNoiBo || 'moi') === t).length;
+  const tongTrang = Math.max(1, Math.ceil(ds.length / DON_MOI_TRANG));
+  if (donPage > tongTrang) donPage = tongTrang;
+  const trang = ds.slice((donPage - 1) * DON_MOI_TRANG, donPage * DON_MOI_TRANG);
+  const nutTT = (ma, nhan, so, mau) => `<button style="flex:1;border:1.5px solid ${donFilterTrangThai===ma?mau:'var(--border)'};border-radius:6px;padding:7px 4px;font-size:12px;background:${donFilterTrangThai===ma?mau:'#fff'};color:${donFilterTrangThai===ma?'#fff':'var(--text)'}" onclick="doiFilterDonTT('${ma}')">${nhan}${so!=null?` (${so})`:''}</button>`;
+
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:8px">
+      <button class="btn-g" style="flex:1" onclick="keoDonVe()">🔄 Đồng bộ đơn từ KiotViet</button>
+      <button class="btn-outline" style="flex:1" onclick="capNhatPhiSanDon()">💰 Cập nhật phí sàn</button>
+    </div>
+    <div class="admin-block" style="margin-bottom:10px;padding:10px 12px">
+      <p class="info-note" style="margin:0 0 8px 0">Vận hành hằng ngày dùng <b>webhook</b> — KiotViet tự đẩy đơn mới về app ngay khi phát sinh. Nút "Đồng bộ" phía trên chỉ dùng để nạp dữ liệu ban đầu hoặc vá khi webhook lỡ mất đơn.</p>
+      <button class="btn-outline" style="width:100%" onclick="dangKyWebhookDonHang()">🔌 Đăng ký webhook đơn hàng (chạy 1 lần)</button>
+    </div>
+    <div style="display:flex;gap:5px;margin-bottom:8px">
+      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='all'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('all')">Tất cả (${allDonHangSan.length})</button>
+      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='shopee'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('shopee')">Shopee (${allDonHangSan.filter(d=>d.san==='shopee').length})</button>
+      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('tiktok')">TikTok (${allDonHangSan.filter(d=>d.san==='tiktok').length})</button>
+      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('lazada')">Lazada (${allDonHangSan.filter(d=>d.san==='lazada').length})</button>
+    </div>
+    <div style="display:flex;gap:5px;margin-bottom:8px">
+      ${nutTT('all', 'Tất cả', null, 'var(--text2)')}
+      ${Object.entries(TRANG_THAI_NOI_BO).map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+    </div>
+    <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng..." value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    <div id="don-list"></div>
+    <div id="don-phantrang"></div>`;
+
+  const listEl = document.getElementById('don-list');
+  if (!allDonHangSan.length) {
+    listEl.innerHTML = '<p class="info-note">Chưa có đơn nào — bấm "Đồng bộ đơn từ KiotViet" để kéo về.</p>';
+    return;
+  }
+  if (!ds.length) { listEl.innerHTML = '<p class="info-note">Không có đơn nào khớp bộ lọc.</p>'; return; }
+
+  listEl.innerHTML = trang.map(d => {
+    const tt = TRANG_THAI_NOI_BO[d.trangThaiNoiBo || 'moi'] || TRANG_THAI_NOI_BO.moi;
+    const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : (d.ngayDat ? new Date(d.ngayDat) : null);
+    const gio = ngay ? ngay.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
+    const phi = d.phiSanTong;
+    const tiLePhi = (phi && d.tongTien) ? ((phi / d.tongTien) * 100).toFixed(1) : null;
+    return `
+    <div style="border:1px solid var(--border);border-left:3px solid ${tt.mau};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <span style="font-size:10px;background:var(--bg);padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[d.san] || d.san)}</span>
+            <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
+            <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:3px">
+            ${gio} · ${escHtml(d.trangThaiGiao || '')}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
+          </div>
+          <div style="font-size:12px;margin-top:4px">
+            ${(d.chiTiet || []).slice(0, 3).map(c => `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
+            ${(d.chiTiet || []).length > 3 ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 3} món</span>` : ''}
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <b style="font-size:14px">${(d.tongTien || 0).toLocaleString('vi-VN')}đ</b>
+          <div style="font-size:11px;margin-top:2px">${phi != null
+            ? `<span style="color:#DC2626">phí ${phi.toLocaleString('vi-VN')}đ (${tiLePhi}%)</span>`
+            : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const pt = document.getElementById('don-phantrang');
+  pt.innerHTML = tongTrang > 1 ? `
+    <div style="display:flex;gap:6px;align-items:center;justify-content:center;margin:12px 0">
+      <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage<=1?'disabled':''} onclick="doiTrangDon(${donPage-1})">←</button>
+      <span style="font-size:13px;color:var(--text2)">Trang ${donPage}/${tongTrang} · ${ds.length} đơn</span>
+      <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage>=tongTrang?'disabled':''} onclick="doiTrangDon(${donPage+1})">→</button>
+    </div>` : '';
+}
+
+window.keoDonVe = async function() {
+  if (!currentUser) return;
+  showToast('Đang kéo đơn từ KiotViet...');
+  const idToken = await currentUser.getIdToken();
+  try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'keo-don-hang-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ soNgay: 3 })
+    });
+    const data = await res.json();
+    console.log('[kéo đơn]', data);
+    if (!data.success) { alert('Lỗi kéo đơn:\n' + data.error); return; }
+    const theoSan = Object.entries(data.theoSan || {}).map(([s, n]) => `${TEN_SAN[s] || s}: ${n}`).join(', ');
+    showToast(`Đã đồng bộ ${data.soDonGhi} đơn (${data.donMoi} đơn mới) — ${theoSan}`);
+    await renderDonHangTab();
+  } catch(e) { alert('Lỗi: ' + e.message); }
+};
+
+window.capNhatPhiSanDon = async function() {
+  if (!currentUser) return;
+  // Chỉ gửi đơn CHƯA có phí và đã đủ tuổi — TikTok/Lazada phải chờ 5-9 ngày sàn đối soát,
+  // gọi sớm hơn chỉ tốn request mà không có dữ liệu.
+  const canCapNhat = allDonHangSan.filter(d => {
+    if (d.phiSanTong != null) return false;
+    const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : new Date(d.ngayDat);
+    const tuoi = (Date.now() - ngay.getTime()) / 86400000;
+    return d.san === 'shopee' ? true : tuoi >= 5;
+  });
+  if (!canCapNhat.length) { showToast('Không có đơn nào cần cập nhật phí lúc này'); return; }
+  showToast(`Đang lấy phí cho ${Math.min(canCapNhat.length, 30)} đơn...`);
+  const idToken = await currentUser.getIdToken();
+  try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'cap-nhat-phi-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ donHang: canCapNhat.slice(0, 30).map(d => ({ ma: d.maHoaDon, kiotvietId: d.kiotvietId })) })
+    });
+    const data = await res.json();
+    console.log('[cập nhật phí]', data);
+    if (!data.success) { alert('Lỗi: ' + data.error); return; }
+    showToast(`Đã cập nhật phí cho ${data.soCapNhat}/${data.daKiemTra} đơn. Còn ${canCapNhat.length - data.daKiemTra} đơn chờ.`);
+    await renderDonHangTab();
+  } catch(e) { alert('Lỗi: ' + e.message); }
+};
+
+// Đăng ký webhook invoice.update với KiotViet — chỉ cần chạy 1 lần.
+// Sau khi đăng ký, KiotViet tự đẩy mọi đơn mới/cập nhật về worker.
+window.dangKyWebhookDonHang = async function() {
+  if (!currentUser) return;
+  if (!confirm('Đăng ký webhook đơn hàng với KiotViet?\n\nSau khi đăng ký, mọi đơn mới sẽ tự động đẩy về app — không cần bấm Đồng bộ nữa.\n\nChỉ cần chạy 1 lần.')) return;
+  const idToken = await currentUser.getIdToken();
+  try {
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'register-kiotviet-webhook', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'invoice.update' })
+    });
+    const data = await res.json();
+    console.log('[đăng ký webhook]', data);
+    if (data.success) alert('Đăng ký webhook thành công!\n\nTừ giờ đơn mới sẽ tự động về app. Thử đặt 1 đơn trên sàn rồi chờ khoảng 1 phút, vào lại màn hình này xem đơn có tự xuất hiện không.');
+    else alert('Đăng ký không thành công:\n' + JSON.stringify(data.kiotviet || data.error));
+  } catch(e) { alert('Lỗi: ' + e.message); }
 };
 
 function renderHangHoaNhomFilters() {
@@ -6804,7 +7007,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v193</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v195</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -6858,7 +7061,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v193</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v195</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -6899,7 +7102,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v193</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v195</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
