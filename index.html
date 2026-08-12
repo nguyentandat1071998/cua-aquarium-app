@@ -2217,8 +2217,14 @@ function veDanhSachDon() {
   const nutTT = (ma, nhan, so, mau) => `<button style="flex:1;border:1.5px solid ${donFilterTrangThai===ma?mau:'var(--border)'};border-radius:6px;padding:7px 4px;font-size:12px;background:${donFilterTrangThai===ma?mau:'#fff'};color:${donFilterTrangThai===ma?'#fff':'var(--text)'}" onclick="doiFilterDonTT('${ma}')">${nhan}${so!=null?` (${so})`:''}</button>`;
 
   el.innerHTML = `
-    <div style="display:flex;gap:6px;margin-bottom:8px">
-      <button class="btn-g" style="flex:1" onclick="keoDonVe()">🔄 Đồng bộ đơn từ KiotViet</button>
+    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
+      <button class="btn-g" style="flex:1" onclick="keoDonVe()">🔄 Đồng bộ ${donFilterSan === 'all' ? 'mọi sàn' : TEN_SAN[donFilterSan]}</button>
+      <select id="don-songay" style="width:auto;padding:9px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
+        <option value="1">1 ngày</option>
+        <option value="3" selected>3 ngày</option>
+        <option value="7">7 ngày</option>
+        <option value="30">30 ngày</option>
+      </select>
       <button class="btn-outline" style="flex:1" onclick="capNhatPhiSanDon()">💰 Cập nhật phí sàn</button>
     </div>
     <div class="admin-block" style="margin-bottom:10px;padding:10px 12px">
@@ -2290,19 +2296,30 @@ function veDanhSachDon() {
 
 window.keoDonVe = async function() {
   if (!currentUser) return;
-  showToast('Đang kéo đơn từ KiotViet...');
+  const soNgay = Number(document.getElementById('don-songay')?.value) || 3;
+  const san = donFilterSan;
+  showToast(`Đang kéo đơn ${san === 'all' ? 'mọi sàn' : TEN_SAN[san]} (${soNgay} ngày)...`);
   const idToken = await currentUser.getIdToken();
   try {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': 'keo-don-hang-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ soNgay: 3 })
+      body: JSON.stringify({ soNgay, san })
     });
     const data = await res.json();
     console.log('[kéo đơn]', data);
     if (!data.success) { alert('Lỗi kéo đơn:\n' + data.error); return; }
+
+    if (!data.soDonGhi) {
+      alert(`Không tìm thấy đơn nào.\n\n${data.ghiChu || ''}\n\nThử tăng số ngày lên rồi đồng bộ lại.`);
+      return;
+    }
+    // Cảnh báo nếu KiotViet bỏ qua tham số lọc sàn — khi đó sàn ít đơn sẽ dễ bị sót
+    if (data.apiCoLocTheoSan === false) {
+      console.warn(`[kéo đơn] KiotViet KHÔNG lọc theo sàn phía server (đã bỏ qua ${data.soDonSaiSan} đơn sàn khác). Với sàn ít đơn nên tăng số ngày.`);
+    }
     const theoSan = Object.entries(data.theoSan || {}).map(([s, n]) => `${TEN_SAN[s] || s}: ${n}`).join(', ');
-    showToast(`Đã đồng bộ ${data.soDonGhi} đơn (${data.donMoi} đơn mới) — ${theoSan}`);
+    showToast(`Đã đồng bộ ${data.soDonGhi} đơn (${data.donMoi} mới) — ${theoSan}`);
     await renderDonHangTab();
   } catch(e) { alert('Lỗi: ' + e.message); }
 };
@@ -2312,12 +2329,13 @@ window.capNhatPhiSanDon = async function() {
   // Chỉ gửi đơn CHƯA có phí và đã đủ tuổi — TikTok/Lazada phải chờ 5-9 ngày sàn đối soát,
   // gọi sớm hơn chỉ tốn request mà không có dữ liệu.
   const canCapNhat = allDonHangSan.filter(d => {
+    if (donFilterSan !== 'all' && d.san !== donFilterSan) return false;
     if (d.phiSanTong != null) return false;
     const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : new Date(d.ngayDat);
     const tuoi = (Date.now() - ngay.getTime()) / 86400000;
     return d.san === 'shopee' ? true : tuoi >= 5;
   });
-  if (!canCapNhat.length) { showToast('Không có đơn nào cần cập nhật phí lúc này'); return; }
+  if (!canCapNhat.length) { showToast('Không có đơn nào cần cập nhật phí lúc này (TikTok/Lazada phải chờ ~5 ngày sàn đối soát)'); return; }
   showToast(`Đang lấy phí cho ${Math.min(canCapNhat.length, 30)} đơn...`);
   const idToken = await currentUser.getIdToken();
   try {
@@ -7007,7 +7025,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v195</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v196</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7061,7 +7079,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v195</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v196</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7102,7 +7120,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v195</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v196</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
