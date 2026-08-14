@@ -1986,6 +1986,9 @@ const MAN_HINH_TMDT = [
   { key: 'donhang',   ten: 'Đơn hàng',        icon: '📦', nhom: 'Vận hành',
     moTa: 'Đồng bộ đơn từ sàn, xử lý và theo dõi trạng thái',
     quyen: 'tmdt_donhang',   render: () => renderDonHangTab() },
+  { key: 'kiemtra',   ten: 'Kiểm tra đơn',    icon: '🔍', nhom: 'Vận hành',
+    moTa: 'Quét mã đơn, hiện hàng cần lấy kèm ảnh để dò cho đúng',
+    quyen: 'tmdt_donhang',   render: () => renderKiemTraDonTab() },
   { key: 'donggoi',   ten: 'Đóng gói',        icon: '📷', nhom: 'Vận hành',
     moTa: 'Quét mã vận đơn bằng camera điện thoại, tính thưởng ngay',
     quyen: 'tmdt_donhang',   render: () => renderQuetDongGoiTab() },
@@ -2019,8 +2022,9 @@ window.moManHinhTMDT = async function(key) {
   const el = document.getElementById('tmdt-content');
   if (!el) return;
 
-  // Rời màn hình Đóng gói thì phải tắt camera, nếu không nó chạy ngầm tốn pin
+  // Rời màn hình có camera thì phải tắt, nếu không nó chạy ngầm tốn pin
   if (manHinhTMDTHienTai === 'donggoi' && key !== 'donggoi') dungQuet();
+  if (manHinhTMDTHienTai === 'kiemtra' && key !== 'kiemtra') ktDung();
 
   // Rời màn hình Đóng gói thì phải tắt camera, nếu không máy nóng và hao pin
   if (manHinhTMDTHienTai === 'donggoi' && key !== 'donggoi' && typeof dungQuet === 'function') {
@@ -2944,6 +2948,30 @@ window.kiemTraSkuDon = async function() {
   return data;
 };
 
+// Liệt kê chi nhánh KiotViet + kiểm tra đơn đã có SKU thật chưa.
+// Gọi: lietKeChiNhanh()
+window.lietKeChiNhanh = async function() {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'liet-ke-chi-nhanh', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const data = await res.json();
+  console.log('Worker:', data.workerVersion);
+  if (data.chiNhanh) { console.log('===== CHI NHÁNH ====='); console.table(data.chiNhanh); }
+  if (data.mauDonGanDay) {
+    console.log('===== ĐƠN SÀN GẦN ĐÂY =====');
+    data.mauDonGanDay.forEach(d => {
+      console.log(`${d.maHoaDon} · ${d.san} · ${d.tenChiNhanh} (branchId ${d.branchId}) · ${d.conDungSkuAo ? '⚠️ CÒN SKU ẢO' : '✅ SKU THẬT'}`);
+      console.table(d.matHang);
+    });
+  }
+  console.log(JSON.stringify(data, null, 2));
+  return data;
+};
+
 // Liệt kê SKU thật trong KiotViet kèm tồn từng chi nhánh — để chọn mã đem đi thử.
 // Gọi: lietKeSku()
 window.lietKeSku = async function() {
@@ -2980,6 +3008,183 @@ window.thuSuaTonKho = async function(maSku) {
   console.log(JSON.stringify(data, null, 2));
   return data;
 };
+
+// ==========================================================================
+// ===== KIỂM TRA ĐƠN — quét mã, hiện hàng cần lấy kèm ẢNH =====
+//
+// Khác với màn hình Đóng gói: đây là bước TRƯỚC khi bỏ hàng vào bao,
+// nhân viên dò xem lấy đúng hàng chưa. Không đổi trạng thái đơn.
+// Ảnh lấy từ bảng skus nội bộ (đã có sẵn), khớp theo mã hàng của KiotViet.
+// ==========================================================================
+
+let ktDangQuet = false;
+let ktLuong = null;
+let ktDon = null;
+let ktDaTich = new Set();
+
+async function renderKiemTraDonTab() {
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  if (!allSKUs.length) await loadSKUs();
+
+  el.innerHTML = `
+    <div style="background:#0F172A;border-radius:12px;overflow:hidden;position:relative;margin-bottom:10px">
+      <video id="kt-video" playsinline muted style="width:100%;display:block;background:#000;max-height:34vh;object-fit:cover"></video>
+      <div id="kt-khung" style="position:absolute;inset:20% 14%;border:3px solid #FACC15;border-radius:10px;pointer-events:none;display:none"></div>
+      <div id="kt-bao" style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.7);color:#fff;font-size:12px;padding:6px 10px;text-align:center">Bấm nút để quét mã đơn</div>
+    </div>
+    <button class="btn-g" id="kt-nut" style="width:100%;padding:14px;font-size:16px;margin-bottom:12px" onclick="ktBatTat()">▶ Quét mã đơn</button>
+    <div id="kt-ketqua"></div>`;
+}
+
+window.ktBatTat = async function() {
+  if (ktDangQuet) { ktDung(); return; }
+  const video = document.getElementById('kt-video');
+  const bao = document.getElementById('kt-bao');
+  try {
+    bao.textContent = 'Đang bật camera...';
+    ktLuong = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = ktLuong;
+    video.setAttribute('playsinline', ''); video.muted = true;
+    await video.play();
+
+    // Dùng lại đúng bộ đọc mã của màn hình Đóng gói (native hoặc ZXing)
+    if ('BarcodeDetector' in window) {
+      boDocMa = new BarcodeDetector({ formats: ['code_128', 'qr_code', 'code_39', 'ean_13'] });
+      kieuBoDoc = 'native';
+    } else {
+      bao.textContent = 'Đang tải bộ đọc mã...';
+      const ok = await napZXing();
+      if (!ok) { bao.textContent = 'Không tải được bộ đọc mã'; ktDung(); return; }
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,
+        [ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.QR_CODE, ZXing.BarcodeFormat.CODE_39]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      zxingReader = new ZXing.MultiFormatReader();
+      zxingReader.setHints(hints);
+      kieuBoDoc = 'zxing';
+    }
+    ktDangQuet = true;
+    document.getElementById('kt-nut').textContent = '■ Dừng quét';
+    document.getElementById('kt-khung').style.display = 'block';
+    bao.textContent = 'Đưa mã vận đơn vào khung';
+    ktVongQuet();
+  } catch(e) {
+    bao.textContent = 'Không bật được camera: ' + e.message;
+  }
+};
+
+function ktDung(thongBao) {
+  ktDangQuet = false;
+  if (ktLuong) { ktLuong.getTracks().forEach(t => t.stop()); ktLuong = null; }
+  const n = document.getElementById('kt-nut');
+  const k = document.getElementById('kt-khung');
+  const b = document.getElementById('kt-bao');
+  if (n) n.textContent = '▶ Quét mã đơn';
+  if (k) k.style.display = 'none';
+  if (b) b.textContent = thongBao || 'Đã dừng';
+}
+
+async function ktVongQuet() {
+  const video = document.getElementById('kt-video');
+  if (!ktDangQuet || !video) return;
+  try {
+    let ma = null;
+    if (kieuBoDoc === 'native') {
+      const kq = await boDocMa.detect(video);
+      if (kq.length) ma = String(kq[0].rawValue || '').trim();
+    } else if (video.videoWidth) {
+      if (!canvasQuet) canvasQuet = document.createElement('canvas');
+      const tl = Math.min(1, 800 / video.videoWidth);
+      const w = Math.round(video.videoWidth * tl), h = Math.round(video.videoHeight * tl);
+      canvasQuet.width = w; canvasQuet.height = h;
+      const ctx = canvasQuet.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+      const xam = new Uint8ClampedArray(w * h);
+      for (let i = 0, j = 0; j < xam.length; i += 4, j++)
+        xam[j] = (rgba[i] * 299 + rgba[i+1] * 587 + rgba[i+2] * 114) / 1000;
+      try {
+        const kq = zxingReader.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(
+          new ZXing.RGBLuminanceSource(xam, w, h))));
+        if (kq) ma = String(kq.getText() || '').trim();
+      } catch(e) {} finally { try { zxingReader.reset(); } catch(e) {} }
+    }
+    if (ma && ma.length >= 10) {
+      bip(1800, 120);
+      if (navigator.vibrate) navigator.vibrate(100);
+      ktDung();                      // tắt camera ngay, đỡ hao pin
+      await ktTraDon(ma);
+      return;
+    }
+  } catch(e) {}
+  if (ktDangQuet) setTimeout(ktVongQuet, kieuBoDoc === 'zxing' ? 330 : 200);
+}
+
+async function ktTraDon(maVanDon) {
+  const el = document.getElementById('kt-ketqua');
+  el.innerHTML = '<div class="loading">Đang tra đơn...</div>';
+  const snap = await getDocs(query(collection(db, 'don_hang_san'),
+    where('maVanDon', '==', maVanDon), limit(1)));
+  if (snap.empty) {
+    bip(400, 350);
+    el.innerHTML = `<div style="background:#FEE2E2;border:1px solid #DC2626;border-radius:10px;padding:14px;text-align:center">
+      <b style="color:#DC2626">Không tìm thấy đơn</b>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">${escHtml(maVanDon)}<br>Vào tab Đơn hàng bấm Đồng bộ rồi quét lại</div></div>`;
+    return;
+  }
+  ktDon = { id: snap.docs[0].id, ...snap.docs[0].data() };
+  ktDaTich = new Set();
+  ktVeDanhSachHang();
+}
+
+window.ktTichHang = function(i) {
+  if (ktDaTich.has(i)) ktDaTich.delete(i); else ktDaTich.add(i);
+  ktVeDanhSachHang();
+};
+
+function ktVeDanhSachHang() {
+  const el = document.getElementById('kt-ketqua');
+  if (!ktDon) return;
+  const hang = ktDon.chiTiet || [];
+  const xong = ktDaTich.size === hang.length && hang.length > 0;
+
+  el.innerHTML = `
+    <div style="background:${xong ? '#DCFCE7' : 'var(--bg)'};border:1.5px solid ${xong ? '#16A34A' : 'var(--border)'};border-radius:10px;padding:12px;margin-bottom:10px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span style="font-size:10px;background:#fff;padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[ktDon.san] || ktDon.san || '')}</span>
+        <b>${escHtml(ktDon.maDonSan || ktDon.maHoaDon)}</b>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">VĐ: ${escHtml(ktDon.maVanDon || '')} · ${(ktDon.tongTien || 0).toLocaleString('vi-VN')}đ</div>
+      <div style="font-size:15px;font-weight:700;margin-top:6px;color:${xong ? '#16A34A' : '#D97706'}">
+        ${xong ? '✓ Đã lấy đủ hàng' : `Đã lấy ${ktDaTich.size}/${hang.length} món`}
+      </div>
+    </div>
+    ${hang.map((c, i) => {
+      // Tra ảnh + tên đầy đủ từ bảng SKU nội bộ theo mã hàng KiotViet
+      const sku = allSKUs.find(s => String(s.sku).toUpperCase() === String(c.maHang).toUpperCase());
+      const daTich = ktDaTich.has(i);
+      const laSkuAo = /^TMDT/i.test(String(c.maHang || ''));
+      return `
+      <div onclick="ktTichHang(${i})" style="display:flex;gap:10px;align-items:center;border:1.5px solid ${daTich ? '#16A34A' : 'var(--border)'};background:${daTich ? '#F0FDF4' : '#fff'};border-radius:10px;padding:10px;margin-bottom:8px;cursor:pointer">
+        <div style="width:26px;height:26px;border-radius:6px;border:2px solid ${daTich ? '#16A34A' : 'var(--border)'};background:${daTich ? '#16A34A' : '#fff'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0">${daTich ? '✓' : ''}</div>
+        ${sku?.anhUrl
+          ? `<img src="${sku.anhUrl}" loading="lazy" style="width:62px;height:62px;object-fit:cover;border-radius:8px;flex-shrink:0">`
+          : `<div style="width:62px;height:62px;border-radius:8px;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text2);flex-shrink:0;text-align:center">không có ảnh</div>`}
+        <div style="flex:1;min-width:0">
+          <b style="font-size:14px">${escHtml(sku?.ten || c.tenHang || '')}</b>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">${escHtml(c.maHang || '')}</div>
+          ${laSkuAo ? `<div style="font-size:10px;color:#DC2626;margin-top:2px">SKU ảo — chưa liên kết sản phẩm trong KiotViet</div>` : ''}
+          ${!sku && !laSkuAo ? `<div style="font-size:10px;color:#D97706;margin-top:2px">Không có mã này trong app — kiểm tra lại danh mục hàng hóa</div>` : ''}
+        </div>
+        <div style="font-size:22px;font-weight:700;color:var(--green);flex-shrink:0">×${c.soLuong}</div>
+      </div>`;
+    }).join('')}
+    <button class="btn-outline" style="width:100%;margin-top:6px" onclick="ktBatTat()">Quét đơn tiếp theo</button>`;
+}
 
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
@@ -7635,7 +7840,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v209</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v210</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7689,7 +7894,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v209</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v210</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7730,7 +7935,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v209</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v210</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
