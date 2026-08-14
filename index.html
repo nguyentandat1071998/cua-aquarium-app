@@ -2347,7 +2347,7 @@ function veDanhSachDon() {
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
             ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
           </div>
-          ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.nhanVienDongGoi ? ` · ${escHtml(d.nhanVienDongGoi)}` : ''}${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
+          ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
           <div style="font-size:12px;margin-top:4px">
             ${(d.chiTiet || []).slice(0, 3).map(c => `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
             ${(d.chiTiet || []).length > 3 ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 3} món</span>` : ''}
@@ -2544,13 +2544,18 @@ async function renderQuetDongGoiTab() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
 
-  const coHoTro = 'BarcodeDetector' in window;
+  // Chrome Android có bộ đọc mã sẵn; iPhone/Safari sẽ tải thư viện dự phòng khi bấm quét.
+  const coBoDocSan = 'BarcodeDetector' in window;
+  const coCamera = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   el.innerHTML = `
-    ${!coHoTro ? `
+    ${!coCamera ? `
     <div style="background:#FEE2E2;border:1px solid #DC2626;border-radius:8px;padding:12px;margin-bottom:12px">
-      <b style="color:#DC2626">Trình duyệt này không quét được mã</b>
-      <div style="font-size:12px;margin-top:4px">Hãy mở app bằng <b>Chrome trên Android</b>. Safari/iPhone chưa hỗ trợ tính năng quét mã của trình duyệt.</div>
-    </div>` : ''}
+      <b style="color:#DC2626">Không dùng được camera</b>
+      <div style="font-size:12px;margin-top:4px">Trang phải chạy qua HTTPS và bạn cần cho phép quyền camera. Thử mở lại bằng Chrome hoặc Safari.</div>
+    </div>` : (!coBoDocSan ? `
+    <div style="background:#EFF6FF;border:1px solid #3B82F6;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:12px;color:#1D4ED8">Máy này dùng bộ đọc mã dự phòng — lần quét đầu sẽ chậm hơn vài giây do phải tải thư viện. Cần có mạng ở lần đầu.</div>
+    </div>` : '')}
 
     <div style="background:#0F172A;border-radius:12px;padding:14px;margin-bottom:12px;color:#fff">
       <div style="display:flex;gap:14px;text-align:center">
@@ -2575,7 +2580,7 @@ async function renderQuetDongGoiTab() {
       <div id="qdg-bao" style="position:absolute;left:0;right:0;bottom:0;padding:10px;background:rgba(0,0,0,.75);color:#fff;font-size:13px;text-align:center">Bấm "Bắt đầu quét" bên dưới</div>
     </div>
 
-    <button class="btn-g" id="qdg-nut" style="width:100%;padding:14px;font-size:16px" onclick="batTatQuet()" ${coHoTro ? '' : 'disabled'}>
+    <button class="btn-g" id="qdg-nut" style="width:100%;padding:14px;font-size:16px" onclick="batTatQuet()" ${coCamera ? '' : 'disabled'}>
       ▶ Bắt đầu quét
     </button>
 
@@ -2585,6 +2590,27 @@ async function renderQuetDongGoiTab() {
     </div>`;
 
   veLichSuQuet();
+}
+
+// ===== BỘ ĐỌC MÃ: hai đường, tự chọn theo trình duyệt =====
+// Chrome Android có BarcodeDetector sẵn trong trình duyệt -> nhanh, nhẹ pin.
+// Safari/iPhone KHÔNG có -> tải thư viện ZXing (JavaScript thuần) làm dự phòng.
+// Nhờ vậy nhân viên dùng iPhone hay Android đều quét được như nhau.
+let kieuBoDoc = null;        // 'native' | 'zxing'
+let zxingReader = null;
+let zxingDangTai = null;
+
+async function napZXing() {
+  if (window.ZXing) return true;
+  if (zxingDangTai) return zxingDangTai;
+  zxingDangTai = new Promise((thanhCong) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js';
+    s.onload = () => thanhCong(true);
+    s.onerror = () => thanhCong(false);
+    document.head.appendChild(s);
+  });
+  return zxingDangTai;
 }
 
 window.batTatQuet = async function() {
@@ -2599,8 +2625,31 @@ window.batTatQuet = async function() {
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     video.srcObject = luongCameraQuet;
+    video.setAttribute('playsinline', '');   // iOS bắt buộc, không có sẽ mở toàn màn hình
     await video.play();
-    boDocMa = new BarcodeDetector({ formats: ['code_128', 'qr_code', 'code_39', 'ean_13'] });
+
+    if ('BarcodeDetector' in window) {
+      boDocMa = new BarcodeDetector({ formats: ['code_128', 'qr_code', 'code_39', 'ean_13'] });
+      kieuBoDoc = 'native';
+    } else {
+      bao.textContent = 'Đang tải bộ đọc mã...';
+      const ok = await napZXing();
+      if (!ok) {
+        bao.textContent = 'Không tải được bộ đọc mã — kiểm tra kết nối mạng';
+        dungQuet();
+        return;
+      }
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.CODE_128,
+        ZXing.BarcodeFormat.QR_CODE,
+        ZXing.BarcodeFormat.CODE_39,
+        ZXing.BarcodeFormat.EAN_13
+      ]);
+      zxingReader = new ZXing.BrowserMultiFormatReader(hints);
+      kieuBoDoc = 'zxing';
+    }
+
     dangQuetDongGoi = true;
     nut.textContent = '■ Dừng quét';
     nut.style.background = '#DC2626';
@@ -2618,6 +2667,7 @@ function dungQuet() {
     luongCameraQuet.getTracks().forEach(t => t.stop());
     luongCameraQuet = null;
   }
+  if (zxingReader) { try { zxingReader.reset(); } catch(e) {} }
   const nut = document.getElementById('qdg-nut');
   const bao = document.getElementById('qdg-bao');
   if (nut) { nut.textContent = '▶ Bắt đầu quét'; nut.style.background = ''; }
@@ -2639,13 +2689,34 @@ function bip(tanSo = 1800, thoiGian = 120) {
   } catch(e) {}
 }
 
+// Khung ảnh tạm để ZXing đọc — tạo 1 lần, dùng lại để đỡ tốn bộ nhớ
+let canvasQuet = null;
+
 async function vongQuet() {
   const video = document.getElementById('qdg-video');
   if (!dangQuetDongGoi || !video) return;
   try {
-    const cacMa = await boDocMa.detect(video);
-    for (const m of cacMa) {
-      const ma = String(m.rawValue || '').trim();
+    let cacMaTho = [];
+
+    if (kieuBoDoc === 'native') {
+      const kq = await boDocMa.detect(video);
+      cacMaTho = kq.map(m => String(m.rawValue || '').trim());
+    } else if (kieuBoDoc === 'zxing' && video.videoWidth) {
+      // ZXing đọc từ ảnh tĩnh nên phải chụp khung hình ra canvas trước.
+      // Thu nhỏ còn tối đa 800px: đủ nét để đọc mã mà nhẹ hơn nhiều cho máy yếu.
+      if (!canvasQuet) canvasQuet = document.createElement('canvas');
+      const tyLe = Math.min(1, 800 / video.videoWidth);
+      canvasQuet.width = Math.round(video.videoWidth * tyLe);
+      canvasQuet.height = Math.round(video.videoHeight * tyLe);
+      const ctx = canvasQuet.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvasQuet.width, canvasQuet.height);
+      try {
+        const kq = zxingReader.decodeFromCanvas(canvasQuet);
+        if (kq) cacMaTho = [String(kq.getText() || '').trim()];
+      } catch(e) { /* không thấy mã trong khung này — bình thường */ }
+    }
+
+    for (const ma of cacMaTho) {
       if (ma.length < 10) continue;
       const bayGio = Date.now();
       if (bayGio - (daQuetGanDay.get(ma) || 0) < GIAY_CHONG_TRUNG_QUET * 1000) continue;
@@ -2653,13 +2724,31 @@ async function vongQuet() {
       await xuLyMaQuet(ma);
     }
   } catch(e) { /* khung hình lỗi, bỏ qua */ }
-  // Quét 5 lần/giây là đủ, không cần mỗi khung hình
-  if (dangQuetDongGoi) setTimeout(vongQuet, 200);
+  // Native nhanh nên quét 5 lần/giây; ZXing nặng hơn nên giãn ra 3 lần/giây
+  if (dangQuetDongGoi) setTimeout(vongQuet, kieuBoDoc === 'zxing' ? 330 : 200);
 }
 
 async function xuLyMaQuet(ma) {
   const bao = document.getElementById('qdg-bao');
-  const don = allDonHangSan.find(d => d.maVanDon === ma);
+
+  // Tra thẳng Firestore theo mã vận đơn. KHÔNG tải cả danh sách đơn về điện thoại:
+  // shop có hàng nghìn đơn, tải hết vừa chậm vừa tốn dung lượng mạng của nhân viên.
+  bao.style.background = 'rgba(217,119,6,.9)';
+  bao.textContent = `Đang tra ${ma}...`;
+  let docDon = null, don = null;
+  try {
+    const snap = await getDocs(query(collection(db, 'don_hang_san'),
+      where('maVanDon', '==', ma), limit(1)));
+    if (!snap.empty) {
+      docDon = snap.docs[0];
+      don = { id: docDon.id, ...docDon.data() };
+    }
+  } catch(e) {
+    bip(400, 350);
+    bao.style.background = 'rgba(185,28,28,.9)';
+    bao.textContent = `Lỗi tra đơn: ${e.message}`;
+    return;
+  }
 
   if (!don) {
     bip(400, 350);
@@ -2681,17 +2770,17 @@ async function xuLyMaQuet(ma) {
     return;
   }
 
-  // Ghi nhận
+  // Ghi nhận. Tên 4 trường phải TRÙNG KHỚP với firestore.rules, lệch một chữ là bị từ chối.
   try {
     await updateDoc(doc(db, 'don_hang_san', don.id), {
       trangThaiNoiBo: 'da_dong_goi',
       thoiGianDongGoi: serverTimestamp(),
-      nhanVienDongGoi: currentUserData?.ten || currentUser?.email || '',
-      uidNhanVienDongGoi: currentUser?.uid || ''
+      nhanVienDongGoi: currentUser?.uid || '',
+      banDongGoi: currentUserData?.ten || currentUser?.email || ''
     });
     don.thoiGianDongGoi = new Date();
     don.trangThaiNoiBo = 'da_dong_goi';
-    don.nhanVienDongGoi = currentUserData?.ten || '';
+    don.nhanVienDongGoi = currentUser?.uid || '';
 
     const t = tinhThuongDon(don);
     phienQuet.soDon++;
@@ -7389,7 +7478,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v201</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v203</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7443,7 +7532,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v201</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v203</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7484,7 +7573,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v201</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v203</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
