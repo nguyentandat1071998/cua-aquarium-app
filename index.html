@@ -1986,9 +1986,9 @@ const MAN_HINH_TMDT = [
   { key: 'donhang',   ten: 'Đơn hàng',        icon: '📦', nhom: 'Vận hành',
     moTa: 'Đồng bộ đơn từ sàn, xử lý và theo dõi trạng thái',
     quyen: 'tmdt_donhang',   render: () => renderDonHangTab() },
-  { key: 'donggoi',   ten: 'Đóng gói',        icon: '🔍', nhom: 'Vận hành',
-    moTa: 'Quét mã vạch, ghi nhận thời gian đóng gói từng đơn',
-    quyen: 'tmdt_donhang',   render: null },
+  { key: 'donggoi',   ten: 'Đóng gói',        icon: '📷', nhom: 'Vận hành',
+    moTa: 'Quét mã vận đơn bằng camera điện thoại, tính thưởng ngay',
+    quyen: 'tmdt_donhang',   render: () => renderQuetDongGoiTab() },
   { key: 'inhdon',    ten: 'In đơn',          icon: '🖨️', nhom: 'Vận hành',
     moTa: 'In phiếu giao hàng, gom in hàng loạt',
     quyen: 'tmdt_donhang',   render: null },
@@ -2018,6 +2018,14 @@ function coQuyenTMDT(quyen) {
 window.moManHinhTMDT = async function(key) {
   const el = document.getElementById('tmdt-content');
   if (!el) return;
+
+  // Rời màn hình Đóng gói thì phải tắt camera, nếu không nó chạy ngầm tốn pin
+  if (manHinhTMDTHienTai === 'donggoi' && key !== 'donggoi') dungQuet();
+
+  // Rời màn hình Đóng gói thì phải tắt camera, nếu không máy nóng và hao pin
+  if (manHinhTMDTHienTai === 'donggoi' && key !== 'donggoi' && typeof dungQuet === 'function') {
+    dungQuet();
+  }
 
   if (!key) { manHinhTMDTHienTai = null; renderMenuTMDT(); return; }
 
@@ -2163,12 +2171,52 @@ let donTimKiem = '';
 let donPage = 1;
 const DON_MOI_TRANG = 25;
 
+// HAI TRỤC TRẠNG THÁI:
+//   1. Nội bộ (app tự quản): moi -> da_dong_goi   (quét mã ở bàn đóng gói)
+//   2. Giao hàng (KiotViet đồng bộ từ sàn): Chờ xử lý -> Đang giao -> Đã giao / Hủy / Trả hàng
+//
+// QUY TẮC GHÉP: đơn đã rời kho thì trạng thái sàn đè lên trạng thái nội bộ.
+//
+// TRẠNG THÁI ĐẶC BIỆT "huy_sau_dong_goi" = đã quét đóng gói TRONG APP + sàn báo hủy.
+// Chỉ app biết được vì chỉ app có dữ liệu thời điểm đóng gói. Đây là tab quản lý
+// dùng để đối chiếu với số kiện shipper trả lại khi bàn giao — nếu không tách riêng,
+// đơn hủy sau đóng gói lẫn với đơn hủy chưa đóng gói thì đối chiếu sai ngay.
 const TRANG_THAI_NOI_BO = {
-  moi:          { ten: 'Đơn mới',      mau: '#2563EB' },
-  cho_in:       { ten: 'Chờ in',       mau: '#D97706' },
-  da_in:        { ten: 'Đã in',        mau: '#7C3AED' },
-  da_dong_goi:  { ten: 'Đã đóng gói',  mau: '#16A34A' }
+  moi:               { ten: 'Đơn mới',        mau: '#2563EB', nhom: 'kho' },
+  cho_in:            { ten: 'Chờ in',         mau: '#D97706', nhom: 'kho' },
+  da_in:             { ten: 'Đã in',          mau: '#7C3AED', nhom: 'kho' },
+  da_dong_goi:       { ten: 'Đã đóng gói',    mau: '#0891B2', nhom: 'kho' },
+  huy_sau_dong_goi:  { ten: 'Hủy sau đóng gói', mau: '#EA580C', nhom: 'canh_bao' },
+  dang_giao:         { ten: 'Đang giao',      mau: '#16A34A', nhom: 'san' },
+  da_giao:           { ten: 'Đã giao',        mau: '#15803D', nhom: 'san' },
+  giao_that_bai:     { ten: 'Giao thất bại',  mau: '#B91C1C', nhom: 'san' },
+  tra_hang:          { ten: 'Trả hàng/Hoàn tiền', mau: '#9333EA', nhom: 'san' },
+  da_huy:            { ten: 'Đã hủy',         mau: '#DC2626', nhom: 'san' }
 };
+
+function trangThaiHienThi(d) {
+  const giao = String(d.trangThaiGiao || '');
+  const hoaDon = String(d.trangThaiHoaDon || '');
+  const daDongGoi = !!d.thoiGianDongGoi;
+
+  // Xét trả hàng TRƯỚC hủy: đơn trả hàng thường cũng mang dấu hiệu hủy,
+  // nhưng bản chất khác nhau (đã giao rồi khách trả vs chưa giao đã hủy).
+  if (/trả hàng|hoàn tiền|hoàn hàng/i.test(giao) || /trả hàng|hoàn tiền/i.test(hoaDon)) return 'tra_hang';
+  if (/thất bại|không giao được|giao hỏng/i.test(giao)) return 'giao_that_bai';
+
+  if (/hủy/i.test(giao) || /hủy/i.test(hoaDon)) {
+    // Đây là điểm mấu chốt: hủy khi hàng ĐÃ đóng gói cần quản lý riêng
+    return daDongGoi ? 'huy_sau_dong_goi' : 'da_huy';
+  }
+  if (/thành công|đã giao/i.test(giao)) return 'da_giao';
+  if (/đang giao|đã bàn giao|đang vận chuyển/i.test(giao)) return 'dang_giao';
+  return d.trangThaiNoiBo || 'moi';
+}
+
+// Đơn hủy sau đóng gói đã được quản lý nhận lại kiện hàng từ shipper chưa
+function daNhanLaiKien(d) {
+  return !!d.daNhanLaiKien;
+}
 
 async function renderDonHangTab() {
   const el = document.getElementById('tmdt-than');
@@ -2182,7 +2230,7 @@ async function renderDonHangTab() {
 function locDon() {
   let ds = allDonHangSan;
   if (donFilterSan !== 'all') ds = ds.filter(d => d.san === donFilterSan);
-  if (donFilterTrangThai !== 'all') ds = ds.filter(d => (d.trangThaiNoiBo || 'moi') === donFilterTrangThai);
+  if (donFilterTrangThai !== 'all') ds = ds.filter(d => trangThaiHienThi(d) === donFilterTrangThai);
   const tu = donTimKiem.trim().toLowerCase();
   if (tu) ds = ds.filter(d =>
     String(d.maHoaDon || '').toLowerCase().includes(tu) ||
@@ -2210,11 +2258,17 @@ function veDanhSachDon() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
   const ds = locDon();
-  const demTT = (t) => allDonHangSan.filter(d => (d.trangThaiNoiBo || 'moi') === t).length;
+  const demTT = (t) => allDonHangSan.filter(d => trangThaiHienThi(d) === t).length;
   const tongTrang = Math.max(1, Math.ceil(ds.length / DON_MOI_TRANG));
   if (donPage > tongTrang) donPage = tongTrang;
   const trang = ds.slice((donPage - 1) * DON_MOI_TRANG, donPage * DON_MOI_TRANG);
   const nutTT = (ma, nhan, so, mau) => `<button style="flex:1;border:1.5px solid ${donFilterTrangThai===ma?mau:'var(--border)'};border-radius:6px;padding:7px 4px;font-size:12px;background:${donFilterTrangThai===ma?mau:'#fff'};color:${donFilterTrangThai===ma?'#fff':'var(--text)'}" onclick="doiFilterDonTT('${ma}')">${nhan}${so!=null?` (${so})`:''}</button>`;
+  const nhomKho = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'kho');
+  const nhomCanhBao = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'canh_bao');
+  const nhomSan = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'san');
+  const soHuySauDongGoi = demTT('huy_sau_dong_goi');
+  const soChuaNhanLai = allDonHangSan.filter(d =>
+    trangThaiHienThi(d) === 'huy_sau_dong_goi' && !daNhanLaiKien(d)).length;
 
   el.innerHTML = `
     <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
@@ -2237,9 +2291,22 @@ function veDanhSachDon() {
       <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('tiktok')">TikTok (${allDonHangSan.filter(d=>d.san==='tiktok').length})</button>
       <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('lazada')">Lazada (${allDonHangSan.filter(d=>d.san==='lazada').length})</button>
     </div>
+    ${soHuySauDongGoi ? `
+    <div style="background:${soChuaNhanLai ? '#FEF3C7' : '#F0FDF4'};border:1.5px solid ${soChuaNhanLai ? '#EA580C' : '#16A34A'};border-radius:8px;padding:10px 12px;margin-bottom:10px;cursor:pointer" onclick="doiFilterDonTT('huy_sau_dong_goi')">
+      <b style="font-size:13px;color:${soChuaNhanLai ? '#EA580C' : '#16A34A'}">
+        ${soChuaNhanLai ? `⚠ ${soChuaNhanLai} kiện hủy chưa nhận lại từ shipper` : `✓ Đã nhận lại đủ ${soHuySauDongGoi} kiện hủy`}
+      </b>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">Đối chiếu khi bàn giao hàng cho đơn vị vận chuyển</div>
+    </div>` : ''}
+    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">XỬ LÝ TRONG KHO</div>
     <div style="display:flex;gap:5px;margin-bottom:8px">
-      ${nutTT('all', 'Tất cả', null, 'var(--text2)')}
-      ${Object.entries(TRANG_THAI_NOI_BO).map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+      ${nutTT('all', 'Tất cả', allDonHangSan.length, 'var(--text2)')}
+      ${nhomKho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+    </div>
+    ${nhomCanhBao.map(([k, v]) => `<div style="margin-bottom:8px">${nutTT(k, v.ten, demTT(k), v.mau)}</div>`).join('')}
+    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">TRẠNG THÁI TỪ SÀN</div>
+    <div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
+      ${nhomSan.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
     </div>
     <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng..." value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
     <div id="don-list"></div>
@@ -2253,23 +2320,34 @@ function veDanhSachDon() {
   if (!ds.length) { listEl.innerHTML = '<p class="info-note">Không có đơn nào khớp bộ lọc.</p>'; return; }
 
   listEl.innerHTML = trang.map(d => {
-    const tt = TRANG_THAI_NOI_BO[d.trangThaiNoiBo || 'moi'] || TRANG_THAI_NOI_BO.moi;
+    const maTT = trangThaiHienThi(d);
+    const tt = TRANG_THAI_NOI_BO[maTT] || TRANG_THAI_NOI_BO.moi;
     const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : (d.ngayDat ? new Date(d.ngayDat) : null);
     const gio = ngay ? ngay.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
     const phi = d.phiSanTong;
     const tiLePhi = (phi && d.tongTien) ? ((phi / d.tongTien) * 100).toFixed(1) : null;
+    const laHuySauDongGoi = maTT === 'huy_sau_dong_goi';
+    const daNhan = daNhanLaiKien(d);
+
+    // Thời điểm đóng gói — dùng để tua camera khi cần tìm kiện hàng
+    const tDG = d.thoiGianDongGoi?.toDate ? d.thoiGianDongGoi.toDate()
+              : (d.thoiGianDongGoi ? new Date(d.thoiGianDongGoi) : null);
+    const gioDG = tDG ? tDG.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', second:'2-digit', day:'2-digit', month:'2-digit' }) : null;
+
     return `
-    <div style="border:1px solid var(--border);border-left:3px solid ${tt.mau};border-radius:8px;padding:10px 12px;margin-bottom:8px">
+    <div style="border:1px solid ${laHuySauDongGoi && !daNhan ? '#EA580C' : 'var(--border)'};border-left:3px solid ${tt.mau};border-radius:8px;padding:10px 12px;margin-bottom:8px;background:${laHuySauDongGoi && !daNhan ? '#FFFBEB' : '#fff'}">
       <div style="display:flex;gap:8px;align-items:flex-start">
         <div style="flex:1;min-width:0">
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span style="font-size:10px;background:var(--bg);padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[d.san] || d.san)}</span>
             <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
             <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
+            ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
-            ${gio} · ${escHtml(d.trangThaiGiao || '')}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
+            ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
           </div>
+          ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.nhanVienDongGoi ? ` · ${escHtml(d.nhanVienDongGoi)}` : ''}${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
           <div style="font-size:12px;margin-top:4px">
             ${(d.chiTiet || []).slice(0, 3).map(c => `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
             ${(d.chiTiet || []).length > 3 ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 3} món</span>` : ''}
@@ -2282,6 +2360,12 @@ function veDanhSachDon() {
             : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
         </div>
       </div>
+      ${laHuySauDongGoi ? `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
+        <span style="font-size:11px;color:var(--text2);flex:1">Kiện hàng này đã đóng gói — cần nhận lại từ shipper khi bàn giao</span>
+        <button class="btn-xs" style="background:${daNhan ? '#FEE2E2' : '#16A34A'};color:${daNhan ? '#DC2626' : '#fff'}"
+          onclick="doiNhanLaiKien('${escHtml(d.id)}', ${!daNhan})">${daNhan ? 'Bỏ đánh dấu' : '✓ Đã nhận lại kiện'}</button>
+      </div>` : ''}
     </div>`;
   }).join('');
 
@@ -2404,6 +2488,252 @@ window.chanDoanKenhBan = async function(soNgay = 30) {
   console.log(JSON.stringify(data, null, 2));
   return data;
 };
+
+// Đánh dấu quản lý đã nhận lại kiện hàng của đơn hủy sau đóng gói từ shipper.
+// Dùng khi bàn giao hàng: đối chiếu số kiện shipper trả với danh sách này.
+window.doiNhanLaiKien = async function(idDon, giaTri) {
+  const d = allDonHangSan.find(x => x.id === idDon);
+  if (!d) return;
+  await updateDoc(doc(db, 'don_hang_san', idDon), {
+    daNhanLaiKien: giaTri,
+    nhanLaiLuc: giaTri ? serverTimestamp() : null,
+    nguoiNhanLai: giaTri ? (currentUserData?.ten || currentUser?.email || '') : ''
+  });
+  d.daNhanLaiKien = giaTri;
+  showToast(giaTri ? 'Đã đánh dấu nhận lại kiện' : 'Đã bỏ đánh dấu');
+  veDanhSachDon();
+};
+
+// ==========================================================================
+// ===== QUÉT ĐÓNG GÓI BẰNG CAMERA ĐIỆN THOẠI =====
+// Dùng BarcodeDetector API có sẵn trong Chrome Android — không cần cài gì.
+// Nhân viên đăng nhập tài khoản của mình nên app biết ai quét, khỏi phải chọn.
+// ==========================================================================
+
+let luongCameraQuet = null;
+let dangQuetDongGoi = false;
+let boDocMa = null;
+let daQuetGanDay = new Map();   // mã -> thời điểm, chống quét trùng
+let phienQuet = { soDon: 0, tienThuong: 0, doanhThu: 0, lichSu: [] };
+const GIAY_CHONG_TRUNG_QUET = 60;
+
+// Công thức thưởng: 300đ mỗi đơn + 0,06% doanh thu đơn đó
+const THUONG_MOI_DON = 300;
+const TY_LE_THUONG_DOANH_THU = 0.0006;
+
+function tinhThuongDon(d) {
+  const tt = trangThaiHienThi(d);
+  // Đơn hủy và giao thất bại: không tính thưởng
+  if (tt === 'da_huy' || tt === 'huy_sau_dong_goi' || tt === 'giao_that_bai') {
+    return { thuong: 0, doanhThu: 0, lyDo: TRANG_THAI_NOI_BO[tt]?.ten };
+  }
+  // Trả hàng: trừ đúng phần tiền món bị trả, giữ lại phần khách vẫn nhận
+  const tienTra = Number(d.tienHangTra || 0);
+  const doanhThu = Math.max(0, (Number(d.tongTien) || 0) - tienTra);
+  if (tt === 'tra_hang' && doanhThu <= 0) {
+    return { thuong: 0, doanhThu: 0, lyDo: 'Trả toàn bộ' };
+  }
+  return {
+    thuong: Math.round(THUONG_MOI_DON + doanhThu * TY_LE_THUONG_DOANH_THU),
+    doanhThu,
+    lyDo: tienTra > 0 ? `Đã trừ ${Math.round(tienTra).toLocaleString('vi-VN')}đ hàng trả` : null
+  };
+}
+
+async function renderQuetDongGoiTab() {
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
+
+  const coHoTro = 'BarcodeDetector' in window;
+  el.innerHTML = `
+    ${!coHoTro ? `
+    <div style="background:#FEE2E2;border:1px solid #DC2626;border-radius:8px;padding:12px;margin-bottom:12px">
+      <b style="color:#DC2626">Trình duyệt này không quét được mã</b>
+      <div style="font-size:12px;margin-top:4px">Hãy mở app bằng <b>Chrome trên Android</b>. Safari/iPhone chưa hỗ trợ tính năng quét mã của trình duyệt.</div>
+    </div>` : ''}
+
+    <div style="background:#0F172A;border-radius:12px;padding:14px;margin-bottom:12px;color:#fff">
+      <div style="display:flex;gap:14px;text-align:center">
+        <div style="flex:1">
+          <div style="font-size:28px;font-weight:700;color:#4ade80" id="qdg-so-don">0</div>
+          <div style="font-size:11px;opacity:.7">đơn đã quét</div>
+        </div>
+        <div style="flex:1.3;border-left:1px solid #334155;border-right:1px solid #334155">
+          <div style="font-size:28px;font-weight:700;color:#fbbf24" id="qdg-thuong">0đ</div>
+          <div style="font-size:11px;opacity:.7">thưởng phiên này</div>
+        </div>
+        <div style="flex:1">
+          <div style="font-size:20px;font-weight:600" id="qdg-doanh-thu">0</div>
+          <div style="font-size:11px;opacity:.7">doanh thu</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="position:relative;background:#000;border-radius:12px;overflow:hidden;margin-bottom:10px">
+      <video id="qdg-video" playsinline muted style="width:100%;display:block;max-height:50vh;object-fit:cover"></video>
+      <div id="qdg-khung" style="position:absolute;inset:18% 12%;border:3px solid #22d3ee;border-radius:8px;pointer-events:none"></div>
+      <div id="qdg-bao" style="position:absolute;left:0;right:0;bottom:0;padding:10px;background:rgba(0,0,0,.75);color:#fff;font-size:13px;text-align:center">Bấm "Bắt đầu quét" bên dưới</div>
+    </div>
+
+    <button class="btn-g" id="qdg-nut" style="width:100%;padding:14px;font-size:16px" onclick="batTatQuet()" ${coHoTro ? '' : 'disabled'}>
+      ▶ Bắt đầu quét
+    </button>
+
+    <div style="margin-top:14px">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">ĐÃ QUÉT TRONG PHIÊN NÀY</div>
+      <div id="qdg-lich-su"></div>
+    </div>`;
+
+  veLichSuQuet();
+}
+
+window.batTatQuet = async function() {
+  if (dangQuetDongGoi) { dungQuet(); return; }
+  const video = document.getElementById('qdg-video');
+  const nut = document.getElementById('qdg-nut');
+  const bao = document.getElementById('qdg-bao');
+  try {
+    bao.textContent = 'Đang bật camera...';
+    // facingMode 'environment' = camera sau. Xin độ phân giải cao để đọc mã nét hơn.
+    luongCameraQuet = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = luongCameraQuet;
+    await video.play();
+    boDocMa = new BarcodeDetector({ formats: ['code_128', 'qr_code', 'code_39', 'ean_13'] });
+    dangQuetDongGoi = true;
+    nut.textContent = '■ Dừng quét';
+    nut.style.background = '#DC2626';
+    bao.textContent = 'Đưa mã vận đơn vào khung';
+    vongQuet();
+  } catch(e) {
+    bao.textContent = 'Không bật được camera: ' + e.message;
+    console.error(e);
+  }
+};
+
+function dungQuet() {
+  dangQuetDongGoi = false;
+  if (luongCameraQuet) {
+    luongCameraQuet.getTracks().forEach(t => t.stop());
+    luongCameraQuet = null;
+  }
+  const nut = document.getElementById('qdg-nut');
+  const bao = document.getElementById('qdg-bao');
+  if (nut) { nut.textContent = '▶ Bắt đầu quét'; nut.style.background = ''; }
+  if (bao) bao.textContent = 'Đã dừng';
+}
+
+// Phát tiếng bíp bằng Web Audio — không cần file âm thanh
+function bip(tanSo = 1800, thoiGian = 120) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.frequency.value = tanSo;
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    osc.start();
+    osc.stop(ctx.currentTime + thoiGian / 1000);
+    setTimeout(() => ctx.close(), thoiGian + 100);
+  } catch(e) {}
+}
+
+async function vongQuet() {
+  const video = document.getElementById('qdg-video');
+  if (!dangQuetDongGoi || !video) return;
+  try {
+    const cacMa = await boDocMa.detect(video);
+    for (const m of cacMa) {
+      const ma = String(m.rawValue || '').trim();
+      if (ma.length < 10) continue;
+      const bayGio = Date.now();
+      if (bayGio - (daQuetGanDay.get(ma) || 0) < GIAY_CHONG_TRUNG_QUET * 1000) continue;
+      daQuetGanDay.set(ma, bayGio);
+      await xuLyMaQuet(ma);
+    }
+  } catch(e) { /* khung hình lỗi, bỏ qua */ }
+  // Quét 5 lần/giây là đủ, không cần mỗi khung hình
+  if (dangQuetDongGoi) setTimeout(vongQuet, 200);
+}
+
+async function xuLyMaQuet(ma) {
+  const bao = document.getElementById('qdg-bao');
+  const don = allDonHangSan.find(d => d.maVanDon === ma);
+
+  if (!don) {
+    bip(400, 350);
+    if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+    bao.style.background = 'rgba(185,28,28,.9)';
+    bao.textContent = `Không tìm thấy đơn: ${ma}`;
+    phienQuet.lichSu.unshift({ ma, ok: false, ghiChu: 'không tìm thấy đơn', luc: new Date() });
+    veLichSuQuet();
+    return;
+  }
+
+  if (don.thoiGianDongGoi) {
+    bip(900, 100);
+    if (navigator.vibrate) navigator.vibrate(60);
+    bao.style.background = 'rgba(217,119,6,.9)';
+    bao.textContent = `Đơn này đã đóng gói trước đó`;
+    phienQuet.lichSu.unshift({ ma, ok: false, ghiChu: 'đã đóng gói trước đó', don, luc: new Date() });
+    veLichSuQuet();
+    return;
+  }
+
+  // Ghi nhận
+  try {
+    await updateDoc(doc(db, 'don_hang_san', don.id), {
+      trangThaiNoiBo: 'da_dong_goi',
+      thoiGianDongGoi: serverTimestamp(),
+      nhanVienDongGoi: currentUserData?.ten || currentUser?.email || '',
+      uidNhanVienDongGoi: currentUser?.uid || ''
+    });
+    don.thoiGianDongGoi = new Date();
+    don.trangThaiNoiBo = 'da_dong_goi';
+    don.nhanVienDongGoi = currentUserData?.ten || '';
+
+    const t = tinhThuongDon(don);
+    phienQuet.soDon++;
+    phienQuet.tienThuong += t.thuong;
+    phienQuet.doanhThu += t.doanhThu;
+    phienQuet.lichSu.unshift({ ma, ok: true, don, thuong: t.thuong, luc: new Date() });
+
+    bip(1800, 120);
+    if (navigator.vibrate) navigator.vibrate(100);
+    bao.style.background = 'rgba(22,163,74,.9)';
+    bao.textContent = `✓ ${(TEN_SAN[don.san] || don.san)} · ${(don.tongTien || 0).toLocaleString('vi-VN')}đ · +${t.thuong.toLocaleString('vi-VN')}đ`;
+
+    document.getElementById('qdg-so-don').textContent = phienQuet.soDon;
+    document.getElementById('qdg-thuong').textContent = phienQuet.tienThuong.toLocaleString('vi-VN') + 'đ';
+    document.getElementById('qdg-doanh-thu').textContent = (phienQuet.doanhThu / 1000).toFixed(0) + 'k';
+    veLichSuQuet();
+  } catch(e) {
+    bip(400, 350);
+    bao.style.background = 'rgba(185,28,28,.9)';
+    bao.textContent = 'Lỗi ghi nhận: ' + e.message;
+    console.error(e);
+  }
+}
+
+function veLichSuQuet() {
+  const el = document.getElementById('qdg-lich-su');
+  if (!el) return;
+  if (!phienQuet.lichSu.length) {
+    el.innerHTML = '<p class="info-note">Chưa quét đơn nào trong phiên này.</p>';
+    return;
+  }
+  el.innerHTML = phienQuet.lichSu.slice(0, 20).map(x => `
+    <div style="display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--border);border-left:3px solid ${x.ok ? '#16A34A' : '#D97706'};border-radius:6px;margin-bottom:5px">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600">${escHtml(x.ma)}</div>
+        <div style="font-size:11px;color:var(--text2)">
+          ${x.luc.toLocaleTimeString('vi-VN')}${x.don ? ` · ${escHtml(TEN_SAN[x.don.san] || x.don.san)}` : ''}${x.ghiChu ? ` · ${escHtml(x.ghiChu)}` : ''}
+        </div>
+      </div>
+      ${x.ok ? `<b style="color:#16A34A;font-size:13px">+${x.thuong.toLocaleString('vi-VN')}đ</b>` : ''}
+    </div>`).join('');
+}
 
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
@@ -7059,7 +7389,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v198</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v201</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7113,7 +7443,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v198</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v201</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7154,7 +7484,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v198</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v201</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
