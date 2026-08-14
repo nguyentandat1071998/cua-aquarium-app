@@ -2681,16 +2681,21 @@ window.batTatQuet = async function() {
           ZXing.BarcodeFormat.EAN_13
         ]);
         hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-        zxingReader = new ZXing.BrowserMultiFormatReader(hints);
-        // Kiểm tra hàm cần dùng có tồn tại không — bản thư viện khác nhau có API khác nhau
-        if (typeof zxingReader.decodeFromCanvas !== 'function') {
-          ghiNhatKyQuet('THẤT BẠI: thư viện thiếu hàm decodeFromCanvas');
+
+        // Dùng lớp LÕI MultiFormatReader thay vì BrowserMultiFormatReader.
+        // Bản UMD không kèm đủ các hàm trình duyệt (decodeFromCanvas không tồn tại),
+        // còn lớp lõi thì luôn có và ổn định giữa các phiên bản.
+        if (typeof ZXing.MultiFormatReader !== 'function') {
+          ghiNhatKyQuet('THẤT BẠI: thiếu MultiFormatReader. Có sẵn: ' +
+            Object.keys(ZXing).filter(k => /Reader|Luminance|Bitmap|Binarizer/.test(k)).join(', ').slice(0, 200));
           bao.textContent = 'Bộ đọc mã không tương thích';
           dungQuet();
           return;
         }
+        zxingReader = new ZXing.MultiFormatReader();
+        zxingReader.setHints(hints);
         kieuBoDoc = 'zxing';
-        ghiNhatKyQuet('Dùng bộ đọc dự phòng ZXing');
+        ghiNhatKyQuet('Dùng bộ đọc dự phòng ZXing (lớp lõi)');
       } catch(e) {
         ghiNhatKyQuet('THẤT BẠI khi khởi tạo ZXing: ' + e.message);
         bao.textContent = 'Lỗi khởi tạo bộ đọc: ' + e.message;
@@ -2717,7 +2722,9 @@ function dungQuet() {
     luongCameraQuet.getTracks().forEach(t => t.stop());
     luongCameraQuet = null;
   }
-  if (zxingReader) { try { zxingReader.reset(); } catch(e) {} }
+  if (zxingReader && typeof zxingReader.reset === 'function') {
+    try { zxingReader.reset(); } catch(e) {}
+  }
   const nut = document.getElementById('qdg-nut');
   const bao = document.getElementById('qdg-bao');
   if (nut) { nut.textContent = '▶ Bắt đầu quét'; nut.style.background = ''; }
@@ -2758,18 +2765,32 @@ async function vongQuet() {
       const kq = await boDocMa.detect(video);
       cacMaTho = kq.map(m => String(m.rawValue || '').trim());
     } else if (kieuBoDoc === 'zxing' && video.videoWidth) {
-      // ZXing đọc từ ảnh tĩnh nên phải chụp khung hình ra canvas trước.
-      // Thu nhỏ còn tối đa 800px: đủ nét để đọc mã mà nhẹ hơn nhiều cho máy yếu.
+      // ZXing lõi đọc từ mảng độ sáng nên phải tự dựng:
+      //   khung hình -> canvas -> RGBA -> mảng xám -> BinaryBitmap -> decode
       if (!canvasQuet) canvasQuet = document.createElement('canvas');
       const tyLe = Math.min(1, 800 / video.videoWidth);
-      canvasQuet.width = Math.round(video.videoWidth * tyLe);
-      canvasQuet.height = Math.round(video.videoHeight * tyLe);
-      const ctx = canvasQuet.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvasQuet.width, canvasQuet.height);
+      const w = Math.round(video.videoWidth * tyLe);
+      const h = Math.round(video.videoHeight * tyLe);
+      canvasQuet.width = w; canvasQuet.height = h;
+      const ctx = canvasQuet.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+
+      // Chuyển RGBA sang độ sáng theo công thức chuẩn (mắt người nhạy với xanh lá nhất)
+      const xam = new Uint8ClampedArray(w * h);
+      for (let i = 0, j = 0; j < xam.length; i += 4, j++) {
+        xam[j] = (rgba[i] * 299 + rgba[i + 1] * 587 + rgba[i + 2] * 114) / 1000;
+      }
       try {
-        const kq = zxingReader.decodeFromCanvas(canvasQuet);
+        const nguon = new ZXing.RGBLuminanceSource(xam, w, h);
+        const bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(nguon));
+        const kq = zxingReader.decode(bitmap);
         if (kq) cacMaTho = [String(kq.getText() || '').trim()];
-      } catch(e) { /* không thấy mã trong khung này — bình thường */ }
+      } catch(e) {
+        // NotFoundException = không có mã trong khung này, hoàn toàn bình thường
+      } finally {
+        try { zxingReader.reset(); } catch(e) {}
+      }
     }
 
     for (const ma of cacMaTho) {
@@ -7534,7 +7555,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v204</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v205</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7588,7 +7609,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v204</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v205</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7629,7 +7650,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v204</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v205</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
