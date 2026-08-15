@@ -1293,6 +1293,7 @@ function roleLabel(r) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'baocao', hanghoa: 'hanghoa', tmdt: 'tmdt',
+  kiemtradon: 'kiemtradon', quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
   // thietlapluong: kiểm tra riêng bên dưới (chỉ Admin, không thuộc quyền module "nhanvien" thông thường)
@@ -1364,6 +1365,22 @@ window.switchModule = function(mod) {
     document.getElementById('panel-hanghoa-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderHangHoaTab();
+    return;
+  }
+  // Hai module vào THẲNG màn hình, không qua menu Sàn TMĐT.
+  // Nhân viên đóng gói chỉ dùng đúng hai cái này, bắt họ đi qua menu 10 mục là thừa.
+  if (mod === 'kiemtradon' || mod === 'quetdonggoi') {
+    document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
+    const mMobile = document.getElementById(`mod-${mod}`);
+    const mSidebar = document.getElementById(`sidebar-${mod}`);
+    if (mMobile) mMobile.classList.add('active');
+    if (mSidebar) mSidebar.classList.add('active');
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-tmdt-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    // Tắt camera màn hình kia nếu đang bật
+    if (mod === 'kiemtradon') dungQuet(); else ktDung();
+    moManHinhTMDT(mod === 'kiemtradon' ? 'kiemtra' : 'donggoi', true);
     return;
   }
   if (mod === 'tmdt') {
@@ -1991,10 +2008,10 @@ const MAN_HINH_TMDT = [
     quyen: 'tmdt_donhang',   render: () => renderDonHangTab() },
   { key: 'kiemtra',   ten: 'Kiểm tra đơn',    icon: '🔍', nhom: 'Vận hành',
     moTa: 'Quét mã đơn, hiện hàng cần lấy kèm ảnh để dò cho đúng',
-    quyen: 'tmdt_donhang',   render: () => renderKiemTraDonTab() },
+    quyen: 'kiemtradon', anTrongMenu: true, render: () => renderKiemTraDonTab() },
   { key: 'donggoi',   ten: 'Đóng gói',        icon: '📷', nhom: 'Vận hành',
     moTa: 'Quét mã vận đơn bằng camera điện thoại, tính thưởng ngay',
-    quyen: 'tmdt_donhang',   render: () => renderQuetDongGoiTab() },
+    quyen: 'quetdonggoi', anTrongMenu: true, render: () => renderQuetDongGoiTab() },
   { key: 'inhdon',    ten: 'In đơn',          icon: '🖨️', nhom: 'Vận hành',
     moTa: 'In phiếu giao hàng, gom in hàng loạt',
     quyen: 'tmdt_donhang',   render: null },
@@ -2024,7 +2041,7 @@ function coQuyenTMDT(quyen) {
 }
 
 // Điểm vào duy nhất của module. key = null -> menu chính.
-window.moManHinhTMDT = async function(key) {
+window.moManHinhTMDT = async function(key, vaoThang = false) {
   const el = document.getElementById('tmdt-content');
   if (!el) return;
 
@@ -2032,24 +2049,23 @@ window.moManHinhTMDT = async function(key) {
   if (manHinhTMDTHienTai === 'donggoi' && key !== 'donggoi') dungQuet();
   if (manHinhTMDTHienTai === 'kiemtra' && key !== 'kiemtra') ktDung();
 
-  // Rời màn hình Đóng gói thì phải tắt camera, nếu không máy nóng và hao pin
-  if (manHinhTMDTHienTai === 'donggoi' && key !== 'donggoi' && typeof dungQuet === 'function') {
-    dungQuet();
-  }
-
   if (!key) { manHinhTMDTHienTai = null; renderMenuTMDT(); return; }
 
   const mh = MAN_HINH_TMDT.find(m => m.key === key);
   if (!mh) { manHinhTMDTHienTai = null; renderMenuTMDT(); return; }
 
-  // Chặn thật ở tầng hàm — không chỉ ẩn nút trên menu, chặn cả khi gọi qua Console
-  if (!coQuyenTMDT(mh.quyen)) { showToast('Bạn không có quyền vào mục này', true); renderMenuTMDT(); return; }
+  // Chặn thật ở tầng hàm — không chỉ ẩn nút trên menu, chặn cả khi gọi qua Console.
+  // vaoThang: mở từ sidebar bằng quyền module riêng (kiemtradon / quetdonggoi)
+  const quyenCanCo = vaoThang
+    ? (key === 'kiemtra' ? 'kiemtradon' : key === 'donggoi' ? 'quetdonggoi' : mh.quyen)
+    : mh.quyen;
+  if (!coQuyenTMDT(quyenCanCo)) { showToast('Bạn không có quyền vào mục này', true); renderMenuTMDT(); return; }
   if (!mh.render) { showToast(`"${mh.ten}" chưa làm xong`, true); renderMenuTMDT(); return; }
 
   manHinhTMDTHienTai = key;
   el.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
-      <button class="btn-outline" style="width:auto;padding:7px 14px" onclick="moManHinhTMDT(null)">←</button>
+      ${vaoThang ? '' : `<button class="btn-outline" style="width:auto;padding:7px 14px" onclick="moManHinhTMDT(null)">←</button>`}
       <div style="flex:1;min-width:0">
         <b style="font-size:15px">${mh.icon} ${escHtml(mh.ten)}</b>
         <div style="font-size:11px;color:var(--text2)">${escHtml(mh.moTa)}</div>
@@ -2071,7 +2087,8 @@ window.moManHinhTMDT = async function(key) {
 function renderMenuTMDT() {
   const el = document.getElementById('tmdt-content');
   if (!el) return;
-  const duocVao = MAN_HINH_TMDT.filter(m => coQuyenTMDT(m.quyen));
+  // Bỏ những màn hình đã có module riêng ngoài sidebar, tránh vào được hai đường
+  const duocVao = MAN_HINH_TMDT.filter(m => !m.anTrongMenu && coQuyenTMDT(m.quyen));
   const nhomThuTu = [...new Set(duocVao.map(m => m.nhom))];
 
   el.innerHTML = `
@@ -4389,7 +4406,11 @@ const DANH_SACH_MODULE = [
     { key: 'hh_xoa', ten: 'Xóa' },
     { key: 'hh_xuatfile', ten: 'Xuất file' }
   ]},
-  // Sàn TMĐT — mỗi màn hình con là 1 quyền riêng.
+  // Hai màn hình nhân viên đóng gói dùng hằng ngày — để riêng ngoài sidebar
+  // thay vì chôn trong Sàn TMĐT, vì họ chỉ dùng đúng hai cái này.
+  { key: 'kiemtradon', ten: 'Kiểm tra đơn', con: [] },
+  { key: 'quetdonggoi', ten: 'Đóng gói', con: [] },
+  // Sàn TMĐT — phần quản trị, chỉ quản lý và admin cần.
   // Thêm màn hình mới: thêm 1 dòng ở đây + 1 dòng trong MAN_HINH_TMDT, không sửa gì khác.
   { key: 'tmdt', ten: 'Sàn TMĐT', con: [
     { key: 'tmdt_donhang', ten: 'Đơn hàng' },
@@ -4423,7 +4444,8 @@ function layQuyenFallbackChuaMigrate() {
     nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
     nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
     hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
-    tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_nhaphang:false, tmdt_ketnoi:false
+    tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_nhaphang:false, tmdt_ketnoi:false,
+    kiemtradon:false, quetdonggoi:false
   };
 }
 
@@ -4435,6 +4457,8 @@ const ANH_XA_HIEN_MODULE = {
   baocao: [['mod-baocao','flex'], ['sidebar-baocao','flex']],
   nhanvien: [['mod-nhanvien','flex'], ['sidebar-nhanvien-wrap','block']],
   hanghoa: [['mod-hanghoa','flex'], ['sidebar-hanghoa','flex']],
+  kiemtradon: [['mod-kiemtradon','flex'], ['sidebar-kiemtradon','flex']],
+  quetdonggoi: [['mod-quetdonggoi','flex'], ['sidebar-quetdonggoi','flex']],
   tmdt: [['mod-tmdt','flex'], ['sidebar-tmdt','flex']]
 };
 
@@ -8479,7 +8503,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v223</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v224</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8533,7 +8557,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v223</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v224</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8551,6 +8575,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
     </div>
     <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
+    <button class="mod-btn" id="sidebar-kiemtradon" onclick="switchModule('kiemtradon');updateSidebar('kiemtradon')" style="display:none;color:#0891B2">Kiểm tra đơn</button>
+    <button class="mod-btn" id="sidebar-quetdonggoi" onclick="switchModule('quetdonggoi');updateSidebar('quetdonggoi')" style="display:none;color:#16A34A">Đóng gói</button>
     <button class="mod-btn" id="sidebar-tmdt" onclick="switchModule('tmdt');updateSidebar('tmdt')" style="display:none;color:#0D9488">Sàn TMĐT</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
     <div class="sidebar-user" style="position:relative">
@@ -8574,7 +8600,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v223</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v224</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -8600,6 +8626,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <button class="mod-btn" id="mod-baocao" onclick="switchModule('baocao')" style="display:none;background:var(--bg);color:#4F46E5">Báo cáo</button>
         <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:#FEF3C7;color:#B45309">Nhân viên ▾</button>
         <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
+        <button class="mod-btn" id="mod-kiemtradon" onclick="switchModule('kiemtradon')" style="display:none;background:var(--bg);color:#0891B2">Kiểm tra đơn</button>
+        <button class="mod-btn" id="mod-quetdonggoi" onclick="switchModule('quetdonggoi')" style="display:none;background:var(--bg);color:#16A34A">Đóng gói</button>
         <button class="mod-btn" id="mod-tmdt" onclick="switchModule('tmdt')" style="display:none;background:var(--bg);color:#0D9488">Sàn TMĐT</button>
         <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
       </div>
