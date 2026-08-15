@@ -1293,7 +1293,7 @@ function roleLabel(r) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'baocao', hanghoa: 'hanghoa', tmdt: 'tmdt',
-  kiemtradon: 'kiemtradon', quetdonggoi: 'quetdonggoi',
+  quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
   // thietlapluong: kiểm tra riêng bên dưới (chỉ Admin, không thuộc quyền module "nhanvien" thông thường)
@@ -1369,7 +1369,7 @@ window.switchModule = function(mod) {
   }
   // Hai module vào THẲNG màn hình, không qua menu Sàn TMĐT.
   // Nhân viên đóng gói chỉ dùng đúng hai cái này, bắt họ đi qua menu 10 mục là thừa.
-  if (mod === 'kiemtradon' || mod === 'quetdonggoi') {
+  if (mod === 'quetdonggoi') {
     document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
     const mMobile = document.getElementById(`mod-${mod}`);
     const mSidebar = document.getElementById(`sidebar-${mod}`);
@@ -1379,8 +1379,7 @@ window.switchModule = function(mod) {
     document.getElementById('panel-tmdt-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     // Tắt camera màn hình kia nếu đang bật
-    if (mod === 'kiemtradon') dungQuet(); else ktDung();
-    moManHinhTMDT(mod === 'kiemtradon' ? 'kiemtra' : 'donggoi', true);
+    moManHinhTMDT('kiemtra', true);
     return;
   }
   if (mod === 'tmdt') {
@@ -2006,12 +2005,9 @@ const MAN_HINH_TMDT = [
   { key: 'donhang',   ten: 'Đơn hàng',        icon: '📦', nhom: 'Vận hành',
     moTa: 'Đồng bộ đơn từ sàn, xử lý và theo dõi trạng thái',
     quyen: 'tmdt_donhang',   render: () => renderDonHangTab() },
-  { key: 'kiemtra',   ten: 'Kiểm tra đơn',    icon: '🔍', nhom: 'Vận hành',
-    moTa: 'Quét mã đơn, hiện hàng cần lấy kèm ảnh để dò cho đúng',
-    quyen: 'kiemtradon', anTrongMenu: true, render: () => renderKiemTraDonTab() },
-  { key: 'donggoi',   ten: 'Đóng gói',        icon: '📷', nhom: 'Vận hành',
-    moTa: 'Quét mã vận đơn bằng camera điện thoại, tính thưởng ngay',
-    quyen: 'quetdonggoi', anTrongMenu: true, render: () => renderQuetDongGoiTab() },
+  { key: 'kiemtra',   ten: 'Đóng gói',        icon: '📷', nhom: 'Vận hành',
+    moTa: 'Quét mã đơn, xem hàng cần lấy, xong bấm hoàn thành đóng gói',
+    quyen: 'quetdonggoi', anTrongMenu: true, render: () => renderKiemTraDonTab() },
   { key: 'inhdon',    ten: 'In đơn',          icon: '🖨️', nhom: 'Vận hành',
     moTa: 'In phiếu giao hàng, gom in hàng loạt',
     quyen: 'tmdt_donhang',   render: null },
@@ -2055,9 +2051,9 @@ window.moManHinhTMDT = async function(key, vaoThang = false) {
   if (!mh) { manHinhTMDTHienTai = null; renderMenuTMDT(); return; }
 
   // Chặn thật ở tầng hàm — không chỉ ẩn nút trên menu, chặn cả khi gọi qua Console.
-  // vaoThang: mở từ sidebar bằng quyền module riêng (kiemtradon / quetdonggoi)
+  // vaoThang: mở từ sidebar bằng quyền module riêng quetdonggoi
   const quyenCanCo = vaoThang
-    ? (key === 'kiemtra' ? 'kiemtradon' : key === 'donggoi' ? 'quetdonggoi' : mh.quyen)
+    ? (key === 'kiemtra' ? 'quetdonggoi' : mh.quyen)
     : mh.quyen;
   if (!coQuyenTMDT(quyenCanCo)) { showToast('Bạn không có quyền vào mục này', true); renderMenuTMDT(); return; }
   if (!mh.render) { showToast(`"${mh.ten}" chưa làm xong`, true); renderMenuTMDT(); return; }
@@ -3244,6 +3240,7 @@ let ktDangQuet = false;
 let ktLuong = null;
 let ktDon = null;
 let ktDaTich = new Set();
+let ktPhien = { soDon: 0, tienThuong: 0 };   // số liệu ca làm hiện tại
 
 async function renderKiemTraDonTab() {
   const el = document.getElementById('tmdt-than');
@@ -3252,6 +3249,18 @@ async function renderKiemTraDonTab() {
   if (!allSKUs.length) await loadSKUs();
 
   el.innerHTML = `
+    <div style="background:#0F172A;border-radius:12px;padding:12px;margin-bottom:10px;color:#fff">
+      <div style="display:flex;text-align:center">
+        <div style="flex:1;border-right:1px solid rgba(255,255,255,.15)">
+          <div id="kt-so-don" style="font-size:24px;font-weight:700;color:#4ade80">${ktPhien.soDon}</div>
+          <div style="font-size:10px;opacity:.7">đơn đã đóng</div>
+        </div>
+        <div style="flex:1">
+          <div id="kt-tien" style="font-size:24px;font-weight:700;color:#facc15">${ktPhien.tienThuong.toLocaleString('vi-VN')}đ</div>
+          <div style="font-size:10px;opacity:.7">thưởng phiên này</div>
+        </div>
+      </div>
+    </div>
     <div style="background:#0F172A;border-radius:12px;overflow:hidden;position:relative;margin-bottom:10px">
       <video id="kt-video" playsinline muted style="width:100%;display:block;background:#000;max-height:34vh;object-fit:cover"></video>
       <div id="kt-khung" style="position:absolute;inset:20% 14%;border:3px solid #FACC15;border-radius:10px;pointer-events:none;display:none"></div>
@@ -3374,20 +3383,21 @@ function ktVeDanhSachHang() {
   if (!ktDon) return;
   const hang = ktDon.chiTiet || [];
   const xong = ktDaTich.size === hang.length && hang.length > 0;
+  const daDongGoi = !!ktDon.thoiGianDongGoi;
+  const thuong = tinhThuongDon ? (tinhThuongDon(ktDon)?.thuong || 0) : 0;
 
   el.innerHTML = `
-    <div style="background:${xong ? '#DCFCE7' : 'var(--bg)'};border:1.5px solid ${xong ? '#16A34A' : 'var(--border)'};border-radius:10px;padding:12px;margin-bottom:10px">
+    <div style="background:${daDongGoi ? '#DCFCE7' : (xong ? '#DCFCE7' : 'var(--bg)')};border:1.5px solid ${daDongGoi || xong ? '#16A34A' : 'var(--border)'};border-radius:10px;padding:12px;margin-bottom:10px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span style="font-size:10px;background:#fff;padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[ktDon.san] || ktDon.san || '')}</span>
         <b>${escHtml(ktDon.maDonSan || ktDon.maHoaDon)}</b>
       </div>
       <div style="font-size:12px;color:var(--text2);margin-top:4px">VĐ: ${escHtml(ktDon.maVanDon || '')} · ${(ktDon.tongTien || 0).toLocaleString('vi-VN')}đ</div>
-      <div style="font-size:15px;font-weight:700;margin-top:6px;color:${xong ? '#16A34A' : '#D97706'}">
-        ${xong ? '✓ Đã lấy đủ hàng' : `Đã lấy ${ktDaTich.size}/${hang.length} món`}
+      <div style="font-size:15px;font-weight:700;margin-top:6px;color:${daDongGoi || xong ? '#16A34A' : '#D97706'}">
+        ${daDongGoi ? '✓ Đã đóng gói xong' : (xong ? '✓ Đã lấy đủ hàng' : `Đã lấy ${ktDaTich.size}/${hang.length} món`)}
       </div>
     </div>
     ${hang.map((c, i) => {
-      // Tra ảnh + tên đầy đủ từ bảng SKU nội bộ theo mã hàng KiotViet
       const sku = allSKUs.find(s => String(s.sku).toUpperCase() === String(c.maHang).toUpperCase());
       const daTich = ktDaTich.has(i);
       const laSkuAo = /^TMDT/i.test(String(c.maHang || ''));
@@ -3401,13 +3411,62 @@ function ktVeDanhSachHang() {
           <b style="font-size:14px">${escHtml(sku?.ten || c.tenHang || '')}</b>
           <div style="font-size:11px;color:var(--text2);margin-top:2px">${escHtml(c.maHang || '')}</div>
           ${laSkuAo ? `<div style="font-size:10px;color:#DC2626;margin-top:2px">SKU ảo — chưa liên kết sản phẩm trong KiotViet</div>` : ''}
-          ${!sku && !laSkuAo ? `<div style="font-size:10px;color:#D97706;margin-top:2px">Không có mã này trong app — kiểm tra lại danh mục hàng hóa</div>` : ''}
         </div>
         <div style="font-size:22px;font-weight:700;color:var(--green);flex-shrink:0">×${c.soLuong}</div>
       </div>`;
     }).join('')}
-    <button class="btn-outline" style="width:100%;margin-top:6px" onclick="ktBatTat()">Quét đơn tiếp theo</button>`;
+
+    ${daDongGoi ? `
+      <div style="background:#F0FDF4;border:1px solid #16A34A;border-radius:10px;padding:12px;text-align:center;margin-top:10px">
+        <b style="color:#16A34A">Đơn này đã đóng gói</b>
+        <div style="font-size:12px;color:var(--text2);margin-top:3px">
+          ${(ktDon.thoiGianDongGoi?.toDate ? ktDon.thoiGianDongGoi.toDate() : new Date(ktDon.thoiGianDongGoi)).toLocaleString('vi-VN')}
+          ${ktDon.banDongGoi ? ' · ' + escHtml(ktDon.banDongGoi) : ''}
+        </div>
+      </div>`
+    : `
+      <button class="btn-g" style="width:100%;padding:16px;font-size:16px;margin-top:10px;background:${xong ? '' : '#94A3B8'}"
+        onclick="ktHoanThanhDongGoi()">✓ Hoàn thành đóng gói${thuong ? ` · +${thuong.toLocaleString('vi-VN')}đ` : ''}</button>
+      ${!xong ? `<p class="info-note" style="margin-top:6px">Chưa tích đủ ${hang.length} món. Vẫn bấm được nhưng nên kiểm đủ trước.</p>` : ''}`}
+
+    <button class="btn-outline" style="width:100%;margin-top:8px" onclick="ktBatTat()">Quét đơn tiếp theo</button>`;
 }
+
+// Ghi nhận đóng gói xong — thay cho việc quét mã lần thứ hai.
+// Nhân viên quét 1 lần để xem hàng, dò xong bấm nút này là hết.
+window.ktHoanThanhDongGoi = async function() {
+  if (!ktDon) return;
+  if (ktDon.thoiGianDongGoi) { showToast('Đơn này đã đóng gói rồi', true); return; }
+  const hang = ktDon.chiTiet || [];
+  if (ktDaTich.size < hang.length) {
+    if (!confirm(`Mới tích ${ktDaTich.size}/${hang.length} món.\n\nVẫn xác nhận đã đóng gói xong?`)) return;
+  }
+  try {
+    await updateDoc(doc(db, 'don_hang_san', ktDon.id), {
+      trangThaiNoiBo: 'da_dong_goi',
+      thoiGianDongGoi: serverTimestamp(),
+      nhanVienDongGoi: currentUser?.uid || '',
+      banDongGoi: currentUserData?.ten || currentUser?.email || ''
+    });
+    ktDon.thoiGianDongGoi = new Date();
+    ktDon.trangThaiNoiBo = 'da_dong_goi';
+    ktDon.banDongGoi = currentUserData?.ten || '';
+    bip(1800, 150);
+    if (navigator.vibrate) navigator.vibrate(120);
+    const t = tinhThuongDon ? tinhThuongDon(ktDon) : { thuong: 0 };
+    ktPhien.soDon++;
+    ktPhien.tienThuong += (t.thuong || 0);
+    const oSoDon = document.getElementById('kt-so-don');
+    const oTien = document.getElementById('kt-tien');
+    if (oSoDon) oSoDon.textContent = ktPhien.soDon;
+    if (oTien) oTien.textContent = ktPhien.tienThuong.toLocaleString('vi-VN') + 'đ';
+    showToast(`Đã ghi nhận đóng gói${t.thuong ? ` · +${t.thuong.toLocaleString('vi-VN')}đ` : ''}`);
+    ktVeDanhSachHang();
+  } catch(e) {
+    bip(400, 350);
+    alert('Không ghi được: ' + e.message);
+  }
+};
 
 // ==========================================================================
 // ===== NHẬP HÀNG (chi nhánh Sàn TMĐT) =====
@@ -4406,9 +4465,8 @@ const DANH_SACH_MODULE = [
     { key: 'hh_xoa', ten: 'Xóa' },
     { key: 'hh_xuatfile', ten: 'Xuất file' }
   ]},
-  // Hai màn hình nhân viên đóng gói dùng hằng ngày — để riêng ngoài sidebar
-  // thay vì chôn trong Sàn TMĐT, vì họ chỉ dùng đúng hai cái này.
-  { key: 'kiemtradon', ten: 'Kiểm tra đơn', con: [] },
+  // Màn hình nhân viên đóng gói dùng hằng ngày — quét 1 lần, xem hàng, bấm hoàn thành.
+  // Để riêng ngoài sidebar vì họ chỉ dùng đúng cái này.
   { key: 'quetdonggoi', ten: 'Đóng gói', con: [] },
   // Sàn TMĐT — phần quản trị, chỉ quản lý và admin cần.
   // Thêm màn hình mới: thêm 1 dòng ở đây + 1 dòng trong MAN_HINH_TMDT, không sửa gì khác.
@@ -4445,7 +4503,7 @@ function layQuyenFallbackChuaMigrate() {
     nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
     hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
     tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_nhaphang:false, tmdt_ketnoi:false,
-    kiemtradon:false, quetdonggoi:false
+    quetdonggoi:false
   };
 }
 
@@ -4457,7 +4515,6 @@ const ANH_XA_HIEN_MODULE = {
   baocao: [['mod-baocao','flex'], ['sidebar-baocao','flex']],
   nhanvien: [['mod-nhanvien','flex'], ['sidebar-nhanvien-wrap','block']],
   hanghoa: [['mod-hanghoa','flex'], ['sidebar-hanghoa','flex']],
-  kiemtradon: [['mod-kiemtradon','flex'], ['sidebar-kiemtradon','flex']],
   quetdonggoi: [['mod-quetdonggoi','flex'], ['sidebar-quetdonggoi','flex']],
   tmdt: [['mod-tmdt','flex'], ['sidebar-tmdt','flex']]
 };
@@ -8503,7 +8560,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v224</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v225</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8557,7 +8614,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v224</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v225</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8575,7 +8632,6 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
     </div>
     <button class="mod-btn" id="sidebar-hanghoa" onclick="switchModule('hanghoa');updateSidebar('hanghoa')" style="display:none;color:#BE185D">Danh sách hàng hóa</button>
-    <button class="mod-btn" id="sidebar-kiemtradon" onclick="switchModule('kiemtradon');updateSidebar('kiemtradon')" style="display:none;color:#0891B2">Kiểm tra đơn</button>
     <button class="mod-btn" id="sidebar-quetdonggoi" onclick="switchModule('quetdonggoi');updateSidebar('quetdonggoi')" style="display:none;color:#16A34A">Đóng gói</button>
     <button class="mod-btn" id="sidebar-tmdt" onclick="switchModule('tmdt');updateSidebar('tmdt')" style="display:none;color:#0D9488">Sàn TMĐT</button>
     <button class="mod-btn admin-btn" id="sidebar-admin" onclick="switchAdmin();updateSidebar('admin')" style="display:none">Admin</button>
@@ -8600,7 +8656,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v224</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v225</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -8626,7 +8682,6 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <button class="mod-btn" id="mod-baocao" onclick="switchModule('baocao')" style="display:none;background:var(--bg);color:#4F46E5">Báo cáo</button>
         <button class="mod-btn" id="mod-nhanvien" onclick="toggleNVMenu('mobile')" style="display:none;background:#FEF3C7;color:#B45309">Nhân viên ▾</button>
         <button class="mod-btn" id="mod-hanghoa" onclick="switchModule('hanghoa')" style="display:none;background:var(--bg);color:#BE185D">Hàng hóa</button>
-        <button class="mod-btn" id="mod-kiemtradon" onclick="switchModule('kiemtradon')" style="display:none;background:var(--bg);color:#0891B2">Kiểm tra đơn</button>
         <button class="mod-btn" id="mod-quetdonggoi" onclick="switchModule('quetdonggoi')" style="display:none;background:var(--bg);color:#16A34A">Đóng gói</button>
         <button class="mod-btn" id="mod-tmdt" onclick="switchModule('tmdt')" style="display:none;background:var(--bg);color:#0D9488">Sàn TMĐT</button>
         <button class="mod-btn admin-btn" id="mod-admin" onclick="switchAdmin()" style="display:none">Admin</button>
