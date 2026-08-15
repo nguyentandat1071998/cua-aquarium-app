@@ -3262,6 +3262,41 @@ function ktVeDanhSachHang() {
 let nhPhieuHienTai = null;   // phiếu đang mở (null = tạo mới)
 let nhDongHang = [];         // [{sku, ten, soLuong, donGia}]
 let nhDsPhieu = [];
+let nhDaKhoiPhucNhap = false;
+
+// ===== TỰ LƯU NHÁP VÀO MÁY =====
+// Lưu ngay trong trình duyệt sau mỗi thay đổi, không cần bấm gì.
+// Tắt nhầm tab, rớt mạng, hết pin — mở lại vẫn còn nguyên.
+// Khóa gắn theo tài khoản để hai người dùng chung máy không đè nháp của nhau.
+function nhKhoaNhap() {
+  return `nhap_hang_nhap_${currentUser?.uid || 'chung'}`;
+}
+
+function nhLuuNhap() {
+  try {
+    if (!nhDongHang.length) { localStorage.removeItem(nhKhoaNhap()); return; }
+    localStorage.setItem(nhKhoaNhap(), JSON.stringify({
+      dongHang: nhDongHang,
+      idPhieuDangSua: nhPhieuHienTai?.id || null,
+      luc: Date.now()
+    }));
+  } catch(e) { /* trình duyệt chặn hoặc hết dung lượng — bỏ qua, không chặn thao tác */ }
+}
+
+function nhDocNhap() {
+  try {
+    const s = localStorage.getItem(nhKhoaNhap());
+    if (!s) return null;
+    const d = JSON.parse(s);
+    // Nháp quá 7 ngày coi như bỏ, tránh mở nhầm phiếu cũ từ tuần trước
+    if (Date.now() - (d.luc || 0) > 7 * 86400000) { localStorage.removeItem(nhKhoaNhap()); return null; }
+    return d;
+  } catch(e) { return null; }
+}
+
+function nhXoaNhap() {
+  try { localStorage.removeItem(nhKhoaNhap()); } catch(e) {}
+}
 
 async function renderNhapHangTab() {
   const el = document.getElementById('tmdt-than');
@@ -3272,6 +3307,16 @@ async function renderNhapHangTab() {
   nhDsPhieu = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted);
   nhPhieuHienTai = null;
   nhDongHang = [];
+
+  // Có bản nháp chưa lưu -> mở thẳng ra, đỡ mất công gõ lại
+  const nhap = nhDocNhap();
+  if (nhap?.dongHang?.length) {
+    nhDongHang = nhap.dongHang;
+    nhPhieuHienTai = nhap.idPhieuDangSua ? nhDsPhieu.find(p => p.id === nhap.idPhieuDangSua) || null : null;
+    nhDaKhoiPhucNhap = true;
+    veManHinhSoanPhieu();
+    return;
+  }
   veDanhSachPhieuNhap();
 }
 
@@ -3279,7 +3324,13 @@ function veDanhSachPhieuNhap() {
   const el = document.getElementById('tmdt-than');
   const tam = nhDsPhieu.filter(p => p.trangThai === 'tam');
   const xong = nhDsPhieu.filter(p => p.trangThai === 'da_luu');
+  const nhap = nhDocNhap();
   el.innerHTML = `
+    ${nhap?.dongHang?.length ? `
+      <div style="background:#EFF6FF;border:1.5px solid #3B82F6;border-radius:10px;padding:12px;margin-bottom:12px;cursor:pointer" onclick="nhMoLaiNhap()">
+        <b style="font-size:13px;color:#1D4ED8">📝 Có phiếu đang soạn dở (${nhap.dongHang.length} mã)</b>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">Chạm để mở lại · lưu trên máy này, chưa gửi lên hệ thống</div>
+      </div>` : ''}
     <button class="btn-g" style="width:100%;padding:13px;font-size:15px;margin-bottom:12px" onclick="nhTaoPhieuMoi()">+ Tạo phiếu nhập</button>
     ${tam.length ? `
       <div style="font-size:11px;color:#D97706;font-weight:700;margin-bottom:6px">PHIẾU TẠM — CHỜ ĐIỀN GIÁ (${tam.length})</div>
@@ -3310,7 +3361,39 @@ function veThePhieu(p) {
   </div>`;
 }
 
+// Thoát về danh sách. Giữ nguyên nháp để lát vào lại vẫn còn —
+// chỉ mất khi người dùng chủ động bỏ hoặc đã lưu phiếu.
+window.nhThoatSoanPhieu = function() {
+  nhDaKhoiPhucNhap = false;
+  nhPhieuHienTai = null;
+  nhDongHang = [];
+  veDanhSachPhieuNhap();
+};
+
+window.nhBoNhap = function() {
+  if (!confirm('Bỏ phiếu đang soạn dở?\n\nCác dòng đã nhập sẽ mất.')) return;
+  nhXoaNhap();
+  nhDaKhoiPhucNhap = false;
+  nhPhieuHienTai = null;
+  nhDongHang = [];
+  veDanhSachPhieuNhap();
+};
+
+window.nhMoLaiNhap = function() {
+  const nhap = nhDocNhap();
+  if (!nhap?.dongHang?.length) return;
+  nhDongHang = nhap.dongHang;
+  nhPhieuHienTai = nhap.idPhieuDangSua ? nhDsPhieu.find(p => p.id === nhap.idPhieuDangSua) || null : null;
+  nhDaKhoiPhucNhap = true;
+  veManHinhSoanPhieu();
+};
+
 window.nhTaoPhieuMoi = function() {
+  const nhap = nhDocNhap();
+  if (nhap?.dongHang?.length &&
+      !confirm(`Đang có phiếu soạn dở ${nhap.dongHang.length} mã.\n\nTạo phiếu mới sẽ bỏ phiếu đó. Tiếp tục?`)) return;
+  nhXoaNhap();
+  nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
   nhDongHang = [];
   veManHinhSoanPhieu();
@@ -3343,8 +3426,15 @@ function veManHinhSoanPhieu() {
   const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
   const thieuGia = nhDongHang.some(d => !Number(d.donGia));
 
+  // Ghi nháp sau mỗi lần thay đổi. Phiếu đã lưu thì không cần.
+  if (!daLuu) nhLuuNhap();
+
   el.innerHTML = `
-    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderNhapHangTab()">← Quay lại danh sách phiếu</button>
+    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="nhThoatSoanPhieu()">← Quay lại danh sách phiếu</button>
+    ${nhDaKhoiPhucNhap ? `<div style="background:#EFF6FF;border:1px solid #3B82F6;border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;gap:8px;align-items:center">
+      <div style="flex:1;font-size:12px;color:#1D4ED8">Đã khôi phục phiếu đang soạn dở lần trước.</div>
+      <button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="nhBoNhap()">Bỏ, làm phiếu mới</button>
+    </div>` : ''}
     ${nhPhieuHienTai ? `<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:10px">
       <b>${escHtml(nhPhieuHienTai.maPhieu || '')}</b>
       <span style="font-size:11px;color:#fff;background:${daLuu ? '#16A34A' : '#D97706'};padding:2px 7px;border-radius:4px;margin-left:6px">${daLuu ? 'Đã lưu' : 'Phiếu tạm'}</span>
@@ -3503,6 +3593,8 @@ window.nhLuuPhieu = async function(luuThat) {
       await addDoc(collection(db, 'phieu_nhap_san'), duLieu);
     }
     showToast(luuThat ? `Đã lưu phiếu và đẩy sang KiotViet${duLieu.kiotvietCode ? ' (' + duLieu.kiotvietCode + ')' : ''}` : 'Đã lưu phiếu tạm');
+    nhXoaNhap();              // đã lưu lên hệ thống, không cần giữ nháp trên máy nữa
+    nhDaKhoiPhucNhap = false;
     await renderNhapHangTab();
   } catch(e) {
     alert('Lỗi lưu phiếu: ' + e.message);
@@ -8169,7 +8261,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v216</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v217</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8223,7 +8315,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v216</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v217</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8264,7 +8356,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v216</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v217</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
