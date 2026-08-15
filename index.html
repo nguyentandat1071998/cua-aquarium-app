@@ -4524,8 +4524,7 @@ const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', mau: '#2563EB', muc: [
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
-    { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
-    { key: 'lichca',    ten: 'Lịch làm việc',  quyen: 'lichca',    moGi: () => switchModule('lichca') }
+    { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', mau: '#0D9488', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
@@ -4542,9 +4541,12 @@ const NHOM_MENU = [
   { key: 'nhansu', ten: 'Nhân sự', mau: '#B45309', muc: [
     { key: 'danhsachnv', ten: 'Danh sách nhân viên', quyen: 'nhanvien',    moGi: () => moNVTab('danhsachnv') },
     { key: 'chamcong',   ten: 'Chấm công',           quyen: 'nv_chamcong', moGi: () => moNVTab('chamcong') },
-    // Bảng lương: ai cũng xem được của mình. Nếu không có quyền quản lý nhân sự
-    // thì mục này tự chèn vào hàng mục con của nhóm đang xem.
-    { key: 'luong',      ten: 'Bảng lương',          quyen: 'nv_luong_minh', phu: true, moGi: () => moNVTab('luongnv') }
+    // Lịch làm việc là mục phụ: nhân viên xem ca của mình ngay ở hàng mục con,
+    // quản lý xếp ca thì vào nhóm Nhân sự.
+    { key: 'lichca',     ten: 'Lịch làm việc',       quyen: 'lichca', phu: true, moGi: () => switchModule('lichca') },
+    // Bảng lương: quản lý có quyền "xem tất cả" cũng phải thấy, không chỉ "xem của mình"
+    { key: 'luong',      ten: 'Bảng lương',
+      quyen: ['nv_luong_minh', 'nv_luong_tatca'], phu: true, moGi: () => moNVTab('luongnv') }
   ]},
   { key: 'baocao', ten: 'Báo cáo', mau: '#1D4ED8', moTrucTiep: true, quyen: 'baocao',
     muc: [], moGi: () => switchModule('baocao') },
@@ -4557,12 +4559,44 @@ const NHOM_MENU = [
 
 let nhomMenuDangChon = null;
 
+// quyen có thể là một khóa hoặc mảng khóa — đủ MỘT trong số đó là được vào.
+// Ví dụ Bảng lương: ai có "xem của mình" HOẶC "xem tất cả" đều thấy.
 function coQuyenMuc(quyen) {
   if (currentUserData?.role === 'admin') return true;
-  return !!(quyenModuleHienTai && quyenModuleHienTai[quyen]);
+  if (!quyenModuleHienTai) return false;
+  const ds = Array.isArray(quyen) ? quyen : [quyen];
+  return ds.some(k => !!quyenModuleHienTai[k]);
 }
 
 // Vẽ cả hai hàng. Gọi sau khi đã biết quyền của người dùng.
+// Cuộn hàng tab lớn khi màn hình hẹp không đủ chỗ.
+window.cuonNhom = function(huong) {
+  const bar = document.getElementById('menu-nhom');
+  if (bar) bar.scrollBy({ left: huong * 160, behavior: 'smooth' });
+};
+
+// Người dùng cũng có thể vuốt tay, hoặc xoay ngang điện thoại -> cập nhật lại mũi tên
+window.addEventListener('resize', () => setTimeout(capNhatMuiTenNhom, 100));
+document.addEventListener('DOMContentLoaded', () => {
+  const bar = document.getElementById('menu-nhom');
+  if (bar) bar.addEventListener('scroll', capNhatMuiTenNhom, { passive: true });
+});
+
+// Chỉ hiện mũi tên khi thật sự có phần bị tràn ra ngoài
+function capNhatMuiTenNhom() {
+  const bar = document.getElementById('menu-nhom');
+  const prev = document.getElementById('nhom-prev');
+  const next = document.getElementById('nhom-next');
+  if (!bar || !prev || !next) return;
+  const traTe = bar.scrollWidth > bar.clientWidth + 4;
+  prev.style.display = traTe ? 'block' : 'none';
+  next.style.display = traTe ? 'block' : 'none';
+  if (traTe) {
+    prev.style.opacity = bar.scrollLeft > 4 ? '1' : '.25';
+    next.style.opacity = (bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4) ? '1' : '.25';
+  }
+}
+
 function veMenuHaiCap() {
   const hangTren = document.getElementById('menu-nhom');
   const hangDuoi = document.getElementById('menu-muc');
@@ -4607,6 +4641,9 @@ function veMenuHaiCap() {
   hangDuoi.innerHTML = mucHienDuoc.map(m => `
     <button class="muc-btn" id="muc-${m.key}" onclick="chonMucMenu('${nhom.key}','${m.key}')">${escHtml(m.ten)}</button>`).join('');
   hangDuoi.style.display = mucHienDuoc.length ? 'flex' : 'none';
+
+  // Kiểm tra sau khi trình duyệt vẽ xong mới đo được chiều rộng thật
+  setTimeout(capNhatMuiTenNhom, 50);
 }
 
 window.chonNhomMenu = function(key) {
@@ -8414,8 +8451,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 /* ===== MENU HAI CẤP ===== */
 .menu-hai-cap{width:100%;background:#fff;border-bottom:1px solid var(--border)}
-.menu-nhom-bar{display:flex;gap:6px;padding:8px 10px 0;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.menu-nhom-wrap{display:flex;align-items:flex-end;padding:8px 4px 0}
+.menu-nhom-bar{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+  scroll-behavior:smooth;flex:1}
 .menu-nhom-bar::-webkit-scrollbar{display:none}
+.menu-mui-ten{flex-shrink:0;width:26px;height:36px;border:none;background:transparent;
+  font-size:20px;color:var(--text2);cursor:pointer;padding:0;display:none}
+.menu-mui-ten:active{color:var(--text)}
 .nhom-btn{flex-shrink:0;border:1.5px solid currentColor;background:#fff;border-radius:8px 8px 0 0;
   padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;border-bottom:none;white-space:nowrap}
 .menu-muc-bar{display:flex;gap:4px;padding:6px 10px;overflow-x:auto;background:var(--bg);
@@ -8425,7 +8467,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   padding:7px 14px;font-size:13px;cursor:pointer;color:var(--text);white-space:nowrap}
 .muc-btn.active{background:var(--text);color:#fff;border-color:var(--text);font-weight:600}
 @media(min-width:900px){
-  .menu-nhom-bar{padding:10px 16px 0}
+  .menu-nhom-wrap{padding:10px 10px 0}
   .menu-muc-bar{padding:8px 16px}
   .nhom-btn{font-size:15px;padding:10px 20px}
   .muc-btn{font-size:14px;padding:8px 16px}
@@ -8707,7 +8749,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v229</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v230</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8761,7 +8803,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v229</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v230</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8803,7 +8845,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v229</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v230</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -8822,7 +8864,11 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <!-- MENU HAI CẤP: hàng trên nhóm lớn, hàng dưới mục con.
            Thanh mod-bar cũ ẩn đi nhưng giữ lại vì switchModule vẫn tham chiếu tới các nút bên trong. -->
       <div class="menu-hai-cap">
-        <div class="menu-nhom-bar" id="menu-nhom"></div>
+        <div class="menu-nhom-wrap">
+          <button class="menu-mui-ten" id="nhom-prev" onclick="cuonNhom(-1)">‹</button>
+          <div class="menu-nhom-bar" id="menu-nhom"></div>
+          <button class="menu-mui-ten" id="nhom-next" onclick="cuonNhom(1)">›</button>
+        </div>
         <div class="menu-muc-bar" id="menu-muc"></div>
       </div>
       <button class="mod-page-btn" id="mod-page-prev" onclick="mobTabPage(-1)" style="display:none">‹</button>
