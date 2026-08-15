@@ -4509,25 +4509,23 @@ function layQuyenFallbackChuaMigrate() {
 
 // ==========================================================================
 // ===== MENU HAI CẤP =====
-// Hàng trên: nhóm lớn (Cửa hàng / Sàn TMĐT / Nhân viên / Báo cáo)
-// Hàng dưới: các mục con, đổi theo nhóm đang chọn.
+// Hàng trên: nhóm lớn. Hàng dưới: mục con, đổi theo nhóm đang chọn.
 //
-// Một mục có thể nằm ở NHIỀU nhóm (Bảng lương ở cả Cửa hàng lẫn Sàn TMĐT)
-// vì cả hai nhóm nhân viên đều cần xem lương của mình.
+// Hai quy tắc để menu không rối:
+//   1. Chỉ có ĐÚNG MỘT nhóm được phép -> ẩn hàng trên, hiện thẳng mục con.
+//   2. Mục "phu" (Bảng lương) thuộc nhóm Nhân sự, nhưng nếu người dùng không đủ
+//      quyền vào nhóm đó thì nó được chèn thẳng vào hàng mục con đang xem.
+//      Nhờ vậy nhân viên vẫn xem được lương mình mà không phải tạo ra tab "Nhân sự"
+//      chỉ chứa mỗi bảng lương.
 //
-// Mỗi mục khai báo:
-//   quyen — khóa quyền để quyết định có hiện hay không
-//   moGi  — hàm mở màn hình tương ứng (dùng lại switchModule sẵn có)
+// Nhóm có moTrucTiep = true thì không có mục con, bấm tab lớn là vào luôn.
 // ==========================================================================
 const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', mau: '#2563EB', muc: [
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
-    { key: 'lichca',    ten: 'Lịch làm việc',  quyen: 'lichca',    moGi: () => switchModule('lichca') },
-    // phu: true -> có mặt ở nhiều nhóm nhưng KHÔNG tính khi quyết định nhóm có hiện hay không.
-    // Nếu tính, nhân viên bán hàng sẽ thấy tab "Sàn TMĐT" chỉ chứa mỗi Bảng lương.
-    { key: 'luong',     ten: 'Bảng lương',     quyen: 'nv_luong_minh', phu: true, moGi: () => moNVTab('luongnv') }
+    { key: 'lichca',    ten: 'Lịch làm việc',  quyen: 'lichca',    moGi: () => switchModule('lichca') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', mau: '#0D9488', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
@@ -4536,14 +4534,24 @@ const NHOM_MENU = [
     { key: 'hanghoa',   ten: 'Hàng hóa',       quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
     { key: 'nhaphang',  ten: 'Nhập hàng',      quyen: 'tmdt_nhaphang',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('nhaphang', true); } },
-    { key: 'tmdtkhac',  ten: 'Khác',           quyen: 'tmdt',      moGi: () => switchModule('tmdt') },
-    { key: 'luong2',    ten: 'Bảng lương',     quyen: 'nv_luong_minh', phu: true, moGi: () => moNVTab('luongnv') }
+    { key: 'spsan',     ten: 'Sản phẩm trên sàn', quyen: 'tmdt_sanpham',
+      moGi: () => { switchModule('tmdt'); moManHinhTMDT('sanpham', true); } },
+    { key: 'daytonkho', ten: 'Đẩy tồn kho',    quyen: 'tmdt_daytonkho',
+      moGi: () => { switchModule('tmdt'); moManHinhTMDT('daytonkho', true); } }
   ]},
   { key: 'nhansu', ten: 'Nhân sự', mau: '#B45309', muc: [
-    { key: 'danhsachnv', ten: 'Danh sách nhân viên', quyen: 'nhanvien',      moGi: () => moNVTab('danhsachnv') },
-    { key: 'chamcong',   ten: 'Chấm công',           quyen: 'nv_chamcong',   moGi: () => moNVTab('chamcong') },
-    { key: 'luongtatca', ten: 'Bảng lương',          quyen: 'nv_luong_tatca', moGi: () => moNVTab('luongnv') },
-    { key: 'baocao',     ten: 'Báo cáo',             quyen: 'baocao',        moGi: () => switchModule('baocao') }
+    { key: 'danhsachnv', ten: 'Danh sách nhân viên', quyen: 'nhanvien',    moGi: () => moNVTab('danhsachnv') },
+    { key: 'chamcong',   ten: 'Chấm công',           quyen: 'nv_chamcong', moGi: () => moNVTab('chamcong') },
+    // Bảng lương: ai cũng xem được của mình. Nếu không có quyền quản lý nhân sự
+    // thì mục này tự chèn vào hàng mục con của nhóm đang xem.
+    { key: 'luong',      ten: 'Bảng lương',          quyen: 'nv_luong_minh', phu: true, moGi: () => moNVTab('luongnv') }
+  ]},
+  { key: 'baocao', ten: 'Báo cáo', mau: '#1D4ED8', moTrucTiep: true, quyen: 'baocao',
+    muc: [], moGi: () => switchModule('baocao') },
+  { key: 'thietlap', ten: 'Thiết lập', mau: '#6B7280', chiAdmin: true, muc: [
+    { key: 'adminpanel', ten: 'Quản trị hệ thống', quyen: 'tmdt_ketnoi', moGi: () => switchAdmin() },
+    { key: 'ketnoisan',  ten: 'Kết nối sàn',       quyen: 'tmdt_ketnoi',
+      moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
   ]}
 ];
 
@@ -4560,16 +4568,26 @@ function veMenuHaiCap() {
   const hangDuoi = document.getElementById('menu-muc');
   if (!hangTren || !hangDuoi) return;
 
-  // Nhóm chỉ hiện khi có ít nhất một mục CHÍNH được phép.
-  // Mục phụ (Bảng lương) không tính, nếu không nhóm nào cũng hiện chỉ vì có bảng lương.
-  const nhomHienDuoc = NHOM_MENU.filter(n => n.muc.some(m => !m.phu && coQuyenMuc(m.quyen)));
+  const laAdmin = currentUserData?.role === 'admin';
+  // Nhóm được phép:
+  //   - moTrucTiep: xét quyền của chính nhóm (Báo cáo, Thiết lập)
+  //   - còn lại: có ít nhất một mục CHÍNH được phép (mục phụ không tính)
+  const nhomHienDuoc = NHOM_MENU.filter(n => {
+    if (n.chiAdmin && !laAdmin) return false;
+    if (n.moTrucTiep) return coQuyenMuc(n.quyen);
+    return n.muc.some(m => !m.phu && coQuyenMuc(m.quyen));
+  });
   if (!nhomHienDuoc.length) { hangTren.innerHTML = ''; hangDuoi.innerHTML = ''; return; }
 
-  // Nhóm đang chọn không còn hợp lệ -> về nhóm đầu tiên
+  // Mục phụ "mồ côi": thuộc nhóm không đủ điều kiện hiện, nhưng người dùng vẫn có quyền.
+  // Chèn vào cuối hàng mục con để nhân viên vẫn xem được lương của mình.
+  const mucMoCoi = NHOM_MENU
+    .filter(n => !nhomHienDuoc.includes(n))
+    .flatMap(n => (n.muc || []).filter(m => m.phu && coQuyenMuc(m.quyen)));
+
   if (!nhomHienDuoc.some(n => n.key === nhomMenuDangChon)) nhomMenuDangChon = nhomHienDuoc[0].key;
 
   // Chỉ có ĐÚNG MỘT nhóm -> ẩn hàng tab lớn, hiện thẳng các mục con.
-  // Nhân viên đóng gói chỉ dùng phần Sàn TMĐT, bắt họ nhìn tab lớn với 1 lựa chọn là thừa.
   if (nhomHienDuoc.length === 1) {
     hangTren.innerHTML = '';
     hangTren.style.display = 'none';
@@ -4582,26 +4600,32 @@ function veMenuHaiCap() {
   }
 
   const nhom = nhomHienDuoc.find(n => n.key === nhomMenuDangChon);
-  const mucHienDuoc = nhom.muc.filter(m => coQuyenMuc(m.quyen));
+  const mucHienDuoc = [
+    ...(nhom.muc || []).filter(m => coQuyenMuc(m.quyen)),
+    ...mucMoCoi
+  ];
   hangDuoi.innerHTML = mucHienDuoc.map(m => `
     <button class="muc-btn" id="muc-${m.key}" onclick="chonMucMenu('${nhom.key}','${m.key}')">${escHtml(m.ten)}</button>`).join('');
-
-  // Chỉ hiện hàng dưới khi có mục
   hangDuoi.style.display = mucHienDuoc.length ? 'flex' : 'none';
 }
 
 window.chonNhomMenu = function(key) {
   nhomMenuDangChon = key;
-  veMenuHaiCap();
-  // Mở luôn mục đầu tiên của nhóm để không phải bấm hai lần
   const nhom = NHOM_MENU.find(n => n.key === key);
+  // Nhóm không có mục con -> mở thẳng, không cần bấm hai lần
+  if (nhom?.moTrucTiep) { veMenuHaiCap(); nhom.moGi(); return; }
+  veMenuHaiCap();
   const mucDau = nhom?.muc.find(m => coQuyenMuc(m.quyen));
   if (mucDau) chonMucMenu(key, mucDau.key);
 };
 
 window.chonMucMenu = function(nhomKey, mucKey) {
-  const nhom = NHOM_MENU.find(n => n.key === nhomKey);
-  const muc = nhom?.muc.find(m => m.key === mucKey);
+  // Mục có thể là mục phụ mồ côi từ nhóm khác, nên tìm trong toàn bộ danh sách
+  let muc = null;
+  for (const n of NHOM_MENU) {
+    const tim = (n.muc || []).find(m => m.key === mucKey);
+    if (tim) { muc = tim; break; }
+  }
   if (!muc || !coQuyenMuc(muc.quyen)) { showToast('Bạn không có quyền vào mục này', true); return; }
   document.querySelectorAll('.muc-btn').forEach(b => b.classList.remove('active'));
   const nut = document.getElementById(`muc-${mucKey}`);
@@ -8683,7 +8707,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v228</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v229</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8737,7 +8761,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v228</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v229</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8779,7 +8803,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v228</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v229</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
