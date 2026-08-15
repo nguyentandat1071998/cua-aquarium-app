@@ -3321,6 +3321,17 @@ window.nhMoPhieu = function(id) {
   if (!p) return;
   nhPhieuHienTai = p;
   nhDongHang = JSON.parse(JSON.stringify(p.dongHang || []));
+  // Phiếu tạm do quản lý tạo thường chưa có giá. Admin mở ra thì gợi sẵn giá vốn
+  // hiện tại để chỉ phải sửa những mã thật sự đổi giá.
+  if (p.trangThai === 'tam' && currentUserData.role === 'admin') {
+    nhDongHang.forEach(d => {
+      if (!Number(d.donGia)) {
+        const sku = allSKUs.find(s => s.sku === d.sku);
+        d.donGia = Number(sku?.giaVon) || 0;
+        d.giaVonCu = d.donGia;
+      }
+    });
+  }
   veManHinhSoanPhieu();
 };
 
@@ -3399,6 +3410,9 @@ function veBangHangNhap() {
           <label style="font-size:10px;color:var(--text2)">Đơn giá nhập</label>
           <input type="number" min="0" value="${d.donGia || ''}" ${daLuu ? 'disabled' : ''} placeholder="chưa có"
             onchange="nhSuaDong(${i},'donGia',this.value)" style="width:100%;padding:8px;text-align:right">
+          ${(d.giaVonCu && Number(d.donGia) !== Number(d.giaVonCu))
+            ? `<div style="font-size:10px;color:#D97706;text-align:right;margin-top:2px">giá cũ ${Number(d.giaVonCu).toLocaleString('vi-VN')}đ</div>`
+            : (d.giaVonCu ? `<div style="font-size:10px;color:var(--text2);text-align:right;margin-top:2px">giá cũ</div>` : '')}
         </div>
         <div style="flex:1;text-align:right">
           <label style="font-size:10px;color:var(--text2)">Thành tiền</label>
@@ -3425,7 +3439,11 @@ window.nhThemHang = function(maSku, ten) {
   if (daCo >= 0) {
     nhDongHang[daCo].soLuong = (Number(nhDongHang[daCo].soLuong) || 0) + 1;
   } else {
-    nhDongHang.push({ sku: maSku, ten, soLuong: 1, donGia: 0 });
+    // Điền sẵn giá vốn đang lưu trong app — hàng giá không đổi thì khỏi gõ lại,
+    // hàng đổi giá thì sửa đè lên. Giá vốn chỉ Admin mới thấy nên nhân viên vẫn để trống.
+    const sku = allSKUs.find(s => s.sku === maSku);
+    const giaCu = (currentUserData.role === 'admin') ? (Number(sku?.giaVon) || 0) : 0;
+    nhDongHang.push({ sku: maSku, ten, soLuong: 1, donGia: giaCu, giaVonCu: giaCu });
   }
   veManHinhSoanPhieu();
 };
@@ -8151,7 +8169,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v215</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v216</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8205,7 +8223,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v215</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v216</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8246,7 +8264,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v215</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v216</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
