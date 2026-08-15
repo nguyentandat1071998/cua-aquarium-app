@@ -2951,6 +2951,32 @@ window.kiemTraSkuDon = async function() {
   return data;
 };
 
+// Xóa đơn cũ dính SKU ảo TMDT.
+// Chạy lần 1 để ĐẾM:      xoaDonSkuAo()
+// Chạy lần 2 để XÓA THẬT: xoaDonSkuAo(true)
+// Đơn đã quét đóng gói luôn được giữ lại (có dữ liệu tính lương).
+window.xoaDonSkuAo = async function(xacNhan = false) {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  if (xacNhan && !confirm('XÓA THẬT các đơn dính SKU ảo?\n\nKhông khôi phục được. Đơn đã quét đóng gói sẽ được giữ lại.')) return;
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'xoa-don-sku-ao', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ xacNhan })
+  });
+  const data = await res.json();
+  console.log(data.CHE_DO || data.error);
+  if (data.soDonSeXoa != null) {
+    console.log(`Tổng đơn trong app: ${data.tongDonDaQuet}`);
+    console.log(`Sẽ xóa: ${data.soDonSeXoa} đơn`);
+    console.log(`Giữ lại (đã đóng gói): ${data.soDonDaDongGoiSeGiuLai} đơn`);
+    console.log('Ví dụ:', data.vaiMaViDu);
+    console.log('→ Chạy xoaDonSkuAo(true) để xóa thật');
+  }
+  if (data.soDonDaXoa != null) console.log(`Đã xóa ${data.soDonDaXoa} đơn`);
+  return data;
+};
+
 // Xem các webhook đã đăng ký với KiotViet — kiểm tra trước khi đăng ký thêm,
 // tránh trùng lặp làm mỗi sự kiện bắn nhiều lần.
 // Gọi: xemWebhook()
@@ -2963,9 +2989,19 @@ window.xemWebhook = async function() {
   });
   const data = await res.json();
   console.log('Worker:', data.workerVersion);
-  const ds = data.kiotviet?.data || data.data || [];
-  if (ds.length) {
-    console.table(ds.map(w => ({ id: w.id, loai: w.type, url: w.url, dangBat: w.isActive })));
+  // KiotViet trả về lồng 2 lớp: { data: { data: [...] } }
+  const ds = data.kiotviet?.data?.data || data.kiotviet?.data || data.data?.data || data.data || [];
+  const mang = Array.isArray(ds) ? ds : [];
+  if (mang.length) {
+    console.table(mang.map(w => ({ id: w.id, loai: w.type, url: w.url, dangBat: w.isActive })));
+    const coDonHang = mang.filter(w => String(w.type).includes('invoice'));
+    if (coDonHang.length > 1) {
+      console.warn(`⚠️ CÓ ${coDonHang.length} webhook invoice trùng nhau — mỗi đơn sẽ bị xử lý lặp. Nên xóa bớt.`);
+    } else if (coDonHang.length === 1) {
+      console.log('✅ Đã có webhook đơn hàng — KHÔNG bấm nút đăng ký nữa');
+    } else {
+      console.log('Chưa có webhook đơn hàng (invoice.update) — có thể bấm nút đăng ký');
+    }
   } else {
     console.log('Chưa có webhook nào đăng ký');
   }
@@ -7865,7 +7901,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v212</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v214</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7919,7 +7955,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v212</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v214</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7960,7 +7996,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v212</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v214</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
