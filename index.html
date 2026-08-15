@@ -3055,6 +3055,29 @@ window.doGiaVonThieu = async function() {
   return nhom;
 };
 
+// Xem cấu trúc phiếu chuyển hàng thật trong KiotViet — để viết đúng phần tạo phiếu.
+// Gọi: xemPhieuChuyen()
+window.xemPhieuChuyen = async function() {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'xem-phieu-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const data = await res.json();
+  console.log('Worker:', data.workerVersion, '| HTTP:', data.httpStatus, '| Số phiếu:', data.soPhieuCo);
+  if (data.danhSachRutGon?.length) console.table(data.danhSachRutGon);
+  if (data.cacTruongPhieuChiTiet) {
+    console.log('===== CÁC TRƯỜNG TRONG PHIẾU CHUYỂN =====');
+    data.cacTruongPhieuChiTiet.forEach(t => console.log(t));
+  } else {
+    console.log('Chưa có phiếu chuyển nào để xem cấu trúc.');
+    if (data.noiDungTho) console.log('Phản hồi thô:', data.noiDungTho);
+  }
+  return data;
+};
+
 // Xem trực tiếp collection gia_von — dùng khi nghi ngờ mất dữ liệu.
 // Gọi bằng Admin: xemGiaVon()
 window.xemGiaVon = async function() {
@@ -6484,7 +6507,9 @@ window.submitNhap = async function() {
     const idToken = await currentUser.getIdToken();
     const kvRes = await fetch(WORKER_URL, {
       method: 'POST',
-      headers: { 'x-action': 'create-purchase-order', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      // Chuyển hàng giữa 2 chi nhánh KiotViet: trừ kho Sàn TMĐT, cộng kho Cửa hàng.
+      // Trước đây tạo phiếu Nhập hàng vì chỉ có 1 chi nhánh — giờ dùng đúng nghiệp vụ.
+      headers: { 'x-action': 'tao-phieu-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: currentNhap.items, tenNguoiDung: currentUserData.ten || currentUserData.email || '' })
     });
     const kvData = await kvRes.json();
@@ -6759,7 +6784,7 @@ window.deleteNhap = async function(id) {
     const idToken = await currentUser.getIdToken();
     const kvRes = await fetch(WORKER_URL, {
       method: 'POST',
-      headers: { 'x-action': 'delete-purchase-order', 'x-kiotviet-id': String(data.kiotvietId), 'Authorization': `Bearer ${idToken}` }
+      headers: { 'x-action': 'xoa-phieu-chuyen', 'x-kiotviet-id': String(data.kiotvietId), 'Authorization': `Bearer ${idToken}` }
     });
     const kvData = await kvRes.json();
     if (!kvData.success) {
@@ -7039,8 +7064,9 @@ window.saveEdit = async function() {
       const idToken = await currentUser.getIdToken();
       const kvRes = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: { 'x-action': 'update-purchase-order', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: newItems, kiotvietId: old.kiotvietId, maPhieu: old.maPhieu, tenNguoiDung: currentUserData.ten || currentUserData.email || '' })
+        headers: { 'x-action': 'sua-phieu-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: newItems, kiotvietId: old.kiotvietId, kiotvietCode: old.kiotvietCode,
+          maPhieu: old.maPhieu, tenNguoiDung: currentUserData.ten || currentUserData.email || '' })
       });
       const kvData = await kvRes.json();
       if (!kvData.success) {
@@ -8787,7 +8813,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v235</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v237</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8841,7 +8867,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v235</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v237</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8883,7 +8909,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v235</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v237</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
