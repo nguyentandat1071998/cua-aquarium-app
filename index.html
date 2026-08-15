@@ -4570,9 +4570,15 @@ function coQuyenMuc(quyen) {
 
 // Vẽ cả hai hàng. Gọi sau khi đã biết quyền của người dùng.
 // Cuộn hàng tab lớn khi màn hình hẹp không đủ chỗ.
+// Chặn cứng trong khoảng [0, tối đa] — nếu không, bấm nhiều lần sẽ cuộn quá đà
+// và các tab trôi hết ra ngoài vùng nhìn.
 window.cuonNhom = function(huong) {
   const bar = document.getElementById('menu-nhom');
-  if (bar) bar.scrollBy({ left: huong * 160, behavior: 'smooth' });
+  if (!bar) return;
+  const toiDa = Math.max(0, bar.scrollWidth - bar.clientWidth);
+  const dich = Math.min(toiDa, Math.max(0, bar.scrollLeft + huong * 140));
+  bar.scrollTo({ left: dich, behavior: 'smooth' });
+  setTimeout(capNhatMuiTenNhom, 300);
 };
 
 // Người dùng cũng có thể vuốt tay, hoặc xoay ngang điện thoại -> cập nhật lại mũi tên
@@ -4582,7 +4588,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (bar) bar.addEventListener('scroll', capNhatMuiTenNhom, { passive: true });
 });
 
-// Chỉ hiện mũi tên khi thật sự có phần bị tràn ra ngoài
+// Chỉ hiện mũi tên khi thật sự có phần bị tràn ra ngoài.
+// Ở biên thì VÔ HIỆU HÓA hẳn nút, không chỉ làm mờ — bấm tiếp cũng không đi đâu được.
 function capNhatMuiTenNhom() {
   const bar = document.getElementById('menu-nhom');
   const prev = document.getElementById('nhom-prev');
@@ -4591,10 +4598,15 @@ function capNhatMuiTenNhom() {
   const traTe = bar.scrollWidth > bar.clientWidth + 4;
   prev.style.display = traTe ? 'block' : 'none';
   next.style.display = traTe ? 'block' : 'none';
-  if (traTe) {
-    prev.style.opacity = bar.scrollLeft > 4 ? '1' : '.25';
-    next.style.opacity = (bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 4) ? '1' : '.25';
-  }
+  if (!traTe) return;
+
+  const toiDa = bar.scrollWidth - bar.clientWidth;
+  const oDau = bar.scrollLeft <= 4;
+  const oCuoi = bar.scrollLeft >= toiDa - 4;
+  prev.disabled = oDau;
+  next.disabled = oCuoi;
+  prev.style.opacity = oDau ? '.2' : '1';
+  next.style.opacity = oCuoi ? '.2' : '1';
 }
 
 function veMenuHaiCap() {
@@ -4645,8 +4657,13 @@ function veMenuHaiCap() {
     <button class="muc-btn" id="muc-${m.key}" onclick="chonMucMenu('${nhom.key}','${m.key}')">${escHtml(m.ten)}</button>`).join('');
   hangDuoi.style.display = mucHienDuoc.length ? 'flex' : 'none';
 
-  // Kiểm tra sau khi trình duyệt vẽ xong mới đo được chiều rộng thật
-  setTimeout(capNhatMuiTenNhom, 50);
+  // Kiểm tra sau khi trình duyệt vẽ xong mới đo được chiều rộng thật.
+  // Đồng thời kéo tab đang chọn vào tầm nhìn, tránh trường hợp nó nằm khuất bên ngoài.
+  setTimeout(() => {
+    capNhatMuiTenNhom();
+    const nutDangChon = document.querySelector('.nhom-btn.active');
+    if (nutDangChon) nutDangChon.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' });
+  }, 50);
 }
 
 window.chonNhomMenu = function(key) {
@@ -8464,7 +8481,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .menu-nhom-bar::-webkit-scrollbar{display:none}
 .menu-mui-ten{flex-shrink:0;width:24px;height:30px;border:none;background:transparent;
   font-size:18px;color:var(--text2);cursor:pointer;padding:0;display:none}
-.menu-mui-ten:active{color:var(--text)}
+.menu-mui-ten:active:not(:disabled){color:var(--text)}
+.menu-mui-ten:disabled{cursor:default;pointer-events:none}
 .nhom-btn{flex-shrink:0;border:1.5px solid currentColor;background:#fff;border-radius:7px 7px 0 0;
   padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer;border-bottom:none;white-space:nowrap;
   display:flex;align-items:center;gap:5px}
@@ -8763,7 +8781,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v232</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v233</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8817,7 +8835,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v232</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v233</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8859,7 +8877,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v232</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v233</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
