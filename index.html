@@ -2980,6 +2980,25 @@ window.xoaDonSkuAo = async function(xacNhan = false) {
   return data;
 };
 
+// Chuyển giá vốn từ skus sang collection riêng gia_von (chạy 1 lần).
+// Bước 1: chuyenGiaVon()        -> sao chép, giữ nguyên bản cũ
+// Bước 2: chuyenGiaVon(true)    -> sau khi kiểm tra ổn thì xóa bản cũ trong skus
+window.chuyenGiaVon = async function(xoaBanCu = false) {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  if (xoaBanCu && !confirm('XÓA giá vốn khỏi collection skus?\n\nChỉ làm sau khi đã kiểm tra app hiển thị giá vốn đúng.')) return;
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'chuyen-gia-von', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ xoaBanCu })
+  });
+  const data = await res.json();
+  console.log('Tổng SKU:', data.tongSku, '| Có giá vốn:', data.soCoGiaVon);
+  console.log('Đã ghi sang gia_von:', data.daGhiSangGiaVon, '| Đã xóa khỏi skus:', data.daXoaKhoiSkus);
+  console.log('→', data.buocTiepTheo || data.ghiChu || data.error);
+  return data;
+};
+
 // Xem các webhook đã đăng ký với KiotViet — kiểm tra trước khi đăng ký thêm,
 // tránh trùng lặp làm mỗi sự kiện bắn nhiều lần.
 // Gọi: xemWebhook()
@@ -3355,7 +3374,7 @@ function veThePhieu(p) {
     <div style="font-size:11px;color:var(--text2);margin-top:3px">
       ${luc ? luc.toLocaleString('vi-VN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : ''}
       · ${(p.dongHang || []).length} mã · ${tongSl} sản phẩm
-      ${p.tongTien ? ` · <b>${Number(p.tongTien).toLocaleString('vi-VN')}đ</b>` : ''}
+      ${(p.tongTien && currentUserData.role === 'admin') ? ` · <b>${Number(p.tongTien).toLocaleString('vi-VN')}đ</b>` : ''}
       ${p.nguoiTao ? ` · ${escHtml(p.nguoiTao)}` : ''}
     </div>
   </div>`;
@@ -3453,20 +3472,21 @@ function veManHinhSoanPhieu() {
       <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
         <span style="color:var(--text2)">Số mã hàng</span><b>${nhDongHang.length}</b>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+      <div style="display:flex;justify-content:space-between;font-size:${laAdmin ? '13' : '16'}px">
         <span style="color:var(--text2)">Tổng số lượng</span><b>${tongSl}</b>
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:16px;padding-top:6px;border-top:1px solid var(--border)">
+      ${laAdmin ? `<div style="display:flex;justify-content:space-between;font-size:16px;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
         <span>Tổng tiền</span><b style="color:var(--green)">${tongTien.toLocaleString('vi-VN')}đ</b>
-      </div>
+      </div>` : ''}
     </div>
 
     ${daLuu ? '' : `
     <div style="display:flex;gap:8px">
       <button class="btn-outline" style="flex:1" onclick="nhLuuPhieu(false)">Lưu phiếu tạm</button>
-      ${(laAdmin || nhPhieuHienTai) ? `<button class="btn-g" style="flex:1" onclick="nhLuuPhieu(true)">Lưu phiếu</button>` : ''}
+      ${laAdmin ? `<button class="btn-g" style="flex:1" onclick="nhLuuPhieu(true)">Lưu phiếu</button>` : ''}
     </div>
-    ${thieuGia ? '<p class="info-note" style="margin-top:8px">Còn mã chưa có đơn giá — "Lưu phiếu" sẽ báo lỗi. Dùng "Lưu phiếu tạm" nếu chưa biết giá.</p>' : ''}`}`;
+    ${laAdmin && thieuGia ? '<p class="info-note" style="margin-top:8px">Còn mã chưa có đơn giá — "Lưu phiếu" sẽ báo lỗi. Dùng "Lưu phiếu tạm" nếu chưa biết giá.</p>' : ''}
+    ${!laAdmin ? '<p class="info-note" style="margin-top:8px">Nhập mã và số lượng rồi lưu phiếu tạm. Quản trị sẽ điền giá và duyệt phiếu.</p>' : ''}`}`;
 
   if (!daLuu) makeSKUSearch('nh-tim', 'nh-drop', null);
   veBangHangNhap();
@@ -3476,6 +3496,9 @@ function veBangHangNhap() {
   const el = document.getElementById('nh-bang');
   if (!el) return;
   const daLuu = nhPhieuHienTai?.trangThai === 'da_luu';
+  // Giá vốn là thông tin nhạy cảm — chỉ Admin thấy và sửa được.
+  // Quản lý chỉ nhập mã + số lượng, Admin mở phiếu tạm ra điền giá sau.
+  const xemDuocGia = currentUserData.role === 'admin';
   if (!nhDongHang.length) { el.innerHTML = '<p class="info-note">Chưa có mã hàng nào. Dùng ô tìm kiếm phía trên để thêm.</p>'; return; }
   el.innerHTML = nhDongHang.map((d, i) => {
     const sku = allSKUs.find(s => s.sku === d.sku);
@@ -3496,6 +3519,7 @@ function veBangHangNhap() {
           <input type="number" min="0" value="${d.soLuong || ''}" ${daLuu ? 'disabled' : ''}
             onchange="nhSuaDong(${i},'soLuong',this.value)" style="width:100%;padding:8px;text-align:center">
         </div>
+        ${xemDuocGia ? `
         <div style="flex:1.4">
           <label style="font-size:10px;color:var(--text2)">Đơn giá nhập</label>
           <input type="number" min="0" value="${d.donGia || ''}" ${daLuu ? 'disabled' : ''} placeholder="chưa có"
@@ -3507,7 +3531,7 @@ function veBangHangNhap() {
         <div style="flex:1;text-align:right">
           <label style="font-size:10px;color:var(--text2)">Thành tiền</label>
           <div style="font-weight:700;font-size:14px;padding:8px 0">${thanhTien.toLocaleString('vi-VN')}đ</div>
-        </div>
+        </div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -3541,6 +3565,11 @@ window.nhThemHang = function(maSku, ten) {
 window.nhLuuPhieu = async function(luuThat) {
   if (!nhDongHang.length) { showToast('Chưa có mã hàng nào', true); return; }
   if (nhDongHang.some(d => !Number(d.soLuong))) { showToast('Còn mã chưa nhập số lượng', true); return; }
+  // Chặn ở tầng hàm, không chỉ ẩn nút — tránh gọi thẳng qua Console
+  if (luuThat && currentUserData.role !== 'admin') {
+    showToast('Chỉ Quản trị mới duyệt được phiếu nhập', true);
+    return;
+  }
 
   if (luuThat) {
     const thieu = nhDongHang.filter(d => !Number(d.donGia));
@@ -3913,7 +3942,7 @@ window.luuHangHoa = async function(laComboParam) {
   await setDoc(doc(db, 'skus', sku), {
     ten, sku, gia, anhFileId, anhUrl, ...nhom, deleted: false,
     soLuongTon: laCombo ? 0 : (parseInt(document.getElementById('hh-soluong')?.value) || 0),
-    giaVon: currentUserData.role === 'admin' ? (parseFloat(document.getElementById('hh-giavon')?.value) || 0) : 0,
+    // giaVon KHÔNG lưu ở đây nữa — nằm ở collection gia_von, chỉ Admin đọc được
     kichThuoc: {
       dai: parseFloat(document.getElementById('hh-dai')?.value) || 0,
       rong: parseFloat(document.getElementById('hh-rong')?.value) || 0,
@@ -3925,6 +3954,8 @@ window.luuHangHoa = async function(laComboParam) {
     createdAt: serverTimestamp(),
     createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
+  // Giá vốn ghi riêng để nhân viên không đọc được
+  await luuGiaVon(sku, parseFloat(document.getElementById('hh-giavon')?.value) || 0);
   comboThanhPhan = [];
   showToast('Đã thêm hàng hóa');
   hangHoaAnhBlob = null;
@@ -4035,9 +4066,11 @@ window.luuSuaHangHoa = async function(id) {
   updateData.soLuongTon = laCombo ? 0 : (parseInt(document.getElementById(`hhs-soluong-${id}`)?.value) || 0);
   updateData.laCombo = laCombo;
   updateData.thanhPhanCombo = laCombo ? comboThanhPhan : [];
+  // Giá vốn ghi vào collection riêng, không nhét vào updateData của skus
+  let giaVonMoi = null;
   if (currentUserData.role === 'admin') {
     const giaVonEl = document.getElementById(`hhs-giavon-${id}`);
-    if (giaVonEl) updateData.giaVon = parseFloat(giaVonEl.value) || 0;
+    if (giaVonEl) giaVonMoi = parseFloat(giaVonEl.value) || 0;
   }
 
   if (hangHoaSuaAnhBlob) {
@@ -4057,9 +4090,15 @@ window.luuSuaHangHoa = async function(id) {
     if (daTonTai.exists()) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể đổi trùng`, true); return; }
     await setDoc(doc(db, 'skus', sku), { ...(s||{}), ...updateData });
     await deleteDoc(doc(db, 'skus', id));
+    // Giá vốn dùng mã SKU làm tên tài liệu nên cũng phải dọn bản cũ,
+    // nếu không sẽ để lại rác và mã mới mất giá vốn.
+    if (currentUserData.role === 'admin') {
+      try { await deleteDoc(doc(db, 'gia_von', id)); } catch(e) {}
+    }
   } else {
     await updateDoc(doc(db,'skus', id), updateData);
   }
+  if (giaVonMoi !== null) await luuGiaVon(sku, giaVonMoi);
   showToast('Đã cập nhật hàng hóa');
   hangHoaSuaAnhBlob = null;
   comboThanhPhan = [];
@@ -4147,6 +4186,32 @@ window.xoaHangHoa = async function(id) {
 async function loadSKUs() {
   const snap = await getDocs(collection(db, 'skus'));
   allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
+  await napGiaVon();
+}
+
+// Giá vốn nằm ở collection riêng, rules chỉ cho Admin đọc.
+// Tài khoản khác gọi vào đây sẽ bị Firestore từ chối — dữ liệu không rời máy chủ.
+async function napGiaVon() {
+  if (currentUserData?.role !== 'admin') return;   // không phải Admin thì khỏi gọi cho đỡ lỗi
+  try {
+    const snap = await getDocs(collection(db, 'gia_von'));
+    const bang = new Map(snap.docs.map(d => [d.id, Number(d.data()?.giaVon) || 0]));
+    allSKUs.forEach(s => { s.giaVon = bang.get(s.sku) ?? (Number(s.giaVon) || 0); });
+  } catch(e) {
+    console.warn('Không nạp được giá vốn:', e.message);
+  }
+}
+
+// Ghi giá vốn vào collection riêng. Gọi sau mỗi lần thêm/sửa hàng hóa.
+async function luuGiaVon(maSku, giaVon) {
+  if (currentUserData?.role !== 'admin' || !maSku) return;
+  try {
+    await setDoc(doc(db, 'gia_von', maSku), { giaVon: Number(giaVon) || 0, suaLuc: serverTimestamp() });
+    const s = allSKUs.find(x => x.sku === maSku);
+    if (s) s.giaVon = Number(giaVon) || 0;
+  } catch(e) {
+    console.error('Lỗi lưu giá vốn:', e);
+  }
 }
 
 // ===== NHÓM HÀNG (collection riêng, cây phân cấp tối đa 3 cấp) =====
@@ -7649,7 +7714,7 @@ window.importSKU = async function(input) {
         const updateData = { ten: ten || existing.ten, gia: (giaIdx>=0 && !giaTrong) ? gia : existing.gia };
         if (anhFileId) { updateData.anhFileId = anhFileId; updateData.anhUrl = anhUrl; }
         if (nhom && nhom.nhomFull) Object.assign(updateData, nhom);
-        if (currentUserData.role === 'admin' && giaVonO.co) updateData.giaVon = giaVonO.val;
+        // Giá vốn ghi vào collection riêng, không nhét vào skus
         if (thanhPhanComboMoi !== null) {
           // Cột combo có nội dung -> đánh dấu là combo, dùng đúng danh sách thành phần mới
           updateData.laCombo = true;
@@ -7667,13 +7732,13 @@ window.importSKU = async function(input) {
         }
         if (canNangO.co) updateData.canNang = canNangO.val;
         await updateDoc(doc(db,'skus', existing.id), updateData);
+        if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
         skuMap.set(sku.toLowerCase(), { ...existing, ...updateData, id: existing.id });
         capNhat++;
       } else {
         const laCombo = thanhPhanComboMoi !== null && thanhPhanComboMoi.length > 0;
         const newData = {
           ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp(),
-          giaVon: currentUserData.role === 'admin' ? giaVonO.val : 0,
           soLuongTon: laCombo ? 0 : soLuongO.val,
           kichThuoc: { dai: daiO.val, rong: rongO.val, cao: caoO.val },
           canNang: canNangO.val,
@@ -7681,6 +7746,7 @@ window.importSKU = async function(input) {
         };
         if (nhom) Object.assign(newData, nhom);
         await setDoc(doc(db, 'skus', sku), newData);
+        if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
         skuMap.set(sku.toLowerCase(), { id: sku, ...newData });
         themMoi++;
       }
@@ -8261,7 +8327,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v217</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v219</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8315,7 +8381,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v217</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v219</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8356,7 +8422,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v217</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v219</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
