@@ -2001,6 +2001,9 @@ const MAN_HINH_TMDT = [
   { key: 'loinhuan',  ten: 'Lợi nhuận đơn',   icon: '💰', nhom: 'Phân tích',
     moTa: 'Lợi nhuận tạm tính từng đơn theo giá vốn nội bộ',
     quyen: 'tmdt_donhang',   render: null },
+  { key: 'nhaphang',  ten: 'Nhập hàng',       icon: '📥', nhom: 'Hàng hóa',
+    moTa: 'Tạo phiếu nhập vào kho Sàn TMĐT, đồng bộ sang KiotViet',
+    quyen: 'tmdt_nhaphang',  render: () => renderNhapHangTab() },
   { key: 'sanpham',   ten: 'Sản phẩm trên sàn', icon: '🔗', nhom: 'Hàng hóa',
     moTa: 'Đồng bộ sản phẩm từ sàn về, liên kết SKU nội bộ',
     quyen: 'tmdt_sanpham',   render: () => renderSanPhamTMDTList() },
@@ -3247,6 +3250,247 @@ function ktVeDanhSachHang() {
     <button class="btn-outline" style="width:100%;margin-top:6px" onclick="ktBatTat()">Quét đơn tiếp theo</button>`;
 }
 
+// ==========================================================================
+// ===== NHẬP HÀNG (chi nhánh Sàn TMĐT) =====
+//
+// Hai bước cho quản lý: "Lưu phiếu tạm" chỉ ghi mã + số lượng (chưa có giá),
+// sau đó mở lại điền đơn giá rồi "Lưu phiếu". Admin lưu thẳng được luôn.
+// Chỉ khi "Lưu phiếu" mới gọi API tạo phiếu nhập bên KiotViet — phiếu tạm
+// không đụng tới tồn kho, tránh nhập nhầm khi chưa có giá.
+// ==========================================================================
+
+let nhPhieuHienTai = null;   // phiếu đang mở (null = tạo mới)
+let nhDongHang = [];         // [{sku, ten, soLuong, donGia}]
+let nhDsPhieu = [];
+
+async function renderNhapHangTab() {
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  if (!allSKUs.length) await loadSKUs();
+  const snap = await getDocs(query(collection(db, 'phieu_nhap_san'), orderBy('taoLuc', 'desc'), limit(50)));
+  nhDsPhieu = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted);
+  nhPhieuHienTai = null;
+  nhDongHang = [];
+  veDanhSachPhieuNhap();
+}
+
+function veDanhSachPhieuNhap() {
+  const el = document.getElementById('tmdt-than');
+  const tam = nhDsPhieu.filter(p => p.trangThai === 'tam');
+  const xong = nhDsPhieu.filter(p => p.trangThai === 'da_luu');
+  el.innerHTML = `
+    <button class="btn-g" style="width:100%;padding:13px;font-size:15px;margin-bottom:12px" onclick="nhTaoPhieuMoi()">+ Tạo phiếu nhập</button>
+    ${tam.length ? `
+      <div style="font-size:11px;color:#D97706;font-weight:700;margin-bottom:6px">PHIẾU TẠM — CHỜ ĐIỀN GIÁ (${tam.length})</div>
+      ${tam.map(p => veThePhieu(p)).join('')}` : ''}
+    ${xong.length ? `
+      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:14px 0 6px">ĐÃ LƯU (${xong.length})</div>
+      ${xong.map(p => veThePhieu(p)).join('')}` : ''}
+    ${!nhDsPhieu.length ? '<p class="info-note">Chưa có phiếu nhập nào.</p>' : ''}`;
+}
+
+function veThePhieu(p) {
+  const luc = p.taoLuc?.toDate ? p.taoLuc.toDate() : null;
+  const tam = p.trangThai === 'tam';
+  const tongSl = (p.dongHang || []).reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
+  return `
+  <div onclick="nhMoPhieu('${p.id}')" style="border:1px solid var(--border);border-left:3px solid ${tam ? '#D97706' : '#16A34A'};border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <b style="font-size:13px">${escHtml(p.maPhieu || p.id)}</b>
+      <span style="font-size:10px;color:#fff;background:${tam ? '#D97706' : '#16A34A'};padding:2px 7px;border-radius:4px">${tam ? 'Phiếu tạm' : 'Đã lưu'}</span>
+      ${p.kiotvietCode ? `<span style="font-size:10px;color:var(--text2)">KV: ${escHtml(p.kiotvietCode)}</span>` : ''}
+    </div>
+    <div style="font-size:11px;color:var(--text2);margin-top:3px">
+      ${luc ? luc.toLocaleString('vi-VN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : ''}
+      · ${(p.dongHang || []).length} mã · ${tongSl} sản phẩm
+      ${p.tongTien ? ` · <b>${Number(p.tongTien).toLocaleString('vi-VN')}đ</b>` : ''}
+      ${p.nguoiTao ? ` · ${escHtml(p.nguoiTao)}` : ''}
+    </div>
+  </div>`;
+}
+
+window.nhTaoPhieuMoi = function() {
+  nhPhieuHienTai = null;
+  nhDongHang = [];
+  veManHinhSoanPhieu();
+};
+
+window.nhMoPhieu = function(id) {
+  const p = nhDsPhieu.find(x => x.id === id);
+  if (!p) return;
+  nhPhieuHienTai = p;
+  nhDongHang = JSON.parse(JSON.stringify(p.dongHang || []));
+  veManHinhSoanPhieu();
+};
+
+function veManHinhSoanPhieu() {
+  const el = document.getElementById('tmdt-than');
+  const laAdmin = currentUserData.role === 'admin';
+  const daLuu = nhPhieuHienTai?.trangThai === 'da_luu';
+  const tongSl = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
+  const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
+  const thieuGia = nhDongHang.some(d => !Number(d.donGia));
+
+  el.innerHTML = `
+    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="renderNhapHangTab()">← Quay lại danh sách phiếu</button>
+    ${nhPhieuHienTai ? `<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+      <b>${escHtml(nhPhieuHienTai.maPhieu || '')}</b>
+      <span style="font-size:11px;color:#fff;background:${daLuu ? '#16A34A' : '#D97706'};padding:2px 7px;border-radius:4px;margin-left:6px">${daLuu ? 'Đã lưu' : 'Phiếu tạm'}</span>
+      ${nhPhieuHienTai.kiotvietCode ? `<div style="font-size:11px;color:var(--text2);margin-top:3px">KiotViet: ${escHtml(nhPhieuHienTai.kiotvietCode)}</div>` : ''}
+    </div>` : ''}
+
+    ${daLuu ? '<p class="info-note">Phiếu đã lưu và đã đẩy sang KiotViet — không sửa được nữa.</p>' : `
+    <div class="field sku-wrap" style="margin-bottom:10px">
+      <input type="text" id="nh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:12px">
+      <div class="sku-drop" id="nh-drop"></div>
+    </div>`}
+
+    <div id="nh-bang"></div>
+
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin:12px 0">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span style="color:var(--text2)">Số mã hàng</span><b>${nhDongHang.length}</b>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span style="color:var(--text2)">Tổng số lượng</span><b>${tongSl}</b>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:16px;padding-top:6px;border-top:1px solid var(--border)">
+        <span>Tổng tiền</span><b style="color:var(--green)">${tongTien.toLocaleString('vi-VN')}đ</b>
+      </div>
+    </div>
+
+    ${daLuu ? '' : `
+    <div style="display:flex;gap:8px">
+      <button class="btn-outline" style="flex:1" onclick="nhLuuPhieu(false)">Lưu phiếu tạm</button>
+      ${(laAdmin || nhPhieuHienTai) ? `<button class="btn-g" style="flex:1" onclick="nhLuuPhieu(true)">Lưu phiếu</button>` : ''}
+    </div>
+    ${thieuGia ? '<p class="info-note" style="margin-top:8px">Còn mã chưa có đơn giá — "Lưu phiếu" sẽ báo lỗi. Dùng "Lưu phiếu tạm" nếu chưa biết giá.</p>' : ''}`}`;
+
+  if (!daLuu) makeSKUSearch('nh-tim', 'nh-drop', null);
+  veBangHangNhap();
+}
+
+function veBangHangNhap() {
+  const el = document.getElementById('nh-bang');
+  if (!el) return;
+  const daLuu = nhPhieuHienTai?.trangThai === 'da_luu';
+  if (!nhDongHang.length) { el.innerHTML = '<p class="info-note">Chưa có mã hàng nào. Dùng ô tìm kiếm phía trên để thêm.</p>'; return; }
+  el.innerHTML = nhDongHang.map((d, i) => {
+    const sku = allSKUs.find(s => s.sku === d.sku);
+    const thanhTien = (Number(d.soLuong) || 0) * (Number(d.donGia) || 0);
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:0">
+          <b style="font-size:13px">${escHtml(d.ten)}</b>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(d.sku)}</div>
+        </div>
+        ${daLuu ? '' : `<button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="nhXoaDong(${i})">Xóa</button>`}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <div style="flex:1">
+          <label style="font-size:10px;color:var(--text2)">Số lượng</label>
+          <input type="number" min="0" value="${d.soLuong || ''}" ${daLuu ? 'disabled' : ''}
+            onchange="nhSuaDong(${i},'soLuong',this.value)" style="width:100%;padding:8px;text-align:center">
+        </div>
+        <div style="flex:1.4">
+          <label style="font-size:10px;color:var(--text2)">Đơn giá nhập</label>
+          <input type="number" min="0" value="${d.donGia || ''}" ${daLuu ? 'disabled' : ''} placeholder="chưa có"
+            onchange="nhSuaDong(${i},'donGia',this.value)" style="width:100%;padding:8px;text-align:right">
+        </div>
+        <div style="flex:1;text-align:right">
+          <label style="font-size:10px;color:var(--text2)">Thành tiền</label>
+          <div style="font-weight:700;font-size:14px;padding:8px 0">${thanhTien.toLocaleString('vi-VN')}đ</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+window.nhSuaDong = function(i, truong, giaTri) {
+  nhDongHang[i][truong] = Math.max(0, parseFloat(giaTri) || 0);
+  veManHinhSoanPhieu();
+};
+
+window.nhXoaDong = function(i) {
+  nhDongHang.splice(i, 1);
+  veManHinhSoanPhieu();
+};
+
+// Hàm chung selectSKU sẽ gọi vào đây khi người dùng chọn từ ô tìm kiếm
+window.nhThemHang = function(maSku, ten) {
+  const daCo = nhDongHang.findIndex(d => d.sku === maSku);
+  if (daCo >= 0) {
+    nhDongHang[daCo].soLuong = (Number(nhDongHang[daCo].soLuong) || 0) + 1;
+  } else {
+    nhDongHang.push({ sku: maSku, ten, soLuong: 1, donGia: 0 });
+  }
+  veManHinhSoanPhieu();
+};
+
+window.nhLuuPhieu = async function(luuThat) {
+  if (!nhDongHang.length) { showToast('Chưa có mã hàng nào', true); return; }
+  if (nhDongHang.some(d => !Number(d.soLuong))) { showToast('Còn mã chưa nhập số lượng', true); return; }
+
+  if (luuThat) {
+    const thieu = nhDongHang.filter(d => !Number(d.donGia));
+    if (thieu.length) {
+      alert(`Còn ${thieu.length} mã chưa có đơn giá:\n\n${thieu.map(d => '· ' + d.ten).join('\n')}\n\nĐiền giá rồi lưu lại, hoặc dùng "Lưu phiếu tạm".`);
+      return;
+    }
+    if (!confirm('Lưu phiếu và đẩy sang KiotViet?\n\nTồn kho chi nhánh Sàn TMĐT sẽ tăng theo phiếu này. Không sửa lại được.')) return;
+  }
+
+  const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
+  const maPhieu = nhPhieuHienTai?.maPhieu || `PN${Date.now().toString().slice(-8)}`;
+  const duLieu = {
+    maPhieu,
+    dongHang: nhDongHang,
+    tongTien,
+    tongSoLuong: nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0),
+    trangThai: luuThat ? 'da_luu' : 'tam',
+    nguoiTao: nhPhieuHienTai?.nguoiTao || currentUserData?.ten || currentUser?.email || '',
+    suaLuc: serverTimestamp()
+  };
+
+  try {
+    // Đẩy sang KiotViet TRƯỚC khi ghi Firestore: nếu KiotViet lỗi thì phiếu vẫn
+    // giữ nguyên trạng thái tạm, tránh app báo đã lưu mà kho bên kia không có gì.
+    if (luuThat) {
+      showToast('Đang tạo phiếu nhập bên KiotViet...');
+      const idToken = await currentUser.getIdToken();
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'tao-phieu-nhap-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: nhDongHang.map(d => ({ sku: d.sku, ten: d.ten, soLuong: d.soLuong, donGia: d.donGia })),
+          maPhieu,
+          tenNguoiTao: currentUserData?.ten || currentUser?.email || ''
+        })
+      });
+      const kq = await res.json();
+      console.log('[nhập hàng]', kq);
+      if (!kq.success) { alert('KiotViet từ chối phiếu:\n\n' + kq.error); return; }
+      duLieu.kiotvietId = kq.kiotvietId || null;
+      duLieu.kiotvietCode = kq.kiotvietCode || null;
+      duLieu.luuThatLuc = serverTimestamp();
+    }
+
+    if (nhPhieuHienTai) {
+      await updateDoc(doc(db, 'phieu_nhap_san', nhPhieuHienTai.id), duLieu);
+    } else {
+      duLieu.taoLuc = serverTimestamp();
+      await addDoc(collection(db, 'phieu_nhap_san'), duLieu);
+    }
+    showToast(luuThat ? `Đã lưu phiếu và đẩy sang KiotViet${duLieu.kiotvietCode ? ' (' + duLieu.kiotvietCode + ')' : ''}` : 'Đã lưu phiếu tạm');
+    await renderNhapHangTab();
+  } catch(e) {
+    alert('Lỗi lưu phiếu: ' + e.message);
+  }
+};
+
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
   if (!el) return;
@@ -3834,6 +4078,7 @@ const DANH_SACH_MODULE = [
     { key: 'tmdt_donhang', ten: 'Đơn hàng' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' },
+    { key: 'tmdt_nhaphang', ten: 'Nhập hàng' },
     { key: 'tmdt_ketnoi', ten: 'Kết nối sàn (OAuth)' }
   ]}
 ];
@@ -3861,7 +4106,7 @@ function layQuyenFallbackChuaMigrate() {
     nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
     nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
     hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
-    tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_ketnoi:false
+    tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_nhaphang:false, tmdt_ketnoi:false
   };
 }
 
@@ -4332,6 +4577,11 @@ window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
   if (drop) drop.style.display = 'none';
   // Blur input để đóng dropdown hoàn toàn
   setTimeout(() => input.blur(), 50);
+  // Màn hình Nhập hàng: chọn xong thì thêm thẳng vào bảng và xóa ô tìm kiếm
+  if (inputId === 'nh-tim') {
+    input.value = '';
+    nhThemHang(sku, ten);
+  }
 };
 
 document.addEventListener('click', e => {
@@ -7901,7 +8151,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v214</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v215</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -7955,7 +8205,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v214</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v215</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -7996,7 +8246,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v214</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v215</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
