@@ -6524,13 +6524,32 @@ async function dieuChinhTonKhoApp(items, dau = -1) {
   }
 
   if (soDong) await batch.commit();
-  // Cập nhật luôn bản trong bộ nhớ để giao diện hiện số mới ngay
-  items.forEach(it => {
-    const sku = allSKUs.find(s => s.sku === String(it.sku || '').trim());
-    if (sku && !sku.laCombo) sku.soLuongTon = (Number(sku.soLuongTon) || 0) + dau * (Number(it.sl ?? it.soLuong) || 0);
-  });
+  // KHÔNG tự sửa allSKUs ở đây: bộ theo dõi onSnapshot trên collection skus sẽ nạp
+  // giá trị mới ngay sau khi commit. Sửa thêm ở đây là trừ hai lần trên màn hình.
   return { soDong, boQuaCombo };
 }
+
+// Xem tồn kho THẬT trong Firestore của một mã (không phải bản trong bộ nhớ).
+// Gọi: xemTon('ABC123')
+window.xemTon = async function(maSku) {
+  if (!maSku) { console.error('Cần mã SKU'); return; }
+  const sku = allSKUs.find(s => s.sku === maSku || s.id === maSku);
+  const d = await getDoc(doc(db, 'skus', sku?.id || maSku));
+  console.log('Trong bộ nhớ app:', sku?.soLuongTon);
+  console.log('Trong Firestore  :', d.exists() ? d.data()?.soLuongTon : '(không có tài liệu)');
+  return d.exists() ? d.data()?.soLuongTon : null;
+};
+
+// Đặt lại tồn kho một mã về đúng số thực tế. Dùng khi phát hiện lệch.
+// Gọi: datTon('ABC123', 10)
+window.datTon = async function(maSku, soLuong) {
+  if (currentUserData?.role !== 'admin') { console.error('Chỉ Admin'); return; }
+  const sku = allSKUs.find(s => s.sku === maSku || s.id === maSku);
+  if (!sku) { console.error('Không tìm thấy mã', maSku); return; }
+  await updateDoc(doc(db, 'skus', sku.id), { soLuongTon: Number(soLuong) || 0 });
+  console.log(`Đã đặt tồn ${maSku} = ${soLuong}`);
+  showToast(`Đã đặt tồn ${maSku} = ${soLuong}`);
+};
 
 window.submitNhap = async function() {
   if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
@@ -8949,7 +8968,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v240</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v241</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9003,7 +9022,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v240</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v241</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9045,7 +9064,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v240</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v241</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
