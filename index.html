@@ -1459,6 +1459,9 @@ async function renderHangHoaTab() {
   if (!allSKUs.length) {
     el.innerHTML = '<div class="loading">Đang tải...</div>';
     await loadSKUs();
+  } else if (currentUserData.role === 'admin' && !allSKUs.some(s => s.giaVon)) {
+    // Danh sách đã nạp từ trước lúc chưa biết vai trò -> giá vốn còn thiếu, bổ sung
+    await napGiaVon();
   }
   const qHH = currentUserData.role === 'admin' ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
   el.innerHTML = `
@@ -2980,6 +2983,34 @@ window.xoaDonSkuAo = async function(xacNhan = false) {
   return data;
 };
 
+// Xem trực tiếp collection gia_von — dùng khi nghi ngờ mất dữ liệu.
+// Gọi bằng Admin: xemGiaVon()
+window.xemGiaVon = async function() {
+  try {
+    const snap = await getDocs(collection(db, 'gia_von'));
+    console.log(`Collection gia_von có ${snap.docs.length} bản ghi`);
+    if (snap.docs.length) {
+      console.log('10 bản ghi đầu:');
+      console.table(snap.docs.slice(0, 10).map(d => ({ sku: d.id, giaVon: d.data()?.giaVon })));
+      console.log('✅ DỮ LIỆU CÒN NGUYÊN — chỉ là app chưa nạp lên. Chạy napLaiGiaVon()');
+    } else {
+      console.log('⚠️ Collection rỗng — chưa chạy chuyenGiaVon() hoặc đã mất');
+    }
+    return snap.docs.length;
+  } catch(e) {
+    console.error('Không đọc được:', e.message);
+  }
+};
+
+// Nạp lại giá vốn vào bộ nhớ app mà không phải tải lại toàn bộ danh sách hàng hóa.
+window.napLaiGiaVon = async function() {
+  await napGiaVon();
+  const co = allSKUs.filter(s => s.giaVon).length;
+  console.log(`Đã nạp giá vốn cho ${co}/${allSKUs.length} SKU`);
+  showToast(`Đã nạp lại giá vốn (${co} SKU)`);
+  return co;
+};
+
 // Kiểm tra giá vốn đã ẩn thật ở tầng dữ liệu chưa.
 // Chạy bằng tài khoản KHÔNG phải Admin — phải thấy cả hai đều bị chặn/rỗng.
 // Gọi: kiemTraAnGiaVon()
@@ -4223,27 +4254,31 @@ async function loadSKUs() {
 }
 
 // Giá vốn nằm ở collection riêng, rules chỉ cho Admin đọc.
-// Tài khoản khác gọi vào đây sẽ bị Firestore từ chối — dữ liệu không rời máy chủ.
+// KHÔNG chặn trước theo vai trò: loadSKUs() có thể chạy trước khi app biết
+// người dùng là ai, chặn sớm sẽ khiến Admin không có giá vốn.
+// Cứ thử đọc — Firestore tự từ chối nếu không đủ quyền, bắt lỗi là xong.
 async function napGiaVon() {
-  if (currentUserData?.role !== 'admin') return;   // không phải Admin thì khỏi gọi cho đỡ lỗi
   try {
     const snap = await getDocs(collection(db, 'gia_von'));
-    const bang = new Map(snap.docs.map(d => [d.id, Number(d.data()?.giaVon) || 0]));
-    allSKUs.forEach(s => { s.giaVon = bang.get(s.sku) ?? (Number(s.giaVon) || 0); });
+    const bang = new Map(snap.docs.map(d => [String(d.id), Number(d.data()?.giaVon) || 0]));
+    allSKUs.forEach(s => {
+      const gt = bang.get(String(s.sku)) ?? bang.get(String(s.id));
+      if (gt != null) s.giaVon = gt;
+    });
   } catch(e) {
-    console.warn('Không nạp được giá vốn:', e.message);
+    // Không đủ quyền (nhân viên/quản lý) — đúng như thiết kế, không phải lỗi
   }
 }
 
-// Ghi giá vốn vào collection riêng. Gọi sau mỗi lần thêm/sửa hàng hóa.
+// Ghi giá vốn vào collection riêng. Rules tự chặn nếu không đủ quyền.
 async function luuGiaVon(maSku, giaVon) {
-  if (currentUserData?.role !== 'admin' || !maSku) return;
+  if (!maSku) return;
   try {
     await setDoc(doc(db, 'gia_von', maSku), { giaVon: Number(giaVon) || 0, suaLuc: serverTimestamp() });
     const s = allSKUs.find(x => x.sku === maSku);
     if (s) s.giaVon = Number(giaVon) || 0;
   } catch(e) {
-    console.error('Lỗi lưu giá vốn:', e);
+    console.warn('Không lưu được giá vốn (có thể do không đủ quyền):', e.message);
   }
 }
 
@@ -8360,7 +8395,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v220</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v221</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8414,7 +8449,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v220</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v221</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8455,7 +8490,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v220</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v221</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
