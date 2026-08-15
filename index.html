@@ -2980,6 +2980,39 @@ window.xoaDonSkuAo = async function(xacNhan = false) {
   return data;
 };
 
+// Kiểm tra giá vốn đã ẩn thật ở tầng dữ liệu chưa.
+// Chạy bằng tài khoản KHÔNG phải Admin — phải thấy cả hai đều bị chặn/rỗng.
+// Gọi: kiemTraAnGiaVon()
+window.kiemTraAnGiaVon = async function() {
+  console.log('Tài khoản:', currentUserData?.ten, '| Vai trò:', currentUserData?.role);
+
+  // 1. Dữ liệu đã tải về máy có kèm giá vốn không
+  const coTrongBoNho = allSKUs.filter(s => s.giaVon != null && s.giaVon !== 0);
+  console.log(`1. Trong bộ nhớ máy: ${coTrongBoNho.length}/${allSKUs.length} SKU có giá vốn`,
+    coTrongBoNho.length ? '⚠️ CÒN LỘ' : '✅ sạch');
+  if (coTrongBoNho.length) console.log('   Ví dụ:', coTrongBoNho.slice(0, 3).map(s => `${s.sku}=${s.giaVon}`));
+
+  // 2. Còn sót trong collection skus không
+  try {
+    const snap = await getDocs(query(collection(db, 'skus'), limit(20)));
+    const conSot = snap.docs.filter(d => d.data()?.giaVon != null && d.data()?.giaVon !== 0);
+    console.log(`2. Trong collection skus: ${conSot.length}/${snap.docs.length} bản ghi còn giá vốn`,
+      conSot.length ? '⚠️ CHƯA DỌN — chạy chuyenGiaVon(true)' : '✅ sạch');
+  } catch(e) {
+    console.log('2. Không đọc được skus:', e.message);
+  }
+
+  // 3. Collection gia_von có bị đọc trộm được không
+  try {
+    const snap = await getDocs(query(collection(db, 'gia_von'), limit(5)));
+    const laAdmin = currentUserData?.role === 'admin';
+    console.log(`3. Đọc collection gia_von: được ${snap.docs.length} bản ghi`,
+      laAdmin ? '✅ đúng (là Admin)' : '⚠️ LỖI RULES — người không phải Admin đọc được');
+  } catch(e) {
+    console.log('3. Đọc collection gia_von: BỊ TỪ CHỐI ✅ (rules chặn đúng)');
+  }
+};
+
 // Chuyển giá vốn từ skus sang collection riêng gia_von (chạy 1 lần).
 // Bước 1: chuyenGiaVon()        -> sao chép, giữ nguyên bản cũ
 // Bước 2: chuyenGiaVon(true)    -> sau khi kiểm tra ổn thì xóa bản cũ trong skus
@@ -8327,7 +8360,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v219</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v220</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8381,7 +8414,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v219</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v220</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8422,7 +8455,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v219</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v220</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
