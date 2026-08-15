@@ -16,7 +16,7 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot, runTransaction, writeBatch } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot, runTransaction, writeBatch, increment } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -6497,6 +6497,41 @@ function renderNhapItems() {
   totalEl.textContent = fmt(total) + '₫';
 }
 
+// ==========================================================================
+// ===== TỒN KHO APP NỘI BỘ =====
+// App giữ sổ tồn song song với chi nhánh Sàn TMĐT của KiotViet — hai sổ của
+// cùng một kho. Chuyển hàng sang cửa hàng thì cả hai đều phải trừ.
+//
+// Dùng increment() thay vì đọc-rồi-ghi: hai người cùng thao tác một lúc vẫn
+// cộng trừ đúng, không đè mất số của nhau.
+// Combo KHÔNG trừ trực tiếp vì tồn combo tính động từ thành phần.
+// ==========================================================================
+async function dieuChinhTonKhoApp(items, dau = -1) {
+  if (!Array.isArray(items) || !items.length) return { soDong: 0, boQuaCombo: [] };
+  const boQuaCombo = [];
+  const batch = writeBatch(db);
+  let soDong = 0;
+
+  for (const it of items) {
+    const ma = String(it.sku || '').trim();
+    const sl = Number(it.sl ?? it.soLuong) || 0;
+    if (!ma || !sl) continue;
+    const sku = allSKUs.find(s => s.sku === ma);
+    if (sku?.laCombo) { boQuaCombo.push(ma); continue; }
+    // Tên tài liệu trong skus chính là mã SKU
+    batch.update(doc(db, 'skus', sku?.id || ma), { soLuongTon: increment(dau * sl) });
+    soDong++;
+  }
+
+  if (soDong) await batch.commit();
+  // Cập nhật luôn bản trong bộ nhớ để giao diện hiện số mới ngay
+  items.forEach(it => {
+    const sku = allSKUs.find(s => s.sku === String(it.sku || '').trim());
+    if (sku && !sku.laCombo) sku.soLuongTon = (Number(sku.soLuongTon) || 0) + dau * (Number(it.sl ?? it.soLuong) || 0);
+  });
+  return { soDong, boQuaCombo };
+}
+
 window.submitNhap = async function() {
   if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
   if (!currentNhap.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
@@ -6537,6 +6572,17 @@ window.submitNhap = async function() {
       kiotvietCode: kvData.kiotvietCode || null,
       kiotvietId: kvData.kiotvietId || null
     });
+    // Trừ tồn kho app — sổ này song song với chi nhánh Sàn TMĐT bên KiotViet.
+    // Làm SAU khi đã lưu phiếu để nếu lưu hỏng thì tồn không bị trừ oan.
+    let ketQuaTon = { soDong: 0, boQuaCombo: [] };
+    try {
+      ketQuaTon = await dieuChinhTonKhoApp(currentNhap.items, -1);
+    } catch(e) {
+      console.error('Lỗi trừ tồn kho app:', e);
+      alert('Phiếu đã lưu nhưng CHƯA TRỪ ĐƯỢC tồn kho trong app:\n' + e.message
+        + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+    }
+
     currentNhap = { items: [], photos: [] };
     renderNhapItems();
     renderNhapPhotos();
@@ -6548,7 +6594,10 @@ window.submitNhap = async function() {
         + 'Vào KiotViet → Chuyển hàng → chọn phiếu → bấm "Nhận hàng" để hoàn tất.'
         + (kvData.loiNhanHang ? `\n\n(App đã thử tự nhận nhưng không được: ${kvData.loiNhanHang})` : ''));
     } else {
-      showToast(`Đã lưu phiếu + đồng bộ KiotViet${kvData.daTuNhanHang ? ' (đã nhận hàng)' : ''}`);
+      showToast(`Đã lưu phiếu + trừ tồn ${ketQuaTon.soDong} mã${kvData.daTuNhanHang ? ' · KiotViet đã nhận hàng' : ''}`);
+    }
+    if (ketQuaTon.boQuaCombo.length) {
+      showToast(`Combo không trừ tồn trực tiếp: ${ketQuaTon.boQuaCombo.join(', ')}`, true);
     }
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu chuyển kho';
@@ -6854,7 +6903,15 @@ window.deleteNhap = async function(id) {
   }
 
   await updateDoc(doc(db,'phieu_chuyenkho',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
-  showToast('Đã xóa'); loadNhapList();
+  // Hàng chưa chuyển đi nữa -> trả lại tồn kho app cho khớp với KiotViet
+  try {
+    const kq = await dieuChinhTonKhoApp(data.items || [], +1);
+    showToast(`Đã xóa phiếu + hoàn lại tồn ${kq.soDong} mã`);
+  } catch(e) {
+    console.error('Lỗi hoàn tồn kho:', e);
+    alert('Đã xóa phiếu nhưng CHƯA HOÀN được tồn kho trong app:\n' + e.message + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+  }
+  loadNhapList();
 };
 
 window.applyNhapFilter = function() { nhapDsPage = 1; loadNhapList(); };
@@ -7157,6 +7214,27 @@ window.saveEdit = async function() {
         updatePayload.kiotvietCode = old.kiotvietCode;
       }
       await updateDoc(doc(db, collectionName, editingPhieuId), updatePayload);
+      // Sửa phiếu chuyển kho -> tồn app phải chỉnh theo CHÊNH LỆCH giữa số cũ và số mới.
+      // Tăng số chuyển đi thì trừ thêm, giảm thì hoàn lại phần dư.
+      if (collectionName === 'phieu_chuyenkho') {
+        try {
+          const bangCu = new Map((old.items || []).map(i => [String(i.sku), Number(i.sl) || 0]));
+          const bangMoi = new Map(newItems.map(i => [String(i.sku), Number(i.sl) || 0]));
+          const cheneLech = [];
+          new Set([...bangCu.keys(), ...bangMoi.keys()]).forEach(ma => {
+            const d = (bangMoi.get(ma) || 0) - (bangCu.get(ma) || 0);
+            if (d !== 0) cheneLech.push({ sku: ma, sl: Math.abs(d), dau: d > 0 ? -1 : +1 });
+          });
+          // Tách hai nhóm vì mỗi nhóm cộng/trừ theo chiều khác nhau
+          const nhomTru = cheneLech.filter(x => x.dau === -1);
+          const nhomCong = cheneLech.filter(x => x.dau === +1);
+          if (nhomTru.length) await dieuChinhTonKhoApp(nhomTru, -1);
+          if (nhomCong.length) await dieuChinhTonKhoApp(nhomCong, +1);
+        } catch(e) {
+          console.error('Lỗi chỉnh tồn kho khi sửa phiếu:', e);
+          alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+        }
+      }
     }
     closeEdit();
     showToast('Đã cập nhật phiếu');
@@ -8871,7 +8949,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v239</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v240</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8925,7 +9003,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v239</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v240</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8967,7 +9045,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v239</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v240</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
