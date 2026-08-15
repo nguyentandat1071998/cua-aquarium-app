@@ -2983,6 +2983,34 @@ window.xoaDonSkuAo = async function(xacNhan = false) {
   return data;
 };
 
+// Soi một mã cụ thể để tìm nguyên nhân không lấy được giá vốn.
+// Gọi: soiGiaVon('ADAVER205L')
+window.soiGiaVon = async function(maSku) {
+  if (!maSku) { console.error('Cần mã SKU'); return; }
+  const s = allSKUs.find(x => x.sku === maSku || x.id === maSku);
+  console.log('--- TRONG BỘ NHỚ APP ---');
+  console.log('Tìm thấy SKU:', !!s);
+  if (s) console.log({ id: s.id, sku: s.sku, ten: s.ten, giaVon: s.giaVon, kieuGiaVon: typeof s.giaVon });
+
+  console.log('--- TRONG COLLECTION gia_von ---');
+  try {
+    const d = await getDoc(doc(db, 'gia_von', maSku));
+    console.log('Tài liệu tồn tại:', d.exists());
+    if (d.exists()) {
+      const dl = d.data();
+      console.log('Nội dung:', dl);
+      console.log('giaVon =', dl.giaVon, '| kiểu:', typeof dl.giaVon, '| Number() =', Number(dl.giaVon));
+    }
+  } catch(e) { console.error('Lỗi đọc:', e.message); }
+
+  console.log('--- TRONG COLLECTION skus ---');
+  try {
+    const d = await getDoc(doc(db, 'skus', maSku));
+    console.log('Tài liệu tồn tại:', d.exists());
+    if (d.exists()) console.log('giaVon trong skus:', d.data()?.giaVon);
+  } catch(e) { console.error('Lỗi đọc:', e.message); }
+};
+
 // Dò xem SKU nào không lấy được giá vốn và nguyên nhân.
 // Gọi bằng Admin: doGiaVonThieu()
 window.doGiaVonThieu = async function() {
@@ -4778,8 +4806,18 @@ function layGiaTriNhomHangDaChon(prefix) {
 let skusUnsub = null;
 function batDauTheoDoiSKU() {
   if (skusUnsub) return; // đã theo dõi rồi, tránh gắn trùng
-  skusUnsub = onSnapshot(collection(db, 'skus'), (snap) => {
+  skusUnsub = onSnapshot(collection(db, 'skus'), async (snap) => {
+    // Giá vốn nằm ở collection riêng nên KHÔNG có trong snapshot này.
+    // Giữ lại giá vốn đang có trong bộ nhớ, nếu không mỗi lần dữ liệu SKU thay đổi
+    // là giá vốn biến mất khỏi giao diện.
+    const giaVonCu = new Map(allSKUs.filter(s => s.giaVon).map(s => [String(s.sku || s.id), s.giaVon]));
     allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
+    allSKUs.forEach(s => {
+      const gt = giaVonCu.get(String(s.sku)) ?? giaVonCu.get(String(s.id));
+      if (gt != null) s.giaVon = gt;
+    });
+    // Có SKU mới chưa biết giá vốn -> nạp bổ sung từ collection riêng
+    if (allSKUs.some(s => !s.giaVon)) await napGiaVon();
     // Chỉ vẽ lại nếu đang mở đúng tab VÀ không có ai đang gõ dở/sửa dở — tránh làm gián đoạn thao tác đang làm
     if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) {
       renderHangHoaNhomFilters();
@@ -8441,7 +8479,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v222</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v223</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8495,7 +8533,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v222</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v223</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8536,7 +8574,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v222</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v223</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
