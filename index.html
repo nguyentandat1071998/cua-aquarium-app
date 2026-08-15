@@ -6668,6 +6668,55 @@ window.openCamera = async function(mode) {
   }
 };
 
+// Thêm ảnh từ file có sẵn — dành cho máy tính không có camera.
+// Vẫn gắn nhãn thời gian và tên người như ảnh chụp trực tiếp, và ghi rõ nguồn
+// là "ảnh chọn" để sau này đối chiếu biết ảnh nào chụp tại chỗ, ảnh nào chọn từ máy.
+window.themAnhTuFile = async function(input, mode) {
+  const files = [...(input.files || [])];
+  if (!files.length) return;
+  showToast(`Đang xử lý ${files.length} ảnh...`);
+
+  for (const f of files) {
+    try {
+      const anh = await new Promise((xong, hong) => {
+        const r = new FileReader();
+        r.onload = () => { const i = new Image(); i.onload = () => xong(i); i.onerror = hong; i.src = r.result; };
+        r.onerror = hong;
+        r.readAsDataURL(f);
+      });
+
+      // Thu nhỏ ảnh lớn về tối đa 1600px cho nhẹ, ảnh điện thoại thường 3000px+
+      const canvas = document.createElement('canvas');
+      const tyLe = Math.min(1, 1600 / Math.max(anh.width, anh.height));
+      canvas.width = Math.round(anh.width * tyLe);
+      canvas.height = Math.round(anh.height * tyLe);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(anh, 0, 0, canvas.width, canvas.height);
+
+      const now = new Date();
+      const d2 = String(now.getDate()).padStart(2,'0'), m2 = String(now.getMonth()+1).padStart(2,'0'), y2 = String(now.getFullYear()).slice(-2);
+      const ts = `${d2}/${m2}/${y2} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      const label = `CUA Aquarium · ${currentUserData?.ten || ''} · ${ts} · ảnh chọn`;
+      const fontSize = Math.max(14, Math.round(canvas.width * 0.025));
+      ctx.font = `bold ${fontSize}px monospace`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
+      ctx.fillStyle = '#FFE566';
+      ctx.fillText(label, 14, canvas.height - 10);
+
+      const photoData = { dataUrl: canvas.toDataURL('image/jpeg', 0.85), ts, tuFile: true };
+      if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
+      else if (mode === 'xuat') { currentPhieu.photos.push(photoData); renderXuatPhotos(); }
+    } catch(e) {
+      console.error('Lỗi đọc ảnh:', e);
+      showToast('Không đọc được một ảnh', true);
+    }
+  }
+  input.value = '';   // cho phép chọn lại cùng file lần sau
+  showToast('Đã thêm ảnh');
+};
+
 window.capturePhoto = function() {
   const mode = document.getElementById('camera-modal').dataset.mode;
   const video = document.getElementById('camera-video');
@@ -8813,7 +8862,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v237</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v238</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -8867,7 +8916,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v237</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v238</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -8909,7 +8958,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v237</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v238</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -9003,7 +9052,13 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <div class="card">
           <div class="card-title">Ảnh minh chứng</div>
           <div class="photo-grid" id="nhap-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
-          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('nhap')">Chụp ảnh</button>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn-outline" style="flex:1" onclick="openCamera('nhap')">Chụp ảnh</button>
+            <button class="btn-outline" style="flex:1" onclick="document.getElementById('nhap-chon-file').click()">Chọn ảnh có sẵn</button>
+          </div>
+          <!-- Máy tính không có camera vẫn thêm được ảnh minh chứng -->
+          <input type="file" id="nhap-chon-file" accept="image/*" multiple style="display:none"
+            onchange="themAnhTuFile(this,'nhap')">
         </div>
 
         <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">Lưu phiếu chuyển kho</button>
@@ -9088,7 +9143,13 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <div class="card">
           <div class="card-title">Ảnh minh chứng</div>
           <div class="photo-grid" id="xuat-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
-          <button class="btn-outline" style="margin-top:10px" onclick="openCamera('xuat')">Chụp ảnh</button>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <button class="btn-outline" style="flex:1" onclick="openCamera('xuat')">Chụp ảnh</button>
+            <button class="btn-outline" style="flex:1" onclick="document.getElementById('xuat-chon-file').click()">Chọn ảnh có sẵn</button>
+          </div>
+          <!-- Máy tính không có camera vẫn thêm được ảnh minh chứng -->
+          <input type="file" id="xuat-chon-file" accept="image/*" multiple style="display:none"
+            onchange="themAnhTuFile(this,'xuat')">
         </div>
 
         <button class="btn-r" id="btn-xuat-submit" onclick="submitXuat()">Lưu phiếu xuất hủy</button>
