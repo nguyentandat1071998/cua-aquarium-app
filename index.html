@@ -1292,7 +1292,8 @@ function roleLabel(r) {
 
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
-  baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', banhang: 'banhang', tmdt: 'tmdt',
+  baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', banhang: 'banhang',
+  thanhtoan: 'tmdt_ketnoi', tmdt: 'tmdt',
   quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
@@ -1356,6 +1357,13 @@ window.switchModule = function(mod) {
     } else {
       document.getElementById('panel-luongnv-main').style.display = 'block';
     }
+    return;
+  }
+  if (mod === 'thanhtoan') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-thietlap-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderThietLapThanhToan();
     return;
   }
   if (mod === 'banhang') {
@@ -4362,6 +4370,7 @@ async function renderBanHang() {
     el.innerHTML = '<div class="loading">Đang tải hàng hóa...</div>';
     await loadSKUs();
   }
+  if (cauHinhThanhToan === null) await napCauHinhThanhToan();
   if (!bhPhieu.length) {
     const cu = bhDoc();
     if (cu?.phieu?.length) {
@@ -4549,23 +4558,66 @@ function veKhoiQR(p, soTien) {
     </div>`;
 }
 
+// Tài khoản nhận tiền lưu trên MÁY CHỦ, không phải trên máy nhân viên.
+// Nếu để localStorage thì ai ngồi máy đó cũng sửa được số tài khoản, tiền khách
+// chuyển đi đâu không ai biết. Rules chỉ cho Admin ghi.
+let cauHinhThanhToan = null;
+
+async function napCauHinhThanhToan() {
+  try {
+    const d = await getDoc(doc(db, 'cau_hinh', 'thanh_toan'));
+    cauHinhThanhToan = d.exists() ? d.data() : null;
+  } catch(e) {
+    console.warn('Không nạp được cấu hình thanh toán:', e.message);
+    cauHinhThanhToan = null;
+  }
+  return cauHinhThanhToan;
+}
+
 function layCauHinhQR() {
   return {
-    nganHang: (window.CAU_HINH_QR?.nganHang) || localStorage.getItem('qr_ngan_hang') || '',
-    stk:      (window.CAU_HINH_QR?.stk)      || localStorage.getItem('qr_stk') || '',
-    tenChu:   (window.CAU_HINH_QR?.tenChu)   || localStorage.getItem('qr_ten_chu') || ''
+    nganHang: cauHinhThanhToan?.nganHang || '',
+    stk:      cauHinhThanhToan?.stk || '',
+    tenChu:   cauHinhThanhToan?.tenChu || ''
   };
 }
 
-// Cấu hình tài khoản nhận tiền. Gọi 1 lần từ Console:
-// datTaiKhoanQR('MB', '0123456789', 'NGUYEN TAN DAT')
-window.datTaiKhoanQR = function(nganHang, stk, tenChu) {
-  if (!nganHang || !stk) { console.error('Cần mã ngân hàng và số tài khoản. VD: datTaiKhoanQR("MB","0123456789","NGUYEN VAN A")'); return; }
-  localStorage.setItem('qr_ngan_hang', nganHang);
-  localStorage.setItem('qr_stk', stk);
-  localStorage.setItem('qr_ten_chu', tenChu || '');
-  showToast('Đã lưu tài khoản nhận tiền');
-  console.log('Đã lưu:', { nganHang, stk, tenChu });
+// Đặt tài khoản nhận tiền — CHỈ ADMIN. Ghi lại ai đổi và lúc nào để truy vết.
+// Gọi: datTaiKhoanQR('MB', '0123456789', 'NGUYEN TAN DAT')
+window.datTaiKhoanQR = async function(nganHang, stk, tenChu) {
+  if (currentUserData?.role !== 'admin') { console.error('Chỉ Admin mới đổi được tài khoản nhận tiền'); return; }
+  if (!nganHang || !stk) {
+    console.error('Cần mã ngân hàng và số tài khoản. VD: datTaiKhoanQR("MB","0123456789","NGUYEN VAN A")');
+    return;
+  }
+  const cu = layCauHinhQR();
+  if (cu.stk && cu.stk !== String(stk) &&
+      !confirm(`ĐỔI TÀI KHOẢN NHẬN TIỀN\n\nCũ:  ${cu.nganHang} ${cu.stk}\nMới: ${nganHang} ${stk}\n\nMọi mã QR từ giờ sẽ chuyển tiền vào tài khoản mới. Xác nhận?`)) return;
+  try {
+    await setDoc(doc(db, 'cau_hinh', 'thanh_toan'), {
+      nganHang: String(nganHang).toUpperCase(),
+      stk: String(stk),
+      tenChu: String(tenChu || '').toUpperCase(),
+      doiBoi: { uid: currentUser.uid, ten: currentUserData?.ten || currentUser?.email || '' },
+      doiLuc: serverTimestamp()
+    });
+    await napCauHinhThanhToan();
+    showToast('Đã lưu tài khoản nhận tiền');
+    console.log('Đã lưu:', layCauHinhQR());
+  } catch(e) {
+    console.error('Không lưu được:', e.message);
+  }
+};
+
+// Xem tài khoản đang dùng và ai đổi lần cuối. Gọi: xemTaiKhoanQR()
+window.xemTaiKhoanQR = async function() {
+  await napCauHinhThanhToan();
+  if (!cauHinhThanhToan) { console.log('Chưa cấu hình tài khoản nhận tiền'); return null; }
+  const c = cauHinhThanhToan;
+  console.log(`Tài khoản: ${c.nganHang} ${c.stk} — ${c.tenChu || '(chưa có tên)'}`);
+  if (c.doiBoi) console.log(`Đổi lần cuối bởi: ${c.doiBoi.ten}`,
+    c.doiLuc?.toDate ? c.doiLuc.toDate().toLocaleString('vi-VN') : '');
+  return c;
 };
 
 // ===== THAO TÁC =====
@@ -4730,6 +4782,119 @@ window.bhHoanThanh = async function() {
   } catch(e) {
     alert('Lỗi lưu đơn: ' + e.message);
   }
+};
+
+// ==========================================================================
+// ===== THIẾT LẬP THANH TOÁN =====
+// Tài khoản nhận tiền chuyển khoản. Chỉ Admin sửa được (chặn ở Firestore rules),
+// vì đổi số tài khoản nghĩa là đổi nơi tiền khách chảy về.
+// ==========================================================================
+const NGAN_HANG_VN = [
+  { ma: 'MB',   ten: 'MB Bank (Quân đội)' },
+  { ma: 'VCB',  ten: 'Vietcombank' },
+  { ma: 'TCB',  ten: 'Techcombank' },
+  { ma: 'ACB',  ten: 'ACB' },
+  { ma: 'VPB',  ten: 'VPBank' },
+  { ma: 'BIDV', ten: 'BIDV' },
+  { ma: 'ICB',  ten: 'VietinBank' },
+  { ma: 'TPB',  ten: 'TPBank' },
+  { ma: 'STB',  ten: 'Sacombank' },
+  { ma: 'HDB',  ten: 'HDBank' },
+  { ma: 'SHB',  ten: 'SHB' },
+  { ma: 'VIB',  ten: 'VIB' },
+  { ma: 'MSB',  ten: 'MSB' },
+  { ma: 'OCB',  ten: 'OCB' },
+  { ma: 'EIB',  ten: 'Eximbank' },
+  { ma: 'SEAB', ten: 'SeABank' },
+  { ma: 'LPB',  ten: 'LPBank' },
+  { ma: 'NAB',  ten: 'Nam A Bank' },
+  { ma: 'VARB', ten: 'Agribank' },
+  { ma: 'SGICB',ten: 'Saigonbank' }
+];
+
+async function renderThietLapThanhToan() {
+  const el = document.getElementById('thietlap-content');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  await napCauHinhThanhToan();
+  const c = cauHinhThanhToan || {};
+  const laAdmin = currentUserData.role === 'admin';
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-title">Tài khoản nhận chuyển khoản</div>
+      <p class="info-note" style="margin-bottom:12px">
+        Dùng để tạo mã QR khi bán hàng. Khách quét mã là chuyển đúng số tiền vào tài khoản này.
+      </p>
+
+      ${!laAdmin ? `<p class="info-note" style="background:#FEF3C7;border-color:#F59E0B">
+        Chỉ Quản trị mới đổi được tài khoản nhận tiền.</p>` : ''}
+
+      <div class="field">
+        <label>Ngân hàng</label>
+        <select id="tt-ngan-hang" ${laAdmin ? '' : 'disabled'} onchange="veXemTruocQR()">
+          <option value="">— Chọn ngân hàng —</option>
+          ${NGAN_HANG_VN.map(n => `<option value="${n.ma}" ${c.nganHang === n.ma ? 'selected' : ''}>${escHtml(n.ten)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Số tài khoản</label>
+        <input type="text" id="tt-stk" inputmode="numeric" value="${escHtml(c.stk || '')}"
+          placeholder="Nhập số tài khoản" ${laAdmin ? '' : 'disabled'} oninput="veXemTruocQR()">
+      </div>
+
+      <div class="field">
+        <label>Tên chủ tài khoản</label>
+        <input type="text" id="tt-ten-chu" value="${escHtml(c.tenChu || '')}"
+          placeholder="VIET HOA KHONG DAU" ${laAdmin ? '' : 'disabled'}
+          oninput="this.value=this.value.toUpperCase();veXemTruocQR()">
+      </div>
+
+      <div id="tt-xem-truoc" style="margin:12px 0"></div>
+
+      ${laAdmin ? `<button class="btn-g" style="width:100%" onclick="luuCauHinhThanhToan()">Lưu tài khoản</button>` : ''}
+
+      ${c.doiBoi ? `<p class="info-note" style="margin-top:10px">
+        Đổi lần cuối bởi <b>${escHtml(c.doiBoi.ten || '')}</b>
+        ${c.doiLuc?.toDate ? ' · ' + c.doiLuc.toDate().toLocaleString('vi-VN') : ''}
+      </p>` : ''}
+    </div>`;
+
+  veXemTruocQR();
+}
+
+window.veXemTruocQR = function() {
+  const el = document.getElementById('tt-xem-truoc');
+  if (!el) return;
+  const nh = document.getElementById('tt-ngan-hang')?.value || '';
+  const stk = (document.getElementById('tt-stk')?.value || '').trim();
+  const ten = (document.getElementById('tt-ten-chu')?.value || '').trim();
+  if (!nh || !stk) {
+    el.innerHTML = '<p class="info-note">Chọn ngân hàng và nhập số tài khoản để xem trước mã QR.</p>';
+    return;
+  }
+  // Xem trước với số tiền mẫu để biết mã có tạo được không
+  const url = `https://img.vietqr.io/image/${encodeURIComponent(nh)}-${encodeURIComponent(stk)}-compact2.png`
+    + `?amount=10000&addInfo=${encodeURIComponent('XEM TRUOC')}`
+    + (ten ? `&accountName=${encodeURIComponent(ten)}` : '');
+  el.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;text-align:center">
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">Xem trước (mẫu 10.000đ)</div>
+      <img src="${url}" alt="Mã QR mẫu" style="width:100%;max-width:220px;border-radius:8px;background:#fff"
+        onerror="this.parentElement.innerHTML='<p style=\\'color:var(--red);font-size:13px\\'>Không tạo được mã QR — kiểm tra lại số tài khoản.</p>'">
+      <div style="font-size:12px;color:var(--text2);margin-top:6px">${escHtml(nh)} · ${escHtml(stk)}</div>
+    </div>`;
+};
+
+window.luuCauHinhThanhToan = async function() {
+  const nh = document.getElementById('tt-ngan-hang')?.value || '';
+  const stk = (document.getElementById('tt-stk')?.value || '').trim();
+  const ten = (document.getElementById('tt-ten-chu')?.value || '').trim();
+  if (!nh) { showToast('Chưa chọn ngân hàng', true); return; }
+  if (!stk) { showToast('Chưa nhập số tài khoản', true); return; }
+  await datTaiKhoanQR(nh, stk, ten);
+  await renderThietLapThanhToan();
 };
 
 function renderHangHoaNhomFilters() {
@@ -5489,6 +5654,7 @@ const NHOM_MENU = [
   { key: 'baocao', ten: 'Báo cáo', moTrucTiep: true, quyen: 'baocao',
     muc: [], moGi: () => switchModule('baocao') },
   { key: 'thietlap', ten: 'Thiết lập', chiAdmin: true, muc: [
+    { key: 'thanhtoan',  ten: 'Thanh toán',        quyen: 'tmdt_ketnoi', moGi: () => switchModule('thanhtoan') },
     { key: 'adminpanel', ten: 'Quản trị hệ thống', quyen: 'tmdt_ketnoi', moGi: () => switchAdmin() },
     { key: 'ketnoisan',  ten: 'Kết nối sàn',       quyen: 'tmdt_ketnoi',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
@@ -9995,7 +10161,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v267</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v269</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10049,7 +10215,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v267</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v269</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10091,7 +10257,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v267</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v269</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -10471,6 +10637,10 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
 
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
+      <div class="panel" id="panel-thietlap-main">
+        <div id="thietlap-content"></div>
+      </div>
+
       <div class="panel" id="panel-banhang-main">
         <div id="banhang-content"></div>
       </div>
