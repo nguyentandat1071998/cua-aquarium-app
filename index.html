@@ -1292,7 +1292,7 @@ function roleLabel(r) {
 
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
-  baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', tmdt: 'tmdt',
+  baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', banhang: 'banhang', tmdt: 'tmdt',
   quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
@@ -1356,6 +1356,13 @@ window.switchModule = function(mod) {
     } else {
       document.getElementById('panel-luongnv-main').style.display = 'block';
     }
+    return;
+  }
+  if (mod === 'banhang') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-banhang-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderBanHang();
     return;
   }
   if (mod === 'hanghoach') {
@@ -4303,6 +4310,206 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
   }
 };
 
+// ==========================================================================
+// ===== BÁN HÀNG TẠI QUẦY =====
+// Trừ KHO CỬA HÀNG, không đụng kho sàn.
+//
+// Điểm khác KiotViet: chọn chuyển khoản KHÔNG tự đánh dấu đã thanh toán.
+// Đơn ở trạng thái "chờ tiền về" cho tới khi đối soát thấy tiền thật —
+// tránh cảnh khách nói đã chuyển, hệ thống ghi nhận, mà tiền không bao giờ tới.
+//
+// Giỏ hàng tự lưu trên máy: rớt mạng hay đóng nhầm tab vẫn còn nguyên.
+// ==========================================================================
+let bhGio = [];              // [{sku, ten, gia, soLuong, giamGia}]
+let bhKhachTra = 0;
+let bhGhiChu = '';
+
+function bhKhoaNhap() { return `ban_hang_gio_${currentUser?.uid || 'chung'}`; }
+
+function bhLuuGio() {
+  try {
+    if (!bhGio.length) { localStorage.removeItem(bhKhoaNhap()); return; }
+    localStorage.setItem(bhKhoaNhap(), JSON.stringify({ gio: bhGio, ghiChu: bhGhiChu, luc: Date.now() }));
+  } catch(e) {}
+}
+
+function bhDocGio() {
+  try {
+    const s = localStorage.getItem(bhKhoaNhap());
+    if (!s) return null;
+    const d = JSON.parse(s);
+    // Giỏ để quá 1 ngày coi như bỏ — khách đã đi từ lâu
+    if (Date.now() - (d.luc || 0) > 86400000) { localStorage.removeItem(bhKhoaNhap()); return null; }
+    return d;
+  } catch(e) { return null; }
+}
+
+async function renderBanHang() {
+  const el = document.getElementById('banhang-content');
+  if (!el) return;
+  if (!allSKUs.length) {
+    el.innerHTML = '<div class="loading">Đang tải hàng hóa...</div>';
+    await loadSKUs();
+  }
+  const nhap = bhDocGio();
+  if (nhap?.gio?.length && !bhGio.length) { bhGio = nhap.gio; bhGhiChu = nhap.ghiChu || ''; }
+  veManHinhBanHang();
+}
+
+function bhTinhTien() {
+  const tongHang = bhGio.reduce((s, d) => s + (Number(d.gia) || 0) * (Number(d.soLuong) || 0), 0);
+  const tongGiam = bhGio.reduce((s, d) => s + (Number(d.giamGia) || 0), 0);
+  return { tongHang, tongGiam, phaiTra: Math.max(0, tongHang - tongGiam) };
+}
+
+function veManHinhBanHang() {
+  const el = document.getElementById('banhang-content');
+  if (!el) return;
+  const { tongHang, tongGiam, phaiTra } = bhTinhTien();
+  const soMon = bhGio.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
+
+  el.innerHTML = `
+    <div class="field sku-wrap" style="margin-bottom:10px">
+      <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:12px;font-size:15px">
+      <div class="sku-drop" id="bh-drop"></div>
+    </div>
+
+    <div id="bh-gio"></div>
+
+    ${bhGio.length ? `
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin:12px 0">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+        <span style="color:var(--text2)">${bhGio.length} mã · ${soMon} sản phẩm</span>
+        <span>${fmt(tongHang)}đ</span>
+      </div>
+      ${tongGiam > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;color:#D97706">
+        <span>Giảm giá</span><span>−${fmt(tongGiam)}đ</span>
+      </div>` : ''}
+      <div style="display:flex;justify-content:space-between;font-size:20px;font-weight:700;padding-top:8px;border-top:1px solid var(--border)">
+        <span>Khách trả</span><span style="color:var(--green)">${fmt(phaiTra)}đ</span>
+      </div>
+    </div>
+
+    <textarea id="bh-ghichu" placeholder="Ghi chú đơn (tùy chọn)" rows="2"
+      oninput="bhGhiChu=this.value;bhLuuGio()" style="width:100%;margin-bottom:10px">${escHtml(bhGhiChu)}</textarea>
+
+    <div style="display:flex;gap:8px;margin-bottom:8px">
+      <button class="btn-g" style="flex:1;padding:15px;font-size:15px" onclick="bhThanhToan('tienmat')">💵 Tiền mặt</button>
+      <button class="btn-g" style="flex:1;padding:15px;font-size:15px;background:#2563EB" onclick="bhThanhToan('chuyenkhoan')">🏦 Chuyển khoản</button>
+    </div>
+    <button class="btn-outline" style="width:100%" onclick="bhXoaGio()">Hủy đơn</button>
+    ` : '<p class="info-note">Giỏ hàng trống. Gõ tên hàng ở ô trên để thêm.</p>'}`;
+
+  makeSKUSearch('bh-tim', 'bh-drop', null);
+  veGioHang();
+}
+
+function veGioHang() {
+  const el = document.getElementById('bh-gio');
+  if (!el) return;
+  if (!bhGio.length) { el.innerHTML = ''; return; }
+  el.innerHTML = bhGio.map((d, i) => {
+    const sku = allSKUs.find(s => s.sku === d.sku);
+    const ton = sku ? layTon(sku, 'cuahang') : 0;
+    const thanhTien = (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (Number(d.giamGia) || 0);
+    const vuotTon = d.soLuong > ton;
+    return `
+    <div style="border:1px solid ${vuotTon ? 'var(--red)' : 'var(--border)'};border-radius:8px;padding:10px;margin-bottom:8px;background:${vuotTon ? '#FEF2F2' : 'var(--surface)'}">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:0">
+          <b style="font-size:14px">${escHtml(d.ten)}</b>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(d.sku)} · ${fmt(d.gia)}đ${vuotTon ? ` · <span style="color:var(--red)">chỉ còn ${ton}</span>` : ''}</div>
+        </div>
+        <button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="bhXoaDong(${i})">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button class="btn-xs" style="width:36px;padding:8px" onclick="bhDoiSL(${i},-1)">−</button>
+        <input type="number" min="1" value="${d.soLuong}" onchange="bhDatSL(${i},this.value)"
+          style="width:56px;padding:8px;text-align:center;font-size:16px;font-weight:600">
+        <button class="btn-xs" style="width:36px;padding:8px" onclick="bhDoiSL(${i},1)">+</button>
+        <input type="number" min="0" value="${d.giamGia || ''}" placeholder="Giảm giá"
+          onchange="bhDatGiam(${i},this.value)" style="flex:1;padding:8px;text-align:right">
+        <div style="font-weight:700;font-size:14px;min-width:80px;text-align:right">${fmt(thanhTien)}đ</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// makeSKUSearch gọi selectSKU, hàm đó chuyển tiếp vào đây
+window.bhThemHang = function(maSku, ten) {
+  const sku = allSKUs.find(s => s.sku === maSku);
+  if (!sku) return;
+  const i = bhGio.findIndex(d => d.sku === maSku);
+  if (i >= 0) bhGio[i].soLuong++;
+  else bhGio.push({ sku: maSku, ten, gia: Number(sku.gia) || 0, soLuong: 1, giamGia: 0 });
+  bhLuuGio();
+  veManHinhBanHang();
+};
+
+window.bhDoiSL = function(i, d) {
+  bhGio[i].soLuong = Math.max(1, (Number(bhGio[i].soLuong) || 1) + d);
+  bhLuuGio(); veManHinhBanHang();
+};
+window.bhDatSL = function(i, v) {
+  bhGio[i].soLuong = Math.max(1, parseInt(v) || 1);
+  bhLuuGio(); veManHinhBanHang();
+};
+window.bhDatGiam = function(i, v) {
+  const toiDa = (Number(bhGio[i].gia) || 0) * (Number(bhGio[i].soLuong) || 0);
+  bhGio[i].giamGia = Math.min(toiDa, Math.max(0, parseFloat(v) || 0));
+  bhLuuGio(); veManHinhBanHang();
+};
+window.bhXoaDong = function(i) { bhGio.splice(i, 1); bhLuuGio(); veManHinhBanHang(); };
+window.bhXoaGio = function() {
+  if (bhGio.length && !confirm('Hủy đơn đang bán?')) return;
+  bhGio = []; bhGhiChu = ''; bhLuuGio(); veManHinhBanHang();
+};
+
+window.bhThanhToan = async function(cachTra) {
+  if (!bhGio.length) return;
+  const { tongHang, tongGiam, phaiTra } = bhTinhTien();
+
+  // Cảnh báo bán quá tồn nhưng vẫn cho qua — có thể hàng về mà chưa kịp nhập sổ
+  const vuot = bhGio.filter(d => {
+    const sku = allSKUs.find(s => s.sku === d.sku);
+    return sku && d.soLuong > layTon(sku, 'cuahang');
+  });
+  if (vuot.length && !confirm(
+    `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán? Tồn kho sẽ về âm.`)) return;
+
+  const laTienMat = cachTra === 'tienmat';
+  if (!confirm(`${laTienMat ? 'TIỀN MẶT' : 'CHUYỂN KHOẢN'}: ${fmt(phaiTra)}đ\n\nXác nhận bán?`)) return;
+
+  try {
+    const maDon = `BL${Date.now().toString().slice(-9)}`;
+    await setDoc(doc(db, 'don_ban_le', maDon), {
+      maDon,
+      dongHang: bhGio,
+      tongHang, tongGiam, phaiTra,
+      cachThanhToan: cachTra,
+      // Tiền mặt là cầm tiền ngay nên xong luôn. Chuyển khoản phải chờ đối soát
+      // thấy tiền thật mới đánh dấu — đây là chỗ KiotViet làm sai.
+      trangThai: laTienMat ? 'hoan_thanh' : 'cho_tien_ve',
+      ghiChu: bhGhiChu,
+      nguoiBan: { uid: currentUser.uid, ten: currentUserData?.ten || currentUser?.email || '' },
+      taoLuc: serverTimestamp()
+    });
+
+    await dieuChinhTonKhoApp(
+      bhGio.map(d => ({ sku: d.sku, sl: d.soLuong })), -1, 'cuahang',
+      { loai: 'Bán tại quầy', ma: maDon });
+
+    bhGio = []; bhGhiChu = ''; bhLuuGio();
+    showToast(laTienMat
+      ? `Đã bán ${fmt(phaiTra)}đ — thu tiền mặt`
+      : `Đã lưu ${fmt(phaiTra)}đ — CHỜ TIỀN VỀ, kiểm tra trước khi giao hàng`);
+    veManHinhBanHang();
+  } catch(e) {
+    alert('Lỗi lưu đơn: ' + e.message);
+  }
+};
+
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
   if (!el) return;
@@ -4964,6 +5171,7 @@ const DANH_SACH_MODULE = [
     { key: 'nv_luong_minh', ten: 'Bảng lương — chỉ xem của mình' },
     { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
   ]},
+  { key: 'banhang', ten: 'Bán hàng tại quầy', con: [] },
   { key: 'hanghoa_ch', ten: 'Hàng hóa cửa hàng', con: [] },
   { key: 'hanghoa', ten: 'Danh sách hàng hóa', con: [
     { key: 'hh_them', ten: 'Thêm' },
@@ -5028,6 +5236,7 @@ function layQuyenFallbackChuaMigrate() {
 // ==========================================================================
 const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
+    { key: 'banhang',   ten: 'Bán hàng',       quyen: 'banhang',   moGi: () => switchModule('banhang') },
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
@@ -5693,6 +5902,10 @@ window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
   if (inputId === 'nh-tim') {
     input.value = '';
     nhThemHang(sku, ten);
+  }
+  if (inputId === 'bh-tim') {
+    input.value = '';
+    bhThemHang(sku, ten);
   }
 };
 
@@ -9527,7 +9740,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v265</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v266</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9581,7 +9794,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v265</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v266</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9623,7 +9836,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v265</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v266</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -10003,6 +10216,10 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
 
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
+      <div class="panel" id="panel-banhang-main">
+        <div id="banhang-content"></div>
+      </div>
+
       <div class="panel" id="panel-hanghoach-main">
         <div id="hanghoach-content"></div>
       </div>
