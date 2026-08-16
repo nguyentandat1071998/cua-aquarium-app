@@ -4063,7 +4063,26 @@ window.nhLuuPhieu = async function(luuThat) {
       duLieu.taoLuc = serverTimestamp();
       await addDoc(collection(db, 'phieu_nhap_san'), duLieu);
     }
-    showToast(luuThat ? `Đã lưu phiếu và đẩy sang KiotViet${duLieu.kiotvietCode ? ' (' + duLieu.kiotvietCode + ')' : ''}` : 'Đã lưu phiếu tạm');
+
+    // CỘNG TỒN KHO SÀN — chỉ khi lưu thật (phiếu tạm chưa nhập hàng thực sự).
+    // Trước đây chỉ tạo phiếu bên KiotViet mà quên cộng sổ app nên hai bên lệch nhau.
+    let soDongTon = 0;
+    if (luuThat) {
+      try {
+        const kq = await dieuChinhTonKhoApp(
+          nhDongHang.map(d => ({ sku: d.sku, sl: d.soLuong })), +1, 'san',
+          { loai: 'Nhập hàng', ma: duLieu.kiotvietCode || maPhieu });
+        soDongTon = kq.soDong;
+      } catch(e) {
+        console.error('Lỗi cộng tồn kho:', e);
+        alert('Phiếu đã lưu nhưng CHƯA CỘNG được tồn kho trong app:\n' + e.message
+          + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+      }
+    }
+
+    showToast(luuThat
+      ? `Đã lưu phiếu + cộng tồn ${soDongTon} mã${duLieu.kiotvietCode ? ' · KV ' + duLieu.kiotvietCode : ''}`
+      : 'Đã lưu phiếu tạm');
     nhXoaNhap();              // đã lưu lên hệ thống, không cần giữ nháp trên máy nữa
     nhDaKhoiPhucNhap = false;
     await renderNhapHangTab();
@@ -4271,7 +4290,7 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div style="font-size:16px;font-weight:700;color:${am ? 'var(--red)' : 'var(--green)'}">${am ? '' : '+'}${g.soLuong}</div>
-          <div style="font-size:11px;color:var(--text2)">còn ${g.tonSau}</div>
+          ${g.tonSau != null ? `<div style="font-size:11px;color:var(--text2)">còn ${g.tonSau}</div>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -9508,7 +9527,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v264</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v265</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9562,7 +9581,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v264</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v265</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9604,7 +9623,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v264</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v265</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
