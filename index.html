@@ -2257,22 +2257,6 @@ function trangThaiHienThi(d) {
   return d.trangThaiNoiBo || 'moi';
 }
 
-// Suy đơn vị vận chuyển từ mã vận đơn.
-// KiotViet chỉ trả partnerDelivery.name = "SHOPEE"/"TIKTOK" (tên sàn, không phải hãng),
-// còn deliveryBy thì chỉ có ở API chi tiết và không tra được tên. Nhưng mã vận đơn
-// có quy luật riêng theo từng hãng nên suy ra được, không tốn request nào.
-function suyDonViVanChuyen(maVanDon) {
-  const m = String(maVanDon || '').trim().toUpperCase();
-  if (!m) return null;
-  if (m.startsWith('SPXVN') || m.startsWith('SPX')) return { ten: 'SPX Express', hoaToc: false };
-  if (m.startsWith('VN') && m.length >= 12)         return { ten: 'Shopee Express', hoaToc: false };
-  if (/^86\d{10}$/.test(m))                          return { ten: 'J&T Express', hoaToc: false };
-  if (/^\d{9}$/.test(m))                             return { ten: 'Giao nhanh nội thành', hoaToc: true };
-  if (m.startsWith('GHN') || m.startsWith('G'))      return { ten: 'GHN', hoaToc: false };
-  if (m.startsWith('VNP'))                           return { ten: 'VNPost', hoaToc: false };
-  return null;   // không nhận ra — hiện nguyên mã, đừng đoán bừa
-}
-
 // Đơn hủy sau đóng gói đã được quản lý nhận lại kiện hàng từ shipper chưa
 function daNhanLaiKien(d) {
   return !!d.daNhanLaiKien;
@@ -2415,13 +2399,9 @@ function veDanhSachDon() {
             <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
             <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
-            ${suyDonViVanChuyen(d.maVanDon)?.hoaToc ? `<span style="font-size:10px;color:#fff;background:#DC2626;padding:2px 7px;border-radius:4px">⚡ HỎA TỐC</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
-            ${gio}${(() => {
-              const dv = suyDonViVanChuyen(d.maVanDon);
-              return dv ? ` · <b>${escHtml(dv.ten)}</b>` : (d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : '');
-            })()}${d.maVanDon ? ` · VĐ: ${escHtml(d.maVanDon)}` : ''}
+            ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
           </div>
           ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
           <div style="font-size:12px;margin-top:4px">
@@ -3187,6 +3167,28 @@ window.thamDoDatHang = async function() {
   if (data.cacTruongChiTiet) {
     console.log('===== CÁC TRƯỜNG TRONG CHI TIẾT PHIẾU ĐẶT =====');
     data.cacTruongChiTiet.forEach(t => console.log(t));
+  }
+  return data;
+};
+
+// Dò xem Public API có mở endpoint nào cho tab "Bán online" không.
+// Gọi: doApiBanOnline()
+window.doApiBanOnline = async function() {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'do-api-ban-online', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const data = await res.json();
+  if (!data.success) { console.error('LỖI:', data.error); return data; }
+  console.table(data.cacDuongDanDaDo);
+  if (data.soEndpointCoDuLieu) {
+    console.log(`✅ Có ${data.soEndpointCoDuLieu} endpoint trả dữ liệu:`);
+    data.cacDuongDanDaDo.filter(x => x.coDuLieu).forEach(x => console.log(x.duongDan, '→', x.noiDung));
+  } else {
+    console.log('❌ Public API không mở endpoint nào cho tab Bán online');
   }
   return data;
 };
@@ -9208,7 +9210,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v257</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v259</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9262,7 +9264,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v257</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v259</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9304,7 +9306,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v257</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v259</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
