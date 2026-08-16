@@ -2216,6 +2216,9 @@ const TRANG_THAI_NOI_BO = {
   // là bước riêng sau đó. Đơn ở đây có thể đã in hoặc chưa — phải kiểm tra mới biết.
   huy_khi_cho_dong_goi: { ten: 'Hủy khi chờ đóng gói', mau: '#F59E0B', nhom: 'canh_bao' },
   huy_sau_dong_goi:  { ten: 'Hủy sau đóng gói', mau: '#EA580C', nhom: 'canh_bao' },
+  // Đơn đã rời kho rồi mới hủy — hàng đang trên đường về, phải chờ nhận lại.
+  // Hay gặp với đơn giao thất bại mà sàn báo về là "Đã hủy" thay vì "Chuyển hoàn".
+  huy_khi_dang_giao: { ten: 'Hủy khi đang giao', mau: '#DC2626', nhom: 'canh_bao' },
   dang_giao:         { ten: 'Đang giao',      mau: '#16A34A', nhom: 'san' },
   da_giao:           { ten: 'Đã giao',        mau: '#15803D', nhom: 'san' },
   giao_that_bai:     { ten: 'Giao thất bại',  mau: '#B91C1C', nhom: 'san' },
@@ -2238,9 +2241,12 @@ function trangThaiHienThi(d) {
 
   if (/hủy/i.test(giao) || /hủy/i.test(hoaDon)) {
     // Ba mức hủy, phân biệt theo việc đã làm tới đâu — quyết định phải xử lý gì
-    if (daDongGoi)      return 'huy_sau_dong_goi';      // kiện đã vào bao, phải lấy lại
-    if (daChuanBiHang)  return 'huy_khi_cho_dong_goi';  // đã chuẩn bị hàng, có thể đã in tem
-    return 'da_huy';                                    // chưa làm gì, bỏ qua
+    // Xét ĐÃ TỪNG RỜI KHO trước tiên — cờ này do app tự ghi khi thấy trạng thái
+    // "đang giao", nên đúng kể cả khi sàn đổ trạng thái cuối bị sai.
+    if (d.daTungRoiKho === true) return 'huy_khi_dang_giao';
+    if (daDongGoi)               return 'huy_sau_dong_goi';      // kiện đã vào bao, phải lấy lại
+    if (daChuanBiHang)           return 'huy_khi_cho_dong_goi';  // đã chuẩn bị hàng, có thể đã in tem
+    return 'da_huy';                                             // chưa làm gì, bỏ qua
   }
   if (/thành công|đã giao/i.test(giao)) return 'da_giao';
   if (/đang giao|đã bàn giao|đang vận chuyển/i.test(giao)) return 'dang_giao';
@@ -2306,6 +2312,7 @@ function veDanhSachDon() {
   const nhomSan = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'san');
   const soHuySauDongGoi = demTT('huy_sau_dong_goi');
   const soHuyChoDongGoi = demTT('huy_khi_cho_dong_goi');
+  const soHuyDangGiao = demTT('huy_khi_dang_giao');
   const soChuaNhanLai = allDonHangSan.filter(d =>
     trangThaiHienThi(d) === 'huy_sau_dong_goi' && !daNhanLaiKien(d)).length;
 
@@ -2330,6 +2337,11 @@ function veDanhSachDon() {
       <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('tiktok')">TikTok (${allDonHangSan.filter(d=>d.san==='tiktok').length})</button>
       <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('lazada')">Lazada (${allDonHangSan.filter(d=>d.san==='lazada').length})</button>
     </div>
+    ${soHuyDangGiao ? `
+    <div style="background:#FEF2F2;border:1.5px solid #DC2626;border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="doiFilterDonTT('huy_khi_dang_giao')">
+      <b style="font-size:13px;color:#DC2626">🚚 ${soHuyDangGiao} đơn hủy khi đã rời kho</b>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">Hàng đang trên đường về — theo dõi để nhận lại, đối chiếu với shipper</div>
+    </div>` : ''}
     ${soHuyChoDongGoi ? `
     <div style="background:#FFFBEB;border:1.5px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="doiFilterDonTT('huy_khi_cho_dong_goi')">
       <b style="font-size:13px;color:#B45309">🏷️ ${soHuyChoDongGoi} đơn hủy khi đang chờ đóng gói</b>
@@ -3093,6 +3105,26 @@ window.doGiaVonThieu = async function() {
     console.log('→ Những mã này chưa được chuyển. Chạy chuyenGiaVon() lại.');
   }
   return nhom;
+};
+
+// Xem API có trả lịch sử giao hàng không — để app dựng lại dòng thời gian thật
+// thay vì đoán từ trạng thái cuối (có thể sai do sàn đổ về lỗi).
+// Gọi: thamDoLichSuGiao()  hoặc  thamDoLichSuGiao('HDTTS_585568324776462124')
+window.thamDoLichSuGiao = async function(maHoaDon) {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'tham-do-lich-su-giao', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maHoaDon: maHoaDon || '' })
+  });
+  const data = await res.json();
+  console.log('Hóa đơn:', data.maHoaDon, '| Trạng thái giao:', data.trangThaiGiaoHienTai, '| latestStatus:', data.latestStatus);
+  if (data.cacTruong) {
+    console.log('===== TẤT CẢ TRƯỜNG (tìm mảng lịch sử) =====');
+    data.cacTruong.forEach(t => console.log(t));
+  }
+  return data;
 };
 
 // Kiểm tra phiếu đặt hàng có phân kênh bán không — quyết định app có kéo được
@@ -9034,7 +9066,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v246</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v247</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9088,7 +9120,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v246</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v247</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9130,7 +9162,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v246</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v247</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
