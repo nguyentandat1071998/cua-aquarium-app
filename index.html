@@ -4356,8 +4356,8 @@ function bhPhieuHienTai() { return bhPhieu.find(p => p.id === bhPhieuDangMo) || 
 
 function bhTaoPhieu(moLuon = true) {
   const soMoi = bhPhieu.length + 1;
-  const p = { id: 'P' + Date.now().toString(36), ten: `Khách ${soMoi}`, gio: [], ghiChu: '',
-    cachTra: 'tienmat', khachDua: null, tienMat: null, daNhanCK: false };
+  const p = { id: 'P' + Date.now().toString(36), ten: `Phiếu ${soMoi}`, gio: [], ghiChu: '',
+    cachTra: 'tienmat', khachDua: null, tienMat: null, daNhanCK: false, thuGon: false };
   bhPhieu.push(p);
   if (moLuon) bhPhieuDangMo = p.id;
   return p;
@@ -4481,19 +4481,21 @@ function veDayDuoi() {
               : p.cachTra === 'ketHop' ? Math.max(0, phaiTra - tienMat) : 0;
   const khachDua = Number(p.khachDua ?? phaiTra) || 0;
   const tienThua = khachDua - phaiTra;
+  const soMon = p.gio.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
 
   const nutGat = (ma, nhan) => `
     <button class="bh-nut-gat ${p.cachTra === ma ? 'sang' : ''}" onclick="bhDoiCachTra('${ma}')">${nhan}</button>`;
 
-  el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:2px">
-      <span>${p.gio.length} mã${tongGiam > 0 ? ` · giảm ${fmt(tongGiam)}đ` : ''}</span>
-      <span>${fmt(tongHang)}đ</span>
-    </div>
-    <div style="display:flex;justify-content:space-between;font-size:19px;font-weight:700;margin-bottom:8px">
-      <span>Khách trả</span><span style="color:var(--green)">${fmt(phaiTra)}đ</span>
-    </div>
+  // Dòng tổng tiền hàng dùng chung cho cả ba cách trả — số lượng nằm trong vòng tròn
+  const dongTongTien = `
+    <div class="bh-dong-tt">
+      <span style="display:flex;align-items:center;gap:7px">
+        Tổng tiền hàng <span class="bh-tron-sl">${soMon}</span>
+      </span>
+      <b>${fmt(phaiTra)}đ</b>
+    </div>`;
 
+  el.innerHTML = `
     <div class="bh-hang-gat">
       ${nutGat('tienmat', '💵 Tiền mặt')}
       ${nutGat('chuyenkhoan', '🏦 Chuyển khoản')}
@@ -4502,77 +4504,89 @@ function veDayDuoi() {
 
     ${p.cachTra === 'tienmat' ? `
       <div class="bh-o-tt">
-        <div class="bh-dong-tt"><span>Tổng tiền hàng</span><b>${fmt(phaiTra)}đ</b></div>
+        ${dongTongTien}
         <div class="bh-dong-tt">
           <span>Khách thanh toán</span>
           <input type="number" id="bh-khach-dua" value="${khachDua}" onchange="bhDatKhachDua(this.value)"
-            style="width:130px;padding:8px;text-align:right;font-size:16px;font-weight:600">
+            style="width:130px;padding:7px;text-align:right;font-size:16px;font-weight:600">
         </div>
-        <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:8px">
+        <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:7px">
           <span>Tiền thừa trả khách</span>
           <b style="font-size:18px;color:${tienThua < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(tienThua)}đ</b>
         </div>
       </div>` : ''}
 
-    ${p.cachTra === 'ketHop' ? `
+    ${p.cachTra !== 'tienmat' ? `
       <div class="bh-o-tt">
-        <div class="bh-dong-tt">
-          <span>Tiền mặt</span>
-          <input type="number" id="bh-tien-mat" value="${p.tienMat ?? ''}" placeholder="0" onchange="bhDatTienMat(this.value)"
-            style="width:130px;padding:8px;text-align:right;font-size:16px;font-weight:600">
-        </div>
-        <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:8px">
-          <span>Chuyển khoản</span><b style="font-size:17px;color:#2563EB">${fmt(canCK)}đ</b>
-        </div>
+        ${dongTongTien}
+        ${p.cachTra === 'ketHop' ? `
+          <div class="bh-dong-tt">
+            <span>Tiền mặt</span>
+            <input type="number" id="bh-tien-mat" value="${p.tienMat ?? ''}" placeholder="0" onchange="bhDatTienMat(this.value)"
+              style="width:130px;padding:7px;text-align:right;font-size:16px;font-weight:600">
+          </div>
+          <div class="bh-dong-tt">
+            <span>Chuyển khoản</span><b style="color:#2563EB">${fmt(canCK)}đ</b>
+          </div>` : ''}
+
+        ${canCK > 0 ? `
+          <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px">
+            ${veTrangThaiCK(p, canCK)}
+            <button class="bh-nut-thu-gon" onclick="bhThuGon()">
+              ${p.thuGon ? '▾ Hiện mã QR' : '▴ Thu gọn'}
+            </button>
+            ${p.thuGon ? '' : veKhoiQR(p, canCK)}
+          </div>` : ''}
       </div>` : ''}
 
-    ${canCK > 0 ? veKhoiQR(p, canCK) : ''}
-
-    <button class="btn-g" id="bh-nut-xong" style="width:100%;padding:15px;font-size:16px;margin-top:10px"
+    <button class="btn-g" id="bh-nut-xong" style="width:100%;padding:14px;font-size:16px"
       onclick="bhHoanThanh()">✓ Hoàn thành${phaiTra ? ` · ${fmt(phaiTra)}đ` : ''}</button>`;
+}
+
+// Dòng trạng thái tiền về — KHÔNG phải nút bấm để "kiểm tra", mà là trạng thái
+// tự đổi khi nhận được tiền. Chạm vào để xác nhận tay khi chưa nối dịch vụ đối soát.
+function veTrangThaiCK(p, soTien) {
+  if (p.daNhanCK) {
+    return `<div class="bh-tt-ck da-nhan">✓ Đã nhận ${fmt(soTien)}đ${p.xacNhanTay ? ' (xác nhận tay)' : ''}</div>`;
+  }
+  return `<div class="bh-tt-ck cho" onclick="bhXacNhanTienVe()">
+    <span class="bh-cham-nhap-nhay"></span> Đang chờ chuyển khoản ${fmt(soTien)}đ
+  </div>`;
 }
 
 function veKhoiQR(p, soTien) {
   const ch = layCauHinhQR();
   if (!ch.stk || !ch.nganHang) {
-    return `<div class="bh-o-tt" style="background:#FEF3C7;border-color:#F59E0B">
-      <div style="font-size:12px;color:#92400E">Chưa cấu hình tài khoản nhận tiền.
-      Vào <b>Thiết lập → Quản trị hệ thống</b> để nhập số tài khoản, rồi mới tạo được mã QR.</div>
+    return `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px;margin-top:6px;font-size:12px;color:#92400E">
+      Chưa cấu hình tài khoản nhận tiền. Vào <b>Thiết lập → Thanh toán</b> để nhập.
     </div>`;
   }
-  const noiDung = `${p.id}`;
   const url = `https://img.vietqr.io/image/${encodeURIComponent(ch.nganHang)}-${encodeURIComponent(ch.stk)}-compact2.png`
-    + `?amount=${Math.round(soTien)}&addInfo=${encodeURIComponent(noiDung)}`
+    + `?amount=${Math.round(soTien)}&addInfo=${encodeURIComponent(p.id)}`
     + (ch.tenChu ? `&accountName=${encodeURIComponent(ch.tenChu)}` : '');
-  return `
-    <div class="bh-o-tt" style="text-align:center">
-      <img src="${url}" alt="Mã QR" style="width:100%;max-width:230px;border-radius:8px;background:#fff">
-      <div style="font-size:12px;color:var(--text2);margin-top:6px">Nội dung: <b>${escHtml(noiDung)}</b></div>
-      ${p.daNhanCK
-        ? `<div style="background:#DCFCE7;border:1px solid #16A34A;border-radius:8px;padding:10px;margin-top:8px">
-             <b style="color:#16A34A;font-size:15px">✓ Đã nhận ${fmt(soTien)}đ</b>
-           </div>`
-        : `<button class="btn-outline" style="width:100%;margin-top:8px" onclick="bhKiemTraGiaoDich()">
-             🔄 Kiểm tra giao dịch
-           </button>`}
+  return `<div style="text-align:center;margin-top:6px">
+      <img src="${url}" alt="Ma QR" onclick="phongToQR('${url}')"
+        style="width:100%;max-width:190px;border-radius:8px;background:#fff;cursor:zoom-in">
     </div>`;
 }
 
-// Tài khoản nhận tiền lưu trên MÁY CHỦ, không phải trên máy nhân viên.
-// Nếu để localStorage thì ai ngồi máy đó cũng sửa được số tài khoản, tiền khách
-// chuyển đi đâu không ai biết. Rules chỉ cho Admin ghi.
-let cauHinhThanhToan = null;
-
-async function napCauHinhThanhToan() {
-  try {
-    const d = await getDoc(doc(db, 'cau_hinh', 'thanh_toan'));
-    cauHinhThanhToan = d.exists() ? d.data() : null;
-  } catch(e) {
-    console.warn('Không nạp được cấu hình thanh toán:', e.message);
-    cauHinhThanhToan = null;
+// Phong to ma QR de khach de quet - cham ra ngoai la dong
+window.phongToQR = function(url) {
+  let m = document.getElementById('qr-phong-to');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'qr-phong-to';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;'
+      + 'display:flex;align-items:center;justify-content:center;padding:20px';
+    m.onclick = () => m.style.display = 'none';
+    document.body.appendChild(m);
   }
-  return cauHinhThanhToan;
-}
+  m.innerHTML = `<div style="text-align:center">
+      <img src="${url}" style="width:100%;max-width:340px;border-radius:12px;background:#fff">
+      <div style="color:#fff;font-size:13px;margin-top:12px;opacity:.8">Cham de dong</div>
+    </div>`;
+  m.style.display = 'flex';
+};
 
 function layCauHinhQR() {
   return {
@@ -4673,8 +4687,29 @@ window.bhDoiCachTra = function(ma) {
   if (!p) return;
   p.cachTra = ma;
   p.daNhanCK = false;   // đổi cách trả thì phải kiểm tra tiền lại từ đầu
+  p.thuGon = false;
   bhLuu();
   veDayDuoi();
+};
+
+window.bhThuGon = function() {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  p.thuGon = !p.thuGon;
+  bhLuu(); veDayDuoi();
+};
+
+// Cham vao dong trang thai de xac nhan da thay tien ve.
+// Khi noi duoc dich vu doi soat thi trang thai tu doi, khong can cham.
+window.bhXacNhanTienVe = function() {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  const { phaiTra } = bhTinhTien(p);
+  const soTien = p.cachTra === 'ketHop' ? Math.max(0, phaiTra - (Number(p.tienMat) || 0)) : phaiTra;
+  if (!confirm(`Ban da kiem tra app ngan hang va THAY ${fmt(soTien)}d ve chua?\n\nChi xac nhan khi da thay tien that.`)) return;
+  p.daNhanCK = true;
+  p.xacNhanTay = true;
+  bhLuu(); veDayDuoi();
 };
 
 window.bhDatKhachDua = function(v) {
@@ -4691,45 +4726,6 @@ window.bhDatTienMat = function(v) {
   p.tienMat = Math.min(phaiTra, Math.max(0, parseFloat(v) || 0));
   p.daNhanCK = false;   // số tiền chuyển khoản đổi -> mã QR đổi -> kiểm tra lại
   bhLuu(); veDayDuoi();
-};
-
-// Kiểm tra tiền đã về chưa. Chưa nối dịch vụ đối soát nên tạm để người dùng
-// tự xác nhận sau khi nhìn app ngân hàng — vẫn hơn KiotViet ở chỗ phải chủ động xác nhận.
-window.bhKiemTraGiaoDich = async function() {
-  const p = bhPhieuHienTai();
-  if (!p) return;
-  const { phaiTra } = bhTinhTien(p);
-  const soTien = p.cachTra === 'ketHop' ? Math.max(0, phaiTra - (Number(p.tienMat) || 0)) : phaiTra;
-  const nut = event?.target;
-  if (nut) { nut.disabled = true; nut.textContent = 'Đang kiểm tra...'; }
-
-  try {
-    const idToken = await currentUser.getIdToken();
-    const res = await fetch(WORKER_URL, {
-      method: 'POST',
-      headers: { 'x-action': 'kiem-tra-chuyen-khoan', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ noiDung: p.id, soTien })
-    });
-    const data = await res.json();
-    if (data.success && data.daNhan) {
-      p.daNhanCK = true;
-      bhLuu(); veDayDuoi();
-      showToast(`Đã nhận ${fmt(soTien)}đ`);
-      return;
-    }
-    // Chưa nối dịch vụ đối soát -> cho xác nhận tay, ghi rõ ai xác nhận
-    if (confirm(`Chưa thấy giao dịch tự động.\n\nBạn đã kiểm tra app ngân hàng và THẤY tiền ${fmt(soTien)}đ về chưa?\n\nChọn OK nếu đã thấy tiền.`)) {
-      p.daNhanCK = true;
-      p.xacNhanTay = true;
-      bhLuu(); veDayDuoi();
-    } else if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra giao dịch'; }
-  } catch(e) {
-    if (confirm(`Không kiểm tra tự động được (${e.message}).\n\nBạn đã thấy tiền ${fmt(soTien)}đ về trong app ngân hàng chưa?`)) {
-      p.daNhanCK = true;
-      p.xacNhanTay = true;
-      bhLuu(); veDayDuoi();
-    } else if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra giao dịch'; }
-  }
 };
 
 window.bhHoanThanh = async function() {
@@ -9815,15 +9811,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bh-khung{display:flex;flex-direction:column;height:calc(100vh - 190px);min-height:400px}
 .bh-tab-phieu{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;flex-shrink:0;-webkit-overflow-scrolling:touch}
 .bh-tab-phieu::-webkit-scrollbar{display:none}
-.bh-the{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:7px 8px 7px 12px;
-  border:1.5px solid var(--border);border-radius:8px;background:var(--surface);
-  font-size:13px;cursor:pointer;white-space:nowrap}
+.bh-the{flex-shrink:0;display:flex;align-items:center;gap:5px;padding:4px 6px 4px 10px;
+  border:1.5px solid var(--border);border-radius:7px;background:var(--surface);
+  font-size:12.5px;cursor:pointer;white-space:nowrap}
 .bh-the.dang-mo{border-color:var(--green);background:#F0FDF4;font-weight:600}
 .bh-the-xoa{border:none;background:transparent;color:var(--text2);font-size:14px;
   cursor:pointer;padding:0 2px;line-height:1}
 .bh-the-xoa:hover{color:var(--red)}
 .bh-the-them{flex-shrink:0;border:1.5px dashed var(--border);background:transparent;
-  border-radius:8px;padding:7px 12px;font-size:13px;color:var(--text2);cursor:pointer;white-space:nowrap}
+  border-radius:7px;padding:4px 10px;font-size:12.5px;color:var(--text2);cursor:pointer;white-space:nowrap}
 
 .bh-o-hang{flex:1;min-height:0;border:1px solid var(--border);border-radius:10px;
   background:var(--bg);position:relative;display:flex;flex-direction:column}
@@ -9833,11 +9829,29 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 .bh-day-duoi{flex-shrink:0;padding-top:10px;background:var(--surface)}
 .bh-hang-gat{display:flex;gap:6px;margin-bottom:8px}
-.bh-nut-gat{flex:1;padding:11px 4px;border:1.5px solid var(--border);background:var(--surface);
-  border-radius:8px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer}
+.bh-nut-gat{flex:1;padding:7px 4px;border:1.5px solid var(--border);background:var(--surface);
+  border-radius:7px;font-size:12.5px;font-weight:600;color:var(--text2);cursor:pointer}
+
+/* Vòng tròn hiện số lượng hàng cạnh chữ "Tổng tiền hàng" */
+.bh-tron-sl{display:inline-flex;align-items:center;justify-content:center;
+  min-width:22px;height:22px;padding:0 6px;border-radius:11px;
+  background:var(--green);color:#fff;font-size:12px;font-weight:700}
+
+/* Dòng trạng thái tiền về — là trạng thái, không phải nút bấm */
+.bh-tt-ck{display:flex;align-items:center;gap:7px;padding:8px 10px;border-radius:7px;
+  font-size:13px;font-weight:600;justify-content:center}
+.bh-tt-ck.cho{background:#FEF3C7;color:#92400E;cursor:pointer}
+.bh-tt-ck.da-nhan{background:#DCFCE7;color:#15803D}
+.bh-cham-nhap-nhay{width:8px;height:8px;border-radius:50%;background:#D97706;
+  animation:bh-nhap-nhay 1.2s ease-in-out infinite}
+@keyframes bh-nhap-nhay{0%,100%{opacity:1}50%{opacity:.2}}
+
+.bh-nut-thu-gon{width:100%;border:none;background:transparent;color:var(--text2);
+  font-size:12px;padding:5px 0;cursor:pointer}
+.bh-nut-thu-gon:hover{color:var(--text)}
 .bh-nut-gat.sang{border-color:var(--green);background:var(--green);color:#fff}
-.bh-o-tt{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px}
-.bh-dong-tt{display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:4px 0}
+.bh-o-tt{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px;margin-bottom:8px}
+.bh-dong-tt{display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:3px 0}
 @media(min-width:900px){
   .bh-khung{height:calc(100vh - 210px)}
 }
@@ -10161,7 +10175,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v269</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v270</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10215,7 +10229,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v269</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v270</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10257,7 +10271,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v269</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v270</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
