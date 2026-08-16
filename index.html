@@ -2195,20 +2195,24 @@ let donPage = 1;
 const DON_MOI_TRANG = 25;
 
 // HAI TRỤC TRẠNG THÁI:
-//   1. Nội bộ (app tự quản): moi -> da_dong_goi   (quét mã ở bàn đóng gói)
+//   1. Nội bộ (app tự quản): chỉ còn đúng MỘT bước là "đã đóng gói" — do nhân viên quét.
 //   2. Giao hàng (KiotViet đồng bộ từ sàn): Chờ xử lý -> Đang giao -> Đã giao / Hủy / Trả hàng
 //
-// QUY TẮC GHÉP: đơn đã rời kho thì trạng thái sàn đè lên trạng thái nội bộ.
+// LUỒNG THẬT:
+//   Khách đặt          -> KiotViet tạo phiếu đặt        -> app: "Đơn mới"
+//   Bấm "Chuẩn bị hàng"-> KiotViet tạo HÓA ĐƠN + in tem -> app: "Chờ đóng gói"
+//   Nhân viên quét app                                  -> app: "Đã đóng gói"
+//   Shipper lấy hàng   -> KiotViet "Đang giao hàng"     -> app: "Đang giao"
 //
-// TRẠNG THÁI ĐẶC BIỆT "huy_sau_dong_goi" = đã quét đóng gói TRONG APP + sàn báo hủy.
-// Chỉ app biết được vì chỉ app có dữ liệu thời điểm đóng gói. Đây là tab quản lý
-// dùng để đối chiếu với số kiện shipper trả lại khi bàn giao — nếu không tách riêng,
-// đơn hủy sau đóng gói lẫn với đơn hủy chưa đóng gói thì đối chiếu sai ngay.
+// Bỏ "Chờ in" và "Đã in" vì việc in nằm bên KiotViet, app không quản.
+//
+// BA MỨC HỦY — phân biệt được nhờ: hóa đơn chỉ sinh ra khi bấm "Chuẩn bị hàng",
+// tức là CÓ HÓA ĐƠN = ĐÃ IN TEM. Không cần trạng thái riêng để biết đã in hay chưa.
 const TRANG_THAI_NOI_BO = {
   moi:               { ten: 'Đơn mới',        mau: '#2563EB', nhom: 'kho' },
-  cho_in:            { ten: 'Chờ in',         mau: '#D97706', nhom: 'kho' },
-  da_in:             { ten: 'Đã in',          mau: '#7C3AED', nhom: 'kho' },
+  cho_dong_goi:      { ten: 'Chờ đóng gói',   mau: '#D97706', nhom: 'kho' },
   da_dong_goi:       { ten: 'Đã đóng gói',    mau: '#0891B2', nhom: 'kho' },
+  huy_sau_in:        { ten: 'Hủy sau in đơn', mau: '#F59E0B', nhom: 'canh_bao' },
   huy_sau_dong_goi:  { ten: 'Hủy sau đóng gói', mau: '#EA580C', nhom: 'canh_bao' },
   dang_giao:         { ten: 'Đang giao',      mau: '#16A34A', nhom: 'san' },
   da_giao:           { ten: 'Đã giao',        mau: '#15803D', nhom: 'san' },
@@ -2221,6 +2225,8 @@ function trangThaiHienThi(d) {
   const giao = String(d.trangThaiGiao || '');
   const hoaDon = String(d.trangThaiHoaDon || '');
   const daDongGoi = !!d.thoiGianDongGoi;
+  // Có hóa đơn = đã bấm "Chuẩn bị hàng" = đã in tem
+  const daInTem = !!d.maHoaDon;
 
   // Xét trả hàng TRƯỚC hủy: đơn trả hàng thường cũng mang dấu hiệu hủy,
   // nhưng bản chất khác nhau (đã giao rồi khách trả vs chưa giao đã hủy).
@@ -2228,11 +2234,17 @@ function trangThaiHienThi(d) {
   if (/thất bại|không giao được|giao hỏng/i.test(giao)) return 'giao_that_bai';
 
   if (/hủy/i.test(giao) || /hủy/i.test(hoaDon)) {
-    // Đây là điểm mấu chốt: hủy khi hàng ĐÃ đóng gói cần quản lý riêng
-    return daDongGoi ? 'huy_sau_dong_goi' : 'da_huy';
+    // Ba mức hủy, phân biệt theo việc đã làm tới đâu — quyết định phải xử lý gì
+    if (daDongGoi) return 'huy_sau_dong_goi';   // kiện đã vào bao, phải lấy lại
+    if (daInTem)   return 'huy_sau_in';          // đã in tem, phải bỏ tem
+    return 'da_huy';                             // chưa làm gì, bỏ qua
   }
   if (/thành công|đã giao/i.test(giao)) return 'da_giao';
   if (/đang giao|đã bàn giao|đang vận chuyển/i.test(giao)) return 'dang_giao';
+
+  if (daDongGoi) return 'da_dong_goi';
+  // Có hóa đơn nhưng chưa quét đóng gói -> đang chờ nhân viên xử lý
+  if (daInTem) return 'cho_dong_goi';
   return d.trangThaiNoiBo || 'moi';
 }
 
@@ -2290,6 +2302,7 @@ function veDanhSachDon() {
   const nhomCanhBao = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'canh_bao');
   const nhomSan = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'san');
   const soHuySauDongGoi = demTT('huy_sau_dong_goi');
+  const soHuySauIn = demTT('huy_sau_in');
   const soChuaNhanLai = allDonHangSan.filter(d =>
     trangThaiHienThi(d) === 'huy_sau_dong_goi' && !daNhanLaiKien(d)).length;
 
@@ -2314,6 +2327,11 @@ function veDanhSachDon() {
       <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('tiktok')">TikTok (${allDonHangSan.filter(d=>d.san==='tiktok').length})</button>
       <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('lazada')">Lazada (${allDonHangSan.filter(d=>d.san==='lazada').length})</button>
     </div>
+    ${soHuySauIn ? `
+    <div style="background:#FFFBEB;border:1.5px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="doiFilterDonTT('huy_sau_in')">
+      <b style="font-size:13px;color:#B45309">🏷️ ${soHuySauIn} đơn hủy sau khi đã in tem</b>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">Tem đã in nhưng chưa đóng gói — bỏ tem, không cần lấy lại kiện</div>
+    </div>` : ''}
     ${soHuySauDongGoi ? `
     <div style="background:${soChuaNhanLai ? '#FEF3C7' : '#F0FDF4'};border:1.5px solid ${soChuaNhanLai ? '#EA580C' : '#16A34A'};border-radius:8px;padding:10px 12px;margin-bottom:10px;cursor:pointer" onclick="doiFilterDonTT('huy_sau_dong_goi')">
       <b style="font-size:13px;color:${soChuaNhanLai ? '#EA580C' : '#16A34A'}">
@@ -2409,7 +2427,7 @@ window.keoDonVe = async function() {
 
   // KiotViet không lọc theo sàn, mỗi lần chạy worker chỉ quét ~1000 hóa đơn.
   // Với ~560 đơn/ngày thì phải gọi lặp nhiều vòng mới phủ hết khoảng ngày yêu cầu.
-  let viTri = 0, vong = 0, tongGhi = 0, tongMoi = 0, tongQuet = 0;
+  let viTri = 0, vong = 0, tongGhi = 0, tongMoi = 0, tongQuet = 0, tongTruTon = 0, tongHoanTon = 0;
   const gomTheoSan = {};
   const MAX_VONG = 40; // chặn trên, tránh lặp vô hạn nếu API trả dữ liệu lạ
 
@@ -2429,6 +2447,8 @@ window.keoDonVe = async function() {
       tongGhi += data.soDonGhi || 0;
       tongMoi += data.donMoi || 0;
       tongQuet += data.tongQuet || 0;
+      tongTruTon += data.soDonTruTon || 0;
+      tongHoanTon += data.soDonHoanTon || 0;
       Object.entries(data.theoSan || {}).forEach(([s, n]) => { gomTheoSan[s] = (gomTheoSan[s] || 0) + n; });
 
       if (!data.conNua) break;
@@ -2439,7 +2459,9 @@ window.keoDonVe = async function() {
     if (!tongGhi) {
       alert(`Đã quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn trong ${soNgay} ngày nhưng không thấy đơn ${san === 'all' ? 'sàn' : TEN_SAN[san]} nào.`);
     } else {
-      showToast(`Xong: ${tongGhi} đơn (${tongMoi} mới) — ${moTaSan}. Đã quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn qua ${vong} vòng.`);
+      showToast(`Xong: ${tongGhi} đơn (${tongMoi} mới) — ${moTaSan}`
+        + (tongTruTon ? ` · trừ tồn ${tongTruTon} đơn` : '')
+        + (tongHoanTon ? ` · hoàn tồn ${tongHoanTon} đơn` : ''));
     }
     await renderDonHangTab();
   } catch(e) { alert('Lỗi: ' + e.message); }
@@ -3053,6 +3075,28 @@ window.doGiaVonThieu = async function() {
     console.log('→ Những mã này chưa được chuyển. Chạy chuyenGiaVon() lại.');
   }
   return nhom;
+};
+
+// Kiểm tra phiếu đặt hàng có phân kênh bán không — quyết định app có kéo được
+// "Đơn mới" (khách vừa đặt, chưa bấm Chuẩn bị hàng) hay không.
+// Gọi: thamDoDatHang()
+window.thamDoDatHang = async function() {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'tham-do-dat-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  const data = await res.json();
+  console.log('Worker:', data.workerVersion, '| Tổng phiếu đặt:', data.tongDatHang);
+  console.log('Có saleChannelId trong danh sách:', data.coSaleChannelIdTrongList ? '✅ CÓ' : '❌ KHÔNG');
+  if (data.mauTrongList) console.table(data.mauTrongList);
+  if (data.cacTruongChiTiet) {
+    console.log('===== CÁC TRƯỜNG TRONG CHI TIẾT PHIẾU ĐẶT =====');
+    data.cacTruongChiTiet.forEach(t => console.log(t));
+  }
+  return data;
 };
 
 // Xem cấu trúc phiếu chuyển hàng thật trong KiotViet — để viết đúng phần tạo phiếu.
@@ -8968,7 +9012,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v241</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v244</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9022,7 +9066,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v241</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v244</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9064,7 +9108,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v241</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v244</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
