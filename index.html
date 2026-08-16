@@ -4145,7 +4145,7 @@ function veDanhSachHangHoaCH() {
     + trang.map(s => {
     const ton = layTon(s, 'cuahang');
     return `
-    <div onclick="moTheKho('${escHtml(s.sku)}')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer">
+    <div onclick="moTheKho('${escHtml(s.sku)}','cuahang')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer">
       <div style="display:flex;gap:10px;align-items:center">
         ${s.anhFileId
           ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0">`
@@ -4216,9 +4216,10 @@ window.timHangHoaRac = async function(xoaLuon = false) {
   return rac;
 };
 
-window.moTheKho = async function(maSku) {
+window.moTheKho = async function(maSku, maKho = 'cuahang') {
   const sku = allSKUs.find(s => s.sku === maSku);
   if (!sku) return;
+  const tenKho = maKho === 'cuahang' ? 'Kho Cửa hàng' : 'Kho Sàn TMĐT';
   let modal = document.getElementById('the-kho-modal');
   if (!modal) {
     modal = document.createElement('div');
@@ -4238,9 +4239,8 @@ window.moTheKho = async function(maSku) {
         </div>
         <button class="btn-outline" style="width:auto;padding:6px 12px" onclick="document.getElementById('the-kho-modal').style.display='none'">✕</button>
       </div>
-      <div style="padding:10px 14px;background:var(--bg);display:flex;gap:16px;font-size:13px">
-        <span>Kho sàn: <b>${layTon(sku, 'san')}</b></span>
-        <span>Kho cửa hàng: <b>${layTon(sku, 'cuahang')}</b></span>
+      <div style="padding:10px 14px;background:var(--bg);font-size:13px">
+        ${escHtml(tenKho)}: <b style="font-size:16px">${layTon(sku, maKho)}</b>
       </div>
       <div id="the-kho-noidung" style="flex:1;overflow-y:auto;padding:12px 14px">
         <div class="loading">Đang tải thẻ kho...</div>
@@ -4249,15 +4249,13 @@ window.moTheKho = async function(maSku) {
   modal.style.display = 'flex';
 
   try {
+    // Lọc kho ngay trong truy vấn — hai kho chung một danh sách thì rất khó đọc
     const snap = await getDocs(query(collection(db, 'the_kho'),
-      where('sku', '==', maSku), orderBy('thoiGian', 'desc'), limit(100)));
+      where('sku', '==', maSku), where('kho', '==', maKho),
+      orderBy('thoiGian', 'desc'), limit(100)));
     const ds = snap.docs.map(d => d.data());
     const el = document.getElementById('the-kho-noidung');
-    if (!ds.length) {
-      el.innerHTML = `<p class="info-note">Chưa có giao dịch nào được ghi nhận.<br><br>
-        Thẻ kho chỉ ghi từ khi tính năng này được bật — các thay đổi trước đó không có trong sổ.</p>`;
-      return;
-    }
+    if (!ds.length) { el.innerHTML = ''; return; }
     el.innerHTML = ds.map(g => {
       const t = g.thoiGian?.toDate ? g.thoiGian.toDate() : null;
       const am = Number(g.soLuong) < 0;
@@ -4270,7 +4268,6 @@ window.moTheKho = async function(maSku) {
             ${g.maChungTu ? ` · ${escHtml(g.maChungTu)}` : ''}
             ${g.nguoiTao ? ` · ${escHtml(g.nguoiTao)}` : ''}
           </div>
-          <div style="font-size:10px;color:var(--text2);margin-top:1px">${g.kho === 'cuahang' ? 'Kho Cửa hàng' : 'Kho Sàn TMĐT'}</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div style="font-size:16px;font-weight:700;color:${am ? 'var(--red)' : 'var(--green)'}">${am ? '' : '+'}${g.soLuong}</div>
@@ -4407,10 +4404,11 @@ function renderHangHoaList() {
           ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
         </div>
-        ${(qHH2.hh_sua || qHH2.hh_xoa) ? `<div style="display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho</button>
           ${qHH2.hh_sua ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>` : ''}
           ${qHH2.hh_xoa ? `<button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
-        </div>` : ''}
+        </div>
       </div>
       <div id="hh-sua-${s.id}"></div>
     </div>`;
@@ -9510,7 +9508,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v263</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v264</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9564,7 +9562,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v263</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v264</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9606,7 +9604,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v263</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v264</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
