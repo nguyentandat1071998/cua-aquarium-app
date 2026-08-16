@@ -1292,7 +1292,7 @@ function roleLabel(r) {
 
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
-  baocao: 'baocao', hanghoa: 'hanghoa', tmdt: 'tmdt',
+  baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', tmdt: 'tmdt',
   quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
@@ -1356,6 +1356,15 @@ window.switchModule = function(mod) {
     } else {
       document.getElementById('panel-luongnv-main').style.display = 'block';
     }
+    return;
+  }
+  if (mod === 'hanghoach') {
+    // Hàng hóa cửa hàng — chỉ tồn kho quầy, cho nhân viên kiểm kho.
+    // Không hiện tồn kho sàn và giá vốn để đỡ rối và đỡ lộ thông tin.
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-hanghoach-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderHangHoaCuaHang();
     return;
   }
   if (mod === 'hanghoa') {
@@ -4063,6 +4072,176 @@ window.nhLuuPhieu = async function(luuThat) {
   }
 };
 
+// ==========================================================================
+// ===== HÀNG HÓA CỬA HÀNG =====
+// Chỉ hiện tồn kho quầy, không hiện tồn kho sàn và giá vốn — nhân viên bán hàng
+// không cần hai thứ đó, hiện ra chỉ rối và lộ thông tin.
+// Có chế độ kiểm kho: đếm thực tế rồi so với sổ, lệch bao nhiêu thấy ngay.
+// ==========================================================================
+let hhchTimKiem = '';
+let hhchNhomLoc = '';
+let hhchDangKiemKho = false;
+let hhchDemThucTe = {};   // sku -> số đếm được
+
+async function renderHangHoaCuaHang() {
+  const el = document.getElementById('hanghoach-content');
+  if (!el) return;
+  if (!allSKUs.length) {
+    el.innerHTML = '<div class="loading">Đang tải...</div>';
+    await loadSKUs();
+  }
+  veManHinhHangHoaCH();
+}
+
+function veManHinhHangHoaCH() {
+  const el = document.getElementById('hanghoach-content');
+  if (!el) return;
+
+  const nhomCo = [...new Set(allSKUs.map(s => s.nhom1).filter(Boolean))].sort();
+  const soLech = Object.keys(hhchDemThucTe).filter(ma => {
+    const sku = allSKUs.find(s => s.sku === ma);
+    return sku && Number(hhchDemThucTe[ma]) !== layTon(sku, 'cuahang');
+  }).length;
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="text" id="hhch-tim" placeholder="Tìm tên / mã SKU..." value="${escHtml(hhchTimKiem)}"
+        oninput="hhchDoiTim(this.value)" style="flex:1">
+    </div>
+    ${nhomCo.length ? `<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:10px">
+      <button class="btn-xs" style="flex-shrink:0;background:${!hhchNhomLoc ? 'var(--text)' : '#fff'};color:${!hhchNhomLoc ? '#fff' : 'var(--text)'};border:1px solid var(--border)" onclick="hhchLocNhom('')">Tất cả</button>
+      ${nhomCo.map(n => `<button class="btn-xs" style="flex-shrink:0;background:${hhchNhomLoc === n ? 'var(--text)' : '#fff'};color:${hhchNhomLoc === n ? '#fff' : 'var(--text)'};border:1px solid var(--border)" onclick="hhchLocNhom('${escHtml(n)}')">${escHtml(n)}</button>`).join('')}
+    </div>` : ''}
+
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="${hhchDangKiemKho ? 'btn-g' : 'btn-outline'}" style="flex:1" onclick="hhchBatTatKiemKho()">
+        ${hhchDangKiemKho ? '✓ Đang kiểm kho' : '📋 Bắt đầu kiểm kho'}
+      </button>
+      ${hhchDangKiemKho && Object.keys(hhchDemThucTe).length ? `
+        <button class="btn-outline" style="flex:1" onclick="hhchXemLech()">Xem lệch (${soLech})</button>` : ''}
+    </div>
+
+    <div id="hhch-list"></div>`;
+
+  veDanhSachHangHoaCH();
+}
+
+function veDanhSachHangHoaCH() {
+  const el = document.getElementById('hhch-list');
+  if (!el) return;
+  const tim = hhchTimKiem.trim().toLowerCase();
+  const ds = allSKUs.filter(s => {
+    if (hhchNhomLoc && s.nhom1 !== hhchNhomLoc) return false;
+    if (!tim) return true;
+    return String(s.ten || '').toLowerCase().includes(tim)
+        || String(s.sku || '').toLowerCase().includes(tim);
+  }).sort((a, b) => String(a.ten || '').localeCompare(String(b.ten || ''), 'vi'));
+
+  if (!ds.length) { el.innerHTML = '<p class="info-note">Không tìm thấy hàng hóa nào.</p>'; return; }
+
+  el.innerHTML = `<div style="font-size:11px;color:var(--text2);margin-bottom:6px">${ds.length} mã hàng</div>`
+    + ds.slice(0, 300).map(s => {
+    const ton = layTon(s, 'cuahang');
+    const dem = hhchDemThucTe[s.sku];
+    const coDem = dem !== undefined && dem !== '';
+    const lech = coDem ? Number(dem) - ton : 0;
+    return `
+    <div style="background:var(--surface);border:1px solid ${coDem && lech !== 0 ? '#DC2626' : 'var(--border)'};border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;gap:10px;align-items:center">
+        ${s.anhFileId
+          ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+          : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:14px">${escHtml(s.ten || '')}</div>
+          <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku || '')} · ${fmt(s.gia || 0)}đ</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:10px;color:var(--text2)">Tồn sổ</div>
+          <div style="font-size:20px;font-weight:700;color:${ton <= 0 ? 'var(--red)' : 'var(--text)'}">${ton}</div>
+        </div>
+      </div>
+      ${hhchDangKiemKho ? `
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <label style="font-size:12px;color:var(--text2);flex-shrink:0">Đếm thực tế:</label>
+        <input type="number" inputmode="numeric" value="${dem ?? ''}" placeholder="—"
+          onchange="hhchGhiDem('${escHtml(s.sku)}', this.value)"
+          style="width:80px;padding:6px;text-align:center;font-size:16px;font-weight:600">
+        ${coDem ? `<span style="font-size:13px;font-weight:600;color:${lech === 0 ? 'var(--green)' : '#DC2626'}">
+          ${lech === 0 ? '✓ Khớp' : (lech > 0 ? `thừa ${lech}` : `thiếu ${Math.abs(lech)}`)}
+        </span>` : ''}
+      </div>` : ''}
+    </div>`;
+  }).join('')
+    + (ds.length > 300 ? '<p class="info-note">Chỉ hiện 300 mã đầu — dùng ô tìm kiếm để thu hẹp.</p>' : '');
+}
+
+window.hhchDoiTim = function(v) { hhchTimKiem = v; veDanhSachHangHoaCH(); };
+window.hhchLocNhom = function(n) { hhchNhomLoc = n; veManHinhHangHoaCH(); };
+
+window.hhchBatTatKiemKho = function() {
+  if (hhchDangKiemKho && Object.keys(hhchDemThucTe).length) {
+    if (!confirm('Thoát chế độ kiểm kho?\n\nSố đã đếm sẽ mất nếu chưa áp dụng.')) return;
+    hhchDemThucTe = {};
+  }
+  hhchDangKiemKho = !hhchDangKiemKho;
+  veManHinhHangHoaCH();
+};
+
+window.hhchGhiDem = function(sku, giaTri) {
+  if (giaTri === '') delete hhchDemThucTe[sku];
+  else hhchDemThucTe[sku] = Math.max(0, parseInt(giaTri) || 0);
+  veDanhSachHangHoaCH();
+};
+
+window.hhchXemLech = function() {
+  const lech = [];
+  for (const [ma, dem] of Object.entries(hhchDemThucTe)) {
+    const sku = allSKUs.find(s => s.sku === ma);
+    if (!sku) continue;
+    const ton = layTon(sku, 'cuahang');
+    const d = Number(dem) - ton;
+    if (d !== 0) lech.push({ sku: ma, ten: sku.ten, tonSo: ton, demDuoc: Number(dem), lech: d });
+  }
+  if (!lech.length) { alert('Không có mã nào lệch. Tất cả khớp sổ.'); return; }
+
+  const laAdmin = currentUserData.role === 'admin';
+  const noiDung = lech.map(l =>
+    `${l.ten}\n   sổ ${l.tonSo} → đếm ${l.demDuoc} (${l.lech > 0 ? '+' : ''}${l.lech})`).join('\n\n');
+
+  if (!laAdmin) {
+    alert(`Có ${lech.length} mã lệch:\n\n${noiDung}\n\nBáo quản lý để điều chỉnh.`);
+    return;
+  }
+  if (!confirm(`Có ${lech.length} mã lệch:\n\n${noiDung}\n\nCẬP NHẬT tồn kho cửa hàng theo số đếm thực tế?`)) return;
+  hhchApDungKiemKho(lech);
+};
+
+// Ghi số đếm thực tế vào sổ. Chỉ Admin, và lưu lại lịch sử để truy vết sau.
+async function hhchApDungKiemKho(lech) {
+  try {
+    const batch = writeBatch(db);
+    for (const l of lech) {
+      const sku = allSKUs.find(s => s.sku === l.sku);
+      if (!sku) continue;
+      batch.update(doc(db, 'skus', sku.id), { tonCuaHang: l.demDuoc });
+    }
+    await batch.commit();
+    await addDoc(collection(db, 'phieu_kiem_kho'), {
+      kho: 'cuahang',
+      dongHang: lech,
+      soMaLech: lech.length,
+      nguoiKiem: { uid: currentUser.uid, ten: currentUserData?.ten || currentUser?.email || '' },
+      taoLuc: serverTimestamp()
+    });
+    hhchDemThucTe = {};
+    hhchDangKiemKho = false;
+    showToast(`Đã cập nhật ${lech.length} mã theo số đếm thực tế`);
+    veManHinhHangHoaCH();
+  } catch(e) {
+    alert('Lỗi cập nhật: ' + e.message);
+  }
+}
+
 function renderHangHoaNhomFilters() {
   const el = document.getElementById('hanghoa-nhom-filters');
   if (!el) return;
@@ -4723,6 +4902,7 @@ const DANH_SACH_MODULE = [
     { key: 'nv_luong_minh', ten: 'Bảng lương — chỉ xem của mình' },
     { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
   ]},
+  { key: 'hanghoa_ch', ten: 'Hàng hóa cửa hàng', con: [] },
   { key: 'hanghoa', ten: 'Danh sách hàng hóa', con: [
     { key: 'hh_them', ten: 'Thêm' },
     { key: 'hh_sua', ten: 'Sửa' },
@@ -4788,7 +4968,8 @@ const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
-    { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') }
+    { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
+    { key: 'hanghoach', ten: 'Hàng hóa CH',    quyen: 'hanghoa_ch', moGi: () => switchModule('hanghoach') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
@@ -9249,7 +9430,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v260</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v261</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9303,7 +9484,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v260</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v261</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9345,7 +9526,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v260</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v261</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -9725,6 +9906,10 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       </div>
 
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
+      <div class="panel" id="panel-hanghoach-main">
+        <div id="hanghoach-content"></div>
+      </div>
+
       <div class="panel" id="panel-hanghoa-main">
         <div id="hanghoa-content"><div class="loading">Đang tải...</div></div>
       </div>
