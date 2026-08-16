@@ -4314,34 +4314,45 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
 // ===== BÁN HÀNG TẠI QUẦY =====
 // Trừ KHO CỬA HÀNG, không đụng kho sàn.
 //
-// Điểm khác KiotViet: chọn chuyển khoản KHÔNG tự đánh dấu đã thanh toán.
-// Đơn ở trạng thái "chờ tiền về" cho tới khi đối soát thấy tiền thật —
-// tránh cảnh khách nói đã chuyển, hệ thống ghi nhận, mà tiền không bao giờ tới.
+// NHIỀU PHIẾU CÙNG LÚC: cửa hàng hay tiếp vài khách một lúc, khách này còn đang
+// chọn thì khách kia đã hỏi. Mỗi khách một phiếu, chuyển qua lại bằng thẻ ở trên.
 //
-// Giỏ hàng tự lưu trên máy: rớt mạng hay đóng nhầm tab vẫn còn nguyên.
+// TIỀN CHUYỂN KHOẢN: chưa thấy tiền về thì KHÔNG cho hoàn thành đơn — đây là chỗ
+// KiotViet làm sai (chọn chuyển khoản là tự đánh dấu đã thanh toán).
 // ==========================================================================
-let bhGio = [];              // [{sku, ten, gia, soLuong, giamGia}]
-let bhKhachTra = 0;
-let bhGhiChu = '';
+let bhPhieu = [];            // [{id, ten, gio:[], ghiChu, cachTra, khachDua, tienMat, daNhanCK}]
+let bhPhieuDangMo = null;    // id phiếu đang mở
 
-function bhKhoaNhap() { return `ban_hang_gio_${currentUser?.uid || 'chung'}`; }
+function bhKhoaLuu() { return `ban_hang_phieu_${currentUser?.uid || 'chung'}`; }
 
-function bhLuuGio() {
+function bhLuu() {
   try {
-    if (!bhGio.length) { localStorage.removeItem(bhKhoaNhap()); return; }
-    localStorage.setItem(bhKhoaNhap(), JSON.stringify({ gio: bhGio, ghiChu: bhGhiChu, luc: Date.now() }));
+    const conDung = bhPhieu.filter(p => p.gio.length);
+    if (!conDung.length) { localStorage.removeItem(bhKhoaLuu()); return; }
+    localStorage.setItem(bhKhoaLuu(), JSON.stringify({ phieu: conDung, dangMo: bhPhieuDangMo, luc: Date.now() }));
   } catch(e) {}
 }
 
-function bhDocGio() {
+function bhDoc() {
   try {
-    const s = localStorage.getItem(bhKhoaNhap());
+    const s = localStorage.getItem(bhKhoaLuu());
     if (!s) return null;
     const d = JSON.parse(s);
-    // Giỏ để quá 1 ngày coi như bỏ — khách đã đi từ lâu
-    if (Date.now() - (d.luc || 0) > 86400000) { localStorage.removeItem(bhKhoaNhap()); return null; }
+    // Phiếu để quá 1 ngày coi như bỏ — khách đã đi từ lâu
+    if (Date.now() - (d.luc || 0) > 86400000) { localStorage.removeItem(bhKhoaLuu()); return null; }
     return d;
   } catch(e) { return null; }
+}
+
+function bhPhieuHienTai() { return bhPhieu.find(p => p.id === bhPhieuDangMo) || null; }
+
+function bhTaoPhieu(moLuon = true) {
+  const soMoi = bhPhieu.length + 1;
+  const p = { id: 'P' + Date.now().toString(36), ten: `Khách ${soMoi}`, gio: [], ghiChu: '',
+    cachTra: 'tienmat', khachDua: null, tienMat: null, daNhanCK: false };
+  bhPhieu.push(p);
+  if (moLuon) bhPhieuDangMo = p.id;
+  return p;
 }
 
 async function renderBanHang() {
@@ -4351,64 +4362,74 @@ async function renderBanHang() {
     el.innerHTML = '<div class="loading">Đang tải hàng hóa...</div>';
     await loadSKUs();
   }
-  const nhap = bhDocGio();
-  if (nhap?.gio?.length && !bhGio.length) { bhGio = nhap.gio; bhGhiChu = nhap.ghiChu || ''; }
+  if (!bhPhieu.length) {
+    const cu = bhDoc();
+    if (cu?.phieu?.length) {
+      bhPhieu = cu.phieu;
+      bhPhieuDangMo = bhPhieu.some(p => p.id === cu.dangMo) ? cu.dangMo : bhPhieu[0].id;
+    } else bhTaoPhieu();
+  }
   veManHinhBanHang();
 }
 
-function bhTinhTien() {
-  const tongHang = bhGio.reduce((s, d) => s + (Number(d.gia) || 0) * (Number(d.soLuong) || 0), 0);
-  const tongGiam = bhGio.reduce((s, d) => s + (Number(d.giamGia) || 0), 0);
+function bhTinhTien(p) {
+  const g = p?.gio || [];
+  const tongHang = g.reduce((s, d) => s + (Number(d.gia) || 0) * (Number(d.soLuong) || 0), 0);
+  const tongGiam = g.reduce((s, d) => s + (Number(d.giamGia) || 0), 0);
   return { tongHang, tongGiam, phaiTra: Math.max(0, tongHang - tongGiam) };
 }
 
 function veManHinhBanHang() {
   const el = document.getElementById('banhang-content');
   if (!el) return;
-  const { tongHang, tongGiam, phaiTra } = bhTinhTien();
-  const soMon = bhGio.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
+  const p = bhPhieuHienTai();
 
   el.innerHTML = `
-    <div class="field sku-wrap" style="margin-bottom:10px">
-      <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:12px;font-size:15px">
-      <div class="sku-drop" id="bh-drop"></div>
-    </div>
+    <div class="bh-khung">
+      <div class="bh-tab-phieu" id="bh-tab-phieu"></div>
 
-    <div id="bh-gio"></div>
-
-    ${bhGio.length ? `
-    <div style="background:var(--bg);border-radius:10px;padding:12px;margin:12px 0">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span style="color:var(--text2)">${bhGio.length} mã · ${soMon} sản phẩm</span>
-        <span>${fmt(tongHang)}đ</span>
+      <div class="field sku-wrap" style="margin:8px 0 10px">
+        <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:12px;font-size:15px">
+        <div class="sku-drop" id="bh-drop"></div>
       </div>
-      ${tongGiam > 0 ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;color:#D97706">
-        <span>Giảm giá</span><span>−${fmt(tongGiam)}đ</span>
-      </div>` : ''}
-      <div style="display:flex;justify-content:space-between;font-size:20px;font-weight:700;padding-top:8px;border-top:1px solid var(--border)">
-        <span>Khách trả</span><span style="color:var(--green)">${fmt(phaiTra)}đ</span>
+
+      <div class="bh-o-hang">
+        <div class="bh-o-hang-nhan">Danh sách hàng hóa</div>
+        <div class="bh-o-hang-trong" id="bh-gio"></div>
       </div>
-    </div>
 
-    <textarea id="bh-ghichu" placeholder="Ghi chú đơn (tùy chọn)" rows="2"
-      oninput="bhGhiChu=this.value;bhLuuGio()" style="width:100%;margin-bottom:10px">${escHtml(bhGhiChu)}</textarea>
+      <div class="bh-day-duoi" id="bh-day-duoi"></div>
+    </div>`;
 
-    <div style="display:flex;gap:8px;margin-bottom:8px">
-      <button class="btn-g" style="flex:1;padding:15px;font-size:15px" onclick="bhThanhToan('tienmat')">💵 Tiền mặt</button>
-      <button class="btn-g" style="flex:1;padding:15px;font-size:15px;background:#2563EB" onclick="bhThanhToan('chuyenkhoan')">🏦 Chuyển khoản</button>
-    </div>
-    <button class="btn-outline" style="width:100%" onclick="bhXoaGio()">Hủy đơn</button>
-    ` : '<p class="info-note">Giỏ hàng trống. Gõ tên hàng ở ô trên để thêm.</p>'}`;
-
+  veTabPhieu();
   makeSKUSearch('bh-tim', 'bh-drop', null);
   veGioHang();
+  veDayDuoi();
+}
+
+function veTabPhieu() {
+  const el = document.getElementById('bh-tab-phieu');
+  if (!el) return;
+  el.innerHTML = bhPhieu.map(p => {
+    const dangMo = p.id === bhPhieuDangMo;
+    const soMon = p.gio.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
+    return `
+    <div class="bh-the ${dangMo ? 'dang-mo' : ''}" onclick="bhMoPhieu('${p.id}')">
+      <span>${escHtml(p.ten)}${soMon ? ` <b>(${soMon})</b>` : ''}</span>
+      <button class="bh-the-xoa" onclick="event.stopPropagation();bhXoaPhieu('${p.id}')">✕</button>
+    </div>`;
+  }).join('') + `<button class="bh-the-them" onclick="bhThemPhieu()">+ Phiếu</button>`;
 }
 
 function veGioHang() {
   const el = document.getElementById('bh-gio');
-  if (!el) return;
-  if (!bhGio.length) { el.innerHTML = ''; return; }
-  el.innerHTML = bhGio.map((d, i) => {
+  const p = bhPhieuHienTai();
+  if (!el || !p) return;
+  if (!p.gio.length) {
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">Chưa có hàng nào.<br>Gõ tên hàng ở ô trên để thêm.</div>';
+    return;
+  }
+  el.innerHTML = p.gio.map((d, i) => {
     const sku = allSKUs.find(s => s.sku === d.sku);
     const ton = sku ? layTon(sku, 'cuahang') : 0;
     const thanhTien = (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (Number(d.giamGia) || 0);
@@ -4423,87 +4444,288 @@ function veGioHang() {
         </div>
         <button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="bhXoaDong(${i})">✕</button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-        <button class="btn-xs" style="width:36px;padding:8px" onclick="bhDoiSL(${i},-1)">−</button>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
+        <button class="btn-xs" style="width:34px;padding:8px" onclick="bhDoiSL(${i},-1)">−</button>
         <input type="number" min="1" value="${d.soLuong}" onchange="bhDatSL(${i},this.value)"
-          style="width:56px;padding:8px;text-align:center;font-size:16px;font-weight:600">
-        <button class="btn-xs" style="width:36px;padding:8px" onclick="bhDoiSL(${i},1)">+</button>
-        <input type="number" min="0" value="${d.giamGia || ''}" placeholder="Giảm giá"
-          onchange="bhDatGiam(${i},this.value)" style="flex:1;padding:8px;text-align:right">
-        <div style="font-weight:700;font-size:14px;min-width:80px;text-align:right">${fmt(thanhTien)}đ</div>
+          style="width:52px;padding:8px;text-align:center;font-size:16px;font-weight:600">
+        <button class="btn-xs" style="width:34px;padding:8px" onclick="bhDoiSL(${i},1)">+</button>
+        <input type="number" min="0" value="${d.giamGia || ''}" placeholder="Giảm"
+          onchange="bhDatGiam(${i},this.value)" style="flex:1;min-width:60px;padding:8px;text-align:right">
+        <div style="font-weight:700;font-size:14px;min-width:76px;text-align:right">${fmt(thanhTien)}đ</div>
       </div>
     </div>`;
   }).join('');
 }
 
-// makeSKUSearch gọi selectSKU, hàm đó chuyển tiếp vào đây
-window.bhThemHang = function(maSku, ten) {
-  const sku = allSKUs.find(s => s.sku === maSku);
-  if (!sku) return;
-  const i = bhGio.findIndex(d => d.sku === maSku);
-  if (i >= 0) bhGio[i].soLuong++;
-  else bhGio.push({ sku: maSku, ten, gia: Number(sku.gia) || 0, soLuong: 1, giamGia: 0 });
-  bhLuuGio();
+// ===== KHỐI THANH TOÁN CỐ ĐỊNH DƯỚI =====
+function veDayDuoi() {
+  const el = document.getElementById('bh-day-duoi');
+  const p = bhPhieuHienTai();
+  if (!el || !p) return;
+  const { tongHang, tongGiam, phaiTra } = bhTinhTien(p);
+
+  if (!p.gio.length) { el.innerHTML = ''; return; }
+
+  // Kết hợp: tiền mặt bao nhiêu thì phần còn lại chuyển khoản
+  const tienMat = p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
+  const canCK = p.cachTra === 'chuyenkhoan' ? phaiTra
+              : p.cachTra === 'ketHop' ? Math.max(0, phaiTra - tienMat) : 0;
+  const khachDua = Number(p.khachDua ?? phaiTra) || 0;
+  const tienThua = khachDua - phaiTra;
+
+  const nutGat = (ma, nhan) => `
+    <button class="bh-nut-gat ${p.cachTra === ma ? 'sang' : ''}" onclick="bhDoiCachTra('${ma}')">${nhan}</button>`;
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text2);margin-bottom:2px">
+      <span>${p.gio.length} mã${tongGiam > 0 ? ` · giảm ${fmt(tongGiam)}đ` : ''}</span>
+      <span>${fmt(tongHang)}đ</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:19px;font-weight:700;margin-bottom:8px">
+      <span>Khách trả</span><span style="color:var(--green)">${fmt(phaiTra)}đ</span>
+    </div>
+
+    <div class="bh-hang-gat">
+      ${nutGat('tienmat', '💵 Tiền mặt')}
+      ${nutGat('chuyenkhoan', '🏦 Chuyển khoản')}
+      ${nutGat('ketHop', '⇄ Kết hợp')}
+    </div>
+
+    ${p.cachTra === 'tienmat' ? `
+      <div class="bh-o-tt">
+        <div class="bh-dong-tt"><span>Tổng tiền hàng</span><b>${fmt(phaiTra)}đ</b></div>
+        <div class="bh-dong-tt">
+          <span>Khách thanh toán</span>
+          <input type="number" id="bh-khach-dua" value="${khachDua}" onchange="bhDatKhachDua(this.value)"
+            style="width:130px;padding:8px;text-align:right;font-size:16px;font-weight:600">
+        </div>
+        <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:8px">
+          <span>Tiền thừa trả khách</span>
+          <b style="font-size:18px;color:${tienThua < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(tienThua)}đ</b>
+        </div>
+      </div>` : ''}
+
+    ${p.cachTra === 'ketHop' ? `
+      <div class="bh-o-tt">
+        <div class="bh-dong-tt">
+          <span>Tiền mặt</span>
+          <input type="number" id="bh-tien-mat" value="${p.tienMat ?? ''}" placeholder="0" onchange="bhDatTienMat(this.value)"
+            style="width:130px;padding:8px;text-align:right;font-size:16px;font-weight:600">
+        </div>
+        <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:8px">
+          <span>Chuyển khoản</span><b style="font-size:17px;color:#2563EB">${fmt(canCK)}đ</b>
+        </div>
+      </div>` : ''}
+
+    ${canCK > 0 ? veKhoiQR(p, canCK) : ''}
+
+    <button class="btn-g" id="bh-nut-xong" style="width:100%;padding:15px;font-size:16px;margin-top:10px"
+      onclick="bhHoanThanh()">✓ Hoàn thành${phaiTra ? ` · ${fmt(phaiTra)}đ` : ''}</button>`;
+}
+
+function veKhoiQR(p, soTien) {
+  const ch = layCauHinhQR();
+  if (!ch.stk || !ch.nganHang) {
+    return `<div class="bh-o-tt" style="background:#FEF3C7;border-color:#F59E0B">
+      <div style="font-size:12px;color:#92400E">Chưa cấu hình tài khoản nhận tiền.
+      Vào <b>Thiết lập → Quản trị hệ thống</b> để nhập số tài khoản, rồi mới tạo được mã QR.</div>
+    </div>`;
+  }
+  const noiDung = `${p.id}`;
+  const url = `https://img.vietqr.io/image/${encodeURIComponent(ch.nganHang)}-${encodeURIComponent(ch.stk)}-compact2.png`
+    + `?amount=${Math.round(soTien)}&addInfo=${encodeURIComponent(noiDung)}`
+    + (ch.tenChu ? `&accountName=${encodeURIComponent(ch.tenChu)}` : '');
+  return `
+    <div class="bh-o-tt" style="text-align:center">
+      <img src="${url}" alt="Mã QR" style="width:100%;max-width:230px;border-radius:8px;background:#fff">
+      <div style="font-size:12px;color:var(--text2);margin-top:6px">Nội dung: <b>${escHtml(noiDung)}</b></div>
+      ${p.daNhanCK
+        ? `<div style="background:#DCFCE7;border:1px solid #16A34A;border-radius:8px;padding:10px;margin-top:8px">
+             <b style="color:#16A34A;font-size:15px">✓ Đã nhận ${fmt(soTien)}đ</b>
+           </div>`
+        : `<button class="btn-outline" style="width:100%;margin-top:8px" onclick="bhKiemTraGiaoDich()">
+             🔄 Kiểm tra giao dịch
+           </button>`}
+    </div>`;
+}
+
+function layCauHinhQR() {
+  return {
+    nganHang: (window.CAU_HINH_QR?.nganHang) || localStorage.getItem('qr_ngan_hang') || '',
+    stk:      (window.CAU_HINH_QR?.stk)      || localStorage.getItem('qr_stk') || '',
+    tenChu:   (window.CAU_HINH_QR?.tenChu)   || localStorage.getItem('qr_ten_chu') || ''
+  };
+}
+
+// Cấu hình tài khoản nhận tiền. Gọi 1 lần từ Console:
+// datTaiKhoanQR('MB', '0123456789', 'NGUYEN TAN DAT')
+window.datTaiKhoanQR = function(nganHang, stk, tenChu) {
+  if (!nganHang || !stk) { console.error('Cần mã ngân hàng và số tài khoản. VD: datTaiKhoanQR("MB","0123456789","NGUYEN VAN A")'); return; }
+  localStorage.setItem('qr_ngan_hang', nganHang);
+  localStorage.setItem('qr_stk', stk);
+  localStorage.setItem('qr_ten_chu', tenChu || '');
+  showToast('Đã lưu tài khoản nhận tiền');
+  console.log('Đã lưu:', { nganHang, stk, tenChu });
+};
+
+// ===== THAO TÁC =====
+window.bhThemPhieu = function() { bhTaoPhieu(); bhLuu(); veManHinhBanHang(); };
+window.bhMoPhieu = function(id) { bhPhieuDangMo = id; bhLuu(); veManHinhBanHang(); };
+
+window.bhXoaPhieu = function(id) {
+  const p = bhPhieu.find(x => x.id === id);
+  if (!p) return;
+  if (p.gio.length && !confirm(`Xóa phiếu "${p.ten}"?\n\n${p.gio.length} mã hàng trong phiếu sẽ mất.`)) return;
+  bhPhieu = bhPhieu.filter(x => x.id !== id);
+  if (!bhPhieu.length) bhTaoPhieu();
+  else if (bhPhieuDangMo === id) bhPhieuDangMo = bhPhieu[0].id;
+  bhLuu();
   veManHinhBanHang();
 };
 
-window.bhDoiSL = function(i, d) {
-  bhGio[i].soLuong = Math.max(1, (Number(bhGio[i].soLuong) || 1) + d);
-  bhLuuGio(); veManHinhBanHang();
+// makeSKUSearch gọi selectSKU, hàm đó chuyển tiếp vào đây
+window.bhThemHang = function(maSku, ten) {
+  const p = bhPhieuHienTai();
+  const sku = allSKUs.find(s => s.sku === maSku);
+  if (!p || !sku) return;
+  const i = p.gio.findIndex(d => d.sku === maSku);
+  if (i >= 0) p.gio[i].soLuong++;
+  else p.gio.push({ sku: maSku, ten, gia: Number(sku.gia) || 0, soLuong: 1, giamGia: 0 });
+  p.khachDua = null;   // giỏ đổi thì số khách đưa tính lại
+  bhLuu();
+  veManHinhBanHang();
 };
-window.bhDatSL = function(i, v) {
-  bhGio[i].soLuong = Math.max(1, parseInt(v) || 1);
-  bhLuuGio(); veManHinhBanHang();
-};
+
+function bhSuaDong(f) {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  f(p);
+  p.khachDua = null;
+  bhLuu();
+  veGioHang();
+  veDayDuoi();
+}
+
+window.bhDoiSL = function(i, d) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, (Number(p.gio[i].soLuong) || 1) + d); }); };
+window.bhDatSL = function(i, v) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, parseInt(v) || 1); }); };
 window.bhDatGiam = function(i, v) {
-  const toiDa = (Number(bhGio[i].gia) || 0) * (Number(bhGio[i].soLuong) || 0);
-  bhGio[i].giamGia = Math.min(toiDa, Math.max(0, parseFloat(v) || 0));
-  bhLuuGio(); veManHinhBanHang();
+  bhSuaDong(p => {
+    const toiDa = (Number(p.gio[i].gia) || 0) * (Number(p.gio[i].soLuong) || 0);
+    p.gio[i].giamGia = Math.min(toiDa, Math.max(0, parseFloat(v) || 0));
+  });
 };
-window.bhXoaDong = function(i) { bhGio.splice(i, 1); bhLuuGio(); veManHinhBanHang(); };
-window.bhXoaGio = function() {
-  if (bhGio.length && !confirm('Hủy đơn đang bán?')) return;
-  bhGio = []; bhGhiChu = ''; bhLuuGio(); veManHinhBanHang();
+window.bhXoaDong = function(i) { bhSuaDong(p => { p.gio.splice(i, 1); }); };
+
+window.bhDoiCachTra = function(ma) {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  p.cachTra = ma;
+  p.daNhanCK = false;   // đổi cách trả thì phải kiểm tra tiền lại từ đầu
+  bhLuu();
+  veDayDuoi();
 };
 
-window.bhThanhToan = async function(cachTra) {
-  if (!bhGio.length) return;
-  const { tongHang, tongGiam, phaiTra } = bhTinhTien();
+window.bhDatKhachDua = function(v) {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  p.khachDua = Math.max(0, parseFloat(v) || 0);
+  bhLuu(); veDayDuoi();
+};
 
-  // Cảnh báo bán quá tồn nhưng vẫn cho qua — có thể hàng về mà chưa kịp nhập sổ
-  const vuot = bhGio.filter(d => {
+window.bhDatTienMat = function(v) {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  const { phaiTra } = bhTinhTien(p);
+  p.tienMat = Math.min(phaiTra, Math.max(0, parseFloat(v) || 0));
+  p.daNhanCK = false;   // số tiền chuyển khoản đổi -> mã QR đổi -> kiểm tra lại
+  bhLuu(); veDayDuoi();
+};
+
+// Kiểm tra tiền đã về chưa. Chưa nối dịch vụ đối soát nên tạm để người dùng
+// tự xác nhận sau khi nhìn app ngân hàng — vẫn hơn KiotViet ở chỗ phải chủ động xác nhận.
+window.bhKiemTraGiaoDich = async function() {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  const { phaiTra } = bhTinhTien(p);
+  const soTien = p.cachTra === 'ketHop' ? Math.max(0, phaiTra - (Number(p.tienMat) || 0)) : phaiTra;
+  const nut = event?.target;
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang kiểm tra...'; }
+
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'kiem-tra-chuyen-khoan', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ noiDung: p.id, soTien })
+    });
+    const data = await res.json();
+    if (data.success && data.daNhan) {
+      p.daNhanCK = true;
+      bhLuu(); veDayDuoi();
+      showToast(`Đã nhận ${fmt(soTien)}đ`);
+      return;
+    }
+    // Chưa nối dịch vụ đối soát -> cho xác nhận tay, ghi rõ ai xác nhận
+    if (confirm(`Chưa thấy giao dịch tự động.\n\nBạn đã kiểm tra app ngân hàng và THẤY tiền ${fmt(soTien)}đ về chưa?\n\nChọn OK nếu đã thấy tiền.`)) {
+      p.daNhanCK = true;
+      p.xacNhanTay = true;
+      bhLuu(); veDayDuoi();
+    } else if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra giao dịch'; }
+  } catch(e) {
+    if (confirm(`Không kiểm tra tự động được (${e.message}).\n\nBạn đã thấy tiền ${fmt(soTien)}đ về trong app ngân hàng chưa?`)) {
+      p.daNhanCK = true;
+      p.xacNhanTay = true;
+      bhLuu(); veDayDuoi();
+    } else if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra giao dịch'; }
+  }
+};
+
+window.bhHoanThanh = async function() {
+  const p = bhPhieuHienTai();
+  if (!p || !p.gio.length) return;
+  const { tongHang, tongGiam, phaiTra } = bhTinhTien(p);
+  const tienMat = p.cachTra === 'tienmat' ? phaiTra
+                : p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
+  const canCK = Math.max(0, phaiTra - tienMat);
+
+  // CHẶN hoàn thành khi tiền chuyển khoản chưa về — điểm khác biệt chính so với KiotViet
+  if (canCK > 0 && !p.daNhanCK) {
+    alert(`Chưa nhận được ${fmt(canCK)}đ chuyển khoản.\n\nBấm "Kiểm tra giao dịch" và chắc chắn tiền đã về trước khi giao hàng.`);
+    return;
+  }
+
+  const vuot = p.gio.filter(d => {
     const sku = allSKUs.find(s => s.sku === d.sku);
     return sku && d.soLuong > layTon(sku, 'cuahang');
   });
   if (vuot.length && !confirm(
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán? Tồn kho sẽ về âm.`)) return;
 
-  const laTienMat = cachTra === 'tienmat';
-  if (!confirm(`${laTienMat ? 'TIỀN MẶT' : 'CHUYỂN KHOẢN'}: ${fmt(phaiTra)}đ\n\nXác nhận bán?`)) return;
-
   try {
     const maDon = `BL${Date.now().toString().slice(-9)}`;
     await setDoc(doc(db, 'don_ban_le', maDon), {
       maDon,
-      dongHang: bhGio,
+      maPhieuTam: p.id,           // trùng với nội dung chuyển khoản, dùng để đối soát
+      dongHang: p.gio,
       tongHang, tongGiam, phaiTra,
-      cachThanhToan: cachTra,
-      // Tiền mặt là cầm tiền ngay nên xong luôn. Chuyển khoản phải chờ đối soát
-      // thấy tiền thật mới đánh dấu — đây là chỗ KiotViet làm sai.
-      trangThai: laTienMat ? 'hoan_thanh' : 'cho_tien_ve',
-      ghiChu: bhGhiChu,
+      cachThanhToan: p.cachTra,
+      tienMat, tienChuyenKhoan: canCK,
+      khachDua: p.cachTra === 'tienmat' ? (Number(p.khachDua ?? phaiTra) || 0) : null,
+      xacNhanCKBangTay: !!p.xacNhanTay,
+      trangThai: 'hoan_thanh',
+      ghiChu: p.ghiChu || '',
       nguoiBan: { uid: currentUser.uid, ten: currentUserData?.ten || currentUser?.email || '' },
       taoLuc: serverTimestamp()
     });
 
     await dieuChinhTonKhoApp(
-      bhGio.map(d => ({ sku: d.sku, sl: d.soLuong })), -1, 'cuahang',
+      p.gio.map(d => ({ sku: d.sku, sl: d.soLuong })), -1, 'cuahang',
       { loai: 'Bán tại quầy', ma: maDon });
 
-    bhGio = []; bhGhiChu = ''; bhLuuGio();
-    showToast(laTienMat
-      ? `Đã bán ${fmt(phaiTra)}đ — thu tiền mặt`
-      : `Đã lưu ${fmt(phaiTra)}đ — CHỜ TIỀN VỀ, kiểm tra trước khi giao hàng`);
+    bhPhieu = bhPhieu.filter(x => x.id !== p.id);
+    if (!bhPhieu.length) bhTaoPhieu(); else bhPhieuDangMo = bhPhieu[0].id;
+    bhLuu();
+    showToast(`Đã bán ${fmt(phaiTra)}đ · ${maDon}`);
     veManHinhBanHang();
   } catch(e) {
     alert('Lỗi lưu đơn: ' + e.message);
@@ -9421,6 +9643,39 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .mod-btn.admin-btn.active{background:#5B21B6;color:#fff}
 #mod-nhanvien.active,#sidebar-nhanvien.active{background:#B45309!important;color:#fff!important}
 
+/* ===== MÀN HÌNH BÁN HÀNG ===== */
+/* Khung chiếm hết chiều cao còn lại, ô hàng hóa co giãn và cuộn được,
+   khối thanh toán luôn dính đáy — nhân viên không phải cuộn để bấm hoàn thành. */
+.bh-khung{display:flex;flex-direction:column;height:calc(100vh - 190px);min-height:400px}
+.bh-tab-phieu{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;flex-shrink:0;-webkit-overflow-scrolling:touch}
+.bh-tab-phieu::-webkit-scrollbar{display:none}
+.bh-the{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:7px 8px 7px 12px;
+  border:1.5px solid var(--border);border-radius:8px;background:var(--surface);
+  font-size:13px;cursor:pointer;white-space:nowrap}
+.bh-the.dang-mo{border-color:var(--green);background:#F0FDF4;font-weight:600}
+.bh-the-xoa{border:none;background:transparent;color:var(--text2);font-size:14px;
+  cursor:pointer;padding:0 2px;line-height:1}
+.bh-the-xoa:hover{color:var(--red)}
+.bh-the-them{flex-shrink:0;border:1.5px dashed var(--border);background:transparent;
+  border-radius:8px;padding:7px 12px;font-size:13px;color:var(--text2);cursor:pointer;white-space:nowrap}
+
+.bh-o-hang{flex:1;min-height:0;border:1px solid var(--border);border-radius:10px;
+  background:var(--bg);position:relative;display:flex;flex-direction:column}
+.bh-o-hang-nhan{position:absolute;top:-8px;left:10px;background:var(--surface);
+  padding:0 6px;font-size:11px;color:var(--text2)}
+.bh-o-hang-trong{flex:1;overflow-y:auto;padding:14px 10px 10px;-webkit-overflow-scrolling:touch}
+
+.bh-day-duoi{flex-shrink:0;padding-top:10px;background:var(--surface)}
+.bh-hang-gat{display:flex;gap:6px;margin-bottom:8px}
+.bh-nut-gat{flex:1;padding:11px 4px;border:1.5px solid var(--border);background:var(--surface);
+  border-radius:8px;font-size:13px;font-weight:600;color:var(--text2);cursor:pointer}
+.bh-nut-gat.sang{border-color:var(--green);background:var(--green);color:#fff}
+.bh-o-tt{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px}
+.bh-dong-tt{display:flex;justify-content:space-between;align-items:center;font-size:14px;padding:4px 0}
+@media(min-width:900px){
+  .bh-khung{height:calc(100vh - 210px)}
+}
+
 /* ===== MENU HAI CẤP ===== */
 /* Thanh module cũ: ẩn hẳn ở mọi kích thước. Phải dùng !important vì code phân quyền
    tự bật display cho từng nút bên trong sau khi đăng nhập. */
@@ -9740,7 +9995,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v266</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v267</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9794,7 +10049,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v266</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v267</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9836,7 +10091,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v266</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v267</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
