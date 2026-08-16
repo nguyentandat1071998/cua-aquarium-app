@@ -2216,43 +2216,43 @@ const TRANG_THAI_NOI_BO = {
   // là bước riêng sau đó. Đơn ở đây có thể đã in hoặc chưa — phải kiểm tra mới biết.
   huy_khi_cho_dong_goi: { ten: 'Hủy khi chờ đóng gói', mau: '#F59E0B', nhom: 'canh_bao' },
   huy_sau_dong_goi:  { ten: 'Hủy sau đóng gói', mau: '#EA580C', nhom: 'canh_bao' },
-  // Đơn đã rời kho rồi mới hủy — hàng đang trên đường về, phải chờ nhận lại.
-  // Hay gặp với đơn giao thất bại mà sàn báo về là "Đã hủy" thay vì "Chuyển hoàn".
   huy_khi_dang_giao: { ten: 'Hủy khi đang giao', mau: '#DC2626', nhom: 'canh_bao' },
+  dang_chuyen_hoan:  { ten: 'Đang chuyển hoàn', mau: '#C2410C', nhom: 'canh_bao' },
+  da_chuyen_hoan:    { ten: 'Đã chuyển hoàn',  mau: '#9333EA', nhom: 'canh_bao' },
   dang_giao:         { ten: 'Đang giao',      mau: '#16A34A', nhom: 'san' },
   da_giao:           { ten: 'Đã giao',        mau: '#15803D', nhom: 'san' },
-  giao_that_bai:     { ten: 'Giao thất bại',  mau: '#B91C1C', nhom: 'san' },
-  tra_hang:          { ten: 'Trả hàng/Hoàn tiền', mau: '#9333EA', nhom: 'san' },
   da_huy:            { ten: 'Đã hủy',         mau: '#DC2626', nhom: 'san' }
 };
 
+// Mã trạng thái giao hàng của KiotViet (theo tài liệu chính thức):
+//   1 chưa giao · 2 đang giao · 3 đã giao · 4 đang chuyển hoàn · 5 đã chuyển hoàn · 6 đã hủy
+// Dùng MÃ SỐ thay vì so khớp chuỗi tiếng Việt — chuỗi có thể đổi cách viết giữa các
+// sàn hoặc các bản cập nhật, còn mã số thì cố định.
+const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN: 5, DA_HUY: 6 };
+
 function trangThaiHienThi(d) {
-  const giao = String(d.trangThaiGiao || '');
-  const hoaDon = String(d.trangThaiHoaDon || '');
+  const ma = Number(d.trangThaiGiaoMa) || 0;
   const daDongGoi = !!d.thoiGianDongGoi;
   // Có hóa đơn = đã bấm "Chuẩn bị hàng". CHƯA chắc đã in tem — in là bước riêng sau đó.
-  // Phiếu đặt (đơn khách vừa đặt) chưa có hóa đơn nên cờ này false.
   const daChuanBiHang = d.coHoaDon === true;
 
-  // Xét trả hàng TRƯỚC hủy: đơn trả hàng thường cũng mang dấu hiệu hủy,
-  // nhưng bản chất khác nhau (đã giao rồi khách trả vs chưa giao đã hủy).
-  if (/trả hàng|hoàn tiền|hoàn hàng/i.test(giao) || /trả hàng|hoàn tiền/i.test(hoaDon)) return 'tra_hang';
-  if (/thất bại|không giao được|giao hỏng/i.test(giao)) return 'giao_that_bai';
+  if (ma === MA_GIAO.DANG_HOAN) return 'dang_chuyen_hoan';
+  if (ma === MA_GIAO.DA_HOAN)   return 'da_chuyen_hoan';
+  if (ma === MA_GIAO.DA_GIAO)   return 'da_giao';
+  if (ma === MA_GIAO.DANG_GIAO) return 'dang_giao';
 
-  if (/hủy/i.test(giao) || /hủy/i.test(hoaDon)) {
-    // Ba mức hủy, phân biệt theo việc đã làm tới đâu — quyết định phải xử lý gì
-    // Xét ĐÃ TỪNG RỜI KHO trước tiên — cờ này do app tự ghi khi thấy trạng thái
-    // "đang giao", nên đúng kể cả khi sàn đổ trạng thái cuối bị sai.
+  if (ma === MA_GIAO.DA_HUY) {
+    // Bốn mức hủy tùy hàng đã đi tới đâu — quyết định phải xử lý gì.
+    // Cờ daTungRoiKho do app tự ghi nên đúng kể cả khi sàn đổ trạng thái cuối bị sai
+    // (đơn hỏa tốc TikTok giao thất bại nhưng báo về là "Đã hủy").
     if (d.daTungRoiKho === true) return 'huy_khi_dang_giao';
-    if (daDongGoi)               return 'huy_sau_dong_goi';      // kiện đã vào bao, phải lấy lại
-    if (daChuanBiHang)           return 'huy_khi_cho_dong_goi';  // đã chuẩn bị hàng, có thể đã in tem
-    return 'da_huy';                                             // chưa làm gì, bỏ qua
+    if (daDongGoi)               return 'huy_sau_dong_goi';
+    if (daChuanBiHang)           return 'huy_khi_cho_dong_goi';
+    return 'da_huy';
   }
-  if (/thành công|đã giao/i.test(giao)) return 'da_giao';
-  if (/đang giao|đã bàn giao|đang vận chuyển/i.test(giao)) return 'dang_giao';
 
-  if (daDongGoi) return 'da_dong_goi';
-  // Có hóa đơn nhưng chưa quét đóng gói -> đang chờ nhân viên xử lý
+  // Chưa giao (mã 1) hoặc chưa có mã — dùng tiến trình trong kho
+  if (daDongGoi)     return 'da_dong_goi';
   if (daChuanBiHang) return 'cho_dong_goi';
   return d.trangThaiNoiBo || 'moi';
 }
@@ -2599,16 +2599,23 @@ const GIAY_CHONG_TRUNG_QUET = 60;
 const THUONG_MOI_DON = 300;
 const TY_LE_THUONG_DOANH_THU = 0.0006;
 
+// Các trạng thái KHÔNG tính thưởng: đơn không tới tay khách thì nhân viên
+// không được hưởng, dù đã đóng gói. Riêng "hủy khi chờ đóng gói" cũng không tính
+// vì chưa quét đóng gói thì chưa có ai để trả thưởng.
+const TT_KHONG_TINH_THUONG = new Set([
+  'da_huy', 'huy_khi_cho_dong_goi', 'huy_sau_dong_goi', 'huy_khi_dang_giao',
+  'dang_chuyen_hoan', 'da_chuyen_hoan'
+]);
+
 function tinhThuongDon(d) {
   const tt = trangThaiHienThi(d);
-  // Đơn hủy và giao thất bại: không tính thưởng
-  if (tt === 'da_huy' || tt === 'huy_sau_dong_goi' || tt === 'giao_that_bai') {
+  if (TT_KHONG_TINH_THUONG.has(tt)) {
     return { thuong: 0, doanhThu: 0, lyDo: TRANG_THAI_NOI_BO[tt]?.ten };
   }
-  // Trả hàng: trừ đúng phần tiền món bị trả, giữ lại phần khách vẫn nhận
+  // Trả hàng một phần: trừ đúng phần tiền món bị trả, giữ lại phần khách vẫn nhận
   const tienTra = Number(d.tienHangTra || 0);
   const doanhThu = Math.max(0, (Number(d.tongTien) || 0) - tienTra);
-  if (tt === 'tra_hang' && doanhThu <= 0) {
+  if (tienTra > 0 && doanhThu <= 0) {
     return { thuong: 0, doanhThu: 0, lyDo: 'Trả toàn bộ' };
   }
   return {
@@ -9068,7 +9075,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v248</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v249</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9122,7 +9129,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v248</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v249</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9164,7 +9171,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v248</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v249</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
