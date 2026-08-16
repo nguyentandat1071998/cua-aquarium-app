@@ -1796,9 +1796,10 @@ window.tuDongKhopToanBo = async function() {
 // Mọi SKU khác tuyệt đối không đụng tới tồn kho trên sàn.
 // ==========================================================================
 
-// Tồn thực tế của 1 SKU (combo thì tính động từ thành phần)
-function tonThucTe(s) {
-  return s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon || 0);
+// Tồn thực tế của 1 SKU (combo thì tính động từ thành phần).
+// Mặc định kho sàn — nơi đơn TMĐT trừ vào.
+function tonThucTe(s, maKho = 'san') {
+  return layTon(s, maKho);
 }
 
 // Số thật sự đẩy lên sàn = tồn thực tế - đệm giữ lại, không âm.
@@ -4116,11 +4117,12 @@ window.exportDanhSachHangHoaExcel = async function() {
   showToast('Đang xuất file...');
   await loadSKUs();
   const laAdmin = currentUserData.role === 'admin';
-  const header = ['sku','ten','gia', ...(laAdmin ? ['gia_von'] : []), 'so_luong_ton','trang_thai_anh','url_anh','nhom_cap_1','nhom_cap_2','nhom_cap_3','dai_cm','rong_cm','cao_cm','can_nang_gram','thanh_phan_combo'];
+  const header = ['sku','ten','gia', ...(laAdmin ? ['gia_von'] : []), 'ton_kho_san','ton_cua_hang','trang_thai_anh','url_anh','nhom_cap_1','nhom_cap_2','nhom_cap_3','dai_cm','rong_cm','cao_cm','can_nang_gram','thanh_phan_combo'];
   const rows = allSKUs.map(s => [
     s.sku||'', s.ten||'', s.gia||0,
     ...(laAdmin ? [s.giaVon||0] : []),
-    s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon||0),
+    layTon(s, 'san'),
+    layTon(s, 'cuahang'),
     s.anhFileId ? 'Đã có ảnh' : 'CHƯA CÓ ẢNH',
     s.anhUrl||'',
     s.nhom1||'', s.nhom2||'', s.nhom3||'',
@@ -4157,8 +4159,11 @@ function renderHangHoaList() {
   if (hangHoaPage > totalPages) hangHoaPage = totalPages;
   const pageList = list.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
   el.innerHTML = pageList.map(s => {
-    const ton = s.laCombo ? tinhTonKhoCombo(s) : (s.soLuongTon ?? 0);
-    const canhBaoTon = ton <= 0 ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
+    const tonSan = layTon(s, 'san');
+    const tonCH = layTon(s, 'cuahang');
+    const dat = Number(s.soLuongDatHang) || 0;
+    const khaDung = tonSan - dat;
+    const canhBaoTon = (tonSan + tonCH) <= 0 ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
     return `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
@@ -4169,10 +4174,11 @@ function renderHangHoaList() {
           <div style="font-weight:700;font-size:15px;margin-bottom:2px">${escHtml(s.ten||'')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ - ` : ''}Bán: ${fmt(s.gia||0)}đ</div>
-          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">
-            Tồn: <b>${ton}</b>${(Number(s.soLuongDatHang) || 0) > 0
-              ? ` · Đặt: <b style="color:#D97706">${Number(s.soLuongDatHang)}</b> · Khả dụng: <b style="color:${(ton - Number(s.soLuongDatHang)) <= 0 ? '#DC2626' : 'var(--green)'}">${ton - Number(s.soLuongDatHang)}</b>`
-              : ''}${canhBaoTon ? ' - ' + canhBaoTon : ''}
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
+            <span>Sàn: <b>${tonSan}</b>${dat > 0
+              ? ` <span style="color:#D97706">(đặt ${dat}, còn ${khaDung})</span>` : ''}</span>
+            <span>Cửa hàng: <b style="color:${tonCH <= 0 ? 'var(--red)' : 'var(--text)'}">${tonCH}</b></span>
+            ${canhBaoTon}
           </div>
           ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
@@ -4322,12 +4328,33 @@ function renderThanhPhanCombo(prefix) {
 }
 
 // Tính tồn kho thực tế của 1 SKU Combo dựa trên tồn của các SKU con (không lưu tĩnh, luôn tính lại từ dữ liệu mới nhất)
-function tinhTonKhoCombo(sku) {
+// ==========================================================================
+// ===== HAI KHO RIÊNG BIỆT =====
+// KHO SÀN (soLuongTon)         — hàng cho đơn TMĐT, khớp chi nhánh Sàn TMĐT 650408
+// KHO CỬA HÀNG (tonCuaHang)    — hàng bán trực tiếp tại quầy, khớp chi nhánh 634586
+//
+// Giữ nguyên tên trường soLuongTon cho kho sàn để không phải sửa lại toàn bộ code
+// và dữ liệu đã có. Kho cửa hàng dùng trường mới tonCuaHang.
+// ==========================================================================
+const KHO = {
+  SAN:      { ma: 'san',      ten: 'Kho Sàn TMĐT', truong: 'soLuongTon', branchId: 650408 },
+  CUA_HANG: { ma: 'cuahang',  ten: 'Kho Cửa hàng', truong: 'tonCuaHang', branchId: 634586 }
+};
+
+// Lấy tồn của một kho. Combo tính động từ thành phần, không lưu số riêng.
+function layTon(sku, maKho = 'san') {
+  if (!sku) return 0;
+  if (sku.laCombo) return tinhTonKhoCombo(sku, maKho);
+  const truong = maKho === 'cuahang' ? 'tonCuaHang' : 'soLuongTon';
+  return Number(sku[truong]) || 0;
+}
+
+function tinhTonKhoCombo(sku, maKho = 'san') {
   if (!sku?.laCombo || !sku.thanhPhanCombo?.length) return 0;
   let min = Infinity;
   for (const tp of sku.thanhPhanCombo) {
     const con = allSKUs.find(s => s.id === tp.skuId);
-    const tonCon = con ? (con.laCombo ? tinhTonKhoCombo(con) : (con.soLuongTon || 0)) : 0;
+    const tonCon = con ? layTon(con, maKho) : 0;
     const kha = Math.floor(tonCon / (tp.tyLe || 1));
     if (kha < min) min = kha;
   }
@@ -6720,8 +6747,9 @@ function renderNhapItems() {
 // cộng trừ đúng, không đè mất số của nhau.
 // Combo KHÔNG trừ trực tiếp vì tồn combo tính động từ thành phần.
 // ==========================================================================
-async function dieuChinhTonKhoApp(items, dau = -1) {
+async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san') {
   if (!Array.isArray(items) || !items.length) return { soDong: 0, boQuaCombo: [] };
+  const truong = maKho === 'cuahang' ? 'tonCuaHang' : 'soLuongTon';
   const boQuaCombo = [];
   const batch = writeBatch(db);
   let soDong = 0;
@@ -6733,7 +6761,7 @@ async function dieuChinhTonKhoApp(items, dau = -1) {
     const sku = allSKUs.find(s => s.sku === ma);
     if (sku?.laCombo) { boQuaCombo.push(ma); continue; }
     // Tên tài liệu trong skus chính là mã SKU
-    batch.update(doc(db, 'skus', sku?.id || ma), { soLuongTon: increment(dau * sl) });
+    batch.update(doc(db, 'skus', sku?.id || ma), { [truong]: increment(dau * sl) });
     soDong++;
   }
 
@@ -6837,7 +6865,10 @@ window.submitNhap = async function() {
     // Làm SAU khi đã lưu phiếu để nếu lưu hỏng thì tồn không bị trừ oan.
     let ketQuaTon = { soDong: 0, boQuaCombo: [] };
     try {
-      ketQuaTon = await dieuChinhTonKhoApp(currentNhap.items, -1);
+      // Chuyển kho = trừ kho sàn, cộng kho cửa hàng. Trước đây chỉ trừ mà quên cộng
+      // nên hàng chuyển xuống cửa hàng bị "bốc hơi" khỏi sổ app.
+      ketQuaTon = await dieuChinhTonKhoApp(currentNhap.items, -1, 'san');
+      await dieuChinhTonKhoApp(currentNhap.items, +1, 'cuahang');
     } catch(e) {
       console.error('Lỗi trừ tồn kho app:', e);
       alert('Phiếu đã lưu nhưng CHƯA TRỪ ĐƯỢC tồn kho trong app:\n' + e.message
@@ -7166,7 +7197,8 @@ window.deleteNhap = async function(id) {
   await updateDoc(doc(db,'phieu_chuyenkho',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   // Hàng chưa chuyển đi nữa -> trả lại tồn kho app cho khớp với KiotViet
   try {
-    const kq = await dieuChinhTonKhoApp(data.items || [], +1);
+    const kq = await dieuChinhTonKhoApp(data.items || [], +1, 'san');
+    await dieuChinhTonKhoApp(data.items || [], -1, 'cuahang');
     showToast(`Đã xóa phiếu + hoàn lại tồn ${kq.soDong} mã`);
   } catch(e) {
     console.error('Lỗi hoàn tồn kho:', e);
@@ -7489,8 +7521,15 @@ window.saveEdit = async function() {
           // Tách hai nhóm vì mỗi nhóm cộng/trừ theo chiều khác nhau
           const nhomTru = cheneLech.filter(x => x.dau === -1);
           const nhomCong = cheneLech.filter(x => x.dau === +1);
-          if (nhomTru.length) await dieuChinhTonKhoApp(nhomTru, -1);
-          if (nhomCong.length) await dieuChinhTonKhoApp(nhomCong, +1);
+          // Chuyển kho tác động NGƯỢC CHIỀU lên hai kho
+          if (nhomTru.length) {
+            await dieuChinhTonKhoApp(nhomTru, -1, 'san');
+            await dieuChinhTonKhoApp(nhomTru, +1, 'cuahang');
+          }
+          if (nhomCong.length) {
+            await dieuChinhTonKhoApp(nhomCong, +1, 'san');
+            await dieuChinhTonKhoApp(nhomCong, -1, 'cuahang');
+          }
         } catch(e) {
           console.error('Lỗi chỉnh tồn kho khi sửa phiếu:', e);
           alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
@@ -9210,7 +9249,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v259</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v260</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9264,7 +9303,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v259</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v260</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9306,7 +9345,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v259</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v260</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
