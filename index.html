@@ -1736,7 +1736,7 @@ function renderSkuConLienKet(prefix) {
     if (inp && s.skuNoiBo) inp.dataset.sku = s.skuNoiBo;
     // Tự động khớp nếu mã trên sàn trùng chính xác 1 SKU nội bộ, và chưa liên kết gì
     if (inp && !s.skuNoiBo) {
-      const khop = allSKUs.find(sk => sk.sku.toLowerCase() === s.skuIdSan.toLowerCase());
+      const khop = allSKUs.find(sk => String(sk.sku || '').toLowerCase() === String(s.skuIdSan || '').toLowerCase());
       if (khop) { inp.value = khop.ten; inp.dataset.sku = khop.sku; }
     }
   });
@@ -4182,6 +4182,40 @@ window.hhchXoaLocNhom = function() { hhchNhom1 = hhchNhom2 = hhchNhom3 = ''; hhc
 // và tồn cuối sau giao dịch đó. Không có sổ này thì tồn lệch mà không biết
 // lệch từ đâu, chỉ còn cách đoán.
 // ==========================================================================
+// Tìm bản ghi hàng hóa rác — thiếu cả tên lẫn mã SKU.
+// Chúng gây hai lỗi: hiện thành ô trống trong danh sách, và làm hỏng ô tìm kiếm.
+// Gọi: timHangHoaRac()      -> chỉ liệt kê
+//      timHangHoaRac(true)  -> xóa luôn (chỉ Admin)
+window.timHangHoaRac = async function(xoaLuon = false) {
+  const rac = allSKUs.filter(s => !String(s.ten || '').trim() || !String(s.sku || '').trim());
+  console.log(`Tìm thấy ${rac.length}/${allSKUs.length} bản ghi thiếu tên hoặc mã`);
+  if (!rac.length) return [];
+  console.table(rac.slice(0, 30).map(s => ({
+    idTaiLieu: s.id, ten: s.ten || '(trống)', sku: s.sku || '(trống)',
+    gia: s.gia || 0, tonSan: s.soLuongTon || 0, tonCH: s.tonCuaHang || 0
+  })));
+
+  if (!xoaLuon) { console.log('→ Chạy timHangHoaRac(true) để xóa'); return rac; }
+  if (currentUserData?.role !== 'admin') { console.error('Chỉ Admin mới xóa được'); return rac; }
+  // Giữ lại bản ghi còn tồn kho — có thể là hàng thật chỉ thiếu tên, xóa đi là mất hàng
+  const coTon = rac.filter(s => (Number(s.soLuongTon) || 0) !== 0 || (Number(s.tonCuaHang) || 0) !== 0);
+  const xoaDuoc = rac.filter(s => !coTon.includes(s));
+  if (coTon.length) {
+    console.warn(`⚠️ ${coTon.length} bản ghi CÒN TỒN KHO — không xóa, hãy đặt tên cho chúng:`);
+    console.table(coTon.map(s => ({ id: s.id, tonSan: s.soLuongTon, tonCH: s.tonCuaHang })));
+  }
+  if (!xoaDuoc.length) { console.log('Không có bản ghi nào xóa được'); return rac; }
+  if (!confirm(`Xóa ${xoaDuoc.length} bản ghi rác (tồn kho = 0)?\n\nKhông khôi phục được.`)) return rac;
+
+  const batch = writeBatch(db);
+  xoaDuoc.forEach(s => batch.delete(doc(db, 'skus', s.id)));
+  await batch.commit();
+  console.log(`✅ Đã xóa ${xoaDuoc.length} bản ghi`);
+  showToast(`Đã xóa ${xoaDuoc.length} bản ghi rác`);
+  await loadSKUs();
+  return rac;
+};
+
 window.moTheKho = async function(maSku) {
   const sku = allSKUs.find(s => s.sku === maSku);
   if (!sku) return;
@@ -5598,18 +5632,21 @@ function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
     if (apDungChiNhom) {
       pool = pool.filter(s => XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom1) || XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom2) || XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom3));
     }
+    // Dùng String(...) vì có bản ghi rác thiếu tên — gọi thẳng .toLowerCase()
+    // trên undefined làm cả hàm ném lỗi, dropdown im lặng không hiện gì.
+    const tim = val.toLowerCase();
     const results = pool.filter(s =>
-      s.ten.toLowerCase().includes(val.toLowerCase()) ||
-      (s.sku && s.sku.toLowerCase().includes(val.toLowerCase()))
+      String(s.ten || '').toLowerCase().includes(tim) ||
+      String(s.sku || '').toLowerCase().includes(tim)
     ).slice(0, 8);
     if (!results.length) { box.style.display = 'none'; return; }
     box.innerHTML = results.map(s =>
-      `<div class="sku-item" onmousedown="event.preventDefault();selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten)}',${s.gia||0},'${escHtml(s.sku||'')}')" style="display:flex;gap:8px;align-items:center">
+      `<div class="sku-item" onmousedown="event.preventDefault();selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten || '')}',${s.gia||0},'${escHtml(s.sku||'')}')" style="display:flex;gap:8px;align-items:center">
         ${s.anhFileId
           ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,80)}" style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0">`
           : `<div style="width:32px;height:32px;border-radius:5px;background:var(--bg);flex-shrink:0"></div>`}
         <div style="min-width:0">
-          <span class="sku-name">${escHtml(s.ten)}</span>
+          <span class="sku-name">${escHtml(s.ten || '(chưa đặt tên)')}</span>
           <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&s.gia?' · ':''}${s.gia?fmt(s.gia)+'₫':''}</span>
         </div>
       </div>`
@@ -5919,9 +5956,10 @@ window.searchSKUBenh = function(taskId, rowIdx, val) {
   const box = document.getElementById(dropId);
   if (!box) return;
   if (!val || val.length < 1) { box.style.display = 'none'; return; }
+  const tim = val.toLowerCase();
   const results = allSKUs.filter(s =>
-    s.ten.toLowerCase().includes(val.toLowerCase()) ||
-    (s.sku && s.sku.toLowerCase().includes(val.toLowerCase()))
+    String(s.ten || '').toLowerCase().includes(tim) ||
+    String(s.sku || '').toLowerCase().includes(tim)
   ).slice(0, 6);
   if (!results.length) { box.style.display = 'none'; return; }
   box.innerHTML = results.map(s =>
@@ -9472,7 +9510,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v262</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v263</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -9526,7 +9564,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v262</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v263</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -9568,7 +9606,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v262</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v263</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
