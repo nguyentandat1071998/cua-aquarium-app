@@ -4467,15 +4467,16 @@ function veGioHang() {
 }
 
 // ===== KHỐI THANH TOÁN CỐ ĐỊNH DƯỚI =====
+// Thứ tự: thông tin tiền -> mã QR -> chọn cách trả -> nút Hoàn thành.
+// Số tiền chỉ hiện MỘT lần ở ô thông tin; nút Hoàn thành mang trạng thái
+// chờ/đã nhận thay vì lặp lại con số.
 function veDayDuoi() {
   const el = document.getElementById('bh-day-duoi');
   const p = bhPhieuHienTai();
   if (!el || !p) return;
-  const { tongHang, tongGiam, phaiTra } = bhTinhTien(p);
-
+  const { phaiTra } = bhTinhTien(p);
   if (!p.gio.length) { el.innerHTML = ''; return; }
 
-  // Kết hợp: tiền mặt bao nhiêu thì phần còn lại chuyển khoản
   const tienMat = p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
   const canCK = p.cachTra === 'chuyenkhoan' ? phaiTra
               : p.cachTra === 'ketHop' ? Math.max(0, phaiTra - tienMat) : 0;
@@ -4486,25 +4487,22 @@ function veDayDuoi() {
   const nutGat = (ma, nhan) => `
     <button class="bh-nut-gat ${p.cachTra === ma ? 'sang' : ''}" onclick="bhDoiCachTra('${ma}')">${nhan}</button>`;
 
-  // Dòng tổng tiền hàng dùng chung cho cả ba cách trả — số lượng nằm trong vòng tròn
-  const dongTongTien = `
-    <div class="bh-dong-tt">
-      <span style="display:flex;align-items:center;gap:7px">
-        Tổng tiền hàng <span class="bh-tron-sl">${soMon}</span>
-      </span>
-      <b>${fmt(phaiTra)}đ</b>
-    </div>`;
+  // Nút Hoàn thành mang luôn trạng thái tiền về — xám khi chưa nhận, xanh khi đã nhận
+  const choTien = canCK > 0 && !p.daNhanCK;
+  const nhanNut = choTien
+    ? `<span class="bh-cham-nhap-nhay"></span> Đang chờ chuyển khoản ${fmt(canCK)}đ`
+    : (canCK > 0 ? `✓ Đã nhận ${fmt(canCK)}đ · Hoàn thành` : `✓ Hoàn thành`);
 
   el.innerHTML = `
-    <div class="bh-hang-gat">
-      ${nutGat('tienmat', '💵 Tiền mặt')}
-      ${nutGat('chuyenkhoan', '🏦 Chuyển khoản')}
-      ${nutGat('ketHop', '⇄ Kết hợp')}
-    </div>
+    <div class="bh-o-tt">
+      <div class="bh-dong-tt">
+        <span style="display:flex;align-items:center;gap:7px">
+          Tổng tiền hàng <span class="bh-tron-sl">${soMon}</span>
+        </span>
+        <b style="font-size:17px">${fmt(phaiTra)}đ</b>
+      </div>
 
-    ${p.cachTra === 'tienmat' ? `
-      <div class="bh-o-tt">
-        ${dongTongTien}
+      ${p.cachTra === 'tienmat' ? `
         <div class="bh-dong-tt">
           <span>Khách thanh toán</span>
           <input type="number" id="bh-khach-dua" value="${khachDua}" onchange="bhDatKhachDua(this.value)"
@@ -4512,46 +4510,35 @@ function veDayDuoi() {
         </div>
         <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:7px">
           <span>Tiền thừa trả khách</span>
-          <b style="font-size:18px;color:${tienThua < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(tienThua)}đ</b>
+          <b style="font-size:17px;color:${tienThua < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(tienThua)}đ</b>
+        </div>` : ''}
+
+      ${p.cachTra === 'ketHop' ? `
+        <div class="bh-dong-tt">
+          <span>Tiền mặt</span>
+          <input type="number" id="bh-tien-mat" value="${p.tienMat ?? ''}" placeholder="0" onchange="bhDatTienMat(this.value)"
+            style="width:130px;padding:7px;text-align:right;font-size:16px;font-weight:600">
         </div>
-      </div>` : ''}
+        <div class="bh-dong-tt">
+          <span>Chuyển khoản</span><b style="color:#2563EB">${fmt(canCK)}đ</b>
+        </div>` : ''}
+    </div>
 
-    ${p.cachTra !== 'tienmat' ? `
-      <div class="bh-o-tt">
-        ${dongTongTien}
-        ${p.cachTra === 'ketHop' ? `
-          <div class="bh-dong-tt">
-            <span>Tiền mặt</span>
-            <input type="number" id="bh-tien-mat" value="${p.tienMat ?? ''}" placeholder="0" onchange="bhDatTienMat(this.value)"
-              style="width:130px;padding:7px;text-align:right;font-size:16px;font-weight:600">
-          </div>
-          <div class="bh-dong-tt">
-            <span>Chuyển khoản</span><b style="color:#2563EB">${fmt(canCK)}đ</b>
-          </div>` : ''}
+    ${canCK > 0 ? `
+      ${p.thuGon ? '' : veKhoiQR(p, canCK)}
+      <button class="bh-nut-thu-gon" onclick="bhThuGon()">
+        ${p.thuGon ? '▾ Hiện mã QR' : '▴ Thu gọn'}
+      </button>` : ''}
 
-        ${canCK > 0 ? `
-          <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px">
-            ${veTrangThaiCK(p, canCK)}
-            <button class="bh-nut-thu-gon" onclick="bhThuGon()">
-              ${p.thuGon ? '▾ Hiện mã QR' : '▴ Thu gọn'}
-            </button>
-            ${p.thuGon ? '' : veKhoiQR(p, canCK)}
-          </div>` : ''}
-      </div>` : ''}
+    <div class="bh-hang-gat">
+      ${nutGat('tienmat', '💵 Tiền mặt')}
+      ${nutGat('chuyenkhoan', '🏦 Chuyển khoản')}
+      ${nutGat('ketHop', '⇄ Kết hợp')}
+    </div>
 
-    <button class="btn-g" id="bh-nut-xong" style="width:100%;padding:14px;font-size:16px"
-      onclick="bhHoanThanh()">✓ Hoàn thành${phaiTra ? ` · ${fmt(phaiTra)}đ` : ''}</button>`;
-}
-
-// Dòng trạng thái tiền về — KHÔNG phải nút bấm để "kiểm tra", mà là trạng thái
-// tự đổi khi nhận được tiền. Chạm vào để xác nhận tay khi chưa nối dịch vụ đối soát.
-function veTrangThaiCK(p, soTien) {
-  if (p.daNhanCK) {
-    return `<div class="bh-tt-ck da-nhan">✓ Đã nhận ${fmt(soTien)}đ${p.xacNhanTay ? ' (xác nhận tay)' : ''}</div>`;
-  }
-  return `<div class="bh-tt-ck cho" onclick="bhXacNhanTienVe()">
-    <span class="bh-cham-nhap-nhay"></span> Đang chờ chuyển khoản ${fmt(soTien)}đ
-  </div>`;
+    <button class="${choTien ? 'bh-nut-cho' : 'btn-g'}" id="bh-nut-xong"
+      style="width:100%;padding:14px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:7px"
+      onclick="${choTien ? 'bhXacNhanTienVe()' : 'bhHoanThanh()'}">${nhanNut}</button>`;
 }
 
 function veKhoiQR(p, soTien) {
@@ -9864,6 +9851,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 
 .bh-nut-thu-gon{width:100%;border:none;background:transparent;color:var(--text2);
   font-size:12px;padding:5px 0;cursor:pointer}
+
+/* Nút Hoàn thành khi chưa nhận tiền chuyển khoản — xám, chạm vào để xác nhận */
+.bh-nut-cho{border:1.5px solid var(--border);background:var(--bg);color:var(--text2);
+  border-radius:8px;font-weight:600;cursor:pointer}
+.bh-nut-cho:active{background:#E5E7EB}
 .bh-nut-thu-gon:hover{color:var(--text)}
 .bh-nut-gat.sang{border-color:var(--green);background:var(--green);color:#fff}
 .bh-o-tt{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px;margin-bottom:8px}
@@ -10191,7 +10183,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v271</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v272</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10245,7 +10237,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v271</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v272</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10287,7 +10279,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v271</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v272</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
