@@ -4635,6 +4635,14 @@ async function renderBanHang() {
   veManHinhBanHang();
 }
 
+// Dấu vân tay giỏ hàng — dùng để biết đơn có đổi sau khi đã tạo QR không.
+// Gồm mã hàng, số lượng, giá, giảm giá và phần tiền mặt (đơn kết hợp đổi tiền mặt
+// thì số cần chuyển khoản cũng đổi, QR cũ sai).
+function bhVanTayGio(p) {
+  const g = (p.gio || []).map(d => `${d.sku}:${d.soLuong}:${d.gia}:${d.giamGia || 0}`).sort().join('|');
+  return `${g}#${p.cachTra}#${p.cachTra === 'ketHop' ? (Number(p.tienMat) || 0) : 0}`;
+}
+
 function bhTinhTien(p) {
   const g = p?.gio || [];
   const tongHang = g.reduce((s, d) => s + (Number(d.gia) || 0) * (Number(d.soLuong) || 0), 0);
@@ -4744,8 +4752,15 @@ function veDayDuoi() {
   // Nút Thanh toán: tiền mặt bấm là xong. Chuyển khoản/kết hợp thì mở khung QR —
   // chỉ tạo mã khi nhân viên chủ động bấm, tránh sinh mã ảo mỗi lần sửa giỏ hàng.
   const chiTienMat = canCK <= 0;
+  // Đã tạo QR mà giỏ đổi -> nhắc nhân viên biết mã cũ không còn đúng
+  const daLechQR = p.maHoaDonKV && p.vanTayLucTaoQR && p.vanTayLucTaoQR !== bhVanTayGio(p);
 
   el.innerHTML = `
+    ${daLechQR ? `
+      <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#92400E">
+        Đơn đã đổi sau khi tạo mã <b>${escHtml(p.maHoaDonKV)}</b> — bấm Thanh toán sẽ tạo mã mới,
+        hóa đơn cũ cần hủy trong KiotViet.
+      </div>` : ''}
     <div class="bh-o-tt">
       <div class="bh-dong-tt">
         <span style="display:flex;align-items:center;gap:7px">
@@ -4810,6 +4825,19 @@ window.bhMoKhungQR = async function() {
   if (vuot.length && !confirm(
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán?`)) return;
 
+  // Giỏ không đổi từ lần tạo QR trước -> dùng lại mã cũ, khỏi tạo hóa đơn mới.
+  // Đổi rồi thì phải tạo lại, vì QR cũ mang số tiền cũ.
+  const vanTay = bhVanTayGio(p);
+  if (p.maHoaDonKV && p.vanTayLucTaoQR === vanTay && p.anhQRDaTao) {
+    veKhungQR({ anhQR: p.anhQRDaTao, soTien: canCK, maHoaDon: p.maHoaDonKV });
+    bhNgheThanhToan(p.maHoaDonKV, canCK);
+    return;
+  }
+  if (p.maHoaDonKV && p.vanTayLucTaoQR !== vanTay) {
+    if (!confirm(`Đơn đã thay đổi từ lần tạo mã trước.\n\n`
+      + `Hóa đơn ${p.maHoaDonKV} bên KiotViet cần hủy thủ công.\n\nTạo mã mới?`)) return;
+  }
+
   veKhungQR({ dangTao: true });
 
   try {
@@ -4832,6 +4860,8 @@ window.bhMoKhungQR = async function() {
 
     p.maHoaDonKV = data.maHoaDon;
     p.tienMatDaChot = tienMat;
+    p.vanTayLucTaoQR = vanTay;
+    p.anhQRDaTao = data.qr?.anhQR || null;
     bhLuu();
     veKhungQR({ anhQR: data.qr?.anhQR, soTien: canCK, maHoaDon: data.maHoaDon });
     bhNgheThanhToan(data.maHoaDon, canCK);
@@ -10616,7 +10646,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v289</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v290</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10670,7 +10700,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v289</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v290</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10712,7 +10742,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v289</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v290</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
