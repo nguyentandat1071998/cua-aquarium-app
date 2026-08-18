@@ -1370,7 +1370,9 @@ window.switchModule = function(mod) {
     renderThietLapThanhToan();
     return;
   }
-  if (mod !== 'banhang' && typeof bhTatKiemTraTuDong === 'function') bhTatKiemTraTuDong();
+  // Rời màn hình Bán hàng thì dừng tra hóa đơn — nếu không, vòng lặp chạy ngầm
+  // suốt 6 phút dù nhân viên đã sang việc khác.
+  if (mod !== 'banhang' && typeof bhThoiNghe === 'function') bhThoiNghe();
   if (mod === 'banhang') {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-banhang-main').style.display = 'block';
@@ -4957,9 +4959,12 @@ function bhNgheThanhToan(maHoaDon, soTien) {
     if (snap.exists() && snap.data()?.daTraDu) xong();
   }, (e) => console.warn('Lỗi nghe thanh toán:', e));
 
-  // Đường 2: hỏi thẳng KiotViet làm dự phòng. Chờ 1 phút rưỡi rồi mới hỏi lần đầu —
-  // khách lấy máy ra quét cũng mất chừng đó, hỏi sớm hơn là phí request.
+  // Đường 2 mới là đường chính. KiotViet tạo PHIẾU THU riêng khi tiền về chứ không
+  // sửa hóa đơn, nên không bắn invoice.update — webhook chỉ tới lúc tạo hóa đơn.
+  // Hỏi mỗi 8 giây, dừng sau 6 phút để không chạy ngầm mãi.
+  let soLanHoi = 0;
   const hoi = async () => {
+    if (++soLanHoi > 45) { bhThoiNghe(); return; }
     try {
       const idToken = await currentUser.getIdToken();
       const res = await fetch(WORKER_URL, {
@@ -4973,9 +4978,22 @@ function bhNgheThanhToan(maHoaDon, soTien) {
   };
   bhHenLanDau = setTimeout(() => {
     hoi();
-    bhDongHoTra = setInterval(hoi, 30000);   // sau đó 30 giây một lần
-  }, 90000);
+    bhDongHoTra = setInterval(hoi, 8000);
+  }, 8000);
 }
+
+// Điện thoại khóa màn hình hay chuyển sang app khác: trình duyệt vẫn giữ hẹn giờ.
+// Dừng hẳn khi tab bị ẩn, mở lại thì tra một lần ngay rồi chạy tiếp.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (bhDongHoTra) { clearInterval(bhDongHoTra); bhDongHoTra = null; }
+    if (bhHenLanDau) { clearTimeout(bhHenLanDau); bhHenLanDau = null; }
+  } else {
+    const p = bhPhieuHienTai();
+    const khung = document.getElementById('bh-khung-qr');
+    if (p?.maHoaDonKV && khung?.style.display === 'flex') bhTraNgay();
+  }
+});
 
 function bhThoiNghe() {
   if (bhHuyNgheThanhToan) { bhHuyNgheThanhToan(); bhHuyNgheThanhToan = null; }
@@ -10718,7 +10736,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v293</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v295</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10772,7 +10790,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v293</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v295</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10814,7 +10832,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v293</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v295</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
