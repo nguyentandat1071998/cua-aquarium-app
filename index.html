@@ -4894,15 +4894,18 @@ function veKhungQR(tt) {
         </div>` : ''}
 
       ${tt.anhQR ? `
-        <div style="padding:18px;text-align:center">
+        <div style="padding:18px;text-align:center;position:relative">
+          <button onclick="bhDongKhungQR()" title="Đóng"
+            style="position:absolute;top:8px;right:10px;border:none;background:transparent;
+                   font-size:22px;color:var(--text2);cursor:pointer;line-height:1;padding:4px 8px">✕</button>
           <div style="font-size:13px;color:var(--text2)">Quét mã để thanh toán</div>
           <div style="font-size:26px;font-weight:700;color:var(--green);margin:4px 0 12px">${fmt(tt.soTien)}đ</div>
           <img src="${tt.anhQR}" style="width:100%;max-width:280px;border-radius:10px;background:#fff">
           <div style="font-size:11px;color:var(--text2);margin-top:8px">${escHtml(tt.maHoaDon || '')}</div>
-          <div id="bh-qr-trang-thai" class="bh-tt-ck cho" style="margin-top:14px">
+          <div id="bh-qr-trang-thai" class="bh-tt-ck cho" style="margin-top:14px" onclick="bhTraNgay()">
             <span class="bh-cham-nhap-nhay"></span> Đang chờ khách chuyển khoản
           </div>
-          <button class="btn-outline" style="width:100%;margin-top:10px" onclick="bhDongKhungQR(true)">Hủy đơn</button>
+          <div style="font-size:11px;color:var(--text2);margin-top:6px">Chạm dòng trên để kiểm tra ngay</div>
         </div>` : ''}
 
       ${tt.daTra ? `
@@ -4961,6 +4964,37 @@ function bhThoiNghe() {
   if (bhDongHoTra) { clearInterval(bhDongHoTra); bhDongHoTra = null; }
   if (bhHenLanDau) { clearTimeout(bhHenLanDau); bhHenLanDau = null; }
 }
+
+// Chạm vào dòng trạng thái để hỏi KiotViet ngay, khỏi chờ tới lượt tra định kỳ
+window.bhTraNgay = async function() {
+  const p = bhPhieuHienTai();
+  if (!p?.maHoaDonKV) return;
+  const el = document.getElementById('bh-qr-trang-thai');
+  if (el) el.innerHTML = 'Đang kiểm tra...';
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'tra-hoa-don-da-tra', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maHoaDon: p.maHoaDonKV })
+    });
+    const d = await res.json();
+    console.log('[tra hóa đơn]', d);
+    if (d.success && d.daTraDu) {
+      bhThoiNghe();
+      bip(1800, 160);
+      const { phaiTra } = bhTinhTien(p);
+      const tm = p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
+      veKhungQR({ daTra: true, soTien: Math.max(0, phaiTra - tm), maHoaDon: p.maHoaDonKV });
+      setTimeout(() => { bhDongKhungQR(); bhHoanThanh(true); }, 1400);
+      return;
+    }
+    if (el) el.innerHTML = `<span class="bh-cham-nhap-nhay"></span> `
+      + `Đã nhận ${fmt(d.daTra || 0)}đ / ${fmt(d.tongTien || 0)}đ`;
+  } catch(e) {
+    if (el) el.innerHTML = 'Lỗi kiểm tra: ' + escHtml(e.message);
+  }
+};
 
 window.bhDongKhungQR = function(huyDon) {
   bhThoiNghe();
@@ -10666,7 +10700,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v291</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v292</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10720,7 +10754,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v291</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v292</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10762,7 +10796,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v291</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v292</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
