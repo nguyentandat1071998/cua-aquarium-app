@@ -42,6 +42,10 @@ const secondaryAuth = getAuth(secondaryApp);
 // ===== CONFIG =====
 const WORKER_URL = 'https://cua-video-upload.nguyentandat1071998.workers.dev';
 
+// Chi nhánh ghi hóa đơn bán lẻ. Tạm dùng Sàn TMĐT để test, xong đổi về
+// Chi nhánh trung tâm (634586).
+const CHI_NHANH_BAN_LE = 650408;
+
 // ===== CHECKLIST DATA =====
 
 const CHECKLIST = {
@@ -4737,16 +4741,9 @@ function veDayDuoi() {
   const nutGat = (ma, nhan) => `
     <button class="bh-nut-gat ${p.cachTra === ma ? 'sang' : ''}" onclick="bhDoiCachTra('${ma}')">${nhan}</button>`;
 
-  // Nút Hoàn thành mang luôn trạng thái tiền về — xám khi chưa nhận, xanh khi đã nhận
-  // Lưu số tiền đã nhận chứ không phải cờ đúng/sai: nếu giỏ hàng đổi làm số tiền
-  // chuyển khoản đổi thì phải xác nhận lại, tránh nhận 100k mà giao đơn 500k.
-  const daNhanDu = Number(p.soTienDaNhan || 0) >= canCK && canCK > 0;
-  const choTien = canCK > 0 && !daNhanDu;
-  // Có tiền cần chuyển khoản mà chưa đủ -> tự tra sổ quỹ mỗi 8 giây
-  if (choTien) bhBatKiemTraTuDong(); else bhTatKiemTraTuDong();
-  const nhanNut = choTien
-    ? `<span class="bh-cham-nhap-nhay"></span> Đang chờ chuyển khoản ${fmt(canCK)}đ`
-    : (canCK > 0 ? `✓ Đã nhận ${fmt(canCK)}đ · Hoàn thành` : `✓ Hoàn thành`);
+  // Nút Thanh toán: tiền mặt bấm là xong. Chuyển khoản/kết hợp thì mở khung QR —
+  // chỉ tạo mã khi nhân viên chủ động bấm, tránh sinh mã ảo mỗi lần sửa giỏ hàng.
+  const chiTienMat = canCK <= 0;
 
   el.innerHTML = `
     <div class="bh-o-tt">
@@ -4779,60 +4776,150 @@ function veDayDuoi() {
         </div>` : ''}
     </div>
 
-    ${canCK > 0 ? `
-      <button class="bh-nut-thu-gon" onclick="bhThuGon()">
-        ${p.thuGon ? '▴ Hiện mã QR' : '▾ Thu gọn'}
-      </button>
-      ${p.thuGon ? '' : veKhoiQR(p, canCK)}` : ''}
-
     <div class="bh-hang-gat">
       ${nutGat('tienmat', '💵 Tiền mặt')}
       ${nutGat('chuyenkhoan', '🏦 Chuyển khoản')}
       ${nutGat('ketHop', '⇄ Kết hợp')}
     </div>
 
-    <button class="${choTien ? 'bh-nut-cho' : 'btn-g'}" id="bh-nut-xong"
-      style="width:100%;padding:14px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:7px"
-      onclick="${choTien ? 'bhXacNhanTienVe()' : 'bhHoanThanh()'}">${nhanNut}</button>`;
+    <button class="btn-g" id="bh-nut-xong"
+      style="width:100%;padding:14px;font-size:16px"
+      onclick="${chiTienMat ? 'bhHoanThanh()' : 'bhMoKhungQR()'}">
+      ${chiTienMat ? '✓ Thanh toán' : '💳 Thanh toán · ' + fmt(canCK) + 'đ'}
+    </button>`;
 }
 
-function veKhoiQR(p, soTien) {
-  const ch = layCauHinhQR();
-  if (!ch.stk || !ch.nganHang) {
-    return `<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:10px;margin-top:6px;font-size:12px;color:#92400E">
-      Chưa cấu hình tài khoản nhận tiền. Vào <b>Thiết lập → Thanh toán</b> để nhập.
-    </div>`;
-  }
-  const url = `https://img.vietqr.io/image/${encodeURIComponent(ch.nganHang)}-${encodeURIComponent(ch.stk)}-compact2.png`
-    + `?amount=${Math.round(soTien)}&addInfo=${encodeURIComponent(p.id)}`
-    + (ch.tenChu ? `&accountName=${encodeURIComponent(ch.tenChu)}` : '');
-  return `<div style="text-align:center;margin-top:6px">
-      <img src="${url}" alt="Ma QR" onclick="phongToQR('${url}')"
-        style="width:100%;max-width:190px;border-radius:8px;background:#fff;cursor:zoom-in">
-    </div>`;
-}
+// ===== KHUNG THANH TOÁN CHUYỂN KHOẢN =====
+// Bấm Thanh toán mới tạo hóa đơn KiotViet + mã QR. Khách quét, KiotViet nhận
+// thông báo từ ngân hàng rồi tự tạo phiếu thu, webhook đẩy về app — nhân viên
+// không phải xác nhận tay.
+let bhHuyNgheThanhToan = null;
 
-// Phong to ma QR de khach de quet - cham ra ngoai la dong
-window.phongToQR = function(url) {
-  let m = document.getElementById('qr-phong-to');
-  if (!m) {
-    m = document.createElement('div');
-    m.id = 'qr-phong-to';
-    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;'
-      + 'display:flex;align-items:center;justify-content:center;padding:20px';
-    m.onclick = () => m.style.display = 'none';
-    document.body.appendChild(m);
+window.bhMoKhungQR = async function() {
+  const p = bhPhieuHienTai();
+  if (!p || !p.gio.length) return;
+  const { phaiTra } = bhTinhTien(p);
+  const tienMat = p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
+  const canCK = Math.max(0, phaiTra - tienMat);
+  if (canCK <= 0) return bhHoanThanh();
+
+  const vuot = p.gio.filter(d => {
+    const sku = allSKUs.find(s => s.sku === d.sku);
+    return sku && d.soLuong > layTon(sku, 'cuahang');
+  });
+  if (vuot.length && !confirm(
+    `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán?`)) return;
+
+  veKhungQR({ dangTao: true });
+
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'tao-hoa-don-ban-le', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: p.gio.map(d => ({ sku: d.sku, soLuong: d.soLuong, gia: d.gia, giamGia: d.giamGia })),
+        tienMat, canChuyenKhoan: canCK,
+        branchId: CHI_NHANH_BAN_LE,
+        ghiChu: p.ghiChu || '',
+        nguoiBan: currentUserData?.ten || ''
+      })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Không tạo được hóa đơn');
+    if (data.qr?.loi) throw new Error(data.qr.loi === 'TOKEN_HET_HAN'
+      ? 'Token KiotViet hết hạn — báo quản lý cập nhật' : data.qr.loi);
+
+    p.maHoaDonKV = data.maHoaDon;
+    p.tienMatDaChot = tienMat;
+    bhLuu();
+    veKhungQR({ anhQR: data.qr?.anhQR, soTien: canCK, maHoaDon: data.maHoaDon });
+    bhNgheThanhToan(data.maHoaDon, canCK);
+  } catch(e) {
+    veKhungQR({ loi: e.message });
   }
-  m.innerHTML = `<div style="text-align:center">
-      <img src="${url}" style="width:100%;max-width:340px;border-radius:12px;background:#fff">
-      <div style="color:#fff;font-size:13px;margin-top:12px;opacity:.8">Cham de dong</div>
-    </div>`;
-  m.style.display = 'flex';
 };
 
-// Tài khoản nhận tiền lưu trên MÁY CHỦ, không phải trên máy nhân viên.
-// Nếu để localStorage thì ai ngồi máy đó cũng sửa được số tài khoản, tiền khách
-// chuyển đi đâu không ai biết. Rules chỉ cho Admin ghi.
+function veKhungQR(tt) {
+  let m = document.getElementById('bh-khung-qr');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'bh-khung-qr';
+    m.className = 'bh-qr-nen';
+    document.body.appendChild(m);
+  }
+  m.innerHTML = `
+    <div class="bh-qr-hop">
+      ${tt.dangTao ? `
+        <div style="padding:50px 20px;text-align:center">
+          <div class="loading">Đang tạo mã thanh toán...</div>
+        </div>` : ''}
+
+      ${tt.loi ? `
+        <div style="padding:24px;text-align:center">
+          <div style="font-size:40px;margin-bottom:10px">⚠️</div>
+          <div style="color:var(--red);font-weight:600;margin-bottom:6px">Không tạo được mã</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:16px">${escHtml(tt.loi)}</div>
+          <button class="btn-outline" style="width:100%" onclick="bhDongKhungQR()">Đóng</button>
+        </div>` : ''}
+
+      ${tt.anhQR ? `
+        <div style="padding:18px;text-align:center">
+          <div style="font-size:13px;color:var(--text2)">Quét mã để thanh toán</div>
+          <div style="font-size:26px;font-weight:700;color:var(--green);margin:4px 0 12px">${fmt(tt.soTien)}đ</div>
+          <img src="${tt.anhQR}" style="width:100%;max-width:280px;border-radius:10px;background:#fff">
+          <div style="font-size:11px;color:var(--text2);margin-top:8px">${escHtml(tt.maHoaDon || '')}</div>
+          <div id="bh-qr-trang-thai" class="bh-tt-ck cho" style="margin-top:14px">
+            <span class="bh-cham-nhap-nhay"></span> Đang chờ khách chuyển khoản
+          </div>
+          <button class="btn-outline" style="width:100%;margin-top:10px" onclick="bhDongKhungQR(true)">Hủy đơn</button>
+        </div>` : ''}
+
+      ${tt.daTra ? `
+        <div style="padding:34px 24px;text-align:center">
+          <div style="font-size:52px">✅</div>
+          <div style="font-size:20px;font-weight:700;color:var(--green);margin:8px 0">Đã nhận ${fmt(tt.soTien)}đ</div>
+          <div style="font-size:13px;color:var(--text2)">${escHtml(tt.maHoaDon || '')}</div>
+        </div>` : ''}
+    </div>`;
+  m.style.display = 'flex';
+}
+
+// Nghe Firestore thay vì hỏi KiotViet liên tục — webhook ghi vào đây khi tiền về
+function bhNgheThanhToan(maHoaDon, soTien) {
+  bhThoiNghe();
+  bhHuyNgheThanhToan = onSnapshot(doc(db, 'thanh_toan_ban_le', maHoaDon), (snap) => {
+    if (!snap.exists()) return;
+    const d = snap.data();
+    if (!d.daTraDu) return;
+    bhThoiNghe();
+    bip(1800, 160);
+    if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+    veKhungQR({ daTra: true, soTien, maHoaDon });
+    setTimeout(() => { bhDongKhungQR(); bhHoanThanh(true); }, 1400);
+  }, (e) => console.warn('Lỗi nghe thanh toán:', e));
+}
+
+function bhThoiNghe() {
+  if (bhHuyNgheThanhToan) { bhHuyNgheThanhToan(); bhHuyNgheThanhToan = null; }
+}
+
+window.bhDongKhungQR = function(huyDon) {
+  bhThoiNghe();
+  const m = document.getElementById('bh-khung-qr');
+  if (m) m.style.display = 'none';
+  if (huyDon) {
+    const p = bhPhieuHienTai();
+    if (p && !confirm(`Hủy đơn này?\n\nHóa đơn ${p.maHoaDonKV || ''} bên KiotViet cần hủy thủ công.`)) {
+      if (m) m.style.display = 'flex';
+      bhNgheThanhToan(p.maHoaDonKV, 0);
+      return;
+    }
+  }
+};
+
+// Tài khoản nhận tiền lưu trên MÁY CHỦ, không phải máy nhân viên — rules chỉ cho
+// Admin ghi, tránh người ngồi quầy đổi số tài khoản để tiền chảy sang chỗ khác.
 let cauHinhThanhToan = null;
 
 async function napCauHinhThanhToan() {
@@ -5043,7 +5130,7 @@ window.bhDatTienMat = function(v) {
   bhLuu(); veDayDuoi();   // số tiền đổi -> so với soTienDaNhan sẽ tự biết còn thiếu
 };
 
-window.bhHoanThanh = async function() {
+window.bhHoanThanh = async function(daTraQuaQR) {
   const p = bhPhieuHienTai();
   if (!p || !p.gio.length) return;
   const { tongHang, tongGiam, phaiTra } = bhTinhTien(p);
@@ -5051,9 +5138,9 @@ window.bhHoanThanh = async function() {
                 : p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
   const canCK = Math.max(0, phaiTra - tienMat);
 
-  // CHẶN hoàn thành khi tiền chuyển khoản chưa về — điểm khác biệt chính so với KiotViet
-  if (canCK > 0 && Number(p.soTienDaNhan || 0) < canCK) {
-    alert(`Chưa nhận được ${fmt(canCK)}đ chuyển khoản.\n\nBấm "Kiểm tra giao dịch" và chắc chắn tiền đã về trước khi giao hàng.`);
+  // Chuyển khoản phải đi qua khung QR — không cho hoàn thành thẳng
+  if (canCK > 0 && !daTraQuaQR) {
+    alert(`Đơn còn ${fmt(canCK)}đ chuyển khoản.\n\nBấm "Thanh toán" để hiện mã QR cho khách quét.`);
     return;
   }
 
@@ -5074,7 +5161,7 @@ window.bhHoanThanh = async function() {
       cachThanhToan: p.cachTra,
       tienMat, tienChuyenKhoan: canCK,
       khachDua: p.cachTra === 'tienmat' ? (Number(p.khachDua ?? phaiTra) || 0) : null,
-      xacNhanCKBangTay: !!p.xacNhanTay,
+      maHoaDonKiotViet: p.maHoaDonKV || null,
       trangThai: 'hoan_thanh',
       ghiChu: p.ghiChu || '',
       nguoiBan: { uid: currentUser.uid, ten: currentUserData?.ten || currentUser?.email || '' },
@@ -10168,6 +10255,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bh-nut-cho{border:1.5px solid var(--border);background:var(--bg);color:var(--text2);
   border-radius:8px;font-weight:600;cursor:pointer}
 .bh-nut-cho:active{background:#E5E7EB}
+
+/* Khung QR toàn màn hình — khách quét trực tiếp trên máy nhân viên */
+.bh-qr-nen{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1500;
+  align-items:center;justify-content:center;padding:16px}
+.bh-qr-hop{background:var(--surface);border-radius:14px;width:100%;max-width:340px;
+  box-shadow:0 8px 32px rgba(0,0,0,.3)}
 .bh-nut-thu-gon:hover{color:var(--text)}
 .bh-nut-gat.sang{border-color:var(--green);background:var(--green);color:#fff}
 .bh-o-tt{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px;margin-bottom:8px}
@@ -10495,7 +10588,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v286</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v287</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10549,7 +10642,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v286</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v287</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10591,7 +10684,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v286</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v287</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
