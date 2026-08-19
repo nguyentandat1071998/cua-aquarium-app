@@ -4687,7 +4687,11 @@ function veManHinhDonDaBan() {
           <div style="display:flex;flex-direction:column;gap:4px">
             <button class="btn-xs" onclick="guiLenhIn('${d.id}')">🖨 In ở quầy</button>
             <button class="btn-xs" onclick="inHoaDon('${d.id}')" title="In bằng máy in của thiết bị này">📄 In máy này</button>
+            ${d.maHoaDonKiotViet && !d.daHuy ? `<button class="btn-xs" style="background:#FEF3C7;color:#92400E" onclick="moTraHang('${d.id}')">↩ Trả hàng</button>` : ''}
           </div>
+          ${d.lanTra?.length ? `<div style="font-size:11px;color:#D97706;margin-top:4px">
+            Đã trả ${d.lanTra.length} lần · hoàn ${fmt(d.lanTra.reduce((s,x)=>s+(x.tienHoan||0),0))}đ
+          </div>` : ''}
         </div>
       </div>`;
     }).join('')}`;
@@ -4695,6 +4699,174 @@ function veManHinhDonDaBan() {
 
 window.ddbDoiNgay = async function(ngay) { ddbNgay = ngay; await napDonDaBan(); veManHinhDonDaBan(); };
 window.ddbLocNV = function(ten) { ddbLocNguoiBan = ten; veManHinhDonDaBan(); };
+
+// ==========================================================================
+// ===== TRẢ HÀNG =====
+// Public API không có phiếu trả riêng, nên trả hàng = sửa hóa đơn gốc, giảm
+// số lượng đi. KiotViet tự cộng lại kho của họ, app cộng lại kho cửa hàng.
+// Tiền hoàn trả bằng tiền mặt — app chỉ ghi nhận, nhân viên đưa tiền cho khách.
+// ==========================================================================
+let thDon = null;
+let thSoLuongTra = {};
+
+window.moTraHang = function(idDon) {
+  const d = ddbDanhSach.find(x => x.id === idDon);
+  if (!d) return;
+  thDon = d;
+  thSoLuongTra = {};
+  veKhungTraHang();
+};
+
+function veKhungTraHang() {
+  let m = document.getElementById('tra-hang-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'tra-hang-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1400;'
+      + 'display:flex;align-items:flex-end;justify-content:center';
+    m.onclick = (e) => { if (e.target === m) dongTraHang(); };
+    document.body.appendChild(m);
+  }
+  const d = thDon;
+  if (!d) return;
+
+  // Trừ đi phần đã trả ở các lần trước, tránh trả quá số đã bán
+  const daTraTruoc = {};
+  for (const lan of (d.lanTra || [])) {
+    for (const x of (lan.hang || [])) daTraTruoc[x.sku] = (daTraTruoc[x.sku] || 0) + x.soLuong;
+  }
+
+  let tienHoan = 0;
+  for (const h of (d.dongHang || [])) {
+    const sl = Number(thSoLuongTra[h.sku]) || 0;
+    const giaThuc = h.soLuong > 0 ? (h.gia * h.soLuong - (h.giamGia || 0)) / h.soLuong : 0;
+    tienHoan += Math.round(giaThuc * sl);
+  }
+
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:520px;max-height:88vh;
+                border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+      <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;
+                  justify-content:space-between;align-items:center">
+        <div>
+          <b style="font-size:15px">Trả hàng</b>
+          <div style="font-size:12px;color:var(--text2)">${escHtml(d.maHoaDonKiotViet || d.maDon)}</div>
+        </div>
+        <button class="btn-outline" style="width:auto;padding:6px 12px" onclick="dongTraHang()">✕</button>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:12px 14px">
+        ${(d.dongHang || []).map(h => {
+          const conLai = h.soLuong - (daTraTruoc[h.sku] || 0);
+          const dangTra = Number(thSoLuongTra[h.sku]) || 0;
+          return `
+          <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;
+                      ${conLai <= 0 ? 'opacity:.45' : ''}">
+            <div style="font-weight:600;font-size:14px">${escHtml(h.ten)}</div>
+            <div style="font-size:11px;color:var(--text2)">
+              ${escHtml(h.sku)} · ${fmt(h.gia)}đ · đã bán ${h.soLuong}
+              ${daTraTruoc[h.sku] ? ` · đã trả ${daTraTruoc[h.sku]}` : ''}
+            </div>
+            ${conLai > 0 ? `
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+              <span style="font-size:12px;color:var(--text2);flex:1">Số lượng trả (tối đa ${conLai})</span>
+              <button class="btn-xs" style="width:34px" onclick="thDoiSL('${escHtml(h.sku)}',-1,${conLai})">−</button>
+              <input type="number" min="0" max="${conLai}" value="${dangTra || ''}" placeholder="0"
+                onchange="thDatSL('${escHtml(h.sku)}',this.value,${conLai})"
+                style="width:56px;padding:7px;text-align:center;font-size:15px;font-weight:600">
+              <button class="btn-xs" style="width:34px" onclick="thDoiSL('${escHtml(h.sku)}',1,${conLai})">+</button>
+            </div>` : '<div style="font-size:12px;color:var(--text2);margin-top:6px">Đã trả hết</div>'}
+          </div>`;
+        }).join('')}
+      </div>
+
+      <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg)">
+        <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;margin-bottom:10px">
+          <span>Hoàn tiền mặt</span>
+          <span style="color:#D97706">${fmt(tienHoan)}đ</span>
+        </div>
+        <button class="btn-g" style="width:100%;padding:13px"
+          ${tienHoan <= 0 ? 'disabled style="opacity:.5;width:100%;padding:13px"' : ''}
+          onclick="xacNhanTraHang()">↩ Xác nhận trả hàng</button>
+      </div>
+    </div>`;
+  m.style.display = 'flex';
+}
+
+window.thDoiSL = function(sku, d, toiDa) {
+  const hienTai = Number(thSoLuongTra[sku]) || 0;
+  thSoLuongTra[sku] = Math.max(0, Math.min(toiDa, hienTai + d));
+  veKhungTraHang();
+};
+window.thDatSL = function(sku, v, toiDa) {
+  thSoLuongTra[sku] = Math.max(0, Math.min(toiDa, parseInt(v) || 0));
+  veKhungTraHang();
+};
+window.dongTraHang = function() {
+  const m = document.getElementById('tra-hang-modal');
+  if (m) m.style.display = 'none';
+  thDon = null; thSoLuongTra = {};
+};
+
+window.xacNhanTraHang = async function() {
+  const d = thDon;
+  if (!d) return;
+  const hang = Object.entries(thSoLuongTra)
+    .filter(([, sl]) => Number(sl) > 0)
+    .map(([sku, sl]) => {
+      const h = (d.dongHang || []).find(x => x.sku === sku);
+      const giaThuc = h && h.soLuong > 0 ? (h.gia * h.soLuong - (h.giamGia || 0)) / h.soLuong : 0;
+      return { sku, ten: h?.ten || sku, soLuong: Number(sl), tienHoan: Math.round(giaThuc * Number(sl)) };
+    });
+  if (!hang.length) return;
+  const tongHoan = hang.reduce((s, x) => s + x.tienHoan, 0);
+
+  if (!confirm(`Trả ${hang.length} mã · hoàn ${fmt(tongHoan)}đ tiền mặt cho khách?\n\n`
+    + hang.map(x => `· ${x.ten} ×${x.soLuong}`).join('\n'))) return;
+
+  try {
+    // 1. Sửa hóa đơn KiotViet — họ tự cộng lại kho bên đó
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'tra-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        maHoaDon: d.maHoaDonKiotViet,
+        traVe: hang.map(x => ({ sku: x.sku, soLuong: x.soLuong }))
+      })
+    });
+    const kq = await res.json();
+    if (!kq.success) {
+      if (kq.traToanBo) {
+        alert('Trả toàn bộ hàng thì phải hủy hóa đơn, không dùng trả hàng.\n\nVào KiotViet hủy hóa đơn này.');
+        return;
+      }
+      throw new Error(kq.error || 'Không sửa được hóa đơn');
+    }
+
+    // 2. Cộng lại kho cửa hàng + ghi thẻ kho
+    await dieuChinhTonKhoApp(
+      hang.map(x => ({ sku: x.sku, sl: x.soLuong })), +1, 'cuahang',
+      { loai: 'Trả hàng', ma: d.maHoaDonKiotViet || d.maDon });
+
+    // 3. Ghi lại lần trả vào đơn — để lần sau không cho trả quá số đã bán
+    await updateDoc(doc(db, 'don_ban_le', d.id), {
+      lanTra: [...(d.lanTra || []), {
+        hang, tienHoan: tongHoan,
+        nguoiTra: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+        luc: new Date().toISOString()
+      }],
+      tongDaTra: (Number(d.tongDaTra) || 0) + tongHoan
+    });
+
+    dongTraHang();
+    showToast(`Đã trả hàng — hoàn ${fmt(tongHoan)}đ tiền mặt cho khách`);
+    await napDonDaBan();
+    veManHinhDonDaBan();
+  } catch(e) {
+    alert('Lỗi trả hàng: ' + e.message);
+  }
+};
 
 // ===== IN QUA MÁY TRUNG GIAN =====
 // Trình duyệt không mở được kết nối tới máy in nhiệt trong mạng LAN (rào bảo mật),
@@ -4731,6 +4903,29 @@ window.guiLenhIn = async function(idDon) {
   } catch(e) {
     alert('Không gửi được lệnh in: ' + e.message);
   }
+};
+
+// Dò cách sửa hóa đơn KiotViet — dùng để làm chức năng trả hàng.
+// Gọi: doSuaHoaDon('HD012080')
+window.doSuaHoaDon = async function(maHoaDon) {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  if (!maHoaDon) { console.error('Cần mã hóa đơn'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'do-sua-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maHoaDon })
+  });
+  const data = await res.json();
+  if (!data.success) { console.error('LỖI:', data.error); return data; }
+  console.log(`${data.maHoaDon} · ${data.soDongHang} dòng hàng`);
+  console.log('Cách sửa chạy được:', data.cachDung || '(không có)');
+  console.table(data.cachSuaDaThu.map(k => ({ cach: k.cach, httpStatus: k.httpStatus, thanhCong: k.thanhCong })));
+  data.cachSuaDaThu.forEach(k => { if (!k.thanhCong && k.httpStatus !== 404) console.log(`${k.cach}:`, k.phanHoi); });
+  console.log('--- Endpoint trả hàng ---');
+  console.table(data.endpointTraHang);
+  data.endpointTraHang.filter(x => x.coDuLieu).forEach(x => console.log(x.duongDan, x.noiDung));
+  return data;
 };
 
 // Xem lệnh in đã vào Firestore chưa — dùng khi bấm In mà máy in không chạy.
@@ -5749,9 +5944,15 @@ async function renderThietLapThanhToan() {
         </select>
       </div>
 
-      <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px">
-        <input type="checkbox" id="mi-bo-dau" ${laAdmin ? '' : 'disabled'}>
-        <span>In không dấu (dùng khi không bảng mã nào hiện đúng)</span>
+      <label style="display:flex;align-items:start;gap:8px;margin-bottom:12px;font-size:14px;cursor:pointer">
+        <input type="checkbox" id="mi-bo-dau" ${laAdmin ? '' : 'disabled'} style="margin-top:3px">
+        <span>
+          <b>In không dấu</b>
+          <div style="font-size:12px;color:var(--text2)">
+            Bật khi máy in không hỗ trợ tiếng Việt. Hóa đơn thành
+            "Artemia say kho - Hu 80g" — vẫn đọc được bình thường.
+          </div>
+        </span>
       </label>
 
       ${laAdmin ? `<button class="btn-g" style="width:100%" onclick="luuCauHinhMayIn()">Lưu cấu hình máy in</button>` : ''}
@@ -11118,7 +11319,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v306</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v309</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11172,7 +11373,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v306</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v309</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11214,7 +11415,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v306</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v309</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
