@@ -4922,10 +4922,9 @@ function veKhungQR(tt) {
           <div style="font-size:26px;font-weight:700;color:var(--green);margin:4px 0 12px">${fmt(tt.soTien)}đ</div>
           <img src="${tt.anhQR}" style="width:100%;max-width:280px;border-radius:10px;background:#fff">
           <div style="font-size:11px;color:var(--text2);margin-top:8px">${escHtml(tt.maHoaDon || '')}</div>
-          <div id="bh-qr-trang-thai" class="bh-tt-ck cho" style="margin-top:14px" onclick="bhTraNgay()">
+          <div id="bh-qr-trang-thai" class="bh-tt-ck cho" style="margin-top:14px">
             <span class="bh-cham-nhap-nhay"></span> Đang chờ khách chuyển khoản
           </div>
-          <div style="font-size:11px;color:var(--text2);margin-top:6px">Chạm dòng trên để kiểm tra ngay</div>
         </div>` : ''}
 
       ${tt.daTra ? `
@@ -4964,7 +4963,21 @@ function bhNgheThanhToan(maHoaDon, soTien) {
   // Hỏi mỗi 8 giây, dừng sau 6 phút để không chạy ngầm mãi.
   let soLanHoi = 0;
   const hoi = async () => {
-    if (++soLanHoi > 45) { bhThoiNghe(); return; }
+    // Dừng sau 6 phút để không chạy ngầm mãi, nhưng phải BÁO cho nhân viên biết —
+    // trước đây dừng im lặng, màn hình vẫn ghi "đang chờ" mà app không hỏi nữa.
+    if (++soLanHoi > 45) {
+      bhThoiNghe();
+      const el = document.getElementById('bh-qr-trang-thai');
+      if (el) {
+        el.className = 'bh-tt-ck cho';
+        el.innerHTML = '⏱ Đã chờ 6 phút — chạm để kiểm tra lại';
+        // Chỉ cho chạm SAU khi app ngừng tự hỏi. Trong 6 phút đầu app đã hỏi mỗi
+        // 8 giây rồi, cho chạm nữa chỉ khiến nhân viên bấm liên tục vô ích.
+        el.onclick = () => bhTraNgay();
+        el.style.cursor = 'pointer';
+      }
+      return;
+    }
     try {
       const idToken = await currentUser.getIdToken();
       const res = await fetch(WORKER_URL, {
@@ -5025,8 +5038,15 @@ window.bhTraNgay = async function() {
       setTimeout(() => { bhDongKhungQR(); bhHoanThanh(true); }, 1400);
       return;
     }
+    // Chưa đủ tiền -> hiện đã nhận bao nhiêu và CHỜ TIẾP, không bỏ mặc
     if (el) el.innerHTML = `<span class="bh-cham-nhap-nhay"></span> `
       + `Đã nhận ${fmt(d.daTra || 0)}đ / ${fmt(d.tongTien || 0)}đ`;
+    const p2 = bhPhieuHienTai();
+    if (p2?.maHoaDonKV) {
+      const { phaiTra } = bhTinhTien(p2);
+      const tm2 = p2.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p2.tienMat) || 0) : 0;
+      bhNgheThanhToan(p2.maHoaDonKV, Math.max(0, phaiTra - tm2));
+    }
   } catch(e) {
     if (el) el.innerHTML = 'Lỗi kiểm tra: ' + escHtml(e.message);
   }
@@ -10736,7 +10756,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v295</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v297</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10790,7 +10810,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v295</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v297</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10832,7 +10852,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v295</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v297</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
