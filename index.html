@@ -4616,6 +4616,8 @@ async function renderDonDaBan() {
   veManHinhDonDaBan();
 }
 
+let ddbPhieuTraCho = [];
+
 async function napDonDaBan() {
   const dau = new Date(ddbNgay + 'T00:00:00');
   const cuoi = new Date(ddbNgay + 'T23:59:59');
@@ -4627,6 +4629,15 @@ async function napDonDaBan() {
   } catch(e) {
     console.error('Lỗi tải đơn:', e);
     ddbDanhSach = [];
+  }
+  // Phiếu trả chờ duyệt — không lọc theo ngày vì phiếu cũ chưa duyệt vẫn phải thấy
+  try {
+    const s2 = await getDocs(query(collection(db, 'phieu_tra_hang'),
+      where('trangThai', '==', 'cho_duyet'), limit(50)));
+    ddbPhieuTraCho = s2.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    console.warn('Không tải được phiếu trả:', e.message);
+    ddbPhieuTraCho = [];
   }
 }
 
@@ -4665,6 +4676,24 @@ function veManHinhDonDaBan() {
         <span>🏦 Chuyển khoản: <b style="color:var(--text)">${fmt(chuyenKhoan)}đ</b></span>
       </div>
     </div>
+
+    ${ddbPhieuTraCho.length ? `
+      <div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:10px;padding:12px;margin-bottom:12px">
+        <b style="font-size:14px;color:#92400E">↩ ${ddbPhieuTraCho.length} phiếu trả hàng chờ duyệt</b>
+        ${ddbPhieuTraCho.map(p => `
+          <div style="background:#fff;border-radius:8px;padding:10px;margin-top:8px">
+            <div style="font-size:13px;font-weight:600">${escHtml(p.maHoaDonKiotViet || p.maDon)} · hoàn ${fmt(p.tienHoan)}đ</div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:6px">
+              ${escHtml(p.nguoiTao?.ten || '')} tạo ·
+              ${(p.hang || []).map(x => `${escHtml(x.ten)} ×${x.soLuong}`).join(', ')}
+            </div>
+            ${xemHet ? `
+              <div style="display:flex;gap:6px">
+                <button class="btn-xs" style="flex:1;background:#DCFCE7;color:#15803D" onclick="duyetPhieuTra('${p.id}')">✓ Duyệt</button>
+                <button class="btn-xs" style="flex:1;background:#FEE2E2;color:#DC2626" onclick="tuChoiPhieuTra('${p.id}')">✕ Từ chối</button>
+              </div>` : '<div style="font-size:11px;color:#92400E">Chờ quản lý duyệt</div>'}
+          </div>`).join('')}
+      </div>` : ''}
 
     ${!ds.length ? '<p class="info-note">Chưa có đơn nào trong ngày.</p>' : ds.map(d => {
       const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : null;
@@ -4824,48 +4853,100 @@ window.xacNhanTraHang = async function() {
   if (!confirm(`Trả ${hang.length} mã · hoàn ${fmt(tongHoan)}đ tiền mặt cho khách?\n\n`
     + hang.map(x => `· ${x.ten} ×${x.soLuong}`).join('\n'))) return;
 
+  // Nhân viên chỉ tạo phiếu tạm — quản lý duyệt mới thực sự sửa hóa đơn và
+  // cộng kho. Tránh nhân viên tự hoàn tiền rồi không ai kiểm tra.
   try {
-    // 1. Sửa hóa đơn KiotViet — họ tự cộng lại kho bên đó
+    await addDoc(collection(db, 'phieu_tra_hang'), {
+      idDonBanLe: d.id,
+      maDon: d.maDon,
+      maHoaDonKiotViet: d.maHoaDonKiotViet || '',
+      hang, tienHoan: tongHoan,
+      trangThai: 'cho_duyet',
+      nguoiTao: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+      taoLuc: serverTimestamp()
+    });
+    dongTraHang();
+    showToast(`Đã gửi phiếu trả ${fmt(tongHoan)}đ — chờ quản lý duyệt`);
+  } catch(e) {
+    alert('Lỗi tạo phiếu trả: ' + e.message);
+  }
+};
+
+// ===== DUYỆT PHIẾU TRẢ HÀNG =====
+// Chỉ quản lý/Admin. Duyệt xong mới sửa hóa đơn KiotViet và cộng lại kho.
+window.duyetPhieuTra = async function(idPhieu) {
+  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
+  if (!laQL) { showToast('Chỉ quản lý mới duyệt được', true); return; }
+
+  const snap = await getDoc(doc(db, 'phieu_tra_hang', idPhieu));
+  if (!snap.exists()) return;
+  const p = snap.data();
+  if (p.trangThai !== 'cho_duyet') { showToast('Phiếu này đã xử lý rồi', true); return; }
+
+  if (!confirm(`Duyệt trả ${p.hang.length} mã · hoàn ${fmt(p.tienHoan)}đ?\n\n`
+    + p.hang.map(x => `· ${x.ten} ×${x.soLuong}`).join('\n')
+    + `\n\nHóa đơn KiotViet sẽ được sửa và kho cộng lại.`)) return;
+
+  try {
     const idToken = await currentUser.getIdToken();
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': 'tra-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        maHoaDon: d.maHoaDonKiotViet,
-        traVe: hang.map(x => ({ sku: x.sku, soLuong: x.soLuong }))
+        maHoaDon: p.maHoaDonKiotViet,
+        traVe: p.hang.map(x => ({ sku: x.sku, soLuong: x.soLuong }))
       })
     });
     const kq = await res.json();
     if (!kq.success) {
-      if (kq.traToanBo) {
-        alert('Trả toàn bộ hàng thì phải hủy hóa đơn, không dùng trả hàng.\n\nVào KiotViet hủy hóa đơn này.');
-        return;
-      }
+      if (kq.traToanBo) { alert('Trả toàn bộ hàng thì phải hủy hóa đơn.\n\nVào KiotViet hủy hóa đơn này.'); return; }
       throw new Error(kq.error || 'Không sửa được hóa đơn');
     }
 
-    // 2. Cộng lại kho cửa hàng + ghi thẻ kho
     await dieuChinhTonKhoApp(
-      hang.map(x => ({ sku: x.sku, sl: x.soLuong })), +1, 'cuahang',
-      { loai: 'Trả hàng', ma: d.maHoaDonKiotViet || d.maDon });
+      p.hang.map(x => ({ sku: x.sku, sl: x.soLuong })), +1, 'cuahang',
+      { loai: 'Trả hàng', ma: p.maHoaDonKiotViet || p.maDon });
 
-    // 3. Ghi lại lần trả vào đơn — để lần sau không cho trả quá số đã bán
-    await updateDoc(doc(db, 'don_ban_le', d.id), {
-      lanTra: [...(d.lanTra || []), {
-        hang, tienHoan: tongHoan,
-        nguoiTra: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+    const dSnap = await getDoc(doc(db, 'don_ban_le', p.idDonBanLe));
+    const dCu = dSnap.exists() ? dSnap.data() : {};
+    await updateDoc(doc(db, 'don_ban_le', p.idDonBanLe), {
+      lanTra: [...(dCu.lanTra || []), {
+        hang: p.hang, tienHoan: p.tienHoan,
+        nguoiTra: p.nguoiTao,
+        nguoiDuyet: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
         luc: new Date().toISOString()
       }],
-      tongDaTra: (Number(d.tongDaTra) || 0) + tongHoan
+      tongDaTra: (Number(dCu.tongDaTra) || 0) + p.tienHoan
     });
 
-    dongTraHang();
-    showToast(`Đã trả hàng — hoàn ${fmt(tongHoan)}đ tiền mặt cho khách`);
+    await updateDoc(doc(db, 'phieu_tra_hang', idPhieu), {
+      trangThai: 'da_duyet',
+      nguoiDuyet: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+      duyetLuc: serverTimestamp()
+    });
+
+    showToast(`Đã duyệt — hoàn ${fmt(p.tienHoan)}đ tiền mặt cho khách`);
     await napDonDaBan();
     veManHinhDonDaBan();
   } catch(e) {
-    alert('Lỗi trả hàng: ' + e.message);
+    alert('Lỗi duyệt phiếu trả: ' + e.message);
   }
+};
+
+window.tuChoiPhieuTra = async function(idPhieu) {
+  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
+  if (!laQL) { showToast('Chỉ quản lý mới xử lý được', true); return; }
+  const lyDo = prompt('Lý do từ chối:');
+  if (lyDo === null) return;
+  await updateDoc(doc(db, 'phieu_tra_hang', idPhieu), {
+    trangThai: 'tu_choi',
+    lyDoTuChoi: lyDo || '',
+    nguoiDuyet: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+    duyetLuc: serverTimestamp()
+  });
+  showToast('Đã từ chối phiếu trả');
+  await napDonDaBan();
+  veManHinhDonDaBan();
 };
 
 // ===== IN QUA MÁY TRUNG GIAN =====
@@ -5802,8 +5883,17 @@ window.bhHoanThanh = async function(daTraQuaQR) {
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán? Tồn kho sẽ về âm.`)) return;
 
   try {
-    // Đơn tiền mặt chưa qua khung QR nên chưa có hóa đơn KiotViet -> tạo ở đây.
-    // Đơn chuyển khoản đã tạo lúc bấm Thanh toán, không tạo lại.
+    // Hóa đơn KiotViet có thể đã tạo lúc bấm Thanh toán (luồng chuyển khoản).
+    // Nhưng nếu sau đó nhân viên sửa giỏ rồi chuyển sang tiền mặt thì hóa đơn cũ
+    // mang số lượng cũ — phải hủy và tạo lại, nếu không sai cả tiền lẫn tồn kho.
+    const vanTayHienTai = bhVanTayGio(p);
+    if (p.maHoaDonKV && p.vanTayLucTaoQR && p.vanTayLucTaoQR !== vanTayHienTai) {
+      await bhHuyHoaDonCu(p.maHoaDonKV);
+      p.maHoaDonKV = null;
+      p.anhQRDaTao = null;
+      p.vanTayLucTaoQR = null;
+    }
+
     if (!p.maHoaDonKV) {
       const idToken = await currentUser.getIdToken();
       const rHD = await fetch(WORKER_URL, {
@@ -5820,6 +5910,7 @@ window.bhHoanThanh = async function(daTraQuaQR) {
       const dHD = await rHD.json();
       if (!dHD.success) throw new Error('Không tạo được hóa đơn KiotViet: ' + (dHD.error || ''));
       p.maHoaDonKV = dHD.maHoaDon;
+      p.vanTayLucTaoQR = vanTayHienTai;
     }
 
     const maDon = `BL${Date.now().toString().slice(-9)}`;
@@ -11319,7 +11410,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v309</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v310</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11373,7 +11464,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v309</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v310</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11415,7 +11506,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v309</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v310</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
