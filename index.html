@@ -4705,8 +4705,8 @@ function veTabPhieu() {
     const dangMo = p.id === bhPhieuDangMo;
     const soMon = p.gio.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
     return `
-    <div class="bh-the ${dangMo ? 'dang-mo' : ''}" onclick="bhMoPhieu('${p.id}')">
-      <span>${escHtml(p.ten)}${soMon ? ` <b>(${soMon})</b>` : ''}</span>
+    <div class="bh-the ${dangMo ? 'dang-mo' : ''} ${p.daBaoTraDu ? 'da-tra' : ''}" onclick="bhMoPhieu('${p.id}')">
+      <span>${p.daBaoTraDu ? '💰 ' : ''}${escHtml(p.ten)}${soMon ? ` <b>(${soMon})</b>` : ''}</span>
       <button class="bh-the-xoa" onclick="event.stopPropagation();bhXoaPhieu('${p.id}')">✕</button>
     </div>`;
   }).join('') + `<button class="bh-the-them" onclick="bhThemPhieu()">+ Phiếu</button>`;
@@ -4841,12 +4841,10 @@ async function bhHuyHoaDonCu(maHoaDon) {
       body: JSON.stringify({ maHoaDon })
     });
     const d = await res.json();
-    if (d.success) { console.log(`Đã hủy hóa đơn ${maHoaDon}`); return; }
-    if (d.daThuTien) {
-      alert(`Hóa đơn ${maHoaDon} đã có tiền vào — không tự hủy được.\n\nVào KiotViet xử lý thủ công.`);
-    } else {
-      console.warn('Không hủy được hóa đơn', maHoaDon, d.error);
-    }
+    console.log('[hủy hóa đơn]', d);
+    if (d.success) { console.log(`Đã hủy ${maHoaDon} bằng: ${d.cachDung}`); return; }
+    alert(`Không hủy được hóa đơn ${maHoaDon}.\n\nVào KiotViet hủy thủ công.\n\n`
+      + (d.cacCachDaThu || []).map(k => `${k.cach}: ${k.httpStatus}`).join('\n'));
   } catch(e) {
     console.warn('Lỗi hủy hóa đơn:', e.message);
   }
@@ -4909,6 +4907,7 @@ window.bhMoKhungQR = async function() {
     bhLuu();
     veKhungQR({ anhQR: data.qr?.anhQR, soTien: canCK, maHoaDon: data.maHoaDon });
     bhNgheThanhToan(data.maHoaDon, canCK);
+    bhBatTheoDoiNen();
   } catch(e) {
     veKhungQR({ loi: e.message });
   }
@@ -5033,6 +5032,44 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// Theo dõi TẤT CẢ phiếu đang chờ tiền, không riêng phiếu đang mở.
+// Nhân viên tạo QR phiếu 1 rồi chuyển sang phiếu 2 bán cho khách khác — tiền phiếu 1
+// về mà app không biết thì đơn treo mãi.
+let bhDongHoNen = null;
+
+function bhBatTheoDoiNen() {
+  if (bhDongHoNen) return;
+  bhDongHoNen = setInterval(bhQuetPhieuCho, 12000);
+}
+
+async function bhQuetPhieuCho() {
+  const cho = bhPhieu.filter(x => x.maHoaDonKV && !x.daBaoTraDu);
+  if (!cho.length) { clearInterval(bhDongHoNen); bhDongHoNen = null; return; }
+  if (document.hidden) return;
+
+  for (const x of cho) {
+    // Phiếu đang mở đã có vòng tra riêng, khỏi hỏi trùng
+    if (x.id === bhPhieuDangMo && document.getElementById('bh-khung-qr')?.style.display === 'flex') continue;
+    try {
+      const idToken = await currentUser.getIdToken();
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'tra-hoa-don-da-tra', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maHoaDon: x.maHoaDonKV })
+      });
+      const d = await res.json();
+      if (d.success && d.daTraDu) {
+        x.daBaoTraDu = true;
+        bhLuu();
+        bip(1800, 200);
+        if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+        showToast(`💰 ${x.ten} đã nhận đủ tiền — mở phiếu để hoàn tất`, false, 8000);
+        veTabPhieu();
+      }
+    } catch(e) {}
+  }
+}
+
 function bhThoiNghe() {
   if (bhHuyNgheThanhToan) { bhHuyNgheThanhToan(); bhHuyNgheThanhToan = null; }
   if (bhDongHoTra) { clearInterval(bhDongHoTra); bhDongHoTra = null; }
@@ -5154,7 +5191,14 @@ window.xemTaiKhoanQR = async function() {
 
 // ===== THAO TÁC =====
 window.bhThemPhieu = function() { bhTaoPhieu(); bhLuu(); veManHinhBanHang(); };
-window.bhMoPhieu = function(id) { bhPhieuDangMo = id; bhLuu(); veManHinhBanHang(); };
+window.bhMoPhieu = function(id) {
+  bhPhieuDangMo = id;
+  bhLuu();
+  veManHinhBanHang();
+  // Phiếu này đã nhận đủ tiền lúc nhân viên đang bán khách khác -> hoàn tất ngay
+  const p = bhPhieuHienTai();
+  if (p?.daBaoTraDu) setTimeout(() => bhHoanThanh(true), 200);
+};
 
 window.bhXoaPhieu = function(id) {
   const p = bhPhieu.find(x => x.id === id);
@@ -10410,6 +10454,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   border:1.5px solid var(--border);border-radius:7px;background:var(--surface);
   font-size:12.5px;cursor:pointer;white-space:nowrap}
 .bh-the.dang-mo{border-color:var(--green);background:#F0FDF4;font-weight:600}
+/* Phiếu đã nhận đủ tiền lúc nhân viên đang bán khách khác */
+.bh-the.da-tra{border-color:#16A34A;background:#DCFCE7;font-weight:700}
 .bh-the-xoa{border:none;background:transparent;color:var(--text2);font-size:14px;
   cursor:pointer;padding:0 2px;line-height:1}
 .bh-the-xoa:hover{color:var(--red)}
@@ -10781,7 +10827,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v298</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v299</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10835,7 +10881,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v298</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v299</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10877,7 +10923,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v298</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v299</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
