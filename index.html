@@ -1297,7 +1297,7 @@ function roleLabel(r) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', banhang: 'banhang',
-  thanhtoan: 'tmdt_ketnoi', tmdt: 'tmdt',
+  thanhtoan: 'tmdt_ketnoi', donbanle: 'banhang', tmdt: 'tmdt',
   quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
   // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
@@ -1373,6 +1373,13 @@ window.switchModule = function(mod) {
   // Rời màn hình Bán hàng thì dừng tra hóa đơn — nếu không, vòng lặp chạy ngầm
   // suốt 6 phút dù nhân viên đã sang việc khác.
   if (mod !== 'banhang' && typeof bhThoiNghe === 'function') bhThoiNghe();
+  if (mod === 'donbanle') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-donbanle-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderDonDaBan();
+    return;
+  }
   if (mod === 'banhang') {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-banhang-main').style.display = 'block';
@@ -4593,6 +4600,178 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
 };
 
 // ==========================================================================
+// ===== ĐƠN ĐÃ BÁN =====
+// Nhân viên xem lại đơn mình bán trong ngày. Quản lý xem tất cả.
+// ==========================================================================
+let ddbNgay = null;          // null = hôm nay
+let ddbLocNguoiBan = '';
+let ddbDanhSach = [];
+
+async function renderDonDaBan() {
+  const el = document.getElementById('donbanle-content');
+  if (!el) return;
+  if (!ddbNgay) ddbNgay = new Date().toISOString().split('T')[0];
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  await napDonDaBan();
+  veManHinhDonDaBan();
+}
+
+async function napDonDaBan() {
+  const dau = new Date(ddbNgay + 'T00:00:00');
+  const cuoi = new Date(ddbNgay + 'T23:59:59');
+  try {
+    const snap = await getDocs(query(collection(db, 'don_ban_le'),
+      where('taoLuc', '>=', dau), where('taoLuc', '<=', cuoi),
+      orderBy('taoLuc', 'desc'), limit(300)));
+    ddbDanhSach = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) {
+    console.error('Lỗi tải đơn:', e);
+    ddbDanhSach = [];
+  }
+}
+
+function veManHinhDonDaBan() {
+  const el = document.getElementById('donbanle-content');
+  if (!el) return;
+  const xemHet = !!currentUserData?.quyen?.nv_luong_tatca || currentUserData?.role === 'admin';
+  const ds = ddbDanhSach.filter(d => {
+    if (!xemHet && d.nguoiBan?.uid !== currentUser.uid) return false;
+    if (ddbLocNguoiBan && d.nguoiBan?.ten !== ddbLocNguoiBan) return false;
+    return true;
+  });
+
+  const tongTien = ds.reduce((s, d) => s + (Number(d.phaiTra) || 0), 0);
+  const tienMat = ds.reduce((s, d) => s + (Number(d.tienMat) || 0), 0);
+  const chuyenKhoan = ds.reduce((s, d) => s + (Number(d.tienChuyenKhoan) || 0), 0);
+  const nguoiBanCo = [...new Set(ddbDanhSach.map(d => d.nguoiBan?.ten).filter(Boolean))];
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="date" value="${ddbNgay}" onchange="ddbDoiNgay(this.value)" style="flex:1">
+      ${xemHet && nguoiBanCo.length > 1 ? `
+        <select onchange="ddbLocNV(this.value)" style="flex:1">
+          <option value="">Tất cả nhân viên</option>
+          ${nguoiBanCo.map(n => `<option value="${escHtml(n)}" ${ddbLocNguoiBan === n ? 'selected' : ''}>${escHtml(n)}</option>`).join('')}
+        </select>` : ''}
+    </div>
+
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;font-size:19px;font-weight:700;margin-bottom:6px">
+        <span>${ds.length} đơn</span>
+        <span style="color:var(--green)">${fmt(tongTien)}đ</span>
+      </div>
+      <div style="display:flex;gap:14px;font-size:13px;color:var(--text2)">
+        <span>💵 Tiền mặt: <b style="color:var(--text)">${fmt(tienMat)}đ</b></span>
+        <span>🏦 Chuyển khoản: <b style="color:var(--text)">${fmt(chuyenKhoan)}đ</b></span>
+      </div>
+    </div>
+
+    ${!ds.length ? '<p class="info-note">Chưa có đơn nào trong ngày.</p>' : ds.map(d => {
+      const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : null;
+      const cach = d.cachThanhToan === 'tienmat' ? '💵' : d.cachThanhToan === 'ketHop' ? '⇄' : '🏦';
+      return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px">${cach} ${fmt(d.phaiTra)}đ</div>
+            <div style="font-size:11px;color:var(--text2)">
+              ${t ? t.toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}) : ''}
+              · ${escHtml(d.nguoiBan?.ten || '')}
+              ${d.maHoaDonKiotViet ? ` · ${escHtml(d.maHoaDonKiotViet)}` : ''}
+            </div>
+            <div style="font-size:12px;color:var(--text2);margin-top:3px">
+              ${(d.dongHang || []).slice(0, 3).map(h => `${escHtml(h.ten)} ×${h.soLuong}`).join(', ')}
+              ${(d.dongHang || []).length > 3 ? ` +${d.dongHang.length - 3} mã` : ''}
+            </div>
+          </div>
+          <button class="btn-xs" onclick="inHoaDon('${d.id}')">🖨 In</button>
+        </div>
+      </div>`;
+    }).join('')}`;
+}
+
+window.ddbDoiNgay = async function(ngay) { ddbNgay = ngay; await napDonDaBan(); veManHinhDonDaBan(); };
+window.ddbLocNV = function(ten) { ddbLocNguoiBan = ten; veManHinhDonDaBan(); };
+
+// ===== IN HÓA ĐƠN =====
+// Khổ 80mm cho máy in nhiệt. Mở cửa sổ mới rồi gọi lệnh in của trình duyệt —
+// chạy được với mọi máy in đã cài trên máy, kể cả in qua Bluetooth trên điện thoại.
+window.inHoaDon = function(idDon) {
+  const d = ddbDanhSach.find(x => x.id === idDon);
+  if (!d) return;
+  const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : new Date();
+  const cachTen = d.cachThanhToan === 'tienmat' ? 'Tiền mặt'
+                : d.cachThanhToan === 'ketHop' ? 'Tiền mặt + Chuyển khoản' : 'Chuyển khoản';
+
+  const w = window.open('', '_blank', 'width=380,height=640');
+  if (!w) { showToast('Trình duyệt chặn cửa sổ in — cho phép rồi thử lại', true); return; }
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(d.maDon)}</title>
+<style>
+  @page { size: 80mm auto; margin: 0 }
+  body { width: 76mm; margin: 0 auto; padding: 4mm 2mm;
+         font-family: 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #000 }
+  .giua { text-align: center }
+  .ten-shop { font-size: 16px; font-weight: 700; margin-bottom: 2px }
+  .ke { border-top: 1px dashed #000; margin: 6px 0 }
+  table { width: 100%; border-collapse: collapse }
+  td { padding: 2px 0; vertical-align: top }
+  .sl { text-align: center; width: 32px }
+  .tien { text-align: right; white-space: nowrap }
+  .dong-tong { display: flex; justify-content: space-between; padding: 2px 0 }
+  .tong-cuoi { font-size: 15px; font-weight: 700 }
+  .chan { font-size: 11px; margin-top: 8px }
+  @media print { .khong-in { display: none } }
+</style></head><body>
+  <div class="giua">
+    <div class="ten-shop">CUA AQUARIUM</div>
+    <div style="font-size:11px">451A-451B Vườn Lài, TP.HCM</div>
+    <div style="font-size:11px">thuysinhcua.com</div>
+  </div>
+  <div class="ke"></div>
+  <div style="font-size:11px">
+    <div>Mã đơn: <b>${escHtml(d.maDon)}</b></div>
+    ${d.maHoaDonKiotViet ? `<div>Hóa đơn: ${escHtml(d.maHoaDonKiotViet)}</div>` : ''}
+    <div>Thời gian: ${t.toLocaleString('vi-VN')}</div>
+    <div>Nhân viên: ${escHtml(d.nguoiBan?.ten || '')}</div>
+  </div>
+  <div class="ke"></div>
+  <table>
+    ${(d.dongHang || []).map(h => `
+      <tr>
+        <td colspan="3"><b>${escHtml(h.ten)}</b></td>
+      </tr>
+      <tr>
+        <td class="sl">${h.soLuong}</td>
+        <td>× ${fmt(h.gia)}</td>
+        <td class="tien">${fmt(h.gia * h.soLuong - (h.giamGia || 0))}</td>
+      </tr>
+      ${h.giamGia ? `<tr><td></td><td colspan="2" style="font-size:11px">giảm ${fmt(h.giamGia)}đ</td></tr>` : ''}
+    `).join('')}
+  </table>
+  <div class="ke"></div>
+  <div class="dong-tong"><span>Tổng tiền hàng</span><span>${fmt(d.tongHang)}đ</span></div>
+  ${d.tongGiam ? `<div class="dong-tong"><span>Giảm giá</span><span>−${fmt(d.tongGiam)}đ</span></div>` : ''}
+  <div class="dong-tong tong-cuoi"><span>KHÁCH TRẢ</span><span>${fmt(d.phaiTra)}đ</span></div>
+  <div class="ke"></div>
+  <div style="font-size:11px">
+    <div>Thanh toán: ${cachTen}</div>
+    ${d.tienMat ? `<div>Tiền mặt: ${fmt(d.tienMat)}đ</div>` : ''}
+    ${d.tienChuyenKhoan ? `<div>Chuyển khoản: ${fmt(d.tienChuyenKhoan)}đ</div>` : ''}
+    ${d.khachDua && d.khachDua > d.phaiTra ? `<div>Khách đưa: ${fmt(d.khachDua)}đ · Trả lại: ${fmt(d.khachDua - d.phaiTra)}đ</div>` : ''}
+  </div>
+  <div class="ke"></div>
+  <div class="giua chan">
+    Cảm ơn quý khách!<br>Hẹn gặp lại
+  </div>
+  <div class="giua khong-in" style="margin-top:14px">
+    <button onclick="window.print()" style="padding:10px 20px;font-size:14px">🖨 In</button>
+  </div>
+  <script>setTimeout(() => window.print(), 400);<\/script>
+</body></html>`);
+  w.document.close();
+};
+
+// ==========================================================================
 // ===== BÁN HÀNG TẠI QUẦY =====
 // Trừ KHO CỬA HÀNG, không đụng kho sàn.
 //
@@ -6258,6 +6437,7 @@ function layQuyenFallbackChuaMigrate() {
 const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
     { key: 'banhang',   ten: 'Bán hàng',       quyen: 'banhang',   moGi: () => switchModule('banhang') },
+    { key: 'donbanle',  ten: 'Đơn đã bán',     quyen: 'banhang',   moGi: () => switchModule('donbanle') },
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
@@ -10826,7 +11006,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v300</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v301</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10880,7 +11060,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v300</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v301</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10922,7 +11102,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v300</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v301</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -11304,6 +11484,10 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <!-- DANH SÁCH HÀNG HÓA (Admin) -->
       <div class="panel" id="panel-thietlap-main">
         <div id="thietlap-content"></div>
+      </div>
+
+      <div class="panel" id="panel-donbanle-main">
+        <div id="donbanle-content"></div>
       </div>
 
       <div class="panel" id="panel-banhang-main">
