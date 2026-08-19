@@ -4684,7 +4684,10 @@ function veManHinhDonDaBan() {
               ${(d.dongHang || []).length > 3 ? ` +${d.dongHang.length - 3} mã` : ''}
             </div>
           </div>
-          <button class="btn-xs" onclick="inHoaDon('${d.id}')">🖨 In</button>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <button class="btn-xs" onclick="guiLenhIn('${d.id}')">🖨 In ở quầy</button>
+            <button class="btn-xs" onclick="inHoaDon('${d.id}')" title="In bằng máy in của thiết bị này">📄 In máy này</button>
+          </div>
         </div>
       </div>`;
     }).join('')}`;
@@ -4692,6 +4695,43 @@ function veManHinhDonDaBan() {
 
 window.ddbDoiNgay = async function(ngay) { ddbNgay = ngay; await napDonDaBan(); veManHinhDonDaBan(); };
 window.ddbLocNV = function(ten) { ddbLocNguoiBan = ten; veManHinhDonDaBan(); };
+
+// ===== IN QUA MÁY TRUNG GIAN =====
+// Trình duyệt không mở được kết nối tới máy in nhiệt trong mạng LAN (rào bảo mật),
+// mà XP-80T không hỗ trợ AirPrint. Nên app ghi lệnh in vào Firestore, chương trình
+// nhỏ chạy trên máy POS đọc rồi gửi ESC/POS tới máy in.
+window.guiLenhIn = async function(idDon) {
+  const d = ddbDanhSach.find(x => x.id === idDon);
+  if (!d) return;
+  try {
+    await addDoc(collection(db, 'lenh_in'), {
+      loai: 'hoa_don_ban_le',
+      maDon: d.maDon,
+      duLieu: {
+        maDon: d.maDon,
+        maHoaDonKiotViet: d.maHoaDonKiotViet || '',
+        thoiGian: (d.taoLuc?.toDate ? d.taoLuc.toDate() : new Date()).toISOString(),
+        nguoiBan: d.nguoiBan?.ten || '',
+        dongHang: (d.dongHang || []).map(h => ({
+          ten: h.ten, soLuong: h.soLuong, gia: h.gia, giamGia: h.giamGia || 0
+        })),
+        tongHang: d.tongHang || 0,
+        tongGiam: d.tongGiam || 0,
+        phaiTra: d.phaiTra || 0,
+        cachThanhToan: d.cachThanhToan || '',
+        tienMat: d.tienMat || 0,
+        tienChuyenKhoan: d.tienChuyenKhoan || 0,
+        khachDua: d.khachDua || 0
+      },
+      trangThai: 'cho_in',
+      nguoiYeuCau: currentUserData?.ten || '',
+      taoLuc: serverTimestamp()
+    });
+    showToast('Đã gửi lệnh in — kiểm tra máy in ở quầy');
+  } catch(e) {
+    alert('Không gửi được lệnh in: ' + e.message);
+  }
+};
 
 // ===== IN HÓA ĐƠN =====
 // Khổ 80mm cho máy in nhiệt. Mở cửa sổ mới rồi gọi lệnh in của trình duyệt —
@@ -4707,9 +4747,11 @@ window.inHoaDon = function(idDon) {
   if (!w) { showToast('Trình duyệt chặn cửa sổ in — cho phép rồi thử lại', true); return; }
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(d.maDon)}</title>
 <style>
+  /* XP-80T: giấy rộng 80mm nhưng vùng in thực chỉ 72mm — để rộng hơn là tràn mép */
   @page { size: 80mm auto; margin: 0 }
-  body { width: 76mm; margin: 0 auto; padding: 4mm 2mm;
-         font-family: 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #000 }
+  body { width: 72mm; margin: 0 auto; padding: 3mm 0;
+         font-family: 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #000;
+         -webkit-print-color-adjust: exact }
   .giua { text-align: center }
   .ten-shop { font-size: 16px; font-weight: 700; margin-bottom: 2px }
   .ke { border-top: 1px dashed #000; margin: 6px 0 }
@@ -11006,7 +11048,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v301</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v304</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11060,7 +11102,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v301</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v304</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11102,7 +11144,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v301</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v304</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
