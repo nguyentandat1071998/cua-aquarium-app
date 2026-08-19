@@ -4679,8 +4679,9 @@ function veManHinhDonDaBan() {
     </div>
 
     ${(() => {
-      // Nhân viên chỉ thấy phiếu mình tạo, quản lý thấy hết
-      const phieu = ddbPhieuTraCho.filter(p => xemHet || p.nguoiTao?.uid === currentUser.uid);
+      // Ai cũng xem được mọi phiếu trả — cả tổ cùng đối soát hàng nhập lại kho.
+      // Chỉ quyền DUYỆT mới giới hạn ở quản lý.
+      const phieu = ddbPhieuTraCho;
       if (!phieu.length) return '';
       const cho = phieu.filter(p => p.trangThai === 'cho_duyet');
       const xong = phieu.filter(p => p.trangThai !== 'cho_duyet').slice(0, 5);
@@ -4889,6 +4890,9 @@ window.xacNhanTraHang = async function() {
     });
     dongTraHang();
     showToast(`Đã gửi phiếu trả ${fmt(tongHoan)}đ — chờ quản lý duyệt`);
+    // Vẽ lại ngay để nhân viên thấy phiếu vừa tạo, khỏi tưởng thao tác hỏng
+    await napDonDaBan();
+    veManHinhDonDaBan();
   } catch(e) {
     alert('Lỗi tạo phiếu trả: ' + e.message);
   }
@@ -4921,10 +4925,7 @@ window.duyetPhieuTra = async function(idPhieu) {
     });
     const kq = await res.json();
     console.log('[trả hàng]', kq);
-    if (!kq.success) {
-      if (kq.traToanBo) { alert('Trả toàn bộ hàng thì phải hủy hóa đơn.\n\nVào KiotViet hủy hóa đơn này.'); return; }
-      throw new Error(kq.error || 'Không sửa được hóa đơn');
-    }
+    if (!kq.success) throw new Error(kq.error || 'Không xử lý được hóa đơn');
 
     await dieuChinhTonKhoApp(
       p.hang.map(x => ({ sku: x.sku, sl: x.soLuong })), +1, 'cuahang',
@@ -4935,7 +4936,8 @@ window.duyetPhieuTra = async function(idPhieu) {
     // KiotViet không cho sửa hóa đơn đã trả đủ nên phải hủy và tạo lại — mã đổi,
     // phải cập nhật để lần trả sau còn tìm đúng hóa đơn.
     await updateDoc(doc(db, 'don_ban_le', p.idDonBanLe), {
-      maHoaDonKiotViet: kq.maHoaDonMoi || d?.maHoaDonKiotViet || null,
+      maHoaDonKiotViet: kq.maHoaDonMoi || null,
+      daHuy: kq.daHuyToanBo === true,
       lanTra: [...(dCu.lanTra || []), {
         hang: p.hang, tienHoan: p.tienHoan,
         maHoaDonCu: kq.maHoaDonCu, maHoaDonMoi: kq.maHoaDonMoi,
@@ -4952,7 +4954,9 @@ window.duyetPhieuTra = async function(idPhieu) {
       duyetLuc: serverTimestamp()
     });
 
-    showToast(`Đã duyệt — hoàn ${fmt(p.tienHoan)}đ tiền mặt cho khách`);
+    showToast(kq.daHuyToanBo
+      ? `Đã trả toàn bộ — hủy hóa đơn, hoàn ${fmt(p.tienHoan)}đ tiền mặt`
+      : `Đã duyệt — hoàn ${fmt(p.tienHoan)}đ tiền mặt cho khách`);
     await napDonDaBan();
     veManHinhDonDaBan();
   } catch(e) {
@@ -11461,7 +11465,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v313</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v314</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11515,7 +11519,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v313</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v314</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11557,7 +11561,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v313</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v314</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
