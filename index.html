@@ -4630,10 +4630,11 @@ async function napDonDaBan() {
     console.error('Lỗi tải đơn:', e);
     ddbDanhSach = [];
   }
-  // Phiếu trả chờ duyệt — không lọc theo ngày vì phiếu cũ chưa duyệt vẫn phải thấy
+  // Lấy cả phiếu đã xử lý để nhân viên biết phiếu mình gửi đi tới đâu.
+  // Không lọc theo ngày vì phiếu cũ chưa duyệt vẫn phải hiện.
   try {
     const s2 = await getDocs(query(collection(db, 'phieu_tra_hang'),
-      where('trangThai', '==', 'cho_duyet'), limit(50)));
+      orderBy('taoLuc', 'desc'), limit(60)));
     ddbPhieuTraCho = s2.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch(e) {
     console.warn('Không tải được phiếu trả:', e.message);
@@ -4677,23 +4678,44 @@ function veManHinhDonDaBan() {
       </div>
     </div>
 
-    ${ddbPhieuTraCho.length ? `
-      <div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:10px;padding:12px;margin-bottom:12px">
-        <b style="font-size:14px;color:#92400E">↩ ${ddbPhieuTraCho.length} phiếu trả hàng chờ duyệt</b>
-        ${ddbPhieuTraCho.map(p => `
-          <div style="background:#fff;border-radius:8px;padding:10px;margin-top:8px">
+    ${(() => {
+      // Nhân viên chỉ thấy phiếu mình tạo, quản lý thấy hết
+      const phieu = ddbPhieuTraCho.filter(p => xemHet || p.nguoiTao?.uid === currentUser.uid);
+      if (!phieu.length) return '';
+      const cho = phieu.filter(p => p.trangThai === 'cho_duyet');
+      const xong = phieu.filter(p => p.trangThai !== 'cho_duyet').slice(0, 5);
+      const the = (p) => {
+        const mau = p.trangThai === 'da_duyet' ? '#DCFCE7'
+                  : p.trangThai === 'tu_choi' ? '#FEE2E2' : '#fff';
+        const nhan = p.trangThai === 'da_duyet' ? '✓ Đã duyệt'
+                   : p.trangThai === 'tu_choi' ? '✕ Từ chối' : '⏳ Chờ duyệt';
+        return `
+        <div style="background:${mau};border-radius:8px;padding:10px;margin-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
             <div style="font-size:13px;font-weight:600">${escHtml(p.maHoaDonKiotViet || p.maDon)} · hoàn ${fmt(p.tienHoan)}đ</div>
-            <div style="font-size:11px;color:var(--text2);margin-bottom:6px">
-              ${escHtml(p.nguoiTao?.ten || '')} tạo ·
-              ${(p.hang || []).map(x => `${escHtml(x.ten)} ×${x.soLuong}`).join(', ')}
-            </div>
-            ${xemHet ? `
-              <div style="display:flex;gap:6px">
-                <button class="btn-xs" style="flex:1;background:#DCFCE7;color:#15803D" onclick="duyetPhieuTra('${p.id}')">✓ Duyệt</button>
-                <button class="btn-xs" style="flex:1;background:#FEE2E2;color:#DC2626" onclick="tuChoiPhieuTra('${p.id}')">✕ Từ chối</button>
-              </div>` : '<div style="font-size:11px;color:#92400E">Chờ quản lý duyệt</div>'}
-          </div>`).join('')}
-      </div>` : ''}
+            <span style="font-size:11px;font-weight:600;flex-shrink:0">${nhan}</span>
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:2px">
+            ${escHtml(p.nguoiTao?.ten || '')} ·
+            ${(p.hang || []).map(x => `${escHtml(x.ten)} ×${x.soLuong}`).join(', ')}
+          </div>
+          ${p.lyDoTuChoi ? `<div style="font-size:11px;color:#DC2626;margin-top:3px">Lý do: ${escHtml(p.lyDoTuChoi)}</div>` : ''}
+          ${p.trangThai === 'cho_duyet' && xemHet ? `
+            <div style="display:flex;gap:6px;margin-top:8px">
+              <button class="btn-xs" style="flex:1;background:#DCFCE7;color:#15803D" onclick="duyetPhieuTra('${p.id}')">✓ Duyệt</button>
+              <button class="btn-xs" style="flex:1;background:#FEE2E2;color:#DC2626" onclick="tuChoiPhieuTra('${p.id}')">✕ Từ chối</button>
+            </div>` : ''}
+        </div>`;
+      };
+      return `
+      <div style="background:${cho.length ? '#FEF3C7' : 'var(--bg)'};border:1.5px solid ${cho.length ? '#F59E0B' : 'var(--border)'};border-radius:10px;padding:12px;margin-bottom:12px">
+        <b style="font-size:14px;color:${cho.length ? '#92400E' : 'var(--text)'}">
+          ↩ Phiếu trả hàng${cho.length ? ` — ${cho.length} chờ duyệt` : ''}
+        </b>
+        ${cho.map(the).join('')}
+        ${xong.map(the).join('')}
+      </div>`;
+    })()}
 
     ${!ds.length ? '<p class="info-note">Chưa có đơn nào trong ngày.</p>' : ds.map(d => {
       const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : null;
@@ -4910,9 +4932,13 @@ window.duyetPhieuTra = async function(idPhieu) {
 
     const dSnap = await getDoc(doc(db, 'don_ban_le', p.idDonBanLe));
     const dCu = dSnap.exists() ? dSnap.data() : {};
+    // KiotViet không cho sửa hóa đơn đã trả đủ nên phải hủy và tạo lại — mã đổi,
+    // phải cập nhật để lần trả sau còn tìm đúng hóa đơn.
     await updateDoc(doc(db, 'don_ban_le', p.idDonBanLe), {
+      maHoaDonKiotViet: kq.maHoaDonMoi || d?.maHoaDonKiotViet || null,
       lanTra: [...(dCu.lanTra || []), {
         hang: p.hang, tienHoan: p.tienHoan,
+        maHoaDonCu: kq.maHoaDonCu, maHoaDonMoi: kq.maHoaDonMoi,
         nguoiTra: p.nguoiTao,
         nguoiDuyet: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
         luc: new Date().toISOString()
@@ -4985,6 +5011,30 @@ window.guiLenhIn = async function(idDon) {
   } catch(e) {
     alert('Không gửi được lệnh in: ' + e.message);
   }
+};
+
+// Thử các biến thể payload sửa hóa đơn — giao diện KiotViet sửa được nên API
+// cũng phải được, chỉ là chưa đúng cách gọi.
+// Gọi: thuSuaHoaDon('HD012120')   — cần hóa đơn có dòng số lượng >= 2
+window.thuSuaHoaDon = async function(maHoaDon) {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  if (!maHoaDon) { console.error('Cần mã hóa đơn có dòng số lượng >= 2'); return; }
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'thu-sua-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maHoaDon })
+  });
+  const data = await res.json();
+  if (!data.success) { console.error('LỖI:', data.error); return data; }
+  console.log(`${data.maHoaDon}: thử giảm dòng đầu từ ${data.soLuongGoc} xuống ${data.soLuongThu}`);
+  console.log('Cách chạy được:', data.cachDung || '❌ không cách nào');
+  console.table(data.ketQua.map(k => ({
+    bienThe: k.bienThe, httpStatus: k.httpStatus,
+    tongTruoc: k.tongTruoc, tongSau: k.tongSau, doiThat: k.doiThat
+  })));
+  data.ketQua.forEach(k => { if (!k.nhanLenh) console.log(`${k.bienThe}:`, k.phanHoi); });
+  return data;
 };
 
 // Dò cách sửa hóa đơn KiotViet — dùng để làm chức năng trả hàng.
@@ -11411,7 +11461,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v311</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v313</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11465,7 +11515,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v311</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v313</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11507,7 +11557,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v311</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v313</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
