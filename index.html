@@ -4778,8 +4778,7 @@ function veDayDuoi() {
   el.innerHTML = `
     ${daLechQR ? `
       <div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:#92400E">
-        Đơn đã đổi sau khi tạo mã <b>${escHtml(p.maHoaDonKV)}</b> — bấm Thanh toán sẽ tạo mã mới,
-        hóa đơn cũ cần hủy trong KiotViet.
+        Đơn đã đổi — bấm Thanh toán sẽ hủy hóa đơn <b>${escHtml(p.maHoaDonKV)}</b> và tạo mã mới.
       </div>` : ''}
     <div class="bh-o-tt">
       <div class="bh-dong-tt">
@@ -4830,6 +4829,29 @@ function veDayDuoi() {
 // không phải xác nhận tay.
 let bhHuyNgheThanhToan = null;
 
+// Hủy hóa đơn KiotViet cũ khi giỏ hàng đổi. Không chặn luồng nếu hủy hỏng —
+// vẫn tạo hóa đơn mới, chỉ ghi lại để người dùng biết còn hóa đơn rác cần dọn.
+async function bhHuyHoaDonCu(maHoaDon) {
+  if (!maHoaDon) return;
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'huy-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maHoaDon })
+    });
+    const d = await res.json();
+    if (d.success) { console.log(`Đã hủy hóa đơn ${maHoaDon}`); return; }
+    if (d.daThuTien) {
+      alert(`Hóa đơn ${maHoaDon} đã có tiền vào — không tự hủy được.\n\nVào KiotViet xử lý thủ công.`);
+    } else {
+      console.warn('Không hủy được hóa đơn', maHoaDon, d.error);
+    }
+  } catch(e) {
+    console.warn('Lỗi hủy hóa đơn:', e.message);
+  }
+}
+
 window.bhMoKhungQR = async function() {
   const p = bhPhieuHienTai();
   if (!p || !p.gio.length) return;
@@ -4854,8 +4876,10 @@ window.bhMoKhungQR = async function() {
     return;
   }
   if (p.maHoaDonKV && p.vanTayLucTaoQR !== vanTay) {
-    if (!confirm(`Đơn đã thay đổi từ lần tạo mã trước.\n\n`
-      + `Hóa đơn ${p.maHoaDonKV} bên KiotViet cần hủy thủ công.\n\nTạo mã mới?`)) return;
+    if (!confirm(`Đơn đã thay đổi từ lần tạo mã trước.\n\nTạo mã mới?\n(Hóa đơn ${p.maHoaDonKV} sẽ được hủy)`)) return;
+    await bhHuyHoaDonCu(p.maHoaDonKV);
+    p.maHoaDonKV = null;
+    p.anhQRDaTao = null;
   }
 
   veKhungQR({ dangTao: true });
@@ -4950,7 +4974,8 @@ function bhNgheThanhToan(maHoaDon, soTien) {
     bip(1800, 160);
     if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
     veKhungQR({ daTra: true, soTien, maHoaDon });
-    setTimeout(() => { bhDongKhungQR(); bhHoanThanh(true); }, 1400);
+    // Tự hoàn thành đơn luôn — nhân viên không phải bấm gì thêm
+    setTimeout(() => { bhDongKhungQR(); bhHoanThanh(true); }, 1200);
   };
 
   // Đường 1: webhook đẩy về Firestore
@@ -10756,7 +10781,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v297</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v298</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -10810,7 +10835,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v297</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v298</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -10852,7 +10877,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v297</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v298</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
