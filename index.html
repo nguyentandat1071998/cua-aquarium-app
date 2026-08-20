@@ -10037,6 +10037,21 @@ async function renderBangLuong() {
   el.innerHTML = '<div class="loading">Đang tính lương...</div>';
   const xemHet = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
   try {
+    // Bảng lương cần vai trò và cấp bậc từng người. Vào thẳng tab này thì
+    // allUsersCache còn rỗng — phải nạp trước, nếu không không nhóm được ai.
+    if (!allUsersCache.length) {
+      const sU = await getDocs(collection(db, 'users'));
+      allUsersCache = sU.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+    // Thưởng đóng gói tra trạng thái từ đơn sàn — chưa nạp thì phần trăm doanh thu
+    // luôn ra 0 vì không biết đơn nào đã giao.
+    if (!allDonHangSan.length) {
+      try {
+        const sD = await getDocs(query(collection(db, 'don_hang_san'),
+          orderBy('ngayDat', 'desc'), limit(1000)));
+        allDonHangSan = sD.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch(e) { console.warn('Không nạp được đơn sàn:', e.message); }
+    }
     // Quản lý mặc định thấy danh sách tổng; bấm vào một người mới xem chi tiết
     if (xemHet && blCheDo !== 'chitiet') {
       const ds = await tinhLuongTatCa(blThang);
@@ -10131,8 +10146,8 @@ async function tinhLuongThang(thang) {
   for (const ca of cacCa) {
     const n = layNgay(ca.ngay);
     n.loaiCa = ca.loaiCa;
-    n.daDieuChinh = !!ca.dieuChinhTre;
-    n.lyDoDieuChinh = ca.dieuChinhTre?.lyDo || '';
+    n.daDieuChinh = !!(ca.dieuChinhCa || ca.dieuChinhTre);
+    n.lyDoDieuChinh = ca.dieuChinhCa?.lyDo || ca.dieuChinhTre?.lyDo || '';
     if (ca.vaoLuc?.seconds) n.vao = new Date(ca.vaoLuc.seconds * 1000);
     if (ca.thoatLuc?.seconds) n.ra = new Date(ca.thoatLuc.seconds * 1000);
     if (n.vao && n.ra) {
@@ -10459,13 +10474,14 @@ function veBangLuong(dl) {
             return `
             <tr>
               <td>${nhanNgay}</td>
-              <td style="white-space:nowrap">
-                ${gioVao ? `<span style="${n.treGio ? 'color:var(--red);font-weight:700' : ''}">${gioVao}</span>` : '—'}
-                ${gioRa ? `–${gioRa}` : (gioVao ? '–?' : '')}
+              <td class="bl-gio">
+                <span class="bl-vao ${n.treGio ? 'tre' : ''}">${gioVao || '—'}</span>
+                <span class="bl-gach">${gioVao ? '–' : ''}</span>
+                <span class="bl-ra ${!gioRa && gioVao ? 'thieu' : ''}">${gioRa || (gioVao ? 'chưa ra' : '')}</span>
                 ${n.daDieuChinh ? `<span title="${escHtml(n.lyDoDieuChinh)}" style="font-size:10px;color:#D97706">✎</span>` : ''}
-                ${n.treGio && laAdmin ? `
-                  <button class="btn-xs" style="margin-left:4px;padding:2px 6px;font-size:10px"
-                    onclick="event.stopPropagation();xuLyDiTre('${n.ngay}','${n.loaiCa || 'full'}')">Xử lý</button>` : ''}
+                ${laAdmin && (n.treGio || (n.vao && !n.ra)) ? `
+                  <button class="btn-xs bl-nut-xuly"
+                    onclick="event.stopPropagation();xuLyCa('${n.ngay}','${n.loaiCa || 'full'}',${n.vao && !n.ra ? 'true' : 'false'})">Xử lý</button>` : ''}
               </td>
               <td>${n.luong ? fmt(n.luong) : '—'}</td>
               ${coThuong ? `<td>${n.thuong ? fmt(n.thuong) : '—'}</td>` : ''}
@@ -10498,40 +10514,55 @@ window.blChonNhanVien = function(uid) { blNhanVienDangXem = uid || null; renderB
 // Nhân viên có thể trễ vì lý do chính đáng (kẹt xe do tai nạn, đi giao hàng sớm...).
 // Admin điều chỉnh giờ vào về đúng giờ ca, nhưng LƯU LẠI giờ gốc và lý do —
 // sửa mà không để dấu vết thì mất ý nghĩa chấm công.
-window.xuLyDiTre = async function(ngay, loaiCa) {
+// Xử lý hai trường hợp: vào trễ có lý do chính đáng, và quên check-out.
+// Cả hai đều GIỮ giờ gốc và ghi lý do — sửa mà không để dấu vết thì chấm công
+// mất ý nghĩa.
+window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
   const uid = blNhanVienDangXem || currentUser.uid;
   const gioCa = CA_GIO[loaiCa] || CA_GIO.full;
-  const gioChuan = `${Math.floor(gioCa.batDau / 60)}h${String(gioCa.batDau % 60).padStart(2, '0')}`;
+  const nhan = (p) => `${Math.floor(p / 60)}h${String(p % 60).padStart(2, '0')}`;
 
-  if (!confirm(`Điều chỉnh giờ vào ngày ${ngay} về ${gioChuan}?\n\n`
-    + `Giờ chấm công gốc vẫn được lưu lại để đối chiếu.`)) return;
-  const lyDo = prompt('Lý do điều chỉnh (bắt buộc):');
+  const viec = thieuGioRa
+    ? `Bổ sung giờ ra ngày ${ngay} là ${nhan(gioCa.ketThuc)}`
+    : `Điều chỉnh giờ vào ngày ${ngay} về ${nhan(gioCa.batDau)}`;
+  if (!confirm(`${viec}?\n\nGiờ chấm công gốc vẫn được lưu lại để đối chiếu.`)) return;
+
+  const lyDo = prompt('Lý do (bắt buộc):');
   if (!lyDo || !lyDo.trim()) { showToast('Cần ghi lý do', true); return; }
 
   try {
-    const idCa = `${ngay}_${uid}`;
-    const ref = doc(db, 'lich_ca', idCa);
+    const ref = doc(db, 'lich_ca', `${ngay}_${uid}`);
     const snap = await getDoc(ref);
     if (!snap.exists()) { showToast('Không tìm thấy ca này', true); return; }
     const ca = snap.data();
 
-    const moi = new Date(ngay + 'T00:00:00');
-    moi.setHours(Math.floor(gioCa.batDau / 60), gioCa.batDau % 60, 0, 0);
-
-    await updateDoc(ref, {
-      vaoLuc: moi,
-      vaoLucGoc: ca.vaoLucGoc || ca.vaoLuc,   // giữ giờ gốc, không ghi đè nếu đã sửa lần trước
-      dieuChinhTre: {
+    const capNhat = {
+      dieuChinhCa: {
+        loai: thieuGioRa ? 'bo_sung_gio_ra' : 'sua_gio_vao',
         lyDo: lyDo.trim(),
         boi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
         luc: new Date().toISOString()
       }
-    });
-    showToast(`Đã điều chỉnh giờ vào về ${gioChuan}`);
+    };
+
+    if (thieuGioRa) {
+      const ra = new Date(ngay + 'T00:00:00');
+      ra.setHours(Math.floor(gioCa.ketThuc / 60), gioCa.ketThuc % 60, 0, 0);
+      capNhat.thoatLuc = ra;
+      capNhat.khongCheckout = false;
+    } else {
+      const vao = new Date(ngay + 'T00:00:00');
+      vao.setHours(Math.floor(gioCa.batDau / 60), gioCa.batDau % 60, 0, 0);
+      capNhat.vaoLuc = vao;
+      capNhat.vaoLucGoc = ca.vaoLucGoc || ca.vaoLuc;   // không ghi đè nếu đã sửa lần trước
+    }
+
+    await updateDoc(ref, capNhat);
+    showToast(thieuGioRa ? 'Đã bổ sung giờ ra' : 'Đã điều chỉnh giờ vào');
     renderBangLuong();
   } catch(e) {
-    alert('Không điều chỉnh được: ' + e.message);
+    alert('Không xử lý được: ' + e.message);
   }
 };
 
@@ -11852,6 +11883,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bl-bang .bl-tong td{background:#F0FDF4;font-weight:700;border-bottom:2px solid var(--green);
   position:sticky;top:0}
 
+/* Cột giờ làm: mỗi phần một ô cố định chiều rộng để các dòng thẳng hàng nhau,
+   không bị lệch khi giờ có 1 hay 2 chữ số */
+.bl-bang td.bl-gio{text-align:left;white-space:nowrap;font-variant-numeric:tabular-nums}
+.bl-vao,.bl-ra{display:inline-block;width:46px;text-align:right}
+.bl-ra{text-align:left;padding-left:2px}
+.bl-vao.tre{color:var(--red);font-weight:700}
+.bl-ra.thieu{color:#D97706;font-size:11px;width:auto}
+.bl-gach{display:inline-block;width:8px;text-align:center;color:var(--text2)}
+.bl-nut-xuly{margin-left:4px;padding:2px 6px;font-size:10px}
+
 /* ===== MÀN HÌNH BÁN HÀNG ===== */
 /* Khung chiếm hết chiều cao còn lại, ô hàng hóa co giãn và cuộn được,
    khối thanh toán luôn dính đáy — nhân viên không phải cuộn để bấm hoàn thành. */
@@ -12235,7 +12276,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v326</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v328</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -12289,7 +12330,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v326</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v328</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12331,7 +12372,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v326</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v328</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
