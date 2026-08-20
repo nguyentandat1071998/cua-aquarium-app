@@ -2685,22 +2685,33 @@ const TT_KHONG_TINH_THUONG = new Set([
   'dang_chuyen_hoan', 'da_chuyen_hoan'
 ]);
 
+// Thưởng đóng gói chia hai phần:
+//   - CỐ ĐỊNH: trả ngay khi quét, giữ nguyên kể cả đơn bị hủy sau đó. Nhân viên đã
+//     bỏ công đóng gói rồi, đơn hủy không phải lỗi của họ.
+//   - THEO DOANH THU: chỉ cộng khi đơn giao thành công. Đơn chưa giao xong thì
+//     chưa có doanh thu để tính.
+// Nhờ vậy con số nhân viên thấy lúc quét không bị tụt xuống khi đơn hủy.
 function tinhThuongDon(d) {
   const tt = trangThaiHienThi(d);
-  if (TT_KHONG_TINH_THUONG.has(tt)) {
-    return { thuong: 0, doanhThu: 0, lyDo: TRANG_THAI_NOI_BO[tt]?.ten };
-  }
+  const coDinh = Number(CONG_THUC_LUONG.thuongMoiDonGoi) || 0;
+  const tyLe = Number(CONG_THUC_LUONG.phanTramDonGoi) || 0;
+
   // Trả hàng một phần: trừ đúng phần tiền món bị trả, giữ lại phần khách vẫn nhận
   const tienTra = Number(d.tienHangTra || 0);
   const doanhThu = Math.max(0, (Number(d.tongTien) || 0) - tienTra);
-  if (tienTra > 0 && doanhThu <= 0) {
-    return { thuong: 0, doanhThu: 0, lyDo: 'Trả toàn bộ' };
-  }
+
+  // Chỉ đơn ĐÃ GIAO mới cộng phần trăm doanh thu
+  const daGiao = tt === 'da_giao';
+  const phanTram = daGiao ? Math.round(doanhThu * tyLe / 100) : 0;
+
   return {
-    thuong: Math.round((Number(CONG_THUC_LUONG.thuongMoiDonGoi) || 0)
-      + doanhThu * (Number(CONG_THUC_LUONG.phanTramDonGoi) || 0) / 100),
+    thuong: coDinh + phanTram,
+    thuongCoDinh: coDinh,
+    thuongDoanhThu: phanTram,
+    daGiao,
     doanhThu,
-    lyDo: tienTra > 0 ? `Đã trừ ${Math.round(tienTra).toLocaleString('vi-VN')}đ hàng trả` : null
+    lyDo: !daGiao ? 'Chờ giao xong mới cộng % doanh thu'
+        : (tienTra > 0 ? `Đã trừ ${Math.round(tienTra).toLocaleString('vi-VN')}đ hàng trả` : null)
   };
 }
 
@@ -3950,7 +3961,8 @@ function ktVeDanhSachHang() {
   const hang = ktDon.chiTiet || [];
   const xong = ktDaTich.size === hang.length && hang.length > 0;
   const daDongGoi = !!ktDon.thoiGianDongGoi;
-  const thuong = tinhThuongDon ? (tinhThuongDon(ktDon)?.thuong || 0) : 0;
+  // Chỉ hiện phần cố định — phần trăm doanh thu cộng sau khi giao xong
+  const thuong = tinhThuongDon ? (tinhThuongDon(ktDon)?.thuongCoDinh || 0) : 0;
 
   el.innerHTML = `
     <div style="background:${daDongGoi ? '#DCFCE7' : (xong ? '#DCFCE7' : 'var(--bg)')};border:1.5px solid ${daDongGoi || xong ? '#16A34A' : 'var(--border)'};border-radius:10px;padding:12px;margin-bottom:10px">
@@ -4019,14 +4031,18 @@ window.ktHoanThanhDongGoi = async function() {
     ktDon.banDongGoi = currentUserData?.ten || '';
     bip(1800, 150);
     if (navigator.vibrate) navigator.vibrate(120);
-    const t = tinhThuongDon ? tinhThuongDon(ktDon) : { thuong: 0 };
+    // Chỉ cộng phần CỐ ĐỊNH vào con số hiện trên màn hình. Phần trăm doanh thu
+    // cộng sau khi đơn giao xong — để số này không bao giờ tụt xuống, tránh nhân
+    // viên thấy tiền giảm mỗi lần có đơn hủy.
+    const t = tinhThuongDon ? tinhThuongDon(ktDon) : { thuongCoDinh: 0 };
+    const coDinh = Number(t.thuongCoDinh) || 0;
     ktPhien.soDon++;
-    ktPhien.tienThuong += (t.thuong || 0);
+    ktPhien.tienThuong += coDinh;
     const oSoDon = document.getElementById('kt-so-don');
     const oTien = document.getElementById('kt-tien');
     if (oSoDon) oSoDon.textContent = ktPhien.soDon;
     if (oTien) oTien.textContent = ktPhien.tienThuong.toLocaleString('vi-VN') + 'đ';
-    showToast(`Đã ghi nhận đóng gói${t.thuong ? ` · +${t.thuong.toLocaleString('vi-VN')}đ` : ''}`);
+    showToast(`Đã ghi nhận đóng gói${coDinh ? ` · +${coDinh.toLocaleString('vi-VN')}đ` : ''}`);
     ktVeDanhSachHang();
   } catch(e) {
     bip(400, 350);
@@ -10001,11 +10017,11 @@ function downloadCSV(rows, filename, slLabel) {
 // Lấy cấu hình lương theo giờ + cấp bậc (dùng chung cho Danh sách nhân viên & Thiết lập bảng lương)
 // ==========================================================================
 // ===== BẢNG LƯƠNG =====
-// Gộp ba nguồn: giờ công (từ lịch ca đã chấm), thưởng đóng gói (nhật ký quét),
-// và doanh thu bán tại quầy. Cột tiền mặt là số nhân viên phải nộp lại cuối ngày —
-// thay cho chức năng kết ca riêng.
+// Bảng theo ngày: mỗi dòng một ca làm, cột Lương / Thưởng / Khấu trừ / Tổng.
+// Hàng đầu là tổng cả tháng.
 //
-// Nhân viên chỉ xem lương mình; ai có quyền xem tất cả thì thấy hết.
+// Thưởng gọi là "tạm tính" vì đơn có thể bị hủy hoặc trả hàng sau — nói rõ từ
+// đầu vẫn hơn để nhân viên tưởng đã chốt rồi cuối tháng nhận ít hơn.
 // ==========================================================================
 let blThang = null;            // 'YYYY-MM'
 let blNhanVienDangXem = null;  // uid, null = chính mình
@@ -10031,6 +10047,10 @@ async function renderBangLuong() {
   }
 }
 
+function phutSangGio(p) {
+  return `${Math.floor(p / 60)}h${String(p % 60).padStart(2, '0')}`;
+}
+
 async function tinhLuongThang(thang) {
   const dauThang = `${thang}-01`;
   const [nam, th] = thang.split('-').map(Number);
@@ -10040,205 +10060,230 @@ async function tinhLuongThang(thang) {
   const xemHet = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
   const uidXem = blNhanVienDangXem || currentUser.uid;
 
-  // --- Giờ công từ lịch ca ---
+  const cfg = await getLuongConfig();
+  await napCongThucLuong();
+  const ct = CONG_THUC_LUONG;
+
+  // --- Ca làm việc ---
   const sCa = await getDocs(query(collection(db, 'lich_ca'),
     where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
-  let cacCa = sCa.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
-  if (!xemHet) cacCa = cacCa.filter(s => s.uid === currentUser.uid);
-  else if (blNhanVienDangXem) cacCa = cacCa.filter(s => s.uid === blNhanVienDangXem);
+  let cacCa = sCa.docs.map(d => ({ id: d.id, ...d.data() }))
+    .filter(s => !s.deleted && s.uid === uidXem);
 
-  // --- Thưởng đóng gói ---
-  let cacLanQuet = [];
-  try {
-    const sQuet = await getDocs(query(collection(db, 'nhat_ky_dong_goi'),
-      where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
-    cacLanQuet = sQuet.docs.map(d => d.data());
-    if (!xemHet) cacLanQuet = cacLanQuet.filter(x => x.uid === currentUser.uid);
-    else if (blNhanVienDangXem) cacLanQuet = cacLanQuet.filter(x => x.uid === blNhanVienDangXem);
-  } catch(e) { console.warn('Không tải được nhật ký đóng gói:', e.message); }
-
-  // --- Doanh thu bán tại quầy ---
+  // --- Đơn bán tại quầy ---
   const dauTS = new Date(dauThang + 'T00:00:00');
   const cuoiTS = new Date(cuoiThang + 'T23:59:59');
   let donBan = [];
   try {
     const sDon = await getDocs(query(collection(db, 'don_ban_le'),
       where('taoLuc', '>=', dauTS), where('taoLuc', '<=', cuoiTS), limit(2000)));
-    donBan = sDon.docs.map(d => d.data());
-    if (!xemHet) donBan = donBan.filter(x => x.nguoiBan?.uid === currentUser.uid);
-    else if (blNhanVienDangXem) donBan = donBan.filter(x => x.nguoiBan?.uid === blNhanVienDangXem);
+    donBan = sDon.docs.map(d => d.data()).filter(x => x.nguoiBan?.uid === uidXem);
   } catch(e) { console.warn('Không tải được đơn bán lẻ:', e.message); }
 
-  const cfg = await getLuongConfig();
-  await napCongThucLuong();
+  // --- Đơn đóng gói ---
+  let cacLanQuet = [];
+  try {
+    const sQuet = await getDocs(query(collection(db, 'nhat_ky_dong_goi'),
+      where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
+    cacLanQuet = sQuet.docs.map(d => d.data()).filter(x => x.uid === uidXem);
+  } catch(e) { console.warn('Không tải được nhật ký đóng gói:', e.message); }
 
-  // Gom theo từng người
-  const theoNguoi = new Map();
-  const lay = (uid, ten) => {
-    if (!theoNguoi.has(uid)) theoNguoi.set(uid, {
-      uid, ten: ten || '', soCa: 0, tongPhut: 0, tienGio: 0,
+  // --- Khấu trừ ---
+  let cacKhauTru = [];
+  try {
+    const sKT = await getDocs(query(collection(db, 'khau_tru'),
+      where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
+    cacKhauTru = sKT.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.uid === uidXem);
+  } catch(e) { console.warn('Không tải được khấu trừ:', e.message); }
+
+  // Đơn giá theo vai trò và cấp bậc của chính người đang xem
+  const nguoi = allUsersCache.find(u => u.id === uidXem) || {};
+  const rates = cfg[nguoi.role || 'nhan_vien']?.rates || {};
+  const donGia = Number(rates[nguoi.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
+
+  // Người này làm việc gì — quyết định hiện cột thưởng nào
+  const q = nguoi.quyen || {};
+  const laBanHang = !!q.banhang;
+  const laDongGoi = !!q.tmdt_donggoi || !!q.tmdt;
+
+  // Gom mọi thứ theo NGÀY
+  const theoNgay = new Map();
+  const layNgay = (ngay) => {
+    if (!theoNgay.has(ngay)) theoNgay.set(ngay, {
+      ngay, vao: null, ra: null, loaiCa: null, treGio: false,
+      phut: 0, luong: 0,
+      soDonBan: 0, dtDoTuoi: 0, dtPhuKien: 0, thuongBan: 0,
       soDonGoi: 0, thuongGoi: 0,
-      soDonBan: 0, doanhThu: 0, tienMat: 0, chuyenKhoan: 0,
-      dtDoTuoi: 0, dtPhuKien: 0
+      khauTru: 0, lyDoKhauTru: []
     });
-    return theoNguoi.get(uid);
+    return theoNgay.get(ngay);
   };
 
   for (const ca of cacCa) {
-    if (!ca.uid || !ca.vaoLuc || !ca.thoatLuc) continue;   // chưa chấm đủ thì không tính
-    const n = lay(ca.uid, ca.ten);
-    const vao = ca.vaoLuc.seconds * 1000;
-    const ra = ca.thoatLuc.seconds * 1000;
-    const phut = Math.max(0, Math.round((ra - vao) / 60000));
-    n.soCa++;
-    n.tongPhut += phut;
-    // Đơn giá theo vai trò và cấp bậc, thiếu cấp bậc thì dùng mức mặc định
-    const nguoi = allUsersCache.find(u => u.id === ca.uid) || {};
-    const vt = nguoi.role || 'nhan_vien';
-    const rates = cfg[vt]?.rates || {};
-    const donGia = Number(
-      rates[nguoi.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
-    n.tienGio += Math.round(phut / 60 * donGia);
+    const n = layNgay(ca.ngay);
+    n.loaiCa = ca.loaiCa;
+    if (ca.vaoLuc?.seconds) n.vao = new Date(ca.vaoLuc.seconds * 1000);
+    if (ca.thoatLuc?.seconds) n.ra = new Date(ca.thoatLuc.seconds * 1000);
+    if (n.vao && n.ra) {
+      n.phut = Math.max(0, Math.round((n.ra - n.vao) / 60000));
+      n.luong = Math.round(n.phut / 60 * donGia);
+    }
+    // Vào trễ so với giờ ca chuẩn
+    const gioCa = CA_GIO[ca.loaiCa] || CA_GIO.full;
+    if (n.vao) {
+      const phutVao = n.vao.getHours() * 60 + n.vao.getMinutes();
+      n.treGio = phutVao > gioCa.batDau;
+    }
   }
 
-  for (const q of cacLanQuet) {
-    if (!q.uid) continue;
-    const n = lay(q.uid, q.ten);
-    n.soDonGoi++;
-    n.thuongGoi += Number(q.thuong) || 0;
-  }
-
-  const nhomTuoi = new Set(CONG_THUC_LUONG.nhomDoTuoi || []);
+  const nhomTuoi = new Set(ct.nhomDoTuoi || []);
   for (const d of donBan) {
-    const uid = d.nguoiBan?.uid;
-    if (!uid) continue;
-    const n = lay(uid, d.nguoiBan?.ten);
+    const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : null;
+    if (!t) continue;
+    const ngay = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    const n = layNgay(ngay);
     n.soDonBan++;
-    const tien = Number(d.phaiTra) || 0;
-    n.doanhThu += tien;
-
-    // Tách doanh thu theo nhóm hàng để tính thưởng riêng. Nhóm hàng tra từ bảng
-    // SKU chứ không lưu trong đơn — đổi nhóm sau này thì thưởng tính lại theo nhóm mới.
+    // Trừ phần đã trả hàng khỏi doanh thu tính thưởng
+    const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
     for (const h of (d.dongHang || [])) {
       const sku = allSKUs.find(x => x.sku === h.sku);
       const tienDong = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
       if (sku && nhomTuoi.has(nhomCuoiCuaSku(sku))) n.dtDoTuoi += tienDong;
       else n.dtPhuKien += tienDong;
     }
-    n.tienMat += Number(d.tienMat) || 0;
-    n.chuyenKhoan += Number(d.tienChuyenKhoan) || 0;
-    // Tiền hoàn khi trả hàng trừ vào tiền mặt phải nộp
-    for (const lan of (d.lanTra || [])) n.tienMat -= Number(lan.tienHoan) || 0;
+    // Tiền trả lại trừ đều vào phụ kiện cho đơn giản; sai số nhỏ, không đáng phức tạp hóa
+    n.dtPhuKien = Math.max(0, n.dtPhuKien - daTra);
   }
 
-  // Thưởng bán hàng và phụ cấp tính sau khi đã gom đủ số liệu từng người
-  const ct = CONG_THUC_LUONG;
-  const ds = [...theoNguoi.values()].map(n => {
-    const thuongBan = Math.round(
+  // Thưởng đóng gói tính LẠI từ đơn hàng thật, không dùng số lưu lúc quét —
+  // vì phần trăm doanh thu chỉ cộng khi đơn đã giao, mà lúc quét chưa biết.
+  for (const qt of cacLanQuet) {
+    const n = layNgay(qt.ngay);
+    n.soDonGoi++;
+    const don = allDonHangSan.find(x => x.maDonSan === qt.maDonSan || x.maHoaDon === qt.maHoaDon);
+    if (don) {
+      const t = tinhThuongDon(don);
+      n.thuongGoi += t.thuong || 0;
+      if (t.thuongDoanhThu) n.thuongGoiDaGiao = (n.thuongGoiDaGiao || 0) + t.thuongDoanhThu;
+    } else {
+      // Không tìm thấy đơn (đã xóa?) thì ít nhất giữ phần cố định
+      n.thuongGoi += Number(CONG_THUC_LUONG.thuongMoiDonGoi) || 0;
+    }
+  }
+
+  for (const kt of cacKhauTru) {
+    const n = layNgay(kt.ngay);
+    n.khauTru += Number(kt.soTien) || 0;
+    if (kt.lyDo) n.lyDoKhauTru.push(kt.lyDo);
+  }
+
+  // Tính thưởng bán hàng theo ngày
+  for (const n of theoNgay.values()) {
+    n.thuongBan = Math.round(
       n.soDonBan * (Number(ct.thuongMoiDonBan) || 0)
       + n.dtDoTuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
       + n.dtPhuKien * (Number(ct.phanTramPhuKien) || 0) / 100);
-    const phuCap = Number(ct.phuCapThang) || 0;
-    return {
-      ...n, thuongBan, phuCap,
-      tongLuong: n.tienGio + n.thuongGoi + thuongBan + phuCap
-    };
-  });
-  ds.sort((a, b) => b.tongLuong - a.tongLuong);
-  return { thang, xemHet, danhSach: ds, uidXem };
+    n.thuong = (laBanHang ? n.thuongBan : 0) + (laDongGoi ? n.thuongGoi : 0);
+    n.tong = n.luong + n.thuong - n.khauTru;
+  }
+
+  const ds = [...theoNgay.values()].sort((a, b) => b.ngay.localeCompare(a.ngay));
+  const tong = ds.reduce((s, n) => ({
+    phut: s.phut + n.phut, luong: s.luong + n.luong,
+    thuong: s.thuong + n.thuong, khauTru: s.khauTru + n.khauTru,
+    tong: s.tong + n.tong
+  }), { phut: 0, luong: 0, thuong: 0, khauTru: 0, tong: 0 });
+
+  // Cộng phụ cấp tháng vào tổng cuối
+  tong.phuCap = Number(ct.phuCapThang) || 0;
+  tong.tong += tong.phuCap;
+
+  return { thang, xemHet, uidXem, tenNguoi: nguoi.ten || currentUserData?.ten || '',
+    laBanHang, laDongGoi, donGia, ngay: ds, tong };
 }
 
 function veBangLuong(dl) {
   const el = document.getElementById('luongnv-content');
   if (!el) return;
-  const { thang, xemHet, danhSach } = dl;
+  const { thang, xemHet, ngay, tong, laBanHang, laDongGoi, donGia, tenNguoi, uidXem } = dl;
   const [nam, th] = thang.split('-');
+  const coThuong = laBanHang || laDongGoi;
 
-  const tong = danhSach.reduce((s, n) => ({
-    tienGio: s.tienGio + n.tienGio,
-    thuongGoi: s.thuongGoi + n.thuongGoi,
-    tongLuong: s.tongLuong + n.tongLuong,
-    doanhThu: s.doanhThu + n.doanhThu,
-    tienMat: s.tienMat + n.tienMat
-  }), { tienGio: 0, thuongGoi: 0, tongLuong: 0, doanhThu: 0, tienMat: 0 });
+  const nvKhac = xemHet
+    ? allUsersCache.filter(u => u.id !== currentUser.uid && !u.disabled)
+    : [];
 
   el.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
       <button class="btn-xs" onclick="blDoiThang(-1)">←</button>
       <input type="month" value="${thang}" onchange="blDatThang(this.value)" style="flex:1;text-align:center">
       <button class="btn-xs" onclick="blDoiThang(1)">→</button>
     </div>
 
-    ${!danhSach.length ? '<p class="info-note">Chưa có dữ liệu trong tháng này.</p>' : ''}
+    ${xemHet && nvKhac.length ? `
+      <select onchange="blChonNhanVien(this.value)" style="width:100%;margin-bottom:10px">
+        <option value="">${escHtml(currentUserData?.ten || 'Tôi')}</option>
+        ${nvKhac.map(u => `<option value="${u.id}" ${uidXem === u.id ? 'selected' : ''}>${escHtml(u.ten || u.email || '')}</option>`).join('')}
+      </select>` : ''}
 
-    ${xemHet && danhSach.length > 1 ? `
-      <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px">
-        <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Toàn cửa hàng tháng ${th}/${nam}</div>
-        <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:700">
-          <span>Tổng lương</span><span style="color:var(--green)">${fmt(tong.tongLuong)}đ</span>
-        </div>
-        <div style="display:flex;gap:14px;font-size:12px;color:var(--text2);margin-top:4px">
-          <span>Giờ công ${fmt(tong.tienGio)}đ</span>
-          <span>Thưởng gói ${fmt(tong.thuongGoi)}đ</span>
-        </div>
-      </div>` : ''}
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px">
+      <div style="font-size:12px;color:var(--text2)">${escHtml(tenNguoi)} · tháng ${th}/${nam}</div>
+      <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:700;margin-top:2px">
+        <span>Tổng lương</span><span style="color:var(--green)">${fmt(tong.tong)}đ</span>
+      </div>
+      ${tong.phuCap ? `<div style="font-size:12px;color:var(--text2)">Đã gồm phụ cấp ${fmt(tong.phuCap)}đ</div>` : ''}
+      ${donGia ? `<div style="font-size:11px;color:var(--text2);margin-top:4px">Đơn giá ${fmt(donGia)}đ/giờ</div>` : `
+        <div style="font-size:11px;color:var(--red);margin-top:4px">Chưa đặt đơn giá theo giờ cho cấp bậc này</div>`}
+    </div>
 
-    ${danhSach.map(n => {
-      const gio = Math.floor(n.tongPhut / 60);
-      const phut = n.tongPhut % 60;
-      return `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <b style="font-size:15px">${escHtml(n.ten || '(chưa có tên)')}</b>
-          <b style="font-size:18px;color:var(--green)">${fmt(n.tongLuong)}đ</b>
-        </div>
+    ${!ngay.length ? '<p class="info-note">Chưa có dữ liệu trong tháng.</p>' : `
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <table class="bl-bang">
+        <thead>
+          <tr>
+            <th>Ngày</th><th>Giờ làm</th><th>Lương</th>
+            ${coThuong ? '<th>Thưởng<br><span style="font-weight:400;font-size:10px">tạm tính</span></th>' : ''}
+            <th>Khấu trừ</th><th>Tổng</th>
+            ${xemHet ? '<th></th>' : ''}
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="bl-tong">
+            <td>Cả tháng</td>
+            <td>${phutSangGio(tong.phut)}</td>
+            <td>${fmt(tong.luong)}</td>
+            ${coThuong ? `<td>${fmt(tong.thuong)}</td>` : ''}
+            <td>${tong.khauTru ? '−' + fmt(tong.khauTru) : '—'}</td>
+            <td>${fmt(tong.tong - tong.phuCap)}</td>
+            ${xemHet ? '<td></td>' : ''}
+          </tr>
+          ${ngay.map(n => {
+            const d = new Date(n.ngay);
+            const nhanNgay = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+            const gioVao = n.vao ? `${n.vao.getHours()}h${String(n.vao.getMinutes()).padStart(2,'0')}` : '';
+            const gioRa = n.ra ? `${n.ra.getHours()}h${String(n.ra.getMinutes()).padStart(2,'0')}` : '';
+            return `
+            <tr>
+              <td>${nhanNgay}</td>
+              <td style="white-space:nowrap">
+                ${gioVao ? `<span style="${n.treGio ? 'color:var(--red);font-weight:700' : ''}">${gioVao}</span>` : '—'}
+                ${gioRa ? `–${gioRa}` : (gioVao ? '–?' : '')}
+              </td>
+              <td>${n.luong ? fmt(n.luong) : '—'}</td>
+              ${coThuong ? `<td>${n.thuong ? fmt(n.thuong) : '—'}</td>` : ''}
+              <td>${n.khauTru ? `<span style="color:var(--red)" title="${escHtml(n.lyDoKhauTru.join('; '))}">−${fmt(n.khauTru)}</span>` : '—'}</td>
+              <td><b>${fmt(n.tong)}</b></td>
+              ${xemHet ? `<td><button class="btn-xs" onclick="moKhauTru('${n.ngay}')">+</button></td>` : ''}
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`}
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
-          <div style="background:var(--bg);border-radius:8px;padding:8px">
-            <div style="font-size:11px;color:var(--text2)">Giờ công</div>
-            <div><b>${gio}h${phut ? ' ' + phut + 'p' : ''}</b> · ${n.soCa} ca</div>
-            <div style="color:var(--green)">${fmt(n.tienGio)}đ</div>
-          </div>
-          <div style="background:var(--bg);border-radius:8px;padding:8px">
-            <div style="font-size:11px;color:var(--text2)">Thưởng đóng gói</div>
-            <div><b>${n.soDonGoi}</b> đơn</div>
-            <div style="color:var(--green)">${fmt(n.thuongGoi)}đ</div>
-          </div>
-        </div>
-
-        ${n.thuongBan || n.phuCap ? `
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-top:8px">
-          ${n.thuongBan ? `<div style="background:var(--bg);border-radius:8px;padding:8px">
-            <div style="font-size:11px;color:var(--text2)">Thưởng bán hàng</div>
-            <div style="color:var(--green)"><b>${fmt(n.thuongBan)}đ</b></div>
-          </div>` : ''}
-          ${n.phuCap ? `<div style="background:var(--bg);border-radius:8px;padding:8px">
-            <div style="font-size:11px;color:var(--text2)">Phụ cấp tháng</div>
-            <div style="color:var(--green)"><b>${fmt(n.phuCap)}đ</b></div>
-          </div>` : ''}
-        </div>` : ''}
-
-        ${n.soDonBan ? `
-        <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
-          <div style="font-size:11px;color:var(--text2);margin-bottom:4px">
-            Bán tại quầy · ${n.soDonBan} đơn · doanh thu ${fmt(n.doanhThu)}đ
-            ${n.dtDoTuoi || n.dtPhuKien ? `<br>tươi sống ${fmt(n.dtDoTuoi)}đ · phụ kiện ${fmt(n.dtPhuKien)}đ` : ''}
-          </div>
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:13px">💵 Tiền mặt phải nộp</span>
-            <b style="font-size:16px;color:${n.tienMat < 0 ? 'var(--red)' : '#D97706'}">${fmt(n.tienMat)}đ</b>
-          </div>
-          ${n.chuyenKhoan ? `<div style="font-size:11px;color:var(--text2)">
-            🏦 Chuyển khoản ${fmt(n.chuyenKhoan)}đ — đã vào tài khoản, không phải nộp
-          </div>` : ''}
-        </div>` : ''}
-      </div>`;
-    }).join('')}
-
-    <p class="info-note" style="margin-top:10px;font-size:12px">
-      Lương giờ công chỉ tính ca đã check-in và check-out đầy đủ.
-      Tiền mặt phải nộp đã trừ phần hoàn khách khi trả hàng.
-    </p>`;
+    ${coThuong ? `<p class="info-note" style="margin-top:10px;font-size:12px">
+      Thưởng là số tạm tính — đơn bị hủy hoặc khách trả hàng thì trừ lại.
+      Chốt vào cuối tháng.
+    </p>` : ''}`;
 }
 
 window.blDoiThang = function(d) {
@@ -10248,10 +10293,31 @@ window.blDoiThang = function(d) {
   renderBangLuong();
 };
 
-window.blDatThang = function(v) {
-  if (!v) return;
-  blThang = v;
-  renderBangLuong();
+window.blDatThang = function(v) { if (v) { blThang = v; renderBangLuong(); } };
+window.blChonNhanVien = function(uid) { blNhanVienDangXem = uid || null; renderBangLuong(); };
+
+// ===== KHẤU TRỪ =====
+// Chỉ quản lý nhập được. Ghi rõ lý do để nhân viên biết vì sao bị trừ.
+window.moKhauTru = async function(ngay) {
+  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
+  if (!laQL) return;
+  const soTien = prompt(`Khấu trừ ngày ${ngay} — số tiền (đồng):`);
+  if (soTien === null) return;
+  const tien = Number(String(soTien).replace(/[^\d]/g, '')) || 0;
+  if (tien <= 0) { showToast('Số tiền không hợp lệ', true); return; }
+  const lyDo = prompt('Lý do khấu trừ:') || '';
+  try {
+    await addDoc(collection(db, 'khau_tru'), {
+      uid: blNhanVienDangXem || currentUser.uid,
+      ngay, soTien: tien, lyDo,
+      nguoiTao: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+      taoLuc: serverTimestamp()
+    });
+    showToast(`Đã ghi khấu trừ ${fmt(tien)}đ`);
+    renderBangLuong();
+  } catch(e) {
+    alert('Không ghi được khấu trừ: ' + e.message);
+  }
 };
 
 // Khóa cho mức lương mặc định (khi nhân viên chưa gán cấp bậc).
@@ -11536,6 +11602,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .mod-btn.admin-btn.active{background:#5B21B6;color:#fff}
 #mod-nhanvien.active,#sidebar-nhanvien.active{background:#B45309!important;color:#fff!important}
 
+/* ===== BẢNG LƯƠNG ===== */
+.bl-bang{width:100%;border-collapse:collapse;font-size:13px;min-width:420px}
+.bl-bang th{background:var(--bg);padding:8px 6px;text-align:right;font-size:11px;
+  color:var(--text2);font-weight:600;border-bottom:1px solid var(--border);white-space:nowrap}
+.bl-bang th:first-child,.bl-bang td:first-child{text-align:left}
+.bl-bang td{padding:9px 6px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap}
+.bl-bang tbody tr:hover{background:var(--bg)}
+/* Hàng tổng dính trên cùng khi cuộn — luôn thấy số tổng */
+.bl-bang .bl-tong td{background:#F0FDF4;font-weight:700;border-bottom:2px solid var(--green);
+  position:sticky;top:0}
+
 /* ===== MÀN HÌNH BÁN HÀNG ===== */
 /* Khung chiếm hết chiều cao còn lại, ô hàng hóa co giãn và cuộn được,
    khối thanh toán luôn dính đáy — nhân viên không phải cuộn để bấm hoàn thành. */
@@ -11919,7 +11996,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v323</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v325</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11973,7 +12050,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v323</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v325</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12015,7 +12092,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v323</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v325</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
