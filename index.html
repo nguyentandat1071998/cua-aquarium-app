@@ -10092,7 +10092,8 @@ async function tinhLuongThang(thang) {
     const nguoi = allUsersCache.find(u => u.id === ca.uid) || {};
     const vt = nguoi.role || 'nhan_vien';
     const rates = cfg[vt]?.rates || {};
-    const donGia = Number(rates[nguoi.capBac || ''] ?? rates[''] ?? 0);
+    const donGia = Number(
+      rates[nguoi.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
     n.tienGio += Math.round(phut / 60 * donGia);
   }
 
@@ -10249,6 +10250,10 @@ window.blDatThang = function(v) {
   renderBangLuong();
 };
 
+// Khóa cho mức lương mặc định (khi nhân viên chưa gán cấp bậc).
+// Firestore không nhận tên trường rỗng nên không dùng '' được.
+const MUC_LUONG_MAC_DINH = 'mac_dinh';
+
 async function getLuongConfig() {
   const snap = await getDoc(doc(db, 'settings', 'luong_theo_gio'));
   return snap.exists() ? snap.data() : {};
@@ -10367,7 +10372,7 @@ async function renderThietLapLuong() {
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span style="flex:1;font-size:13px;color:var(--text2)">Mặc định ${tiers.length?'(chưa gán cấp bậc)':'(áp dụng cho mọi người)'}</span>
             <input type="number" class="luong-rate" data-role="${escHtml(r.key)}" data-tier=""
-              value="${rates['']||0}" placeholder="đ/giờ" style="width:120px">
+              value="${rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0}" placeholder="đ/giờ" style="width:120px">
           </div>
           ${tiers.map(t => `
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
@@ -10570,8 +10575,12 @@ window.luuBangLuong = async function(roleKey) {
     const cacO = document.querySelectorAll(`.luong-rate[data-role="${CSS.escape(roleKey)}"]`);
     if (!cacO.length) { showToast('Không tìm thấy ô nhập nào', true); return; }
     cacO.forEach(o => {
-      cfg[roleKey].rates[o.dataset.tier || ''] = parseFloat(o.value) || 0;
+      // Firestore không cho tên trường rỗng, nên mức mặc định lưu dưới khóa
+      // 'mac_dinh' thay vì chuỗi rỗng như trước.
+      cfg[roleKey].rates[o.dataset.tier || MUC_LUONG_MAC_DINH] = parseFloat(o.value) || 0;
     });
+    // Dọn khóa rỗng còn sót từ dữ liệu cũ — để lại là Firestore từ chối ghi
+    delete cfg[roleKey].rates[''];
 
     await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg);
     showToast('Đã lưu lương theo giờ');
@@ -11906,7 +11915,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v321</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v322</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11960,7 +11969,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v321</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v322</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12002,7 +12011,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v321</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v322</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
