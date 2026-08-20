@@ -10366,12 +10366,14 @@ async function renderThietLapLuong() {
         <div id="luong-tiers-${r.key}">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span style="flex:1;font-size:13px;color:var(--text2)">Mặc định ${tiers.length?'(chưa gán cấp bậc)':'(áp dụng cho mọi người)'}</span>
-            <input type="number" id="luong-rate-${r.key}-" value="${rates['']||0}" placeholder="đ/giờ" style="width:120px">
+            <input type="number" class="luong-rate" data-role="${escHtml(r.key)}" data-tier=""
+              value="${rates['']||0}" placeholder="đ/giờ" style="width:120px">
           </div>
           ${tiers.map(t => `
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span style="flex:1;font-size:13px">${escHtml(t)}</span>
-            <input type="number" id="luong-rate-${r.key}-${escHtml(t)}" value="${rates[t]||0}" placeholder="đ/giờ" style="width:120px">
+            <input type="number" class="luong-rate" data-role="${escHtml(r.key)}" data-tier="${escHtml(t)}"
+              value="${rates[t]||0}" placeholder="đ/giờ" style="width:120px">
             <button class="btn-xs danger" onclick="xoaCapBac('${r.key}','${escHtml(t)}')">Xóa</button>
           </div>`).join('')}
         </div>
@@ -10558,17 +10560,25 @@ window.xoaCapBac = async function(roleKey, ten) {
 };
 
 window.luuBangLuong = async function(roleKey) {
-  const cfg = await getLuongConfig();
-  if (!cfg[roleKey]) cfg[roleKey] = { tiers: [], rates: {} };
-  if (!cfg[roleKey].rates) cfg[roleKey].rates = {};
-  const tiers = cfg[roleKey].tiers || [];
-  cfg[roleKey].rates[''] = parseFloat(document.getElementById(`luong-rate-${roleKey}-`).value) || 0;
-  tiers.forEach(t => {
-    const inp = document.getElementById(`luong-rate-${roleKey}-${t}`);
-    if (inp) cfg[roleKey].rates[t] = parseFloat(inp.value) || 0;
-  });
-  await setDoc(doc(db,'settings','luong_theo_gio'), cfg);
-  showToast('Đã lưu bảng lương');
+  try {
+    const cfg = await getLuongConfig();
+    if (!cfg[roleKey]) cfg[roleKey] = { tiers: [], rates: {} };
+    if (!cfg[roleKey].rates) cfg[roleKey].rates = {};
+
+    // Đọc theo thuộc tính data thay vì ghép id từ tên cấp bậc — tên có dấu cách,
+    // dấu tiếng Việt hay ký tự đặc biệt đều không làm hỏng việc tìm ô nhập.
+    const cacO = document.querySelectorAll(`.luong-rate[data-role="${CSS.escape(roleKey)}"]`);
+    if (!cacO.length) { showToast('Không tìm thấy ô nhập nào', true); return; }
+    cacO.forEach(o => {
+      cfg[roleKey].rates[o.dataset.tier || ''] = parseFloat(o.value) || 0;
+    });
+
+    await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg);
+    showToast('Đã lưu lương theo giờ');
+  } catch(e) {
+    console.error('Lỗi lưu bảng lương:', e);
+    alert('Không lưu được: ' + e.message);
+  }
 };
 
 // ===== ADMIN =====
@@ -11896,7 +11906,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v320</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v321</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11950,7 +11960,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v320</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v321</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11992,7 +12002,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v320</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v321</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
