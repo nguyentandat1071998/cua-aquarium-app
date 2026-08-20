@@ -2655,7 +2655,10 @@ let CONG_THUC_LUONG = {
   thuongMoiDonGoi: 300,        // đồng, thưởng cố định mỗi đơn đóng gói
   phanTramDonGoi: 0.06,        // % doanh thu đơn đó
   thuongMoiDonBan: 0,          // đồng, thưởng cố định mỗi đơn bán tại quầy
-  phanTramDonBan: 0,           // % doanh thu bán tại quầy
+  // Bán tại quầy chia hai nhóm hàng, mỗi nhóm một mức thưởng khác nhau
+  phanTramDoTuoi: 0,           // % doanh thu hàng tươi sống (cá, tép, cây...)
+  phanTramPhuKien: 0,          // % doanh thu phụ kiện và hàng khô
+  nhomDoTuoi: [],              // tên các nhóm hàng cấp 1 tính là đồ tươi
   phuCapThang: 0               // đồng, phụ cấp cố định mỗi tháng
 };
 
@@ -10064,7 +10067,8 @@ async function tinhLuongThang(thang) {
     if (!theoNguoi.has(uid)) theoNguoi.set(uid, {
       uid, ten: ten || '', soCa: 0, tongPhut: 0, tienGio: 0,
       soDonGoi: 0, thuongGoi: 0,
-      soDonBan: 0, doanhThu: 0, tienMat: 0, chuyenKhoan: 0
+      soDonBan: 0, doanhThu: 0, tienMat: 0, chuyenKhoan: 0,
+      dtDoTuoi: 0, dtPhuKien: 0
     });
     return theoNguoi.get(uid);
   };
@@ -10092,6 +10096,7 @@ async function tinhLuongThang(thang) {
     n.thuongGoi += Number(q.thuong) || 0;
   }
 
+  const nhomTuoi = new Set(CONG_THUC_LUONG.nhomDoTuoi || []);
   for (const d of donBan) {
     const uid = d.nguoiBan?.uid;
     if (!uid) continue;
@@ -10099,6 +10104,15 @@ async function tinhLuongThang(thang) {
     n.soDonBan++;
     const tien = Number(d.phaiTra) || 0;
     n.doanhThu += tien;
+
+    // Tách doanh thu theo nhóm hàng để tính thưởng riêng. Nhóm hàng tra từ bảng
+    // SKU chứ không lưu trong đơn — đổi nhóm sau này thì thưởng tính lại theo nhóm mới.
+    for (const h of (d.dongHang || [])) {
+      const sku = allSKUs.find(x => x.sku === h.sku);
+      const tienDong = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
+      if (sku && nhomTuoi.has(sku.nhom1)) n.dtDoTuoi += tienDong;
+      else n.dtPhuKien += tienDong;
+    }
     n.tienMat += Number(d.tienMat) || 0;
     n.chuyenKhoan += Number(d.tienChuyenKhoan) || 0;
     // Tiền hoàn khi trả hàng trừ vào tiền mặt phải nộp
@@ -10110,7 +10124,8 @@ async function tinhLuongThang(thang) {
   const ds = [...theoNguoi.values()].map(n => {
     const thuongBan = Math.round(
       n.soDonBan * (Number(ct.thuongMoiDonBan) || 0)
-      + n.doanhThu * (Number(ct.phanTramDonBan) || 0) / 100);
+      + n.dtDoTuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
+      + n.dtPhuKien * (Number(ct.phanTramPhuKien) || 0) / 100);
     const phuCap = Number(ct.phuCapThang) || 0;
     return {
       ...n, thuongBan, phuCap,
@@ -10195,6 +10210,7 @@ function veBangLuong(dl) {
         <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
           <div style="font-size:11px;color:var(--text2);margin-bottom:4px">
             Bán tại quầy · ${n.soDonBan} đơn · doanh thu ${fmt(n.doanhThu)}đ
+            ${n.dtDoTuoi || n.dtPhuKien ? `<br>tươi sống ${fmt(n.dtDoTuoi)}đ · phụ kiện ${fmt(n.dtPhuKien)}đ` : ''}
           </div>
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:13px">💵 Tiền mặt phải nộp</span>
@@ -10390,7 +10406,16 @@ function veKhoiCongThucThuong() {
 
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin:14px 0 6px">BÁN TẠI QUẦY</div>
       ${o('ct-thuong-ban', 'Thưởng mỗi đơn', 'Cố định cho mỗi đơn bán tại quầy', 'đ')}
-      ${o('ct-pt-ban', 'Cộng thêm theo doanh thu', 'Tính trên tổng tiền đã bán', '%')}
+      ${o('ct-pt-tuoi', 'Thưởng hàng tươi sống', 'Cá, tép, cây thủy sinh...', '%')}
+      ${o('ct-pt-phukien', 'Thưởng phụ kiện', 'Thiết bị, thức ăn, hàng khô...', '%')}
+
+      <div style="margin-bottom:10px">
+        <div style="font-size:13px;margin-bottom:4px">Nhóm hàng tính là tươi sống</div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:6px">
+          Tick nhóm nào thì hàng thuộc nhóm đó hưởng mức tươi sống, còn lại hưởng mức phụ kiện.
+        </div>
+        <div id="ct-nhom-tuoi" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      </div>
 
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin:14px 0 6px">KHÁC</div>
       ${o('ct-phu-cap', 'Phụ cấp mỗi tháng', 'Cộng thẳng vào lương tháng', 'đ')}
@@ -10406,9 +10431,35 @@ async function napGiaTriCongThuc() {
   dat('ct-thuong-goi', c.thuongMoiDonGoi);
   dat('ct-pt-goi', c.phanTramDonGoi);
   dat('ct-thuong-ban', c.thuongMoiDonBan);
-  dat('ct-pt-ban', c.phanTramDonBan);
+  dat('ct-pt-tuoi', c.phanTramDoTuoi);
+  dat('ct-pt-phukien', c.phanTramPhuKien);
   dat('ct-phu-cap', c.phuCapThang);
+  veChonNhomTuoi(c.nhomDoTuoi || []);
 }
+
+// Danh sách nhóm hàng cấp 1 lấy thẳng từ bảng SKU — thêm nhóm mới là tự hiện
+function veChonNhomTuoi(daChon) {
+  const el = document.getElementById('ct-nhom-tuoi');
+  if (!el) return;
+  const cacNhom = [...new Set(allSKUs.map(s => s.nhom1).filter(Boolean))].sort();
+  if (!cacNhom.length) {
+    el.innerHTML = '<span style="font-size:12px;color:var(--text2)">Chưa có nhóm hàng nào</span>';
+    return;
+  }
+  const chon = new Set(daChon);
+  el.innerHTML = cacNhom.map(n => `
+    <label style="display:flex;align-items:center;gap:5px;padding:5px 9px;border-radius:14px;
+                  border:1.5px solid ${chon.has(n) ? 'var(--green)' : 'var(--border)'};
+                  background:${chon.has(n) ? '#F0FDF4' : '#fff'};font-size:12px;cursor:pointer">
+      <input type="checkbox" class="ct-nhom-cb" value="${escHtml(n)}" ${chon.has(n) ? 'checked' : ''}
+        onchange="veChonNhomTuoi(layNhomTuoiDangChon())">
+      ${escHtml(n)}
+    </label>`).join('');
+}
+
+window.layNhomTuoiDangChon = function() {
+  return [...document.querySelectorAll('.ct-nhom-cb')].filter(x => x.checked).map(x => x.value);
+};
 
 window.luuCongThucThuong = async function() {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
@@ -10422,7 +10473,9 @@ window.luuCongThucThuong = async function() {
       thuongMoiDonGoi: lay('ct-thuong-goi'),
       phanTramDonGoi: lay('ct-pt-goi'),
       thuongMoiDonBan: lay('ct-thuong-ban'),
-      phanTramDonBan: lay('ct-pt-ban'),
+      phanTramDoTuoi: lay('ct-pt-tuoi'),
+      phanTramPhuKien: lay('ct-pt-phukien'),
+      nhomDoTuoi: layNhomTuoiDangChon(),
       phuCapThang: lay('ct-phu-cap'),
       doiBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
       doiLuc: serverTimestamp()
@@ -11798,7 +11851,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v318</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v319</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -11852,7 +11905,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v318</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v319</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -11894,7 +11947,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v318</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v319</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
