@@ -250,14 +250,6 @@ const CA_GIO = {
   full:  { batDau: 8*60+30,  ketThuc: 21*60+30 }
 };
 
-// { [vaiTroId]: { sang: {batDau, ketThuc}, chieu: {...}, full: {...} } }
-let CA_GIO_THEO_VAI_TRO = {};
-
-function gioCaCuaVaiTro(vaiTroId, loaiCa) {
-  const rieng = CA_GIO_THEO_VAI_TRO[vaiTroId]?.[loaiCa];
-  return rieng || CA_GIO[loaiCa] || CA_GIO.full;
-}
-
 function phutSangChuoi(p) {
   return `${String(Math.floor(p / 60)).padStart(2, '0')}:${String(p % 60).padStart(2, '0')}`;
 }
@@ -11702,7 +11694,6 @@ async function renderThietLapLuong() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const cfg = await getLuongConfig();
   if (!allVaiTro.length) await loadVaiTro();
-  await napGioCa();
   await napCongThucLuong();
 
   // Lấy vai trò THẬT từ hệ thống thay vì danh sách viết cứng — thêm vai trò mới
@@ -11736,7 +11727,6 @@ async function renderThietLapLuong() {
         </div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
         <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu đơn giá công</button>
-        ${veKhoiGioCa(r.key)}
         ${veKhoiCongThucThuong(r.key)}
       </div>`;
   }).join('');
@@ -11748,92 +11738,6 @@ async function renderThietLapLuong() {
     const c = congThucCuaVaiTro(r.key);
     if (c.bat?.banQuay) veChonNhomTuoi(r.key, ctNhomDaChon[r.key] || c.nhomDoTuoi || []);
   }
-}
-
-// ===== GIỜ CA THEO VAI TRÒ =====
-// Mỗi vai trò làm khung giờ khác nhau. Giờ này quyết định hai thứ: tính vào trễ
-// và tính làm thêm sau giờ ra.
-function veKhoiGioCa(vaiTroId) {
-  const rieng = CA_GIO_THEO_VAI_TRO[vaiTroId] || {};
-  // Vai trò nào chỉ làm một ca thì tắt các ca còn lại — nhân viên khỏi phải chọn
-  // lúc check-in, và bảng lương cũng không hiện ca không dùng.
-  const dungCa = rieng.dungCa || { sang: true, chieu: true, full: true };
-
-  const dong = (loai, ten) => {
-    const g = rieng[loai] || CA_GIO[loai];
-    const bat = dungCa[loai] !== false;
-    return `
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;
-                  opacity:${bat ? '1' : '.45'}">
-        <input type="checkbox" id="gc-${vaiTroId}-${loai}-bat" ${bat ? 'checked' : ''}
-          onchange="luuGioCa('${escHtml(vaiTroId)}', true)">
-        <span style="flex:1;font-size:13px">${ten}</span>
-        <input type="time" id="gc-${vaiTroId}-${loai}-vao" value="${phutSangChuoi(g.batDau)}"
-          ${bat ? '' : 'disabled'} style="width:92px">
-        <span style="color:var(--text2)">–</span>
-        <input type="time" id="gc-${vaiTroId}-${loai}-ra" value="${phutSangChuoi(g.ketThuc)}"
-          ${bat ? '' : 'disabled'} style="width:92px">
-      </div>`;
-  };
-
-  const soCa = ['sang','chieu','full'].filter(c => dungCa[c] !== false).length;
-
-  return `
-    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">GIỜ CA LÀM VIỆC</div>
-      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">
-        Bỏ tick ca không dùng. Một công = 8 giờ; giờ ra dùng để tính làm thêm.
-      </div>
-      ${dong('sang', 'Ca sáng')}
-      ${dong('chieu', 'Ca chiều')}
-      ${dong('full', 'Ca full')}
-      ${soCa === 1 ? `<div style="font-size:11px;color:var(--green);margin-top:4px">
-        Chỉ một ca — nhân viên check-in là tự nhận ca này, không cần xếp lịch.
-      </div>` : ''}
-      <button class="btn-outline" style="width:100%;margin-top:6px"
-        onclick="luuGioCa('${escHtml(vaiTroId)}')">Lưu giờ ca</button>
-    </div>`;
-}
-
-window.luuGioCa = async function(vaiTroId, imLang) {
-  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
-  const lay = (loai) => ({
-    batDau: chuoiSangPhut(document.getElementById(`gc-${vaiTroId}-${loai}-vao`)?.value),
-    ketThuc: chuoiSangPhut(document.getElementById(`gc-${vaiTroId}-${loai}-ra`)?.value)
-  });
-  const dungCa = {};
-  ['sang', 'chieu', 'full'].forEach(c => {
-    dungCa[c] = document.getElementById(`gc-${vaiTroId}-${c}-bat`)?.checked !== false;
-  });
-  if (!Object.values(dungCa).some(Boolean)) {
-    showToast('Phải giữ ít nhất một ca', true);
-    renderThietLapLuong();
-    return;
-  }
-  try {
-    const moi = { ...CA_GIO_THEO_VAI_TRO,
-      [vaiTroId]: { sang: lay('sang'), chieu: lay('chieu'), full: lay('full'), dungCa } };
-    await setDoc(doc(db, 'settings', 'gio_ca'), moi);
-    CA_GIO_THEO_VAI_TRO = moi;
-    if (!imLang) showToast('Đã lưu giờ ca');
-    renderThietLapLuong();
-  } catch(e) {
-    alert('Không lưu được: ' + e.message);
-  }
-};
-
-// Các ca một vai trò được dùng
-function cacCaCuaVaiTro(vaiTroId) {
-  const d = CA_GIO_THEO_VAI_TRO[vaiTroId]?.dungCa;
-  if (!d) return ['sang', 'chieu', 'full'];
-  return ['sang', 'chieu', 'full'].filter(c => d[c] !== false);
-}
-
-async function napGioCa() {
-  try {
-    const d = await getDoc(doc(db, 'settings', 'gio_ca'));
-    CA_GIO_THEO_VAI_TRO = d.exists() ? d.data() : {};
-  } catch(e) { console.warn('Không nạp được giờ ca:', e.message); }
 }
 
 // Chọn nhóm hàng tươi sống: chỉ hiện nhóm ĐÃ CHỌN thành một hàng thẻ, thêm mới
@@ -13478,7 +13382,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v353</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v354</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13532,7 +13436,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v353</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v354</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13574,7 +13478,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v353</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v354</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
