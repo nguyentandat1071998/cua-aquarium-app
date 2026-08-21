@@ -10154,10 +10154,13 @@ let allCaLamViec = [];
 let caLamViecHong = [];   // bản ghi thiếu trường, chờ Admin dọn
 
 // Ba ca mặc định cho cửa hàng chưa cấu hình gì — tạo sẵn khi mở màn hình lần đầu
+// gioLamThuc = giờ làm sau khi trừ nghỉ giữa ca. Số công = gioLamThuc / GIO_MOT_CONG.
+const GIO_MOT_CONG = 8;   // chuẩn quy đổi: 8 giờ làm = 1 công
+
 const CA_MAC_DINH = [
-  { ten: 'Ca sáng',  batDau: 8 * 60 + 30,  ketThuc: 16 * 60 + 30, gioMotCong: 8, mau: '#C2792F' },
-  { ten: 'Ca chiều', batDau: 13 * 60 + 30, ketThuc: 21 * 60 + 30, gioMotCong: 8, mau: '#2563EB' },
-  { ten: 'Ca full',  batDau: 8 * 60 + 30,  ketThuc: 21 * 60 + 30, gioMotCong: 12, mau: '#6B5B95' }
+  { ten: 'Ca sáng',  batDau: 8 * 60 + 30,  ketThuc: 16 * 60 + 30, gioLamThuc: 8,  mau: '#C2792F' },
+  { ten: 'Ca chiều', batDau: 13 * 60 + 30, ketThuc: 21 * 60 + 30, gioLamThuc: 8,  mau: '#2563EB' },
+  { ten: 'Ca full',  batDau: 8 * 60 + 30,  ketThuc: 21 * 60 + 30, gioLamThuc: 11, mau: '#6B5B95' }
 ];
 
 async function napCaLamViec() {
@@ -10185,9 +10188,20 @@ function layCa(caId) {
   return allCaLamViec.find(c => c.id === caId) || null;
 }
 
-// Số phút tính một công của ca — dùng để quy đổi lương làm thêm
-function phutMotCong(ca) {
-  return (Number(ca?.gioMotCong) || 8) * 60;
+// Số công của một ca. Ca full làm thực 11 tiếng thì được 11/8 = 1,375 công.
+function soCongCuaCa(ca) {
+  const gio = Number(ca?.gioLamThuc) || Number(ca?.gioMotCong) || GIO_MOT_CONG;
+  return gio / GIO_MOT_CONG;
+}
+
+// Số phút của một công — dùng quy đổi lương làm thêm theo phút
+function phutMotCong() {
+  return GIO_MOT_CONG * 60;
+}
+
+// Giờ có mặt tại cửa hàng (chưa trừ nghỉ)
+function gioCoMat(ca) {
+  return ((Number(ca?.ketThuc) || 0) - (Number(ca?.batDau) || 0)) / 60;
 }
 
 function nhanGio(phut) {
@@ -10246,7 +10260,11 @@ function veDanhSachCa() {
               <b style="font-size:15px">${escHtml(c.ten)}</b>
               <div style="font-size:13px;color:var(--text2);margin-top:2px">
                 ${nhanGio(c.batDau)} – ${nhanGio(c.ketThuc)}
-                · 1 công = ${c.gioMotCong || 8} giờ
+                <span style="font-size:11px">(có mặt ${gioCoMat(c).toFixed(1).replace('.0','')}h)</span>
+              </div>
+              <div style="font-size:12px;margin-top:2px">
+                Làm thực <b>${(Number(c.gioLamThuc) || GIO_MOT_CONG)}h</b>
+                → <b style="color:var(--green)">${soCongCuaCa(c).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} công</b>
               </div>
               <div style="font-size:11px;color:var(--text2);margin-top:3px">
                 ${vt.length ? 'Áp dụng: ' + vt.map(escHtml).join(', ') : 'Áp dụng cho mọi vai trò'}
@@ -10338,11 +10356,10 @@ window.moSuaCa = function(caId) {
         </div>
 
         <div class="field">
-          <label>Số giờ tính một công</label>
-          <input type="number" id="ca-gio-cong" value="${c?.gioMotCong || 8}" min="1" max="24" step="0.5">
-          <div style="font-size:11px;color:var(--text2);margin-top:3px">
-            Thời gian có mặt có thể dài hơn vì nghỉ giữa ca. Số này dùng để quy đổi lương làm thêm.
-          </div>
+          <label>Giờ làm thực (đã trừ nghỉ giữa ca)</label>
+          <input type="number" id="ca-gio-thuc" value="${c?.gioLamThuc ?? c?.gioMotCong ?? 8}"
+            min="0.5" max="24" step="0.5" oninput="caTinhLaiCong()">
+          <div style="font-size:11px;color:var(--text2);margin-top:3px" id="ca-goi-y-cong"></div>
         </div>
 
         <div class="field">
@@ -10374,6 +10391,20 @@ window.moSuaCa = function(caId) {
       </div>
     </div>`;
   m.style.display = 'flex';
+  caTinhLaiCong();   // hiện số công ngay khi mở
+};
+
+// Hiện ngay số công tương ứng khi Admin gõ giờ làm thực
+window.caTinhLaiCong = function() {
+  const gio = Number(document.getElementById('ca-gio-thuc')?.value) || 0;
+  const el = document.getElementById('ca-goi-y-cong');
+  if (!el) return;
+  const cong = gio / GIO_MOT_CONG;
+  el.innerHTML = gio
+    ? `Chuẩn ${GIO_MOT_CONG} giờ = 1 công, nên ca này tính
+       <b style="color:var(--green)">${cong.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} công</b>.
+       Lương ca = đơn giá một công × số này.`
+    : `Nhập số giờ làm thực tế, đã trừ thời gian nghỉ giữa ca.`;
 };
 
 window.luuCa = async function(caId) {
@@ -10393,7 +10424,7 @@ window.luuCa = async function(caId) {
 
   const duLieu = {
     ten, batDau, ketThuc,
-    gioMotCong: Number(document.getElementById('ca-gio-cong')?.value) || 8,
+    gioLamThuc: Number(document.getElementById('ca-gio-thuc')?.value) || GIO_MOT_CONG,
     mau: document.getElementById('ca-mau')?.value || '#16A34A',
     vaiTroIds, deleted: false,
     suaBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
@@ -13084,7 +13115,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v340</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v341</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13138,7 +13169,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v340</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v341</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13180,7 +13211,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v340</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v341</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
