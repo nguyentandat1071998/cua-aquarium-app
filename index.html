@@ -241,11 +241,31 @@ let checkoutStream = null;
 let checkoutScanInterval = null;
 
 // Giờ chuẩn theo ca (để tính trễ giờ / thiếu giờ)
+// Giờ ca mặc định. Từng vai trò có thể đặt giờ riêng trong Thiết lập lương —
+// nhân viên đóng gói và bán hàng làm khung giờ khác nhau, gán cứng một bộ thì
+// tính vào trễ và làm thêm đều sai.
 const CA_GIO = {
   sang:  { batDau: 8*60+30,  ketThuc: 16*60+30 },
   chieu: { batDau: 13*60+30, ketThuc: 21*60+30 },
   full:  { batDau: 8*60+30,  ketThuc: 21*60+30 }
 };
+
+// { [vaiTroId]: { sang: {batDau, ketThuc}, chieu: {...}, full: {...} } }
+let CA_GIO_THEO_VAI_TRO = {};
+
+function gioCaCuaVaiTro(vaiTroId, loaiCa) {
+  const rieng = CA_GIO_THEO_VAI_TRO[vaiTroId]?.[loaiCa];
+  return rieng || CA_GIO[loaiCa] || CA_GIO.full;
+}
+
+function phutSangChuoi(p) {
+  return `${String(Math.floor(p / 60)).padStart(2, '0')}:${String(p % 60).padStart(2, '0')}`;
+}
+
+function chuoiSangPhut(s) {
+  const [g, p] = String(s || '').split(':').map(Number);
+  return (Number(g) || 0) * 60 + (Number(p) || 0);
+}
 
 let lichCaWeekOffset = 0;
 let lichCaUsersCache = null;
@@ -2691,6 +2711,25 @@ let CONG_THUC_THEO_VAI_TRO = {};
 // Công thức của CHÍNH người đang đăng nhập — dùng ở màn hình đóng gói
 let CONG_THUC_LUONG = { ...MAU_CONG_THUC };
 
+// ===== Ô NHẬP TIỀN =====
+// Định dạng số ngay khi gõ: 1500000 -> 1.500.000. Nhìn là biết mấy con số 0,
+// đỡ nhầm thừa hoặc thiếu một số không.
+window.dinhDangTien = function(o) {
+  const viTri = o.selectionStart;
+  const truoc = o.value.length;
+  const so = o.value.replace(/[^\d]/g, '');
+  o.value = so ? Number(so).toLocaleString('vi-VN') : '';
+  // Giữ con trỏ đúng chỗ sau khi chèn dấu chấm
+  const lech = o.value.length - truoc;
+  o.setSelectionRange(Math.max(0, viTri + lech), Math.max(0, viTri + lech));
+};
+
+// Đọc số từ ô đã định dạng
+window.docTien = function(el) {
+  if (!el) return 0;
+  return Number(String(el.value || '').replace(/[^\d]/g, '')) || 0;
+};
+
 // Nhóm cuối của một SKU — cấp sâu nhất đã gán. Dùng đường dẫn đầy đủ làm khóa
 // để hai nhóm trùng tên ở hai nhánh khác nhau không bị gộp làm một.
 function nhomCuoiCuaSku(s) {
@@ -3726,6 +3765,7 @@ window.kiemTraAnGiaVon = async function() {
   try {
     const snap = await getDocs(query(collection(db, 'gia_von'), limit(5)));
     const laAdmin = currentUserData?.role === 'admin';
+  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
     console.log(`3. Đọc collection gia_von: được ${snap.docs.length} bản ghi`,
       laAdmin ? '✅ đúng (là Admin)' : '⚠️ LỖI RULES — người không phải Admin đọc được');
   } catch(e) {
@@ -7093,6 +7133,7 @@ function veMenuHaiCap() {
   if (!hangTren || !hangDuoi) return;
 
   const laAdmin = currentUserData?.role === 'admin';
+  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
   // Nhóm được phép:
   //   - moTrucTiep: xét quyền của chính nhóm (Báo cáo, Thiết lập)
   //   - còn lại: có ít nhất một mục CHÍNH được phép (mục phụ không tính)
@@ -10195,6 +10236,7 @@ async function tinhLuongThang(thang) {
     if (!theoNgay.has(ngay)) theoNgay.set(ngay, {
       ngay, vao: null, ra: null, loaiCa: null, treGio: false,
       daDieuChinh: false, lyDoDieuChinh: '',
+      phutLamThem: 0, lamThemDaDuyet: false, tienLamThem: 0,
       phut: 0, luong: 0,
       soDonBan: 0, dtDoTuoi: 0, dtPhuKien: 0, thuongBan: 0,
       soDonGoi: 0, thuongGoi: 0,
@@ -10210,15 +10252,22 @@ async function tinhLuongThang(thang) {
     n.lyDoDieuChinh = ca.dieuChinhCa?.lyDo || ca.dieuChinhTre?.lyDo || '';
     if (ca.vaoLuc?.seconds) n.vao = new Date(ca.vaoLuc.seconds * 1000);
     if (ca.thoatLuc?.seconds) n.ra = new Date(ca.thoatLuc.seconds * 1000);
+
+    const gioCa = gioCaCuaVaiTro(nguoi.vaiTroId, ca.loaiCa);
+    if (n.vao) n.treGio = (n.vao.getHours() * 60 + n.vao.getMinutes()) > gioCa.batDau;
+
     if (n.vao && n.ra) {
       n.phut = Math.max(0, Math.round((n.ra - n.vao) / 60000));
-      n.luong = Math.round(n.phut / 60 * donGia);
-    }
-    // Vào trễ so với giờ ca chuẩn
-    const gioCa = CA_GIO[ca.loaiCa] || CA_GIO.full;
-    if (n.vao) {
-      const phutVao = n.vao.getHours() * 60 + n.vao.getMinutes();
-      n.treGio = phutVao > gioCa.batDau;
+      // Lương công tính theo GIỜ CA quy định, không theo thời gian có mặt —
+      // giữa ca có nghỉ nên có mặt lâu hơn không có nghĩa làm nhiều hơn.
+      n.luong = donGia;
+
+      // Làm thêm: chỉ tính khi quản lý đã duyệt
+      n.phutLamThem = tinhPhutLamThem(n.ra, gioCa.ketThuc);
+      n.lamThemDaDuyet = !!ca.lamThemDuyet;
+      if (n.phutLamThem && n.lamThemDaDuyet) {
+        n.tienLamThem = Math.round(donGia / PHUT_MOT_CONG * n.phutLamThem * HE_SO_LAM_THEM);
+      }
     }
   }
 
@@ -10270,15 +10319,17 @@ async function tinhLuongThang(thang) {
       + n.dtDoTuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
       + n.dtPhuKien * (Number(ct.phanTramPhuKien) || 0) / 100);
     n.thuong = (laBanHang ? n.thuongBan : 0) + (laDongGoi ? n.thuongGoi : 0);
-    n.tong = n.luong + n.thuong - n.khauTru;
+    n.tong = n.luong + (n.tienLamThem || 0) + n.thuong - n.khauTru;
   }
 
   const ds = [...theoNgay.values()].sort((a, b) => b.ngay.localeCompare(a.ngay));
   const tong = ds.reduce((s, n) => ({
     phut: s.phut + n.phut, luong: s.luong + n.luong,
+    lamThem: s.lamThem + (n.tienLamThem || 0),
+    phutLamThem: s.phutLamThem + (n.lamThemDaDuyet ? n.phutLamThem : 0),
     thuong: s.thuong + n.thuong, khauTru: s.khauTru + n.khauTru,
     tong: s.tong + n.tong
-  }), { phut: 0, luong: 0, thuong: 0, khauTru: 0, tong: 0 });
+  }), { phut: 0, luong: 0, lamThem: 0, phutLamThem: 0, thuong: 0, khauTru: 0, tong: 0 });
 
   // Cộng phụ cấp tháng vào tổng cuối
   // Phụ cấp giờ đặt theo từng người từng tháng, không còn trong thiết lập chung
@@ -10455,6 +10506,7 @@ function veDanhSachLuong(dl) {
   const { thang, danhSach } = dl;
   const [nam, th] = thang.split('-');
   const laAdmin = currentUserData?.role === 'admin';
+  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
 
   // Chia theo VAI TRÒ — tên do Admin đặt nên chính xác, không phải đoán từ quyền
   const tenNhom = [...new Set(danhSach.map(n => n.tenVaiTro))].sort();
@@ -10477,9 +10529,9 @@ function veDanhSachLuong(dl) {
       <td>
         ${laAdmin ? `
           <input type="text" inputmode="numeric" class="bl-phucap" data-uid="${n.uid}"
-            value="${n.phuCap || ''}" placeholder="0"
-            oninput="this.value=this.value.replace(/[^0-9]/g,'');blTinhLaiDong('${n.uid}')"
-            style="width:86px;text-align:right;padding:5px">`
+            value="${n.phuCap ? Number(n.phuCap).toLocaleString('vi-VN') : ''}" placeholder="0"
+            oninput="dinhDangTien(this);blTinhLaiDong('${n.uid}')"
+            style="width:96px;text-align:right;padding:5px">`
           : (n.phuCap ? fmt(n.phuCap) : '—')}
       </td>
       <td>
@@ -10543,14 +10595,14 @@ window.blTinhLaiDong = function(uid) {
   const o = document.querySelector(`.bl-phucap[data-uid="${CSS.escape(uid)}"]`);
   const n = blDanhSachHienTai.find(x => x.uid === uid);
   if (!o || !n) return;
-  const pc = Number(o.value) || 0;
+  const pc = docTien(o);
   const tong = n.luong + n.thuong - n.khauTru + pc;
   const el = document.getElementById(`bl-tong-${uid}`);
   if (el) el.textContent = fmt(tong);
   // Cập nhật tổng toàn cửa hàng
   const tongTat = blDanhSachHienTai.reduce((s, x) => {
     const oo = document.querySelector(`.bl-phucap[data-uid="${CSS.escape(x.uid)}"]`);
-    const p = oo ? (Number(oo.value) || 0) : (x.phuCap || 0);
+    const p = oo ? docTien(oo) : (x.phuCap || 0);
     return s + x.luong + x.thuong - x.khauTru + p;
   }, 0);
   const elT = document.getElementById('bl-tong-tat-ca');
@@ -10569,7 +10621,7 @@ window.blLuuPhuCap = async function() {
       const ghiChuO = document.querySelector(`.bl-ghichu[data-uid="${CSS.escape(uid)}"]`);
       batch.set(doc(db, 'phu_cap', `${blThang}_${uid}`), {
         uid, thang: blThang,
-        soTien: Number(o.value) || 0,
+        soTien: docTien(o),
         ghiChu: ghiChuO?.value || '',
         capNhatBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
         capNhatLuc: serverTimestamp()
@@ -10603,6 +10655,7 @@ function veBangLuong(dl) {
   const { thang, xemHet, ngay, tong, laBanHang, laDongGoi, donGia, tenNguoi, uidXem } = dl;
   const [nam, th] = thang.split('-');
   const laAdmin = currentUserData?.role === 'admin';
+  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
   const coThuong = laBanHang || laDongGoi;
 
   const nvKhac = xemHet
@@ -10639,6 +10692,7 @@ function veBangLuong(dl) {
         <thead>
           <tr>
             <th>Ngày</th><th>Giờ làm</th><th>Lương</th>
+            <th>Làm thêm</th>
             ${coThuong ? '<th>Thưởng<br><span style="font-weight:400;font-size:10px">tạm tính</span></th>' : ''}
             <th>Khấu trừ</th><th>Tổng</th>
             ${xemHet ? '<th></th>' : ''}
@@ -10649,6 +10703,7 @@ function veBangLuong(dl) {
             <td>Cả tháng</td>
             <td>${phutSangGio(tong.phut)}</td>
             <td>${fmt(tong.luong)}</td>
+            <td>${tong.lamThem ? fmt(tong.lamThem) : '—'}</td>
             ${coThuong ? `<td>${fmt(tong.thuong)}</td>` : ''}
             <td>${tong.khauTru ? '−' + fmt(tong.khauTru) : '—'}</td>
             <td>${fmt(tong.tong - tong.phuCap)}</td>
@@ -10672,6 +10727,15 @@ function veBangLuong(dl) {
                     onclick="event.stopPropagation();xuLyCa('${n.ngay}','${n.loaiCa || 'full'}',${n.vao && !n.ra ? 'true' : 'false'})">Xử lý</button>` : ''}
               </td>
               <td>${n.luong ? fmt(n.luong) : '—'}</td>
+              <td>
+                ${n.phutLamThem ? (n.lamThemDaDuyet
+                  ? `<span style="color:var(--green)">${fmt(n.tienLamThem)}</span>
+                     <div style="font-size:10px;color:var(--text2)">${n.phutLamThem}p</div>`
+                  : `<span style="color:#D97706;font-size:11px">chờ duyệt ${n.phutLamThem}p</span>
+                     ${laQuanLy ? `<div><button class="btn-xs bl-nut-xuly"
+                       onclick="duyetLamThem('${n.ngay}',${n.phutLamThem})">Duyệt</button></div>` : ''}`)
+                : '—'}
+              </td>
               ${coThuong ? `<td>${n.thuong ? fmt(n.thuong) : '—'}</td>` : ''}
               <td>${n.khauTru ? `<span style="color:var(--red)" title="${escHtml(n.lyDoKhauTru.join('; '))}">−${fmt(n.khauTru)}</span>` : '—'}</td>
               <td><b>${fmt(n.tong)}</b></td>
@@ -10754,6 +10818,32 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
   }
 };
 
+// ===== DUYỆT LÀM THÊM GIỜ =====
+// Ở lại sau giờ ra không tự thành làm thêm — có thể chỉ là dọn dẹp hoặc quên
+// check-out. Quản lý duyệt thì mới tính, hưởng 150% đơn giá.
+window.duyetLamThem = async function(ngay, soPhut) {
+  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
+  if (!laQL) { showToast('Chỉ quản lý mới duyệt được', true); return; }
+  const uid = blNhanVienDangXem || currentUser.uid;
+
+  if (!confirm(`Duyệt ${soPhut} phút làm thêm ngày ${ngay}?\n\n`
+    + `Hưởng ${HE_SO_LAM_THEM * 100}% đơn giá theo công.`)) return;
+
+  try {
+    await updateDoc(doc(db, 'lich_ca', `${ngay}_${uid}`), {
+      lamThemDuyet: {
+        soPhut,
+        boi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+        luc: new Date().toISOString()
+      }
+    });
+    showToast(`Đã duyệt ${soPhut} phút làm thêm`);
+    renderBangLuong();
+  } catch(e) {
+    alert('Không duyệt được: ' + e.message);
+  }
+};
+
 // ===== KHẤU TRỪ =====
 // Chỉ quản lý nhập được. Ghi rõ lý do để nhân viên biết vì sao bị trừ.
 window.moKhauTru = async function(ngay) {
@@ -10781,6 +10871,25 @@ window.moKhauTru = async function(ngay) {
 // Khóa cho mức lương mặc định (khi nhân viên chưa gán cấp bậc).
 // Firestore không nhận tên trường rỗng nên không dùng '' được.
 const MUC_LUONG_MAC_DINH = 'mac_dinh';
+
+// Một công = 8 giờ làm. Thời gian check-in/out có thể dài hơn vì có nghỉ giữa ca,
+// nên lương công tính theo GIỜ CA quy định, không theo thời gian có mặt.
+const PHUT_MOT_CONG = 8 * 60;
+
+// Làm thêm chỉ tính khi ở lại quá 5 phút sau giờ ra — về muộn vài phút do dọn dẹp
+// thì không tính, tránh cộng dồn những khoảng vụn vặt.
+const PHUT_TOI_THIEU_LAM_THEM = 5;
+
+// Giờ làm thêm hưởng 150% đơn giá
+const HE_SO_LAM_THEM = 1.5;
+
+// Số phút làm thêm của một ca: tính từ giờ ra quy định tới lúc check-out thật
+function tinhPhutLamThem(gioRaThat, gioCaKetThuc) {
+  if (!gioRaThat) return 0;
+  const phutRa = gioRaThat.getHours() * 60 + gioRaThat.getMinutes();
+  const du = phutRa - gioCaKetThuc;
+  return du > PHUT_TOI_THIEU_LAM_THEM ? du : 0;
+}
 
 async function getLuongConfig() {
   const snap = await getDoc(doc(db, 'settings', 'luong_theo_gio'));
@@ -10889,6 +10998,8 @@ async function renderThietLapLuong() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const cfg = await getLuongConfig();
   if (!allVaiTro.length) await loadVaiTro();
+  await napGioCa();
+  await napCongThucLuong();
 
   // Lấy vai trò THẬT từ hệ thống thay vì danh sách viết cứng — thêm vai trò mới
   // (như Nhân viên đóng gói) là tự hiện, không phải sửa code.
@@ -10906,19 +11017,22 @@ async function renderThietLapLuong() {
         <div id="luong-tiers-${r.key}">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span style="flex:1;font-size:13px;color:var(--text2)">Mặc định ${tiers.length?'(chưa gán cấp bậc)':'(áp dụng cho mọi người)'}</span>
-            <input type="number" class="luong-rate" data-role="${escHtml(r.key)}" data-tier=""
-              value="${rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0}" placeholder="đ/giờ" style="width:120px">
+            <input type="text" inputmode="numeric" class="luong-rate" data-role="${escHtml(r.key)}" data-tier=""
+              value="${Number(rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0).toLocaleString('vi-VN')}"
+              oninput="dinhDangTien(this)" placeholder="đ/công" style="width:120px;text-align:right">
           </div>
           ${tiers.map(t => `
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span style="flex:1;font-size:13px">${escHtml(t)}</span>
-            <input type="number" class="luong-rate" data-role="${escHtml(r.key)}" data-tier="${escHtml(t)}"
-              value="${rates[t]||0}" placeholder="đ/giờ" style="width:120px">
+            <input type="text" inputmode="numeric" class="luong-rate" data-role="${escHtml(r.key)}" data-tier="${escHtml(t)}"
+              value="${Number(rates[t]||0).toLocaleString('vi-VN')}"
+              oninput="dinhDangTien(this)" placeholder="đ/công" style="width:120px;text-align:right">
             <button class="btn-xs danger" onclick="xoaCapBac('${r.key}','${escHtml(t)}')">Xóa</button>
           </div>`).join('')}
         </div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
         <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu lương giờ</button>
+        ${veKhoiGioCa(r.key)}
         ${veKhoiCongThucThuong(r.key)}
       </div>`;
   }).join('');
@@ -10930,6 +11044,64 @@ async function renderThietLapLuong() {
     const c = congThucCuaVaiTro(r.key);
     if (c.bat?.banQuay) veChonNhomTuoi(r.key, ctNhomDaChon[r.key] || c.nhomDoTuoi || []);
   }
+}
+
+// ===== GIỜ CA THEO VAI TRÒ =====
+// Mỗi vai trò làm khung giờ khác nhau. Giờ này quyết định hai thứ: tính vào trễ
+// và tính làm thêm sau giờ ra.
+function veKhoiGioCa(vaiTroId) {
+  const rieng = CA_GIO_THEO_VAI_TRO[vaiTroId] || {};
+  const dong = (loai, ten) => {
+    const g = rieng[loai] || CA_GIO[loai];
+    const laMacDinh = !rieng[loai];
+    return `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+        <span style="flex:1;font-size:13px">${ten}
+          ${laMacDinh ? '<span style="font-size:10px;color:var(--text2)">(mặc định)</span>' : ''}
+        </span>
+        <input type="time" id="gc-${vaiTroId}-${loai}-vao" value="${phutSangChuoi(g.batDau)}" style="width:96px">
+        <span style="color:var(--text2)">–</span>
+        <input type="time" id="gc-${vaiTroId}-${loai}-ra" value="${phutSangChuoi(g.ketThuc)}" style="width:96px">
+      </div>`;
+  };
+
+  return `
+    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">GIỜ CA LÀM VIỆC</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:8px">
+        Dùng để tính vào trễ và làm thêm sau giờ ra. Một công = 8 giờ làm.
+      </div>
+      ${dong('sang', 'Ca sáng')}
+      ${dong('chieu', 'Ca chiều')}
+      ${dong('full', 'Ca full')}
+      <button class="btn-outline" style="width:100%;margin-top:4px"
+        onclick="luuGioCa('${escHtml(vaiTroId)}')">Lưu giờ ca</button>
+    </div>`;
+}
+
+window.luuGioCa = async function(vaiTroId) {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  const lay = (loai) => ({
+    batDau: chuoiSangPhut(document.getElementById(`gc-${vaiTroId}-${loai}-vao`)?.value),
+    ketThuc: chuoiSangPhut(document.getElementById(`gc-${vaiTroId}-${loai}-ra`)?.value)
+  });
+  try {
+    const moi = { ...CA_GIO_THEO_VAI_TRO,
+      [vaiTroId]: { sang: lay('sang'), chieu: lay('chieu'), full: lay('full') } };
+    await setDoc(doc(db, 'settings', 'gio_ca'), moi);
+    CA_GIO_THEO_VAI_TRO = moi;
+    showToast('Đã lưu giờ ca');
+    renderThietLapLuong();
+  } catch(e) {
+    alert('Không lưu được: ' + e.message);
+  }
+};
+
+async function napGioCa() {
+  try {
+    const d = await getDoc(doc(db, 'settings', 'gio_ca'));
+    CA_GIO_THEO_VAI_TRO = d.exists() ? d.data() : {};
+  } catch(e) { console.warn('Không nạp được giờ ca:', e.message); }
 }
 
 // Chọn nhóm hàng tươi sống: chỉ hiện nhóm ĐÃ CHỌN thành một hàng thẻ, thêm mới
@@ -11200,7 +11372,7 @@ window.luuBangLuong = async function(roleKey) {
     cacO.forEach(o => {
       // Firestore không cho tên trường rỗng, nên mức mặc định lưu dưới khóa
       // 'mac_dinh' thay vì chuỗi rỗng như trước.
-      cfg[roleKey].rates[o.dataset.tier || MUC_LUONG_MAC_DINH] = parseFloat(o.value) || 0;
+      cfg[roleKey].rates[o.dataset.tier || MUC_LUONG_MAC_DINH] = docTien(o);
     });
     // Dọn khóa rỗng còn sót từ dữ liệu cũ — để lại là Firestore từ chối ghi
     delete cfg[roleKey].rates[''];
@@ -12562,7 +12734,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v335</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v336</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -12616,7 +12788,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v335</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v336</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12658,7 +12830,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v335</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v336</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
