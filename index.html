@@ -10151,6 +10151,7 @@ function downloadCSV(rows, filename, slLabel) {
 // Mỗi ca: id, tên, giờ vào, giờ ra, số giờ tính một công, vai trò áp dụng.
 // ==========================================================================
 let allCaLamViec = [];
+let caLamViecHong = [];   // bản ghi thiếu trường, chờ Admin dọn
 
 // Ba ca mặc định cho cửa hàng chưa cấu hình gì — tạo sẵn khi mở màn hình lần đầu
 const CA_MAC_DINH = [
@@ -10162,8 +10163,10 @@ const CA_MAC_DINH = [
 async function napCaLamViec() {
   try {
     const snap = await getDocs(collection(db, 'ca_lam_viec'));
-    allCaLamViec = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(c => !c.deleted)
+    const tho = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.deleted);
+    // Tách riêng bản ghi thiếu trường để Admin dọn, thay vì hiện NaN ra màn hình
+    caLamViecHong = tho.filter(c => !c.ten || c.batDau == null || c.ketThuc == null);
+    allCaLamViec = tho.filter(c => c.ten && c.batDau != null && c.ketThuc != null)
       .sort((a, b) => (a.batDau || 0) - (b.batDau || 0));
   } catch (e) {
     console.warn('Không nạp được ca làm việc:', e.message);
@@ -10215,6 +10218,15 @@ function veDanhSachCa() {
       Đổi giờ ở đây là mọi nơi đổi theo.
     </p>
 
+    ${caLamViecHong.length ? `
+      <div style="background:#FEF3C7;border:1.5px solid #F59E0B;border-radius:10px;padding:12px;margin-bottom:12px">
+        <b style="font-size:13px;color:#92400E">${caLamViecHong.length} bản ghi ca bị thiếu dữ liệu</b>
+        <div style="font-size:12px;color:#92400E;margin:4px 0 8px">
+          Thiếu tên hoặc giờ làm — có thể do lần tạo trước bị gián đoạn.
+        </div>
+        <button class="btn-xs" style="background:#fff" onclick="donCaHong()">Xóa các bản ghi này</button>
+      </div>` : ''}
+
     ${!allCaLamViec.length ? `
       <div style="text-align:center;padding:24px 12px">
         <p class="info-note" style="display:inline-block;margin-bottom:12px">Chưa có ca nào.</p>
@@ -10250,6 +10262,20 @@ function veDanhSachCa() {
 
     <button class="btn-g" style="width:100%;margin-top:8px" onclick="moSuaCa()">+ Thêm ca mới</button>`;
 }
+
+window.donCaHong = async function() {
+  if (!caLamViecHong.length) return;
+  if (!confirm(`Xóa ${caLamViecHong.length} bản ghi ca thiếu dữ liệu?`)) return;
+  try {
+    const batch = writeBatch(db);
+    caLamViecHong.forEach(c => batch.delete(doc(db, 'ca_lam_viec', c.id)));
+    await batch.commit();
+    showToast('Đã dọn xong');
+    renderCaLamViec();
+  } catch(e) {
+    alert('Không xóa được: ' + e.message);
+  }
+};
 
 window.taoCaMacDinh = async function() {
   if (!confirm('Tạo 3 ca mẫu: sáng, chiều, full?\n\nSửa lại giờ sau khi tạo.')) return;
@@ -13058,7 +13084,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v339</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v340</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13112,7 +13138,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v339</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v340</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13154,7 +13180,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v339</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v340</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
