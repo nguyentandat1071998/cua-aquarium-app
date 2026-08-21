@@ -2665,16 +2665,25 @@ const MAU_CONG_THUC = {
 };
 
 // Các mục thưởng Admin bật/tắt cho từng vai trò
+// LƯU Ý: 'banQuay' và 'dtCaNhan' cùng tính trên doanh thu người đó bán, chỉ khác
+// cách chia — bật cả hai là ăn thưởng hai lần. App chặn không cho bật đồng thời.
 const CAC_MUC_THUONG = [
   { key: 'donGoi',    ten: 'Đóng gói đơn sàn',
+    moTa: 'Thưởng cho người quét đóng gói đơn TMĐT',
     truong: ['thuongMoiDonGoi', 'phanTramDonGoi'] },
-  { key: 'banQuay',   ten: 'Bán tại quầy theo nhóm hàng',
+  { key: 'banQuay',   ten: 'Doanh thu cá nhân — chia theo nhóm hàng',
+    moTa: 'Trên doanh thu người đó bán. Hàng tươi sống và phụ kiện ăn mức khác nhau',
+    xungDot: ['dtCaNhan'],
     truong: ['thuongMoiDonBan', 'phanTramDoTuoi', 'phanTramPhuKien', 'nhomDoTuoi'] },
-  { key: 'dtCaNhan',  ten: 'Phần trăm doanh thu cá nhân',
+  { key: 'dtCaNhan',  ten: 'Doanh thu cá nhân — một mức chung',
+    moTa: 'Trên doanh thu người đó bán, không phân biệt nhóm hàng',
+    xungDot: ['banQuay'],
     truong: ['phanTramDTCaNhan'] },
-  { key: 'dtCuaHang', ten: 'Phần trăm doanh thu cửa hàng',
+  { key: 'dtCuaHang', ten: 'Doanh thu cả cửa hàng',
+    moTa: 'Trên tổng doanh thu bán tại quầy của mọi nhân viên',
     truong: ['phanTramDTCuaHang'] },
-  { key: 'dtSan',     ten: 'Phần trăm doanh thu sàn TMĐT',
+  { key: 'dtSan',     ten: 'Doanh thu sàn TMĐT',
+    moTa: 'Trên tổng doanh thu đơn sàn đã giao trong tháng',
     truong: ['phanTramDTSan'] }
 ];
 
@@ -10953,7 +10962,7 @@ function veChonNhomTuoi(vaiTroId, daChon) {
         oninput="ctGoTimNhom('${escHtml(vaiTroId)}',this.value)"
         style="width:100%;padding:8px">
       ${goiY.length ? `
-        <div style="position:absolute;top:100%;left:0;right:0;z-index:20;background:var(--surface);
+        <div style="position:absolute;top:100%;left:0;right:0;z-index:200;background:var(--surface);
                     border:1px solid var(--border);border-radius:8px;margin-top:2px;
                     max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)">
           ${goiY.map(n => `
@@ -11013,7 +11022,7 @@ function veKhoiCongThucThuong(vaiTroId) {
       ${oSo('thuongMoiDonBan', 'Thưởng mỗi đơn', '', 'đ')}
       ${oSo('phanTramDoTuoi', 'Hàng tươi sống', 'Cá, tép, cây thủy sinh...', '%')}
       ${oSo('phanTramPhuKien', 'Phụ kiện', 'Thiết bị, thức ăn, hàng khô...', '%')}
-      <div style="margin-bottom:8px">
+      <div style="margin-bottom:8px;position:relative;z-index:100">
         <div style="font-size:13px;margin-bottom:4px">Nhóm hàng tính là tươi sống</div>
         <div id="${id('nhom')}"></div>
       </div>`;
@@ -11032,12 +11041,17 @@ function veKhoiCongThucThuong(vaiTroId) {
         CÔNG THỨC THƯỞNG
       </div>
       ${CAC_MUC_THUONG.map(m => `
-        <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">
-          <label style="display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;
+        <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+          <label style="display:flex;align-items:flex-start;gap:8px;padding:9px 10px;cursor:pointer;
+                        border-radius:7px 7px 0 0;
                         background:${bat[m.key] ? '#F0FDF4' : 'var(--bg)'}">
             <input type="checkbox" class="ct-bat" data-vaitro="${escHtml(vaiTroId)}" data-muc="${m.key}"
-              ${bat[m.key] ? 'checked' : ''} onchange="ctBatTatMuc('${escHtml(vaiTroId)}','${m.key}',this.checked)">
-            <span style="font-size:13px;font-weight:${bat[m.key] ? '600' : '400'}">${m.ten}</span>
+              ${bat[m.key] ? 'checked' : ''} style="margin-top:3px"
+              onchange="ctBatTatMuc('${escHtml(vaiTroId)}','${m.key}',this.checked)">
+            <span style="flex:1">
+              <span style="font-size:13px;font-weight:${bat[m.key] ? '600' : '400'}">${m.ten}</span>
+              ${m.moTa ? `<div style="font-size:11px;color:var(--text2);margin-top:1px">${m.moTa}</div>` : ''}
+            </span>
           </label>
           <div id="${id('muc-' + m.key)}" style="padding:${bat[m.key] ? '10px' : '0'};
                display:${bat[m.key] ? 'block' : 'none'}">
@@ -11050,6 +11064,21 @@ function veKhoiCongThucThuong(vaiTroId) {
 }
 
 window.ctBatTatMuc = function(vaiTroId, mucKey, bat) {
+  // Chặn bật hai mục cùng tính trên một nguồn doanh thu — bật cả hai là
+  // nhân viên ăn thưởng hai lần cho cùng số tiền đó.
+  if (bat) {
+    const muc = CAC_MUC_THUONG.find(m => m.key === mucKey);
+    const dangBat = congThucCuaVaiTro(vaiTroId).bat || {};
+    const trung = (muc?.xungDot || []).filter(k => dangBat[k]);
+    if (trung.length) {
+      const tenTrung = trung.map(k => CAC_MUC_THUONG.find(m => m.key === k)?.ten).join(', ');
+      alert(`Không bật cùng lúc với "${tenTrung}".\n\n`
+        + `Cả hai đều tính trên doanh thu người đó bán — bật cả hai là thưởng hai lần.\n\n`
+        + `Tắt mục kia trước rồi bật lại mục này.`);
+      renderThietLapLuong();
+      return;
+    }
+  }
   // Giữ số đang gõ ở các ô khác trước khi vẽ lại, tránh mất công nhập
   const dangGo = {};
   document.querySelectorAll(`[id^="ct-${vaiTroId}-"]`).forEach(o => {
@@ -12503,7 +12532,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v332</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v334</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -12557,7 +12586,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v332</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v334</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12599,7 +12628,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v332</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v334</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
