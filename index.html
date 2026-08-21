@@ -595,8 +595,11 @@ async function renderLichCaTab() {
     const d = new Date(ngay + 'T00:00:00');
     const thu = thuTenFull[d.getDay()];
     const isToday = ngay === today;
-    const dayShifts = shifts.filter(s => s.ngay === ngay).sort((a,b) => (a.ten||'').localeCompare(b.ten||''));
-    const rows = dayShifts.map(s => renderShiftRow(s, canEdit)).join('') ||
+    const dayShifts = shifts.filter(s => s.ngay === ngay);
+
+    // Gom theo ca thay vì liệt kê phẳng — nhìn là biết ca nào có ai.
+    // Ca sắp theo giờ tan, nên sáng đứng trước chiều, full đứng cuối.
+    const rows = veCacNhomCa(dayShifts, canEdit) ||
       `<p style="font-size:12px;color:var(--text2);padding:4px 0">Chưa xếp ca</p>`;
     return `
       <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
@@ -624,6 +627,51 @@ async function renderLichCaTab() {
     ${daysHtml}`;
 }
 
+// Gom ca đã xếp trong một ngày thành từng nhóm. Ca không có ai thì không hiện —
+// ca full không phải ngày nào cũng có người làm.
+function veCacNhomCa(dayShifts, canEdit) {
+  if (!dayShifts.length) return '';
+
+  const nhom = new Map();
+  for (const s of dayShifts) {
+    // Ca mới lưu caId; ca cũ chỉ có loaiCa nên vẫn phải gom được
+    const khoa = s.caId || s.loaiCa || 'khac';
+    if (!nhom.has(khoa)) nhom.set(khoa, []);
+    nhom.get(khoa).push(s);
+  }
+
+  // Sắp theo GIỜ TAN: ca sáng tan trước, chiều sau, full cuối cùng
+  const gioTan = (khoa, mau) => {
+    const ca = layCa(khoa);
+    if (ca) return ca.ketThuc;
+    return { sang: 16 * 60 + 30, chieu: 21 * 60 + 30, full: 21 * 60 + 31 }[khoa] ?? 9999;
+  };
+
+  return [...nhom.entries()]
+    .sort((a, b) => gioTan(a[0]) - gioTan(b[0]))
+    .map(([khoa, ds]) => {
+      const ca = layCa(khoa);
+      const ten = ca?.ten || ds[0].tenCa
+        || (khoa === 'sang' ? 'Ca sáng' : khoa === 'chieu' ? 'Ca chiều' : khoa === 'full' ? 'Ca Full' : 'Ca khác');
+      const mau = ca?.mau || CA_MAU[khoa] || CA_MAU.full;
+      const gio = ca ? `${nhanGio(ca.batDau)}–${nhanGio(ca.ketThuc)}` : '';
+      ds.sort((a, b) => (a.ten || '').localeCompare(b.ten || ''));
+
+      return `
+        <div style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;
+                      background:${mau}15;border-left:3px solid ${mau};margin-bottom:4px">
+            <b style="font-size:13px;color:${mau}">${escHtml(ten)}</b>
+            ${gio ? `<span style="font-size:11px;color:var(--text2)">${gio}</span>` : ''}
+            <span style="margin-left:auto;font-size:11px;color:var(--text2)">${ds.length} người</span>
+          </div>
+          <div style="padding-left:8px">
+            ${ds.map(s => renderShiftRow(s, canEdit)).join('')}
+          </div>
+        </div>`;
+    }).join('');
+}
+
 // Chạy 1 lần sau khi tách collection: copy các ca đã xếp từ trước (còn hiệu lực, chưa xóa) sang lich_cong_khai
 window.dongBoLichCuSangCongKhai = async function() {
   if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới đồng bộ được', true); return; }
@@ -644,15 +692,11 @@ window.dongBoLichCuSangCongKhai = async function() {
 const CA_MAU = { sang: '#C2792F', chieu: '#3D6EA6', full: '#6B5B95' };
 
 function renderShiftRow(s, canEdit) {
-  // Ca mới lưu caId; ca cũ chỉ có loaiCa nên vẫn phải đọc được để lịch cũ không vỡ
-  const ca = s.caId ? layCa(s.caId) : null;
-  const caLabel = ca?.ten || s.tenCa
-    || (s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Ca Full');
-  const caMau = ca?.mau || CA_MAU[s.loaiCa] || CA_MAU.full;
+  // Tên ca đã hiện ở đầu nhóm nên dòng này chỉ cần tên người
   return `
-    <div class="user-row" style="padding:8px 0">
+    <div class="user-row" style="padding:6px 0">
       <div style="display:flex;justify-content:space-between;width:100%">
-        <span class="uname">${escHtml(s.ten||'')} · <span style="color:${caMau};font-weight:600">${caLabel}</span></span>
+        <span class="uname">${escHtml(s.ten||'')}</span>
         ${canEdit ? `<button class="btn-xs danger" onclick="xoaLichCa('${s.id}')">Xóa</button>` : ''}
       </div>
     </div>`;
@@ -13254,7 +13298,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v344</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v345</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13308,7 +13352,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v344</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v345</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13350,7 +13394,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v344</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v345</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
