@@ -289,7 +289,8 @@ let lichCaDatesCache = null;
 let chamCongWeekOffset = 0;
 
 // ===== VÀO CA =====
-let currentCa = null; // 'sang' | 'chieu' | 'full'
+let currentCa = null;   // loại ca cũ, giữ cho phần chưa chuyển đổi
+let currentCaId = null; // id ca trong module Ca làm việc
 let currentShiftNgay = null; // ngày (YYYY-MM-DD) của phiếu ca đang mở, để chặn checkout qua ngày
 let checklistState = {}; // taskId -> {done, ketqua, photos, benhList}
 let notifiedTaskIds = new Set(); // các task đã nhắc trong ca này (tránh nhắc lặp lại)
@@ -386,21 +387,17 @@ async function startQRScan() {
 // Tìm/khởi tạo phiếu ca hôm nay trong lich_ca (theo lịch xếp ca đã sắp sẵn) rồi ghi nhận check-in
 // Nút vẽ động theo ca vai trò được phép và giờ thật của vai trò đó — trước đây
 // ghi cứng "8h30–16h30" nên vai trò làm giờ khác nhìn vào là sai.
+// Nút vẽ từ ca thật của vai trò, giờ lấy từ module Ca làm việc
 function chonCaNgoaiLich(caDuoc) {
-  const ds = (caDuoc && caDuoc.length) ? caDuoc : ['sang', 'full'];
-  const ten = { sang: 'Ca sáng', chieu: 'Ca chiều', full: 'Ca Full' };
-  const mau = { sang: '#C2792F', chieu: '#2563EB', full: '#6B5B95' };
+  const ds = caDuoc || [];
   const el = document.getElementById('chonca-nut');
   if (el) {
-    el.innerHTML = ds.map(c => {
-      const g = gioCaCuaVaiTro(currentUserData?.vaiTroId, c);
-      const nhan = (p) => `${Math.floor(p / 60)}h${String(p % 60).padStart(2, '0')}`;
-      return `<button onclick="clickChonCa('${c}')"
-        style="padding:14px;background:${mau[c]};color:#fff;border:none;border-radius:10px;
+    el.innerHTML = ds.map(c => `
+      <button onclick="clickChonCa('${c.id}')"
+        style="padding:14px;background:${c.mau || '#6B5B95'};color:#fff;border:none;border-radius:10px;
                font-size:14px;font-weight:600;cursor:pointer">
-        ${ten[c]} (${nhan(g.batDau)}–${nhan(g.ketThuc)})
-      </button>`;
-    }).join('');
+        ${escHtml(c.ten)} (${nhanGio(c.batDau)}–${nhanGio(c.ketThuc)})
+      </button>`).join('');
   }
   return new Promise(resolve => {
     document.getElementById('qr-status').textContent = 'Vui lòng chọn ca làm việc...';
@@ -408,10 +405,34 @@ function chonCaNgoaiLich(caDuoc) {
     window._chonCaResolve = resolve;
   });
 }
-window.clickChonCa = function(loai) {
+
+window.clickChonCa = function(caId) {
   document.getElementById('chonca-modal').style.display = 'none';
-  if (window._chonCaResolve) { window._chonCaResolve(loai); window._chonCaResolve = null; }
+  if (window._chonCaResolve) {
+    window._chonCaResolve(layCa(caId));
+    window._chonCaResolve = null;
+  }
 };
+
+// ===== SUY CA KHI CHECK-IN =====
+// Ba trường hợp:
+//   1. Có lịch xếp trước -> dùng đúng ca đã xếp
+//   2. Không có lịch, vai trò chỉ MỘT ca -> gán luôn ca đó (nhân viên đóng gói)
+//   3. Không có lịch, nhiều ca -> chọn ca có giờ vào gần lúc check-in nhất;
+//      nếu hai ca gần ngang nhau thì hỏi nhân viên
+function suyCaTuGioVao(caDuoc, phutHienTai) {
+  if (!caDuoc.length) return null;
+  if (caDuoc.length === 1) return { ca: caDuoc[0], canHoi: false };
+
+  // Khoảng cách từ giờ hiện tại tới giờ bắt đầu mỗi ca
+  const xep = caDuoc.map(c => ({ ca: c, lech: Math.abs(phutHienTai - c.batDau) }))
+    .sort((a, b) => a.lech - b.lech);
+
+  // Ca gần nhất hơn hẳn ca thứ hai (cách nhau trên 1 tiếng) thì chọn luôn.
+  // Gần ngang nhau thì không đoán bừa — hỏi nhân viên.
+  const canHoi = xep.length > 1 && (xep[1].lech - xep[0].lech) < 60;
+  return { ca: xep[0].ca, canHoi };
+}
 
 async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
   const ngay = getTodayISO();
@@ -419,15 +440,19 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
   const shiftRef = doc(db, 'lich_ca', shiftId);
   const snap = await getDoc(shiftRef);
   let loaiCa = 'full';
+  let caId = null;
 
   if (snap.exists() && !snap.data().deleted) {
+    // --- Có lịch xếp trước ---
     const data = snap.data();
     loaiCa = data.loaiCa || 'full';
+    caId = data.caId || null;
     if (data.vaoLuc) {
-      // Đã check-in ca này trước đó rồi (mở lại app) — không ghi đè giờ vào, khôi phục tiến độ checklist đã lưu
+      // Đã check-in ca này rồi (mở lại app) — không ghi đè giờ vào, khôi phục checklist
       currentShiftDocId = shiftId;
       currentShiftNgay = ngay;
       currentCa = loaiCa;
+      currentCaId = caId;
       await loadChecklistState(shiftId);
       return;
     }
@@ -435,32 +460,45 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
       vaoLuc: serverTimestamp(), gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
     });
   } else {
-    // Không có lịch xếp trước — vẫn cho check-in, đánh dấu ngoài lịch để Admin/Quản lý biết.
-    // Vai trò chỉ dùng MỘT ca thì gán luôn, khỏi hỏi. Nhiều ca thì trước 13h hỏi
-    // nhân viên chọn (chưa rõ nửa buổi hay cả ngày), từ 13h trở đi chắc chắn ca chiều.
-    await napGioCa();
-    const caDuoc = cacCaCuaVaiTro(currentUserData?.vaiTroId);
-    let loaiCaSuyRa;
-    if (caDuoc.length === 1) {
-      loaiCaSuyRa = caDuoc[0];
-    } else {
-      const nowLocal = new Date();
-      const checkinPhut = nowLocal.getHours()*60 + nowLocal.getMinutes();
-      loaiCaSuyRa = checkinPhut < 13*60 ? await chonCaNgoaiLich(caDuoc) : 'chieu';
+    // --- Không có lịch xếp trước ---
+    // Vẫn cho check-in, đánh dấu ngoài lịch để quản lý biết.
+    if (!allCaLamViec.length) await napCaLamViec();
+    const caDuoc = caCuaVaiTro(currentUserData?.vaiTroId);
+
+    if (!caDuoc.length) {
+      showToast('Vai trò của bạn chưa được gán ca làm việc nào — báo quản lý', true);
+      throw new Error('Chưa có ca cho vai trò này');
     }
+
+    const gioHT = new Date();
+    const phutHT = gioHT.getHours() * 60 + gioHT.getMinutes();
+    const suy = suyCaTuGioVao(caDuoc, phutHT);
+
+    // Chỉ hỏi khi thật sự không đoán được — nhân viên đóng gói một ca thì vào thẳng
+    const caChon = suy.canHoi ? await chonCaNgoaiLich(caDuoc) : suy.ca;
+    if (!caChon) throw new Error('Chưa chọn ca');
+
+    caId = caChon.id;
+    loaiCa = caChon.loaiCaCu || 'full';
+
     await setDoc(shiftRef, {
       ngay, uid: currentUser.uid, ten: currentUserData?.ten || '',
-      loaiCa: loaiCaSuyRa, ngoaiLich: true,
+      caId, tenCa: caChon.ten, loaiCa,
+      ngoaiLich: true, deleted: false,
       xepBoi: null, createdAt: serverTimestamp(),
       vaoLuc: serverTimestamp(), thoatLuc: null,
       gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
     });
-    await ghiLichCongKhai(shiftId, { ngay, uid: currentUser.uid, ten: currentUserData?.ten || '', loaiCa: loaiCaSuyRa });
-    loaiCa = loaiCaSuyRa;
+    await ghiLichCongKhai(shiftId, {
+      ngay, uid: currentUser.uid, ten: currentUserData?.ten || '',
+      caId, tenCa: caChon.ten, loaiCa
+    });
   }
+
   currentShiftDocId = shiftId;
   currentShiftNgay = ngay;
   currentCa = loaiCa;
+  currentCaId = caId;
   checklistState = {};
 }
 
@@ -13307,7 +13345,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v346</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v347</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13361,7 +13399,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v346</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v347</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13403,7 +13441,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v346</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v347</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
