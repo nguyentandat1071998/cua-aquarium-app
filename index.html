@@ -299,9 +299,15 @@ function getTodayISO() { return toLocalISO(new Date()); }
 
 // Ghi/xóa bản ghi "lịch công khai" (chỉ tên + loại ca, KHÔNG có ảnh/GPS/giờ vào-ra) —
 // dùng để mọi nhân viên xem được lịch chung mà không lộ dữ liệu chấm công riêng tư.
-async function ghiLichCongKhai(shiftId, { ngay, uid, ten, loaiCa }) {
+async function ghiLichCongKhai(shiftId, { ngay, uid, ten, caId, tenCa, loaiCa }) {
   try {
-    await setDoc(doc(db, 'lich_cong_khai', shiftId), { ngay, uid, ten, loaiCa, deleted: false }, { merge: true });
+    // Firestore không nhận undefined — chỉ ghi trường nào thực sự có giá trị.
+    // Lịch mới dùng caId, lịch cũ dùng loaiCa, cả hai đều phải chạy được.
+    const duLieu = { ngay, uid, ten, deleted: false };
+    if (caId) duLieu.caId = caId;
+    if (tenCa) duLieu.tenCa = tenCa;
+    if (loaiCa) duLieu.loaiCa = loaiCa;
+    await setDoc(doc(db, 'lich_cong_khai', shiftId), duLieu, { merge: true });
   } catch (e) { console.error('Lỗi ghi lịch công khai:', e); }
 }
 async function xoaLichCongKhai(shiftId) {
@@ -930,11 +936,13 @@ window.luuXepCa = async function(ngay) {
         createdAt: serverTimestamp(),
         vaoLuc: null, thoatLuc: null
       }, { merge: true });
-      congKhai.push({ shiftId, ngay, uid, ten: user?.ten || user?.email || '', caId, tenCa: ca.ten });
+      congKhai.push({ shiftId, ngay, uid, ten: user?.ten || user?.email || '',
+        caId, tenCa: ca.ten, loaiCa: ca.loaiCaCu || 'full' });
     }
     await batch.commit();
     for (const c of congKhai) {
-      await ghiLichCongKhai(c.shiftId, { ngay: c.ngay, uid: c.uid, ten: c.ten, caId: c.caId, tenCa: c.tenCa });
+      await ghiLichCongKhai(c.shiftId, { ngay: c.ngay, uid: c.uid, ten: c.ten,
+        caId: c.caId, tenCa: c.tenCa, loaiCa: c.loaiCa });
     }
 
     document.getElementById(`xepca-form-${ngay}`).innerHTML = '';
@@ -1061,7 +1069,7 @@ window.luuXepCaTuan = async function() {
           createdAt: serverTimestamp(), vaoLuc: null, thoatLuc: null
         }, { merge: true }));
         tasks.push(ghiLichCongKhai(shiftId, { ngay, uid: u.id, ten: u.ten || u.email || '',
-          caId: checkedCa, tenCa: caChon?.ten || '' }));
+          caId: checkedCa, tenCa: caChon?.ten || '', loaiCa: caChon?.loaiCaCu || 'full' }));
       } else {
         // Không tick ca nào cho NV này ngày này — nếu trước đó có xếp mà chưa check-in thì gỡ
         const existing = (lichCaShiftsCache||[]).find(s => s.ngay === ngay && s.uid === u.id);
@@ -13246,7 +13254,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v343</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v344</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13300,7 +13308,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v343</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v344</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13342,7 +13350,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v343</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v344</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
