@@ -2648,19 +2648,39 @@ let daQuetGanDay = new Map();   // mã -> thời điểm, chống quét trùng
 let phienQuet = { soDon: 0, tienThuong: 0, doanhThu: 0, lichSu: [] };
 const GIAY_CHONG_TRUNG_QUET = 60;
 
-// Công thức thưởng do Admin đặt trong Thiết lập lương — không viết cứng trong code
-// vì mức thưởng hay thay đổi, mỗi lần đổi mà phải sửa code thì bất tiện.
-// Giá trị dưới chỉ dùng tạm khi chưa nạp được cấu hình.
-let CONG_THUC_LUONG = {
-  thuongMoiDonGoi: 300,        // đồng, thưởng cố định mỗi đơn đóng gói
-  phanTramDonGoi: 0.06,        // % doanh thu đơn đó
-  thuongMoiDonBan: 0,          // đồng, thưởng cố định mỗi đơn bán tại quầy
-  // Bán tại quầy chia hai nhóm hàng, mỗi nhóm một mức thưởng khác nhau
-  phanTramDoTuoi: 0,           // % doanh thu hàng tươi sống (cá, tép, cây...)
-  phanTramPhuKien: 0,          // % doanh thu phụ kiện và hàng khô
-  nhomDoTuoi: [],              // tên các nhóm hàng cấp 1 tính là đồ tươi
-  phuCapThang: 0               // đồng, phụ cấp cố định mỗi tháng
+// Công thức thưởng lưu THEO TỪNG VAI TRÒ — nhân viên bán hàng và đóng gói ăn
+// thưởng khác nhau, để chung một bộ thì phải điền cả những mục không dùng tới.
+// Cấu trúc trong Firestore: { [vaiTroId]: { ...các mục thưởng } }
+const MAU_CONG_THUC = {
+  bat: {},                     // mục nào được bật cho vai trò này
+  thuongMoiDonGoi: 0,          // đồng, mỗi đơn đóng gói (trả ngay khi quét)
+  phanTramDonGoi: 0,           // % doanh thu đơn đóng gói (cộng khi giao xong)
+  thuongMoiDonBan: 0,          // đồng, mỗi đơn bán tại quầy
+  phanTramDoTuoi: 0,           // % doanh thu hàng tươi sống bán tại quầy
+  phanTramPhuKien: 0,          // % doanh thu phụ kiện bán tại quầy
+  nhomDoTuoi: [],              // nhóm hàng cuối tính là tươi sống
+  phanTramDTCaNhan: 0,         // % tổng doanh thu người đó bán được
+  phanTramDTCuaHang: 0,        // % doanh thu bán tại quầy của cả cửa hàng
+  phanTramDTSan: 0             // % doanh thu sàn TMĐT
 };
+
+// Các mục thưởng Admin bật/tắt cho từng vai trò
+const CAC_MUC_THUONG = [
+  { key: 'donGoi',    ten: 'Đóng gói đơn sàn',
+    truong: ['thuongMoiDonGoi', 'phanTramDonGoi'] },
+  { key: 'banQuay',   ten: 'Bán tại quầy theo nhóm hàng',
+    truong: ['thuongMoiDonBan', 'phanTramDoTuoi', 'phanTramPhuKien', 'nhomDoTuoi'] },
+  { key: 'dtCaNhan',  ten: 'Phần trăm doanh thu cá nhân',
+    truong: ['phanTramDTCaNhan'] },
+  { key: 'dtCuaHang', ten: 'Phần trăm doanh thu cửa hàng',
+    truong: ['phanTramDTCuaHang'] },
+  { key: 'dtSan',     ten: 'Phần trăm doanh thu sàn TMĐT',
+    truong: ['phanTramDTSan'] }
+];
+
+let CONG_THUC_THEO_VAI_TRO = {};
+// Công thức của CHÍNH người đang đăng nhập — dùng ở màn hình đóng gói
+let CONG_THUC_LUONG = { ...MAU_CONG_THUC };
 
 // Nhóm cuối của một SKU — cấp sâu nhất đã gán. Dùng đường dẫn đầy đủ làm khóa
 // để hai nhóm trùng tên ở hai nhánh khác nhau không bị gộp làm một.
@@ -2669,10 +2689,16 @@ function nhomCuoiCuaSku(s) {
   return cac.length ? cac.join(' > ') : '';
 }
 
+// Công thức áp cho một vai trò, trộn với mẫu để không thiếu trường nào
+function congThucCuaVaiTro(vaiTroId) {
+  return { ...MAU_CONG_THUC, ...(CONG_THUC_THEO_VAI_TRO[vaiTroId] || {}) };
+}
+
 async function napCongThucLuong() {
   try {
     const d = await getDoc(doc(db, 'settings', 'cong_thuc_luong'));
-    if (d.exists()) CONG_THUC_LUONG = { ...CONG_THUC_LUONG, ...d.data() };
+    CONG_THUC_THEO_VAI_TRO = d.exists() ? d.data() : {};
+    CONG_THUC_LUONG = congThucCuaVaiTro(currentUserData?.vaiTroId);
   } catch(e) { console.warn('Không nạp được công thức lương:', e.message); }
   return CONG_THUC_LUONG;
 }
@@ -2691,6 +2717,18 @@ const TT_KHONG_TINH_THUONG = new Set([
 //   - THEO DOANH THU: chỉ cộng khi đơn giao thành công. Đơn chưa giao xong thì
 //     chưa có doanh thu để tính.
 // Nhờ vậy con số nhân viên thấy lúc quét không bị tụt xuống khi đơn hủy.
+// Tính thưởng đóng gói theo một bộ công thức cụ thể (dùng cho bảng lương,
+// nơi mỗi người một vai trò khác nhau)
+function tinhThuongDonTheoCongThuc(d, ct) {
+  const tt = trangThaiHienThi(d);
+  const coDinh = Number(ct.thuongMoiDonGoi) || 0;
+  const tienTra = Number(d.tienHangTra || 0);
+  const doanhThu = Math.max(0, (Number(d.tongTien) || 0) - tienTra);
+  const phanTram = tt === 'da_giao'
+    ? Math.round(doanhThu * (Number(ct.phanTramDonGoi) || 0) / 100) : 0;
+  return coDinh + phanTram;
+}
+
 function tinhThuongDon(d) {
   const tt = trangThaiHienThi(d);
   const coDinh = Number(CONG_THUC_LUONG.thuongMoiDonGoi) || 0;
@@ -10026,6 +10064,7 @@ function downloadCSV(rows, filename, slLabel) {
 let blThang = null;            // 'YYYY-MM'
 let blNhanVienDangXem = null;  // uid, null = chính mình
 let blCheDo = 'auto';          // 'auto' | 'danhsach' | 'chitiet'
+let blDanhSachHienTai = [];    // để tính lại tổng khi Admin gõ phụ cấp
 
 async function renderBangLuong() {
   const el = document.getElementById('luongnv-content');
@@ -10086,7 +10125,6 @@ async function tinhLuongThang(thang) {
 
   const cfg = await getLuongConfig();
   await napCongThucLuong();
-  const ct = CONG_THUC_LUONG;
 
   // --- Ca làm việc ---
   const sCa = await getDocs(query(collection(db, 'lich_ca'),
@@ -10130,6 +10168,8 @@ async function tinhLuongThang(thang) {
   const q = vtNguoi?.quyenModule || {};
   const laBanHang = !!q.banhang;
   const laDongGoi = !!q.tmdt_donggoi || !!q.tmdt;
+  // Công thức thưởng của chính vai trò người này
+  const ct = congThucCuaVaiTro(nguoi.vaiTroId);
 
   // Gom mọi thứ theo NGÀY
   const theoNgay = new Map();
@@ -10223,7 +10263,12 @@ async function tinhLuongThang(thang) {
   }), { phut: 0, luong: 0, thuong: 0, khauTru: 0, tong: 0 });
 
   // Cộng phụ cấp tháng vào tổng cuối
-  tong.phuCap = Number(ct.phuCapThang) || 0;
+  // Phụ cấp giờ đặt theo từng người từng tháng, không còn trong thiết lập chung
+  try {
+    const pc = await getDoc(doc(db, 'phu_cap', `${thang}_${uidXem}`));
+    tong.phuCap = pc.exists() ? (Number(pc.data().soTien) || 0) : 0;
+    tong.ghiChuPhuCap = pc.exists() ? (pc.data().ghiChu || '') : '';
+  } catch(e) { tong.phuCap = 0; }
   tong.tong += tong.phuCap;
 
   return { thang, xemHet, uidXem, tenNguoi: nguoi.ten || currentUserData?.ten || '',
@@ -10241,7 +10286,6 @@ async function tinhLuongTatCa(thang) {
 
   const cfg = await getLuongConfig();
   await napCongThucLuong();
-  const ct = CONG_THUC_LUONG;
 
   const [sCa, sQuet, sKT] = await Promise.all([
     getDocs(query(collection(db, 'lich_ca'), where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang))),
@@ -10295,33 +10339,55 @@ async function tinhLuongTatCa(thang) {
     }
   }
 
+  // Đóng gói: mỗi vai trò một công thức riêng
   for (const d of sQuet.docs) {
     const q = d.data();
     if (!q.uid) continue;
     const n = lay(q.uid);
-    if (!n.laDongGoi) continue;
+    const u = allUsersCache.find(x => x.id === q.uid) || {};
+    const ct = congThucCuaVaiTro(u.vaiTroId);
+    if (!ct.bat?.donGoi) continue;
     const don = allDonHangSan.find(x => x.maDonSan === q.maDonSan || x.maHoaDon === q.maHoaDon);
-    n.thuong += don ? (tinhThuongDon(don).thuong || 0) : (Number(ct.thuongMoiDonGoi) || 0);
+    n.thuong += don ? (tinhThuongDonTheoCongThuc(don, ct) || 0) : (Number(ct.thuongMoiDonGoi) || 0);
   }
 
-  const nhomTuoi = new Set(ct.nhomDoTuoi || []);
+  // Bán tại quầy: theo nhóm hàng và theo doanh thu cá nhân
+  let dtCuaHang = 0;
   for (const d of donBan) {
     const uid = d.nguoiBan?.uid;
     if (!uid) continue;
     const n = lay(uid);
-    if (!n.laBanHang) continue;
-    let tuoi = 0, pk = 0;
-    for (const h of (d.dongHang || [])) {
-      const sku = allSKUs.find(x => x.sku === h.sku);
-      const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-      if (sku && nhomTuoi.has(nhomCuoiCuaSku(sku))) tuoi += tien; else pk += tien;
-    }
+    const u = allUsersCache.find(x => x.id === uid) || {};
+    const ct = congThucCuaVaiTro(u.vaiTroId);
     const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
-    pk = Math.max(0, pk - daTra);
-    n.thuong += Math.round((Number(ct.thuongMoiDonBan) || 0)
-      + tuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
-      + pk * (Number(ct.phanTramPhuKien) || 0) / 100);
+    const thucThu = Math.max(0, (Number(d.phaiTra) || 0) - daTra);
+    dtCuaHang += thucThu;
+    n.dtCaNhan = (n.dtCaNhan || 0) + thucThu;
+
+    if (ct.bat?.banQuay) {
+      const nhomTuoi = new Set(ct.nhomDoTuoi || []);
+      let tuoi = 0, pk = 0;
+      for (const h of (d.dongHang || [])) {
+        const sku = allSKUs.find(x => x.sku === h.sku);
+        const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
+        if (sku && nhomTuoi.has(nhomCuoiCuaSku(sku))) tuoi += tien; else pk += tien;
+      }
+      pk = Math.max(0, pk - daTra);
+      n.thuong += Math.round((Number(ct.thuongMoiDonBan) || 0)
+        + tuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
+        + pk * (Number(ct.phanTramPhuKien) || 0) / 100);
+    }
   }
+
+  // Doanh thu sàn TMĐT trong tháng — chỉ tính đơn đã giao
+  const dauCat = new Date(dauThang).getTime();
+  const cuoiCat = new Date(cuoiThang + 'T23:59:59').getTime();
+  const dtSan = allDonHangSan.reduce((t, d) => {
+    const ng = d.ngayDat?.toDate ? d.ngayDat.toDate().getTime() : 0;
+    if (ng < dauCat || ng > cuoiCat) return t;
+    if (trangThaiHienThi(d) !== 'da_giao') return t;
+    return t + (Number(d.tongTien) || 0);
+  }, 0);
 
   for (const d of sKT.docs) {
     const kt = d.data();
@@ -10329,12 +10395,29 @@ async function tinhLuongTatCa(thang) {
     lay(kt.uid).khauTru += Number(kt.soTien) || 0;
   }
 
-  const phuCap = Number(ct.phuCapThang) || 0;
-  const ds = [...theoNguoi.values()].map(n => ({
-    ...n, phuCap, tong: n.luong + n.thuong - n.khauTru + phuCap
-  })).sort((a, b) => b.tong - a.tong);
+  // Phụ cấp và ghi chú lưu theo từng người từng tháng
+  const phuCapTheoNguoi = new Map();
+  try {
+    const sPC = await getDocs(query(collection(db, 'phu_cap'), where('thang', '==', thang)));
+    sPC.docs.forEach(d => { const x = d.data(); phuCapTheoNguoi.set(x.uid, x); });
+  } catch(e) { console.warn('Không tải được phụ cấp:', e.message); }
 
-  return { thang, danhSach: ds };
+  const ds = [...theoNguoi.values()].map(n => {
+    const u = allUsersCache.find(x => x.id === n.uid) || {};
+    const ct = congThucCuaVaiTro(u.vaiTroId);
+    // Ba loại thưởng theo doanh thu, bật cái nào tính cái đó
+    if (ct.bat?.dtCaNhan) n.thuong += Math.round((n.dtCaNhan || 0) * (Number(ct.phanTramDTCaNhan) || 0) / 100);
+    if (ct.bat?.dtCuaHang) n.thuong += Math.round(dtCuaHang * (Number(ct.phanTramDTCuaHang) || 0) / 100);
+    if (ct.bat?.dtSan) n.thuong += Math.round(dtSan * (Number(ct.phanTramDTSan) || 0) / 100);
+
+    const pc = phuCapTheoNguoi.get(n.uid) || {};
+    const phuCap = Number(pc.soTien) || 0;
+    return { ...n, phuCap, ghiChu: pc.ghiChu || '',
+      tong: n.luong + n.thuong - n.khauTru + phuCap };
+  }).sort((a, b) => b.tong - a.tong);
+
+  blDanhSachHienTai = ds;
+  return { thang, danhSach: ds, dtCuaHang, dtSan };
 }
 
 function veDanhSachLuong(dl) {
@@ -10342,6 +10425,7 @@ function veDanhSachLuong(dl) {
   if (!el) return;
   const { thang, danhSach } = dl;
   const [nam, th] = thang.split('-');
+  const laAdmin = currentUserData?.role === 'admin';
 
   // Chia theo loại việc để dễ đối chiếu — người làm cả hai xếp vào nhóm riêng
   const nhom = [
@@ -10352,6 +10436,35 @@ function veDanhSachLuong(dl) {
   ];
 
   const tongTatCa = danhSach.reduce((s, n) => s + n.tong, 0);
+
+  const dongNV = (n) => `
+    <tr>
+      <td style="text-align:left">
+        <a onclick="blXemChiTiet('${n.uid}')" style="color:var(--green);cursor:pointer;font-weight:600">
+          ${escHtml(n.ten)}</a>
+        ${n.capBac ? `<div style="font-size:10px;color:var(--text2)">${escHtml(n.capBac)}</div>` : ''}
+      </td>
+      <td>${n.soCa}</td>
+      <td>${phutSangGio(n.phut)}${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
+      <td>${fmt(n.luong)}</td>
+      <td>${n.thuong ? fmt(n.thuong) : '—'}</td>
+      <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
+      <td>
+        ${laAdmin ? `
+          <input type="text" inputmode="numeric" class="bl-phucap" data-uid="${n.uid}"
+            value="${n.phuCap || ''}" placeholder="0"
+            oninput="this.value=this.value.replace(/[^0-9]/g,'');blTinhLaiDong('${n.uid}')"
+            style="width:86px;text-align:right;padding:5px">`
+          : (n.phuCap ? fmt(n.phuCap) : '—')}
+      </td>
+      <td>
+        ${laAdmin ? `
+          <input type="text" class="bl-ghichu" data-uid="${n.uid}" value="${escHtml(n.ghiChu || '')}"
+            placeholder="Ghi chú" style="width:120px;padding:5px;font-size:12px">`
+          : escHtml(n.ghiChu || '')}
+      </td>
+      <td><b id="bl-tong-${n.uid}">${fmt(n.tong)}</b></td>
+    </tr>`;
 
   el.innerHTML = `
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
@@ -10364,46 +10477,88 @@ function veDanhSachLuong(dl) {
       <div style="font-size:12px;color:var(--text2)">Toàn cửa hàng · tháng ${th}/${nam}</div>
       <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:700;margin-top:2px">
         <span>${danhSach.length} người</span>
-        <span style="color:var(--green)">${fmt(tongTatCa)}đ</span>
+        <span style="color:var(--green)" id="bl-tong-tat-ca">${fmt(tongTatCa)}đ</span>
       </div>
     </div>
 
-    ${!danhSach.length ? '<p class="info-note">Chưa có dữ liệu trong tháng.</p>' :
-      nhom.map(g => {
-        const ds = danhSach.filter(g.loc);
-        if (!ds.length) return '';
-        const tongNhom = ds.reduce((s, n) => s + n.tong, 0);
-        return `
-        <div style="margin-bottom:14px">
-          <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;
-                      color:var(--text2);margin-bottom:6px;padding:0 2px">
-            <span>${escHtml(g.ten).toUpperCase()} (${ds.length})</span>
-            <span>${fmt(tongNhom)}đ</span>
-          </div>
-          ${ds.map(n => `
-            <div onclick="blXemChiTiet('${n.uid}')"
-              style="background:var(--surface);border:1px solid var(--border);border-radius:10px;
-                     padding:11px;margin-bottom:8px;cursor:pointer">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <div style="flex:1;min-width:0">
-                  <b style="font-size:14px">${escHtml(n.ten)}</b>
-                  ${n.capBac ? `<span style="font-size:11px;color:var(--text2)"> · ${escHtml(n.capBac)}</span>` : ''}
-                  <div style="font-size:11px;color:var(--text2);margin-top:2px">
-                    ${n.soCa} ca · ${phutSangGio(n.phut)}
-                    ${n.soTre ? ` · <span style="color:var(--red)">${n.soTre} lần trễ</span>` : ''}
-                  </div>
-                </div>
-                <div style="text-align:right;flex-shrink:0">
-                  <b style="font-size:16px;color:var(--green)">${fmt(n.tong)}đ</b>
-                  <div style="font-size:10px;color:var(--text2)">
-                    ${fmt(n.luong)} + ${fmt(n.thuong)}${n.khauTru ? ` − ${fmt(n.khauTru)}` : ''}
-                  </div>
-                </div>
-              </div>
-            </div>`).join('')}
-        </div>`;
-      }).join('')}`;
+    ${!danhSach.length ? '<p class="info-note">Chưa có dữ liệu trong tháng.</p>' : `
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+        <table class="bl-bang">
+          <thead>
+            <tr>
+              <th style="text-align:left">Họ tên</th>
+              <th>Ca</th><th>Giờ làm</th><th>Lương</th><th>Thưởng</th>
+              <th>Khấu trừ</th><th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng</th>
+            </tr>
+          </thead>
+          ${nhom.map(g => {
+            const ds = danhSach.filter(g.loc);
+            if (!ds.length) return '';
+            const tongNhom = ds.reduce((s, n) => s + n.tong, 0);
+            return `
+            <tbody>
+              <tr class="bl-nhom">
+                <td colspan="8" style="text-align:left">${escHtml(g.ten)} (${ds.length})</td>
+                <td>${fmt(tongNhom)}</td>
+              </tr>
+              ${ds.map(dongNV).join('')}
+            </tbody>`;
+          }).join('')}
+        </table>
+      </div>
+
+      ${laAdmin ? `
+        <button class="btn-g" style="width:100%;margin-top:12px" onclick="blLuuPhuCap()">
+          Lưu phụ cấp và ghi chú
+        </button>` : ''}`}`;
 }
+
+// Tính lại tổng của một dòng khi Admin gõ phụ cấp, chưa cần lưu
+window.blTinhLaiDong = function(uid) {
+  const o = document.querySelector(`.bl-phucap[data-uid="${CSS.escape(uid)}"]`);
+  const n = blDanhSachHienTai.find(x => x.uid === uid);
+  if (!o || !n) return;
+  const pc = Number(o.value) || 0;
+  const tong = n.luong + n.thuong - n.khauTru + pc;
+  const el = document.getElementById(`bl-tong-${uid}`);
+  if (el) el.textContent = fmt(tong);
+  // Cập nhật tổng toàn cửa hàng
+  const tongTat = blDanhSachHienTai.reduce((s, x) => {
+    const oo = document.querySelector(`.bl-phucap[data-uid="${CSS.escape(x.uid)}"]`);
+    const p = oo ? (Number(oo.value) || 0) : (x.phuCap || 0);
+    return s + x.luong + x.thuong - x.khauTru + p;
+  }, 0);
+  const elT = document.getElementById('bl-tong-tat-ca');
+  if (elT) elT.textContent = fmt(tongTat) + 'đ';
+};
+
+// Phụ cấp lưu theo TỪNG NGƯỜI và TỪNG THÁNG — mỗi người mỗi khác, và tháng này
+// khác tháng kia, nên không để trong thiết lập chung được.
+window.blLuuPhuCap = async function() {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  try {
+    const batch = writeBatch(db);
+    let soDong = 0;
+    document.querySelectorAll('.bl-phucap').forEach(o => {
+      const uid = o.dataset.uid;
+      const ghiChuO = document.querySelector(`.bl-ghichu[data-uid="${CSS.escape(uid)}"]`);
+      batch.set(doc(db, 'phu_cap', `${blThang}_${uid}`), {
+        uid, thang: blThang,
+        soTien: Number(o.value) || 0,
+        ghiChu: ghiChuO?.value || '',
+        capNhatBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+        capNhatLuc: serverTimestamp()
+      });
+      soDong++;
+    });
+    if (!soDong) { showToast('Không có gì để lưu', true); return; }
+    await batch.commit();
+    showToast(`Đã lưu phụ cấp cho ${soDong} người`);
+    renderBangLuong();
+  } catch(e) {
+    alert('Không lưu được: ' + e.message);
+  }
+};
 
 window.blXemChiTiet = function(uid) {
   blNhanVienDangXem = uid;
@@ -10446,7 +10601,9 @@ function veBangLuong(dl) {
       <div style="display:flex;justify-content:space-between;font-size:22px;font-weight:700;margin-top:2px">
         <span>Tổng lương</span><span style="color:var(--green)">${fmt(tong.tong)}đ</span>
       </div>
-      ${tong.phuCap ? `<div style="font-size:12px;color:var(--text2)">Đã gồm phụ cấp ${fmt(tong.phuCap)}đ</div>` : ''}
+      ${tong.phuCap ? `<div style="font-size:12px;color:var(--text2)">
+        Đã gồm phụ cấp ${fmt(tong.phuCap)}đ${tong.ghiChuPhuCap ? ` — ${escHtml(tong.ghiChuPhuCap)}` : ''}
+      </div>` : ''}
       ${donGia ? `<div style="font-size:11px;color:var(--text2);margin-top:4px">Đơn giá ${fmt(donGia)}đ/giờ</div>` : `
         <div style="font-size:11px;color:var(--red);margin-top:4px">Chưa đặt đơn giá theo giờ cho cấp bậc này</div>`}
     </div>
@@ -10736,163 +10893,192 @@ async function renderThietLapLuong() {
           </div>`).join('')}
         </div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
-        <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu ${r.label}</button>
+        <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu lương giờ</button>
+        ${veKhoiCongThucThuong(r.key)}
       </div>`;
   }).join('') + veKhoiCongThucThuong();
 
   // Lương giờ tra theo vaiTroId của nhân viên
 
-  napGiaTriCongThuc();
+  // Vẽ phần chọn nhóm cho vai trò nào có bật mục bán tại quầy
+  for (const r of cacVaiTro) {
+    const c = congThucCuaVaiTro(r.key);
+    if (c.bat?.banQuay) veChonNhomTuoi(r.key, ctNhomDaChon[r.key] || c.nhomDoTuoi || []);
+  }
 }
 
-// Công thức thưởng — để Admin sửa được, không viết cứng trong code
-function veKhoiCongThucThuong() {
-  // Dùng ô CHỮ chứ không phải ô số: bàn phím điện thoại nhiều nơi dùng dấu phẩy
-  // làm dấu thập phân nên gõ dấu chấm không ăn. Ô chữ nhận cả hai, lúc lưu tự đổi.
-  const o = (id, nhan, ghiChu, donVi) => `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+// Chọn nhóm hàng tươi sống: chỉ hiện nhóm ĐÃ CHỌN thành một hàng thẻ, thêm mới
+// qua ô tìm kiếm có gợi ý. Trước đây xổ hết mấy chục nhóm ra, nhìn rối mắt.
+let ctNhomDaChon = {};   // { [vaiTroId]: [tên nhóm] }
+let ctNhomDangGo = {};   // { [vaiTroId]: chuỗi đang gõ }
+
+function veChonNhomTuoi(vaiTroId, daChon) {
+  const el = document.getElementById(`ct-${vaiTroId}-nhom`);
+  if (!el) return;
+  if (daChon) ctNhomDaChon[vaiTroId] = daChon;
+  const chon = ctNhomDaChon[vaiTroId] || [];
+  const goTim = ctNhomDangGo[vaiTroId] || '';
+
+  const tatCa = [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean))].sort();
+  const tim = goTim.trim().toLowerCase();
+  const goiY = tim
+    ? tatCa.filter(n => !chon.includes(n) && n.toLowerCase().includes(tim)).slice(0, 8)
+    : [];
+
+  el.innerHTML = `
+    ${chon.length ? `
+      <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px">
+        ${chon.map(n => `
+          <span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;
+                       border-radius:13px;background:#F0FDF4;border:1px solid var(--green);font-size:12px">
+            ${escHtml(n)}
+            <button onclick="ctBoNhom('${escHtml(vaiTroId)}','${escHtml(n)}')"
+              style="border:none;background:transparent;color:var(--text2);cursor:pointer;
+                     padding:0;font-size:13px;line-height:1">✕</button>
+          </span>`).join('')}
+      </div>` : `
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Chưa chọn nhóm nào</div>`}
+
+    <div style="position:relative">
+      <input type="text" value="${escHtml(goTim)}" placeholder="Gõ để tìm nhóm hàng..."
+        oninput="ctGoTimNhom('${escHtml(vaiTroId)}',this.value)"
+        style="width:100%;padding:8px">
+      ${goiY.length ? `
+        <div style="position:absolute;top:100%;left:0;right:0;z-index:20;background:var(--surface);
+                    border:1px solid var(--border);border-radius:8px;margin-top:2px;
+                    max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.12)">
+          ${goiY.map(n => `
+            <div onclick="ctThemNhom('${escHtml(vaiTroId)}','${escHtml(n)}')"
+              style="padding:9px 11px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border)">
+              ${escHtml(n)}
+            </div>`).join('')}
+        </div>` : (tim ? `
+        <div style="font-size:11px;color:var(--text2);margin-top:5px">Không tìm thấy nhóm nào</div>` : '')}
+    </div>`;
+}
+
+window.ctGoTimNhom = function(vaiTroId, v) {
+  ctNhomDangGo[vaiTroId] = v;
+  veChonNhomTuoi(vaiTroId);
+  const o = document.querySelector(`#ct-${vaiTroId}-nhom input[type=text]`);
+  if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+};
+
+window.ctThemNhom = function(vaiTroId, nhom) {
+  const ds = ctNhomDaChon[vaiTroId] || [];
+  if (!ds.includes(nhom)) ds.push(nhom);
+  ctNhomDaChon[vaiTroId] = ds;
+  ctNhomDangGo[vaiTroId] = '';
+  veChonNhomTuoi(vaiTroId);
+};
+
+window.ctBoNhom = function(vaiTroId, nhom) {
+  ctNhomDaChon[vaiTroId] = (ctNhomDaChon[vaiTroId] || []).filter(n => n !== nhom);
+  veChonNhomTuoi(vaiTroId);
+};
+
+// Công thức thưởng cho TỪNG vai trò. Admin bật mục nào thì mới hiện ô nhập của
+// mục đó — tránh xổ ra một loạt ô không dùng tới.
+function veKhoiCongThucThuong(vaiTroId) {
+  const c = congThucCuaVaiTro(vaiTroId);
+  const bat = c.bat || {};
+  const id = (t) => `ct-${vaiTroId}-${t}`;
+
+  const oSo = (truong, nhan, ghiChu, donVi) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
       <div style="flex:1">
         <div style="font-size:13px">${nhan}</div>
         ${ghiChu ? `<div style="font-size:11px;color:var(--text2)">${ghiChu}</div>` : ''}
       </div>
-      <input type="text" inputmode="decimal" id="${id}"
+      <input type="text" inputmode="decimal" id="${id(truong)}" value="${c[truong] ?? 0}"
         oninput="this.value=this.value.replace(/[^0-9.,]/g,'')"
-        style="width:110px;text-align:right">
-      <span style="font-size:12px;color:var(--text2);width:36px">${donVi}</span>
+        style="width:100px;text-align:right">
+      <span style="font-size:12px;color:var(--text2);width:30px">${donVi}</span>
     </div>`;
+
+  const noiDungMuc = (muc) => {
+    if (muc.key === 'donGoi') return `
+      ${oSo('thuongMoiDonGoi', 'Thưởng mỗi đơn', 'Trả ngay khi quét, giữ cả khi đơn hủy', 'đ')}
+      ${oSo('phanTramDonGoi', 'Phần trăm doanh thu đơn', 'Chỉ cộng khi đơn giao thành công', '%')}`;
+    if (muc.key === 'banQuay') return `
+      ${oSo('thuongMoiDonBan', 'Thưởng mỗi đơn', '', 'đ')}
+      ${oSo('phanTramDoTuoi', 'Hàng tươi sống', 'Cá, tép, cây thủy sinh...', '%')}
+      ${oSo('phanTramPhuKien', 'Phụ kiện', 'Thiết bị, thức ăn, hàng khô...', '%')}
+      <div style="margin-bottom:8px">
+        <div style="font-size:13px;margin-bottom:4px">Nhóm hàng tính là tươi sống</div>
+        <div id="${id('nhom')}"></div>
+      </div>`;
+    if (muc.key === 'dtCaNhan') return oSo('phanTramDTCaNhan', 'Phần trăm doanh thu cá nhân',
+      'Tính trên tổng tiền người đó bán được', '%');
+    if (muc.key === 'dtCuaHang') return oSo('phanTramDTCuaHang', 'Phần trăm doanh thu cửa hàng',
+      'Tính trên doanh thu bán tại quầy của cả cửa hàng', '%');
+    if (muc.key === 'dtSan') return oSo('phanTramDTSan', 'Phần trăm doanh thu sàn TMĐT',
+      'Tính trên doanh thu đơn sàn đã giao', '%');
+    return '';
+  };
 
   return `
-    <div class="admin-block" style="margin-bottom:1rem">
-      <h3>Công thức thưởng</h3>
-      <p class="info-note" style="margin-bottom:12px">
-        Áp dụng cho mọi nhân viên. Sửa ở đây là bảng lương tính lại ngay,
-        không cần đụng tới mã nguồn.
-      </p>
-
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">ĐÓNG GÓI ĐƠN SÀN</div>
-      ${o('ct-thuong-goi', 'Thưởng mỗi đơn', 'Cố định cho mỗi đơn đã quét đóng gói', 'đ')}
-      ${o('ct-pt-goi', 'Cộng thêm theo doanh thu', 'Ví dụ 0.06 nghĩa là 0,06% giá trị đơn', '%')}
-
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin:14px 0 6px">BÁN TẠI QUẦY</div>
-      ${o('ct-thuong-ban', 'Thưởng mỗi đơn', 'Cố định cho mỗi đơn bán tại quầy', 'đ')}
-      ${o('ct-pt-tuoi', 'Thưởng hàng tươi sống', 'Cá, tép, cây thủy sinh...', '%')}
-      ${o('ct-pt-phukien', 'Thưởng phụ kiện', 'Thiết bị, thức ăn, hàng khô...', '%')}
-
-      <div style="margin-bottom:10px">
-        <div style="font-size:13px;margin-bottom:4px">Nhóm hàng tính là tươi sống</div>
-        <div style="font-size:11px;color:var(--text2);margin-bottom:6px">
-          Chọn nhóm ở cấp cuối cùng. Hàng thuộc nhóm đã tick hưởng mức tươi sống,
-          còn lại hưởng mức phụ kiện.
-        </div>
-        <div id="ct-nhom-tuoi" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">
+        CÔNG THỨC THƯỞNG
       </div>
-
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin:14px 0 6px">KHÁC</div>
-      ${o('ct-phu-cap', 'Phụ cấp mỗi tháng', 'Cộng thẳng vào lương tháng', 'đ')}
-
-      <button class="btn-g" style="width:100%;margin-top:8px" onclick="luuCongThucThuong()">Lưu công thức thưởng</button>
+      ${CAC_MUC_THUONG.map(m => `
+        <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">
+          <label style="display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;
+                        background:${bat[m.key] ? '#F0FDF4' : 'var(--bg)'}">
+            <input type="checkbox" class="ct-bat" data-vaitro="${escHtml(vaiTroId)}" data-muc="${m.key}"
+              ${bat[m.key] ? 'checked' : ''} onchange="ctBatTatMuc('${escHtml(vaiTroId)}','${m.key}',this.checked)">
+            <span style="font-size:13px;font-weight:${bat[m.key] ? '600' : '400'}">${m.ten}</span>
+          </label>
+          <div id="${id('muc-' + m.key)}" style="padding:${bat[m.key] ? '10px' : '0'};
+               display:${bat[m.key] ? 'block' : 'none'}">
+            ${bat[m.key] ? noiDungMuc(m) : ''}
+          </div>
+        </div>`).join('')}
+      <button class="btn-g" style="width:100%;margin-top:4px"
+        onclick="luuCongThucThuong('${escHtml(vaiTroId)}')">Lưu công thức thưởng</button>
     </div>`;
 }
 
-async function napGiaTriCongThuc() {
-  await napCongThucLuong();
-  const c = CONG_THUC_LUONG;
-  const dat = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? 0; };
-  dat('ct-thuong-goi', c.thuongMoiDonGoi);
-  dat('ct-pt-goi', c.phanTramDonGoi);
-  dat('ct-thuong-ban', c.thuongMoiDonBan);
-  dat('ct-pt-tuoi', c.phanTramDoTuoi);
-  dat('ct-pt-phukien', c.phanTramPhuKien);
-  dat('ct-phu-cap', c.phuCapThang);
-  veChonNhomTuoi(c.nhomDoTuoi || []);
-}
+window.ctBatTatMuc = function(vaiTroId, mucKey, bat) {
+  // Lưu ngay vào bộ nhớ để vẽ lại đúng trạng thái, chưa ghi Firestore
+  if (!CONG_THUC_THEO_VAI_TRO[vaiTroId]) CONG_THUC_THEO_VAI_TRO[vaiTroId] = { ...MAU_CONG_THUC };
+  if (!CONG_THUC_THEO_VAI_TRO[vaiTroId].bat) CONG_THUC_THEO_VAI_TRO[vaiTroId].bat = {};
+  CONG_THUC_THEO_VAI_TRO[vaiTroId].bat[mucKey] = !!bat;
+  renderThietLapLuong();
+};
 
-// Danh sách nhóm CUỐI lấy từ bảng SKU. Nhóm cuối thì nhiều nên thêm ô tìm
-// và cho ẩn bớt, tránh danh sách dài lê thê.
-let ctTimNhom = '';
-let ctHienHet = false;
+window.luuCongThucThuong = async function(vaiTroId) {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  const lay = (t) => {
+    const el = document.getElementById(`ct-${vaiTroId}-${t}`);
+    if (!el) return 0;
+    return Number(String(el.value || '').trim().replace(',', '.')) || 0;
+  };
+  const cu = congThucCuaVaiTro(vaiTroId);
+  const bat = {};
+  document.querySelectorAll(`.ct-bat[data-vaitro="${CSS.escape(vaiTroId)}"]`)
+    .forEach(x => { bat[x.dataset.muc] = x.checked; });
 
-function veChonNhomTuoi(daChon) {
-  const el = document.getElementById('ct-nhom-tuoi');
-  if (!el) return;
-  const chon = new Set(daChon);
-  const tatCa = [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean))].sort();
-  if (!tatCa.length) {
-    el.innerHTML = '<span style="font-size:12px;color:var(--text2)">Chưa có nhóm hàng nào</span>';
-    return;
+  const moi = { ...cu, bat };
+  for (const m of CAC_MUC_THUONG) {
+    if (!bat[m.key]) continue;
+    for (const t of m.truong) {
+      if (t === 'nhomDoTuoi') moi.nhomDoTuoi = ctNhomDaChon[vaiTroId] || cu.nhomDoTuoi || [];
+      else moi[t] = lay(t);
+    }
   }
 
-  const tim = ctTimNhom.trim().toLowerCase();
-  // Nhóm đã tick luôn hiện, dù đang lọc — để không mất dấu cái đã chọn
-  const loc = tatCa.filter(n => chon.has(n) || !tim || n.toLowerCase().includes(tim));
-  const hien = (ctHienHet || tim) ? loc : loc.slice(0, 12);
-
-  const the = (n) => `
-    <label style="display:flex;align-items:center;gap:5px;padding:5px 9px;border-radius:14px;
-                  border:1.5px solid ${chon.has(n) ? 'var(--green)' : 'var(--border)'};
-                  background:${chon.has(n) ? '#F0FDF4' : '#fff'};font-size:12px;cursor:pointer">
-      <input type="checkbox" class="ct-nhom-cb" value="${escHtml(n)}" ${chon.has(n) ? 'checked' : ''}
-        onchange="veChonNhomTuoi(layNhomTuoiDangChon())">
-      ${escHtml(n)}
-    </label>`;
-
-  el.innerHTML = `
-    <input type="text" value="${escHtml(ctTimNhom)}" placeholder="Tìm nhóm hàng..."
-      oninput="ctDoiTimNhom(this.value)" style="width:100%;margin-bottom:8px;padding:7px">
-    <div style="display:flex;flex-wrap:wrap;gap:6px">
-      ${hien.map(the).join('')}
-    </div>
-    ${!tim && loc.length > hien.length ? `
-      <button class="btn-xs" style="margin-top:8px" onclick="ctHienHetNhom()">
-        Xem thêm ${loc.length - hien.length} nhóm
-      </button>` : ''}
-    <div style="font-size:11px;color:var(--text2);margin-top:6px">
-      Đã chọn ${chon.size}/${tatCa.length} nhóm
-    </div>`;
-}
-
-window.ctDoiTimNhom = function(v) {
-  ctTimNhom = v;
-  veChonNhomTuoi(layNhomTuoiDangChon());
-  // Giữ con trỏ trong ô tìm sau khi vẽ lại
-  const o = document.querySelector('#ct-nhom-tuoi input[type=text]');
-  if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
-};
-
-window.ctHienHetNhom = function() {
-  ctHienHet = true;
-  veChonNhomTuoi(layNhomTuoiDangChon());
-};
-
-window.layNhomTuoiDangChon = function() {
-  return [...document.querySelectorAll('.ct-nhom-cb')].filter(x => x.checked).map(x => x.value);
-};
-
-window.luuCongThucThuong = async function() {
-  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
-  // Chấp nhận cả "0.06" lẫn "0,06" — người dùng gõ kiểu nào cũng hiểu
-  const lay = (id) => {
-    const v = String(document.getElementById(id)?.value || '').trim().replace(',', '.');
-    return Number(v) || 0;
-  };
   try {
-    await setDoc(doc(db, 'settings', 'cong_thuc_luong'), {
-      thuongMoiDonGoi: lay('ct-thuong-goi'),
-      phanTramDonGoi: lay('ct-pt-goi'),
-      thuongMoiDonBan: lay('ct-thuong-ban'),
-      phanTramDoTuoi: lay('ct-pt-tuoi'),
-      phanTramPhuKien: lay('ct-pt-phukien'),
-      nhomDoTuoi: layNhomTuoiDangChon(),
-      phuCapThang: lay('ct-phu-cap'),
-      doiBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
-      doiLuc: serverTimestamp()
-    });
-    await napCongThucLuong();
+    const tatCa = { ...CONG_THUC_THEO_VAI_TRO, [vaiTroId]: moi };
+    await setDoc(doc(db, 'settings', 'cong_thuc_luong'), tatCa);
+    CONG_THUC_THEO_VAI_TRO = tatCa;
     showToast('Đã lưu công thức thưởng');
   } catch(e) {
     alert('Không lưu được: ' + e.message);
   }
 };
+
 
 window.themCapBac = async function(roleKey) {
   const ten = prompt('Tên cấp bậc mới (vd: Cấp 1, Cấp 2, Thử việc...)');
@@ -11897,6 +12083,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* Hàng tổng dính trên cùng khi cuộn — luôn thấy số tổng */
 .bl-bang .bl-tong td{background:#F0FDF4;font-weight:700;border-bottom:2px solid var(--green);
   position:sticky;top:0}
+/* Hàng tên nhóm trong bảng tổng lương */
+.bl-bang .bl-nhom td{background:var(--bg);font-size:11px;font-weight:700;color:var(--text2);
+  text-transform:uppercase;padding:6px}
 
 /* Cột giờ làm: mỗi phần một ô cố định chiều rộng để các dòng thẳng hàng nhau,
    không bị lệch khi giờ có 1 hay 2 chữ số */
@@ -12291,7 +12480,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v329</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v331</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -12345,7 +12534,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v329</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v331</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12387,7 +12576,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v329</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v331</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
