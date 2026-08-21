@@ -2938,8 +2938,8 @@ const CAC_MUC_THUONG = [
   { key: 'dtSan',     ten: 'Doanh thu sàn TMĐT',
     moTa: 'Trên tổng doanh thu đơn sàn đã giao trong tháng',
     truong: ['phanTramDTSan'] },
-  { key: 'truTre',    ten: 'Tự động trừ khi đi trễ',
-    moTa: 'Trừ mỗi lần vào muộn. Admin xử lý ca trễ thì khoản trừ tự bỏ.',
+  { key: 'truTre',    ten: 'Đi trễ',
+    moTa: 'Trừ tiền khi vào muộn. Admin xử lý ca trễ thì khoản trừ tự bỏ.',
     truong: ['phutChoTre', 'tienTruTre', 'truTheoPhut'] }
 ];
 
@@ -11824,7 +11824,8 @@ function veKhoiCongThucThuong(vaiTroId) {
         ${ghiChu ? `<div style="font-size:11px;color:var(--text2)">${ghiChu}</div>` : ''}
       </div>
       <input type="text" inputmode="decimal" id="${id(truong)}" value="${c[truong] ?? 0}"
-        oninput="this.value=this.value.replace(/[^0-9.,]/g,'')"
+        ${donVi === 'đ' ? 'data-tien' : ''}
+        oninput="${donVi === 'đ' ? 'dinhDangTien(this)' : "this.value=this.value.replace(/[^0-9.,]/g,'')"}"
         style="width:100px;text-align:right">
       <span style="font-size:12px;color:var(--text2);width:30px">${donVi}</span>
     </div>`;
@@ -11848,12 +11849,26 @@ function veKhoiCongThucThuong(vaiTroId) {
     if (muc.key === 'dtSan') return oSo('phanTramDTSan', 'Phần trăm doanh thu sàn TMĐT',
       'Tính trên doanh thu đơn sàn đã giao', '%');
     if (muc.key === 'truTre') return `
-      ${oSo('phutChoTre', 'Trễ bao nhiêu phút thì tính', 'Dưới mức này bỏ qua', 'phút')}
-      ${oSo('tienTruTre', 'Trừ mỗi lần trễ', 'Cố định cho mỗi ca vào muộn', 'đ')}
-      ${oSo('truTheoPhut', 'Trừ thêm mỗi phút', 'Cộng dồn theo số phút muộn', 'đ')}
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:13px">Trễ quá</span>
+        <input type="number" id="${id('phutChoTre')}" value="${c.phutChoTre ?? 5}"
+          min="0" max="120" style="width:64px;text-align:center">
+        <span style="font-size:13px">phút thì trừ</span>
+        <input type="text" inputmode="numeric" id="${id('tienTruTre')}" data-tien
+          value="${Number(c.tienTruTre || 0).toLocaleString('vi-VN')}" placeholder="0"
+          oninput="dinhDangTien(this)" style="width:96px;text-align:right">
+        <span style="font-size:13px">đ</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:13px">Trừ thêm</span>
+        <input type="text" inputmode="numeric" id="${id('truTheoPhut')}" data-tien
+          value="${Number(c.truTheoPhut || 0).toLocaleString('vi-VN')}" placeholder="0"
+          oninput="dinhDangTien(this)" style="width:96px;text-align:right">
+        <span style="font-size:13px">đ mỗi phút muộn</span>
+      </div>
       <div style="font-size:11px;color:var(--text2);background:var(--bg);border-radius:6px;padding:8px">
-        Khoản trừ này tính tự động, không cần nhập tay. Nếu Admin bấm
-        <b>Xử lý</b> ở ca trễ (lý do chính đáng) thì khoản trừ tự bỏ.
+        Để 0 ở ô cuối nếu chỉ muốn trừ số cố định.
+        Admin bấm <b>Xử lý</b> ở ca trễ có lý do chính đáng thì khoản trừ tự bỏ.
       </div>`;
     return '';
   };
@@ -11951,10 +11966,14 @@ window.ctBatTatMuc = function(vaiTroId, mucKey, bat) {
 
 window.luuCongThucThuong = async function(vaiTroId) {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  // Ô tiền đánh dấu data-tien -> bỏ dấu chấm ngăn cách.
+  // Ô còn lại (phần trăm, số phút) -> dấu phẩy thành dấu chấm thập phân.
   const lay = (t) => {
     const el = document.getElementById(`ct-${vaiTroId}-${t}`);
     if (!el) return 0;
-    return Number(String(el.value || '').trim().replace(',', '.')) || 0;
+    const tho = String(el.value || '').trim();
+    if (el.dataset.tien !== undefined) return Number(tho.replace(/[^\d]/g, '')) || 0;
+    return Number(tho.replace(',', '.')) || 0;
   };
   const cu = congThucCuaVaiTro(vaiTroId);
   const bat = { ...(cu.bat || {}) };
@@ -13382,7 +13401,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v354</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v355</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13436,7 +13455,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v354</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v355</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13478,7 +13497,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v354</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v355</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
