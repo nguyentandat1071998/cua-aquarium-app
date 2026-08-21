@@ -10322,14 +10322,21 @@ async function tinhLuongTatCa(thang) {
   const theoNguoi = new Map();
   const lay = (uid) => {
     if (!theoNguoi.has(uid)) {
-      const u = allUsersCache.find(x => x.id === uid) || {};
+      const u = allUsersCache.find(x => x.id === uid);
+      // Bỏ qua tài khoản không còn trong hệ thống (đã xóa nhưng còn dữ liệu cũ)
+      // và tài khoản quản trị — admin không hưởng lương theo bảng này.
+      if (!u || u.role === 'admin' || u.disabled) { theoNguoi.set(uid, null); return null; }
       // Quyền nằm ở VAI TRÒ chứ không ở từng người — trước đây đọc u.quyen nên
       // ai cũng rơi vào nhóm "Khác".
       const vt = allVaiTro.find(v => v.id === u.vaiTroId);
       const q = vt?.quyenModule || {};
       theoNguoi.set(uid, {
         uid, ten: u.ten || u.email || '(không rõ)',
-        vaiTro: u.role || 'nhan_vien', tenVaiTro: vt?.ten || '', capBac: u.capBac || '',
+        vaiTroId: u.vaiTroId || '',
+        // Nhóm theo TÊN VAI TRÒ chứ không đoán từ quyền — quản lý có đủ mọi quyền
+        // nên đoán kiểu cũ là trúng hết các nhóm.
+        tenVaiTro: vt?.ten || (u.role === 'admin' ? 'Quản trị' : 'Chưa gán vai trò'),
+        vaiTro: u.role || 'nhan_vien', capBac: u.capBac || '',
         laBanHang: !!q.banhang, laDongGoi: !!(q.tmdt_donggoi || q.tmdt),
         soCa: 0, phut: 0, luong: 0, thuong: 0, khauTru: 0, soTre: 0
       });
@@ -10341,6 +10348,7 @@ async function tinhLuongTatCa(thang) {
     const ca = d.data();
     if (ca.deleted || !ca.uid) continue;
     const n = lay(ca.uid);
+    if (!n) continue;
     const u = allUsersCache.find(x => x.id === ca.uid) || {};
     // Tra theo vaiTroId (khớp với thiết lập lương), lùi về role nếu chưa có
     const rates = (cfg[u.vaiTroId] || cfg[u.role || 'nhan_vien'])?.rates || {};
@@ -10362,6 +10370,7 @@ async function tinhLuongTatCa(thang) {
     const q = d.data();
     if (!q.uid) continue;
     const n = lay(q.uid);
+    if (!n) continue;
     const u = allUsersCache.find(x => x.id === q.uid) || {};
     const ct = congThucCuaVaiTro(u.vaiTroId);
     if (!ct.bat?.donGoi) continue;
@@ -10375,6 +10384,7 @@ async function tinhLuongTatCa(thang) {
     const uid = d.nguoiBan?.uid;
     if (!uid) continue;
     const n = lay(uid);
+    if (!n) continue;
     const u = allUsersCache.find(x => x.id === uid) || {};
     const ct = congThucCuaVaiTro(u.vaiTroId);
     const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
@@ -10410,7 +10420,8 @@ async function tinhLuongTatCa(thang) {
   for (const d of sKT.docs) {
     const kt = d.data();
     if (!kt.uid) continue;
-    lay(kt.uid).khauTru += Number(kt.soTien) || 0;
+    const nKT = lay(kt.uid);
+    if (nKT) nKT.khauTru += Number(kt.soTien) || 0;
   }
 
   // Phụ cấp và ghi chú lưu theo từng người từng tháng
@@ -10420,7 +10431,7 @@ async function tinhLuongTatCa(thang) {
     sPC.docs.forEach(d => { const x = d.data(); phuCapTheoNguoi.set(x.uid, x); });
   } catch(e) { console.warn('Không tải được phụ cấp:', e.message); }
 
-  const ds = [...theoNguoi.values()].map(n => {
+  const ds = [...theoNguoi.values()].filter(Boolean).map(n => {
     const u = allUsersCache.find(x => x.id === n.uid) || {};
     const ct = congThucCuaVaiTro(u.vaiTroId);
     // Ba loại thưởng theo doanh thu, bật cái nào tính cái đó
@@ -10445,13 +10456,9 @@ function veDanhSachLuong(dl) {
   const [nam, th] = thang.split('-');
   const laAdmin = currentUserData?.role === 'admin';
 
-  // Chia theo loại việc để dễ đối chiếu — người làm cả hai xếp vào nhóm riêng
-  const nhom = [
-    { ten: 'Bán hàng', loc: n => n.laBanHang && !n.laDongGoi },
-    { ten: 'Đóng gói', loc: n => n.laDongGoi && !n.laBanHang },
-    { ten: 'Bán hàng + Đóng gói', loc: n => n.laBanHang && n.laDongGoi },
-    { ten: 'Khác', loc: n => !n.laBanHang && !n.laDongGoi }
-  ];
+  // Chia theo VAI TRÒ — tên do Admin đặt nên chính xác, không phải đoán từ quyền
+  const tenNhom = [...new Set(danhSach.map(n => n.tenVaiTro))].sort();
+  const nhom = tenNhom.map(t => ({ ten: t, loc: n => n.tenVaiTro === t }));
 
   const tongTatCa = danhSach.reduce((s, n) => s + n.tong, 0);
 
@@ -10914,7 +10921,7 @@ async function renderThietLapLuong() {
         <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu lương giờ</button>
         ${veKhoiCongThucThuong(r.key)}
       </div>`;
-  }).join('') + veKhoiCongThucThuong();
+  }).join('');
 
   // Lương giờ tra theo vaiTroId của nhân viên
 
@@ -11035,33 +11042,59 @@ function veKhoiCongThucThuong(vaiTroId) {
     return '';
   };
 
+  // Chỉ hiện mục ĐÃ BẬT. Thêm mục mới qua dropdown — không xổ cả năm mục ra
+  // khi vai trò chỉ dùng một.
+  const daBat = CAC_MUC_THUONG.filter(m => bat[m.key]);
+  const conLai = CAC_MUC_THUONG.filter(m => {
+    if (bat[m.key]) return false;
+    // Ẩn mục xung đột với mục đang bật, khỏi chọn rồi bị chặn
+    return !(m.xungDot || []).some(k => bat[k]);
+  });
+
   return `
     <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">
         CÔNG THỨC THƯỞNG
       </div>
-      ${CAC_MUC_THUONG.map(m => `
-        <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
-          <label style="display:flex;align-items:flex-start;gap:8px;padding:9px 10px;cursor:pointer;
-                        border-radius:7px 7px 0 0;
-                        background:${bat[m.key] ? '#F0FDF4' : 'var(--bg)'}">
-            <input type="checkbox" class="ct-bat" data-vaitro="${escHtml(vaiTroId)}" data-muc="${m.key}"
-              ${bat[m.key] ? 'checked' : ''} style="margin-top:3px"
-              onchange="ctBatTatMuc('${escHtml(vaiTroId)}','${m.key}',this.checked)">
+
+      ${daBat.map(m => `
+        <div style="border:1px solid var(--green);border-radius:8px;margin-bottom:8px">
+          <div style="display:flex;align-items:flex-start;gap:8px;padding:9px 10px;background:#F0FDF4;
+                      border-radius:7px 7px 0 0">
             <span style="flex:1">
-              <span style="font-size:13px;font-weight:${bat[m.key] ? '600' : '400'}">${m.ten}</span>
+              <span style="font-size:13px;font-weight:600">${m.ten}</span>
               ${m.moTa ? `<div style="font-size:11px;color:var(--text2);margin-top:1px">${m.moTa}</div>` : ''}
             </span>
-          </label>
-          <div id="${id('muc-' + m.key)}" style="padding:${bat[m.key] ? '10px' : '0'};
-               display:${bat[m.key] ? 'block' : 'none'}">
-            ${bat[m.key] ? noiDungMuc(m) : ''}
+            <button onclick="ctBatTatMuc('${escHtml(vaiTroId)}','${m.key}',false)"
+              style="border:none;background:transparent;color:var(--text2);cursor:pointer;
+                     font-size:15px;line-height:1;padding:0 2px">✕</button>
           </div>
+          <div style="padding:10px">${noiDungMuc(m)}</div>
         </div>`).join('')}
-      <button class="btn-g" style="width:100%;margin-top:4px"
-        onclick="luuCongThucThuong('${escHtml(vaiTroId)}')">Lưu công thức thưởng</button>
+
+      ${conLai.length ? `
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <select id="${id('them-muc')}" style="flex:1">
+            <option value="">— Thêm mục thưởng —</option>
+            ${conLai.map(m => `<option value="${m.key}">${m.ten}</option>`).join('')}
+          </select>
+          <button class="btn-outline" style="width:auto;padding:0 16px"
+            onclick="ctThemMuc('${escHtml(vaiTroId)}')">Thêm</button>
+        </div>` : ''}
+
+      ${daBat.length ? `
+        <button class="btn-g" style="width:100%"
+          onclick="luuCongThucThuong('${escHtml(vaiTroId)}')">Lưu công thức thưởng</button>`
+        : '<p class="info-note" style="margin:0">Chưa có mục thưởng nào cho vai trò này.</p>'}
     </div>`;
 }
+
+window.ctThemMuc = function(vaiTroId) {
+  const el = document.getElementById(`ct-${vaiTroId}-them-muc`);
+  const key = el?.value;
+  if (!key) { showToast('Chọn mục cần thêm', true); return; }
+  ctBatTatMuc(vaiTroId, key, true);
+};
 
 window.ctBatTatMuc = function(vaiTroId, mucKey, bat) {
   // Chặn bật hai mục cùng tính trên một nguồn doanh thu — bật cả hai là
@@ -11108,10 +11141,7 @@ window.luuCongThucThuong = async function(vaiTroId) {
     return Number(String(el.value || '').trim().replace(',', '.')) || 0;
   };
   const cu = congThucCuaVaiTro(vaiTroId);
-  const bat = {};
-  document.querySelectorAll(`.ct-bat[data-vaitro="${CSS.escape(vaiTroId)}"]`)
-    .forEach(x => { bat[x.dataset.muc] = x.checked; });
-
+  const bat = { ...(cu.bat || {}) };
   const moi = { ...cu, bat };
   for (const m of CAC_MUC_THUONG) {
     if (!bat[m.key]) continue;
@@ -12532,7 +12562,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v334</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v335</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -12586,7 +12616,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v334</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v335</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12628,7 +12658,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v334</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v335</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
