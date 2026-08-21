@@ -10043,6 +10043,7 @@ async function renderBangLuong() {
       const sU = await getDocs(collection(db, 'users'));
       allUsersCache = sU.docs.map(d => ({ id: d.id, ...d.data() }));
     }
+    if (!allVaiTro.length) await loadVaiTro();
     // Thưởng đóng gói tra trạng thái từ đơn sàn — chưa nạp thì phần trăm doanh thu
     // luôn ra 0 vì không biết đơn nào đã giao.
     if (!allDonHangSan.length) {
@@ -10121,11 +10122,12 @@ async function tinhLuongThang(thang) {
 
   // Đơn giá theo vai trò và cấp bậc của chính người đang xem
   const nguoi = allUsersCache.find(u => u.id === uidXem) || {};
-  const rates = cfg[nguoi.role || 'nhan_vien']?.rates || {};
+  const rates = (cfg[nguoi.vaiTroId] || cfg[nguoi.role || 'nhan_vien'])?.rates || {};
   const donGia = Number(rates[nguoi.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
 
-  // Người này làm việc gì — quyết định hiện cột thưởng nào
-  const q = nguoi.quyen || {};
+  // Người này làm việc gì — lấy từ vai trò, quyết định hiện cột thưởng nào
+  const vtNguoi = allVaiTro.find(v => v.id === nguoi.vaiTroId);
+  const q = vtNguoi?.quyenModule || {};
   const laBanHang = !!q.banhang;
   const laDongGoi = !!q.tmdt_donggoi || !!q.tmdt;
 
@@ -10259,10 +10261,13 @@ async function tinhLuongTatCa(thang) {
   const lay = (uid) => {
     if (!theoNguoi.has(uid)) {
       const u = allUsersCache.find(x => x.id === uid) || {};
-      const q = u.quyen || {};
+      // Quyền nằm ở VAI TRÒ chứ không ở từng người — trước đây đọc u.quyen nên
+      // ai cũng rơi vào nhóm "Khác".
+      const vt = allVaiTro.find(v => v.id === u.vaiTroId);
+      const q = vt?.quyenModule || {};
       theoNguoi.set(uid, {
         uid, ten: u.ten || u.email || '(không rõ)',
-        vaiTro: u.role || 'nhan_vien', capBac: u.capBac || '',
+        vaiTro: u.role || 'nhan_vien', tenVaiTro: vt?.ten || '', capBac: u.capBac || '',
         laBanHang: !!q.banhang, laDongGoi: !!(q.tmdt_donggoi || q.tmdt),
         soCa: 0, phut: 0, luong: 0, thuong: 0, khauTru: 0, soTre: 0
       });
@@ -10275,7 +10280,8 @@ async function tinhLuongTatCa(thang) {
     if (ca.deleted || !ca.uid) continue;
     const n = lay(ca.uid);
     const u = allUsersCache.find(x => x.id === ca.uid) || {};
-    const rates = cfg[u.role || 'nhan_vien']?.rates || {};
+    // Tra theo vaiTroId (khớp với thiết lập lương), lùi về role nếu chưa có
+    const rates = (cfg[u.vaiTroId] || cfg[u.role || 'nhan_vien'])?.rates || {};
     const donGia = Number(rates[u.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
     if (ca.vaoLuc?.seconds && ca.thoatLuc?.seconds) {
       const phut = Math.max(0, Math.round((ca.thoatLuc.seconds - ca.vaoLuc.seconds) / 60));
@@ -10700,8 +10706,15 @@ async function renderThietLapLuong() {
   }
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const cfg = await getLuongConfig();
+  if (!allVaiTro.length) await loadVaiTro();
 
-  el.innerHTML = LUONG_ROLES.map(r => {
+  // Lấy vai trò THẬT từ hệ thống thay vì danh sách viết cứng — thêm vai trò mới
+  // (như Nhân viên đóng gói) là tự hiện, không phải sửa code.
+  const cacVaiTro = allVaiTro.length
+    ? allVaiTro.map(v => ({ key: v.id, label: v.ten || v.id }))
+    : LUONG_ROLES;
+
+  el.innerHTML = cacVaiTro.map(r => {
     const roleCfg = cfg[r.key] || { tiers: [], rates: {} };
     const tiers = roleCfg.tiers || [];
     const rates = roleCfg.rates || {};
@@ -10726,6 +10739,8 @@ async function renderThietLapLuong() {
         <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu ${r.label}</button>
       </div>`;
   }).join('') + veKhoiCongThucThuong();
+
+  // Lương giờ tra theo vaiTroId của nhân viên
 
   napGiaTriCongThuc();
 }
@@ -12276,7 +12291,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v328</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v329</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -12330,7 +12345,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v328</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v329</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -12372,7 +12387,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v328</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v329</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
