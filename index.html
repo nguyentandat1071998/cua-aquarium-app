@@ -2910,11 +2910,16 @@ const MAU_CONG_THUC = {
   phanTramPhuKien: 0,          // % doanh thu phụ kiện bán tại quầy
   nhomDoTuoi: [],              // nhóm hàng cuối tính là tươi sống
   phanTramDTCaNhan: 0,         // % tổng doanh thu người đó bán được
-  phanTramDTCuaHang: 0,        // % doanh thu bán tại quầy của cả cửa hàng
+  phanTramDTCuaHang: 0,        // (cũ) % doanh thu cửa hàng, giữ để đọc dữ liệu cũ
+  ptCuaHangTuoi: 0,            // % doanh thu cửa hàng — hàng tươi sống
+  ptCuaHangPhuKien: 0,         // % doanh thu cửa hàng — phụ kiện
   phanTramDTSan: 0,            // % doanh thu sàn TMĐT
   phutChoTre: 5,               // trễ dưới số phút này thì bỏ qua
   tienTruTre: 0,               // đồng, trừ mỗi lần trễ
-  truTheoPhut: 0               // đồng mỗi phút trễ, cộng thêm vào khoản trên
+  truTheoPhut: 0,              // đồng mỗi phút trễ, cộng thêm vào khoản trên
+  // Hàng hỏng: đạt mốc thì thưởng, vượt mốc thì trừ theo bậc phần trăm
+  thuongDatMoc: 0,             // đồng, thưởng khi hàng hỏng ≤ mốc
+  bacHong: []                  // [{ tu: 101, den: 130, truPhanTram: 5 }]
 };
 
 // Các mục thưởng Admin bật/tắt cho từng vai trò
@@ -2933,14 +2938,17 @@ const CAC_MUC_THUONG = [
     xungDot: ['banQuay'],
     truong: ['phanTramDTCaNhan'] },
   { key: 'dtCuaHang', ten: 'Doanh thu cả cửa hàng',
-    moTa: 'Trên tổng doanh thu bán tại quầy của mọi nhân viên',
-    truong: ['phanTramDTCuaHang'] },
+    moTa: 'Trên tổng doanh thu bán tại quầy của mọi nhân viên, chia theo nhóm hàng',
+    truong: ['ptCuaHangTuoi', 'ptCuaHangPhuKien'] },
   { key: 'dtSan',     ten: 'Doanh thu sàn TMĐT',
     moTa: 'Trên tổng doanh thu đơn sàn đã giao trong tháng',
     truong: ['phanTramDTSan'] },
   { key: 'truTre',    ten: 'Đi trễ',
     moTa: 'Trừ tiền khi vào muộn. Admin xử lý ca trễ thì khoản trừ tự bỏ.',
-    truong: ['phutChoTre', 'tienTruTre', 'truTheoPhut'] }
+    truong: ['phutChoTre', 'tienTruTre', 'truTheoPhut'] },
+  { key: 'hangHong',  ten: 'Hàng hỏng (xuất hủy)',
+    moTa: 'So tiền hàng hủy trong tháng với mốc cho phép. Vượt mốc thì trừ theo bậc.',
+    truong: ['thuongDatMoc', 'bacHong'] }
 ];
 
 let CONG_THUC_THEO_VAI_TRO = {};
@@ -11013,7 +11021,8 @@ async function tinhLuongTatCa(thang) {
         vaiTro: u.role || 'nhan_vien', capBac: u.capBac || '',
         laBanHang: !!q.banhang, laDongGoi: !!(q.tmdt_donggoi || q.tmdt),
         soCa: 0, phut: 0, tongCong: 0, luong: 0, lamThem: 0,
-        thuong: 0, khauTru: 0, soTre: 0
+        thuong: 0, thuongDon: 0, thuongDT: 0, thuongThem: 0,
+        khauTru: 0, soTre: 0, ghiChuHong: ''
       });
     }
     return theoNguoi.get(uid);
@@ -11060,11 +11069,24 @@ async function tinhLuongTatCa(thang) {
     const ct = congThucCuaVaiTro(u.vaiTroId);
     if (!ct.bat?.donGoi) continue;
     const don = allDonHangSan.find(x => x.maDonSan === q.maDonSan || x.maHoaDon === q.maHoaDon);
-    n.thuong += don ? (tinhThuongDonTheoCongThuc(don, ct) || 0) : (Number(ct.thuongMoiDonGoi) || 0);
+    if (don) {
+      const t = tinhThuongDon(don);
+      n.thuongDon += t.thuongCoDinh || 0;
+      n.thuongDT += t.thuongDoanhThu || 0;
+    } else {
+      n.thuongDon += Number(ct.thuongMoiDonGoi) || 0;
+    }
+  }
+
+  // Nhóm tươi sống dùng chung cho doanh thu cửa hàng và hàng hỏng — lấy từ vai
+  // trò nào đã cấu hình, vì đây là phân loại hàng chứ không thuộc riêng ai
+  const nhomTuoiChung = new Set();
+  for (const vt of allVaiTro) {
+    for (const n of (congThucCuaVaiTro(vt.id).nhomDoTuoi || [])) nhomTuoiChung.add(n);
   }
 
   // Bán tại quầy: theo nhóm hàng và theo doanh thu cá nhân
-  let dtCuaHang = 0;
+  let dtCuaHang = 0, dtCuaHangTuoi = 0, dtCuaHangPhuKien = 0;
   for (const d of donBan) {
     const uid = d.nguoiBan?.uid;
     if (!uid) continue;
@@ -11077,6 +11099,14 @@ async function tinhLuongTatCa(thang) {
     dtCuaHang += thucThu;
     n.dtCaNhan = (n.dtCaNhan || 0) + thucThu;
 
+    // Doanh thu toàn cửa hàng, tách theo nhóm
+    for (const h of (d.dongHang || [])) {
+      const sku = allSKUs.find(x => x.sku === h.sku);
+      const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
+      if (sku && nhomTuoiChung.has(nhomCuoiCuaSku(sku))) dtCuaHangTuoi += tien;
+      else dtCuaHangPhuKien += tien;
+    }
+
     if (ct.bat?.banQuay) {
       const nhomTuoi = new Set(ct.nhomDoTuoi || []);
       let tuoi = 0, pk = 0;
@@ -11086,11 +11116,39 @@ async function tinhLuongTatCa(thang) {
         if (sku && nhomTuoi.has(nhomCuoiCuaSku(sku))) tuoi += tien; else pk += tien;
       }
       pk = Math.max(0, pk - daTra);
-      n.thuong += Math.round((Number(ct.thuongMoiDonBan) || 0)
-        + tuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
+      n.thuongDon += Number(ct.thuongMoiDonBan) || 0;
+      n.thuongDT += Math.round(tuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
         + pk * (Number(ct.phanTramPhuKien) || 0) / 100);
     }
   }
+
+  // Hàng hỏng trong tháng — lấy từ phiếu xuất hủy, tính theo GIÁ BÁN
+  let tienHongTuoi = 0, tienHongPhuKien = 0;
+  try {
+    const sHuy = await getDocs(query(collection(db, 'phieu_huy'),
+      where('createdAt', '>=', new Date(dauThang + 'T00:00:00')),
+      where('createdAt', '<=', new Date(cuoiThang + 'T23:59:59'))));
+    for (const d of sHuy.docs) {
+      const ph = d.data();
+      if (ph.deleted) continue;
+      for (const it of (ph.items || [])) {
+        const sku = allSKUs.find(x => x.sku === it.sku);
+        const tien = Number(it.tong) || 0;
+        // Nhóm tươi sống lấy từ công thức của vai trò đầu tiên có bật — hàng hủy
+        // là hàng chung, không thuộc riêng ai
+        if (sku && nhomTuoiChung.has(nhomCuoiCuaSku(sku))) tienHongTuoi += tien;
+        else tienHongPhuKien += tien;
+      }
+    }
+  } catch(e) { console.warn('Không tải được phiếu hủy:', e.message); }
+  const tongHong = tienHongTuoi + tienHongPhuKien;
+
+  // Mốc hàng hỏng của tháng — Admin đặt ở màn hình Bảng lương
+  let mocHong = 0;
+  try {
+    const mc = await getDoc(doc(db, 'moc_hang_hong', thang));
+    mocHong = mc.exists() ? (Number(mc.data().soTien) || 0) : 0;
+  } catch(e) {}
 
   // Doanh thu sàn TMĐT trong tháng — chỉ tính đơn đã giao
   const dauCat = new Date(dauThang).getTime();
@@ -11120,18 +11178,47 @@ async function tinhLuongTatCa(thang) {
     const u = allUsersCache.find(x => x.id === n.uid) || {};
     const ct = congThucCuaVaiTro(u.vaiTroId);
     // Ba loại thưởng theo doanh thu, bật cái nào tính cái đó
-    if (ct.bat?.dtCaNhan) n.thuong += Math.round((n.dtCaNhan || 0) * (Number(ct.phanTramDTCaNhan) || 0) / 100);
-    if (ct.bat?.dtCuaHang) n.thuong += Math.round(dtCuaHang * (Number(ct.phanTramDTCuaHang) || 0) / 100);
-    if (ct.bat?.dtSan) n.thuong += Math.round(dtSan * (Number(ct.phanTramDTSan) || 0) / 100);
+    if (ct.bat?.dtCaNhan) n.thuongDT += Math.round((n.dtCaNhan || 0) * (Number(ct.phanTramDTCaNhan) || 0) / 100);
+    if (ct.bat?.dtCuaHang) {
+      n.thuongDT += Math.round(
+        dtCuaHangTuoi * (Number(ct.ptCuaHangTuoi) || 0) / 100
+        + dtCuaHangPhuKien * (Number(ct.ptCuaHangPhuKien) || 0) / 100
+        // Dữ liệu cũ chỉ có một mức chung
+        + (ct.ptCuaHangTuoi || ct.ptCuaHangPhuKien ? 0
+           : dtCuaHang * (Number(ct.phanTramDTCuaHang) || 0) / 100));
+    }
+
+    // Hàng hỏng: trong mốc thì thưởng, vượt mốc thì trừ theo bậc
+    if (ct.bat?.hangHong && mocHong > 0) {
+      const tyLe = tongHong / mocHong * 100;
+      if (tyLe <= 100) {
+        n.thuongHong = Number(ct.thuongDatMoc) || 0;
+        n.thuongThem += n.thuongHong;
+        n.ghiChuHong = `Hàng hỏng ${fmt(tongHong)}đ / mốc ${fmt(mocHong)}đ (${Math.round(tyLe)}%) — đạt mốc`;
+      } else {
+        const bac = (ct.bacHong || []).find(b => tyLe >= (b.tu || 0) && tyLe <= (b.den || 9999));
+        if (bac) {
+          n.truHong = Math.round(tongHong * (Number(bac.truPhanTram) || 0) / 100);
+          n.khauTru += n.truHong;
+          n.ghiChuHong = `Hàng hỏng ${Math.round(tyLe)}% mốc — trừ ${bac.truPhanTram}% giá bán = ${fmt(n.truHong)}đ`;
+        } else {
+          n.ghiChuHong = `Hàng hỏng ${Math.round(tyLe)}% mốc — ngoài các bậc đã đặt`;
+        }
+      }
+    }
+    if (ct.bat?.dtSan) n.thuongDT += Math.round(dtSan * (Number(ct.phanTramDTSan) || 0) / 100);
 
     const pc = phuCapTheoNguoi.get(n.uid) || {};
     const phuCap = Number(pc.soTien) || 0;
-    return { ...n, phuCap, ghiChu: pc.ghiChu || '',
-      tong: n.luong + (n.lamThem || 0) + n.thuong - n.khauTru + phuCap };
+    return { ...n, phuCap, ghiChu: pc.ghiChu || n.ghiChuHong || '',
+      tong: n.luong + (n.lamThem || 0)
+        + (n.thuongDon || 0) + (n.thuongDT || 0) + (n.thuongThem || 0)
+        - n.khauTru + phuCap };
   }).sort((a, b) => b.tong - a.tong);
 
   blDanhSachHienTai = ds;
-  return { thang, danhSach: ds, dtCuaHang, dtSan };
+  return { thang, danhSach: ds, dtCuaHang, dtCuaHangTuoi, dtCuaHangPhuKien,
+    dtSan, tongHong, tienHongTuoi, tienHongPhuKien, mocHong };
 }
 
 function veDanhSachLuong(dl) {
@@ -11161,7 +11248,9 @@ function veDanhSachLuong(dl) {
         </div></td>
       <td>${fmt(n.luong)}</td>
       <td>${n.lamThem ? fmt(n.lamThem) : '—'}</td>
-      <td>${n.thuong ? fmt(n.thuong) : '—'}</td>
+      <td>${n.thuongDon ? fmt(n.thuongDon) : '—'}</td>
+      <td>${n.thuongDT ? fmt(n.thuongDT) : '—'}</td>
+      <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
       <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
       <td>
         ${laAdmin ? `
@@ -11189,7 +11278,32 @@ function veDanhSachLuong(dl) {
         <span>${danhSach.length} người</span>
         <span style="color:var(--green)" id="bl-tong-tat-ca">${fmt(tongTatCa)}đ</span>
       </div>
+      <div style="display:flex;gap:14px;font-size:12px;color:var(--text2);margin-top:6px;flex-wrap:wrap">
+        <span>Doanh thu quầy <b style="color:var(--text)">${fmt(dl.dtCuaHang || 0)}đ</b></span>
+        <span>Sàn TMĐT <b style="color:var(--text)">${fmt(dl.dtSan || 0)}đ</b></span>
+      </div>
     </div>
+
+    ${laAdmin ? `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;
+                  padding:12px;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">
+          MỐC HÀNG HỎNG THÁNG ${th}/${nam}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <input type="text" inputmode="numeric" id="bl-moc-hong"
+            value="${dl.mocHong ? Number(dl.mocHong).toLocaleString('vi-VN') : ''}" placeholder="0"
+            oninput="dinhDangTien(this)" style="flex:1;text-align:right;padding:8px">
+          <span style="font-size:13px;color:var(--text2)">đ</span>
+          <button class="btn-xs" onclick="blLuuMocHong()">Lưu mốc</button>
+        </div>
+        <div style="font-size:12px;color:${dl.mocHong && dl.tongHong > dl.mocHong ? 'var(--red)' : 'var(--text2)'}">
+          Đã hủy trong tháng: <b>${fmt(dl.tongHong || 0)}đ</b>
+          ${dl.mocHong ? ` · ${Math.round((dl.tongHong || 0) / dl.mocHong * 100)}% mốc` : ''}
+          ${dl.tienHongTuoi || dl.tienHongPhuKien
+            ? `<br>tươi sống ${fmt(dl.tienHongTuoi || 0)}đ · phụ kiện ${fmt(dl.tienHongPhuKien || 0)}đ` : ''}
+        </div>
+      </div>` : ''}
 
     ${!danhSach.length ? '<p class="info-note">Chưa có dữ liệu trong tháng.</p>' : `
       <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
@@ -11197,8 +11311,10 @@ function veDanhSachLuong(dl) {
           <thead>
             <tr>
               <th style="text-align:left">Họ tên</th>
-              <th>Công</th><th>Lương</th><th>Làm thêm</th><th>Thưởng</th>
-              <th>Khấu trừ</th><th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng</th>
+              <th>Công</th><th>Lương</th><th>Làm thêm</th>
+              <th>Thưởng đơn</th><th>Thưởng<br><span style="font-weight:400;font-size:10px">doanh thu</span></th>
+              <th>Thưởng</th><th>Điều chỉnh<br><span style="font-weight:400;font-size:10px">thưởng</span></th>
+              <th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng</th>
             </tr>
           </thead>
           ${nhom.map(g => {
@@ -11208,7 +11324,7 @@ function veDanhSachLuong(dl) {
             return `
             <tbody>
               <tr class="bl-nhom">
-                <td colspan="8" style="text-align:left">${escHtml(g.ten)} (${ds.length})</td>
+                <td colspan="10" style="text-align:left">${escHtml(g.ten)} (${ds.length})</td>
                 <td>${fmt(tongNhom)}</td>
               </tr>
               ${ds.map(dongNV).join('')}
@@ -11229,14 +11345,16 @@ window.blTinhLaiDong = function(uid) {
   const n = blDanhSachHienTai.find(x => x.uid === uid);
   if (!o || !n) return;
   const pc = docTien(o);
-  const tong = n.luong + (n.lamThem || 0) + n.thuong - n.khauTru + pc;
+  const tong = n.luong + (n.lamThem || 0)
+    + (n.thuongDon || 0) + (n.thuongDT || 0) + (n.thuongThem || 0) - n.khauTru + pc;
   const el = document.getElementById(`bl-tong-${uid}`);
   if (el) el.textContent = fmt(tong);
   // Cập nhật tổng toàn cửa hàng
   const tongTat = blDanhSachHienTai.reduce((s, x) => {
     const oo = document.querySelector(`.bl-phucap[data-uid="${CSS.escape(x.uid)}"]`);
     const p = oo ? docTien(oo) : (x.phuCap || 0);
-    return s + x.luong + (x.lamThem || 0) + x.thuong - x.khauTru + p;
+    return s + x.luong + (x.lamThem || 0)
+      + (x.thuongDon || 0) + (x.thuongDT || 0) + (x.thuongThem || 0) - x.khauTru + p;
   }, 0);
   const elT = document.getElementById('bl-tong-tat-ca');
   if (elT) elT.textContent = fmt(tongTat) + 'đ';
@@ -11244,6 +11362,23 @@ window.blTinhLaiDong = function(uid) {
 
 // Phụ cấp lưu theo TỪNG NGƯỜI và TỪNG THÁNG — mỗi người mỗi khác, và tháng này
 // khác tháng kia, nên không để trong thiết lập chung được.
+// Mốc hàng hỏng đặt riêng từng tháng — tháng cao điểm cho phép hao hụt nhiều hơn
+window.blLuuMocHong = async function() {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  const tien = docTien(document.getElementById('bl-moc-hong'));
+  try {
+    await setDoc(doc(db, 'moc_hang_hong', blThang), {
+      thang: blThang, soTien: tien,
+      datBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
+      datLuc: serverTimestamp()
+    });
+    showToast(`Đã đặt mốc ${fmt(tien)}đ cho tháng này`);
+    renderBangLuong();
+  } catch(e) {
+    alert('Không lưu được: ' + e.message);
+  }
+};
+
 window.blLuuPhuCap = async function() {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
   try {
@@ -11844,10 +11979,16 @@ function veKhoiCongThucThuong(vaiTroId) {
       </div>`;
     if (muc.key === 'dtCaNhan') return oSo('phanTramDTCaNhan', 'Phần trăm doanh thu cá nhân',
       'Tính trên tổng tiền người đó bán được', '%');
-    if (muc.key === 'dtCuaHang') return oSo('phanTramDTCuaHang', 'Phần trăm doanh thu cửa hàng',
-      'Tính trên doanh thu bán tại quầy của cả cửa hàng', '%');
+    if (muc.key === 'dtCuaHang') return `
+      ${oSo('ptCuaHangTuoi', 'Hàng tươi sống', 'Trên doanh thu tươi sống của cả cửa hàng', '%')}
+      ${oSo('ptCuaHangPhuKien', 'Phụ kiện', 'Trên doanh thu phụ kiện của cả cửa hàng', '%')}
+      <div style="font-size:11px;color:var(--text2);background:var(--bg);border-radius:6px;padding:8px">
+        Dùng chung danh sách nhóm tươi sống với mục "Doanh thu cá nhân".
+        Chưa bật mục đó thì mọi hàng tính là phụ kiện.
+      </div>`;
     if (muc.key === 'dtSan') return oSo('phanTramDTSan', 'Phần trăm doanh thu sàn TMĐT',
       'Tính trên doanh thu đơn sàn đã giao', '%');
+    if (muc.key === 'hangHong') return veKhoiHangHong(vaiTroId, c);
     if (muc.key === 'truTre') return `
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <span style="font-size:13px">Trễ quá</span>
@@ -11920,6 +12061,85 @@ function veKhoiCongThucThuong(vaiTroId) {
     </div>`;
 }
 
+// Bậc thang hàng hỏng: mốc tiền đặt hàng tháng ở Bảng lương, còn các bậc phần
+// trăm vượt mốc đặt ở đây. Ví dụ 101–130% trừ 5% giá bán hàng hỏng.
+function veKhoiHangHong(vaiTroId, c) {
+  const bac = c.bacHong || [];
+  return `
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:13px">Trong mốc thì thưởng</span>
+      <input type="text" inputmode="numeric" id="ct-${vaiTroId}-thuongDatMoc" data-tien
+        value="${Number(c.thuongDatMoc || 0).toLocaleString('vi-VN')}" placeholder="0"
+        oninput="dinhDangTien(this)" style="width:100px;text-align:right">
+      <span style="font-size:13px">đ</span>
+    </div>
+
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">
+      BẬC TRỪ KHI VƯỢT MỐC
+    </div>
+    <div id="ct-${vaiTroId}-bac-hong">
+      ${bac.length ? bac.map((b, i) => veDongBac(vaiTroId, b, i)).join('')
+        : '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Chưa có bậc nào</div>'}
+    </div>
+    <button class="btn-outline" style="width:100%;margin-bottom:8px"
+      onclick="ctThemBac('${escHtml(vaiTroId)}')">+ Thêm bậc</button>
+
+    <div style="font-size:11px;color:var(--text2);background:var(--bg);border-radius:6px;padding:8px">
+      Mốc tiền hàng hỏng đặt riêng từng tháng ở màn hình <b>Bảng lương</b>.
+      Phần trăm ở đây là mức hàng hỏng so với mốc đó.
+    </div>`;
+}
+
+function veDongBac(vaiTroId, b, i) {
+  return `
+    <div class="ct-dong-bac" data-vaitro="${escHtml(vaiTroId)}" data-idx="${i}"
+      style="display:flex;align-items:center;gap:5px;margin-bottom:6px;flex-wrap:wrap">
+      <span style="font-size:12px">Từ</span>
+      <input type="number" class="bac-tu" value="${b.tu ?? 101}" style="width:62px;text-align:center">
+      <span style="font-size:12px">%–</span>
+      <input type="number" class="bac-den" value="${b.den ?? 130}" style="width:62px;text-align:center">
+      <span style="font-size:12px">% trừ</span>
+      <input type="number" class="bac-tru" value="${b.truPhanTram ?? 5}" step="0.5" style="width:58px;text-align:center">
+      <span style="font-size:12px">% giá bán</span>
+      <button onclick="ctXoaBac('${escHtml(vaiTroId)}',${i})"
+        style="border:none;background:transparent;color:var(--red);cursor:pointer;
+               font-size:15px;padding:0 4px">✕</button>
+    </div>`;
+}
+
+window.ctThemBac = function(vaiTroId) {
+  const c = congThucCuaVaiTro(vaiTroId);
+  const bac = layBacDangNhap(vaiTroId, c.bacHong || []);
+  // Bậc mới nối tiếp bậc cuối
+  const cuoi = bac[bac.length - 1];
+  bac.push({
+    tu: cuoi ? (Number(cuoi.den) || 100) + 1 : 101,
+    den: cuoi ? (Number(cuoi.den) || 100) + 30 : 130,
+    truPhanTram: cuoi ? (Number(cuoi.truPhanTram) || 0) + 5 : 5
+  });
+  const el = document.getElementById(`ct-${vaiTroId}-bac-hong`);
+  if (el) el.innerHTML = bac.map((b, i) => veDongBac(vaiTroId, b, i)).join('');
+};
+
+window.ctXoaBac = function(vaiTroId, idx) {
+  const c = congThucCuaVaiTro(vaiTroId);
+  const bac = layBacDangNhap(vaiTroId, c.bacHong || []).filter((_, i) => i !== idx);
+  const el = document.getElementById(`ct-${vaiTroId}-bac-hong`);
+  if (el) el.innerHTML = bac.length ? bac.map((b, i) => veDongBac(vaiTroId, b, i)).join('')
+    : '<div style="font-size:11px;color:var(--text2);margin-bottom:6px">Chưa có bậc nào</div>';
+};
+
+// Đọc các bậc đang hiện trên màn hình, chưa lưu
+function layBacDangNhap(vaiTroId, macDinh) {
+  const cac = document.querySelectorAll(`.ct-dong-bac[data-vaitro="${CSS.escape(vaiTroId)}"]`);
+  if (!cac.length) return [...macDinh];
+  return [...cac].map(d => ({
+    tu: Number(d.querySelector('.bac-tu')?.value) || 0,
+    den: Number(d.querySelector('.bac-den')?.value) || 0,
+    truPhanTram: Number(d.querySelector('.bac-tru')?.value) || 0
+  }));
+}
+
 window.ctThemMuc = async function(vaiTroId) {
   const el = document.getElementById(`ct-${vaiTroId}-them-muc`);
   const key = el?.value;
@@ -11978,6 +12198,7 @@ window.luuCongThucThuong = async function(vaiTroId) {
     if (!bat[m.key]) continue;
     for (const t of m.truong) {
       if (t === 'nhomDoTuoi') moi.nhomDoTuoi = ctNhomDaChon[vaiTroId] || cu.nhomDoTuoi || [];
+      else if (t === 'bacHong') moi.bacHong = layBacDangNhap(vaiTroId, cu.bacHong || []);
       else moi[t] = lay(t);
     }
   }
@@ -13397,7 +13618,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v356</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v357</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13451,7 +13672,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v356</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v357</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13493,7 +13714,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v356</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v357</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
