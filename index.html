@@ -642,7 +642,23 @@ async function renderLichCaTab() {
       </div>`;
   }).join('');
 
+  const soChuaIn = trang.filter(d => !d.daInVanDon).length;
   el.innerHTML = `
+    ${trang.length ? `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn-xs" onclick="vdChonHet()">
+          ☑ Chọn ${soChuaIn} đơn chưa in
+        </button>
+        ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
+      </div>
+
+      <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
+           background:#F0FDF4;border:1.5px solid var(--green);border-radius:8px;padding:9px 11px;margin-bottom:10px">
+        <span style="flex:1;font-size:13px">Đã chọn <b><span id="vd-so-don">${vdDaChon.size}</span></b> đơn</span>
+        <button class="btn-g" id="vd-nut-in" style="width:auto;padding:7px 14px"
+          onclick="inVanDonHangLoat()">🖨 In vận đơn</button>
+      </div>` : ''}
+
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <button class="btn-xs" onclick="doiTuanLichCa(-1)">← Tuần trước</button>
       <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
@@ -2596,6 +2612,11 @@ function veDanhSachDon() {
   const tongTrang = Math.max(1, Math.ceil(ds.length / DON_MOI_TRANG));
   if (donPage > tongTrang) donPage = tongTrang;
   const trang = ds.slice((donPage - 1) * DON_MOI_TRANG, donPage * DON_MOI_TRANG);
+  window._donDangHien = trang;   // dùng cho nút chọn tất cả
+  // Bỏ chọn những đơn không còn hiện sau khi đổi bộ lọc, tránh in nhầm đơn khuất
+  const maHien = new Set(trang.map(d => d.maDonSan || d.maHoaDon));
+  for (const ma of [...vdDaChon]) if (!maHien.has(ma)) vdDaChon.delete(ma);
+
   const nutTT = (ma, nhan, so, mau) => `<button style="flex:1;border:1.5px solid ${donFilterTrangThai===ma?mau:'var(--border)'};border-radius:6px;padding:7px 4px;font-size:12px;background:${donFilterTrangThai===ma?mau:'#fff'};color:${donFilterTrangThai===ma?'#fff':'var(--text)'}" onclick="doiFilterDonTT('${ma}')">${nhan}${so!=null?` (${so})`:''}</button>`;
   const nhomKho = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'kho');
   const nhomCanhBao = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'canh_bao');
@@ -2686,7 +2707,12 @@ function veDanhSachDon() {
         <div style="flex:1;min-width:0">
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
             <span style="font-size:10px;background:var(--bg);padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[d.san] || d.san)}</span>
+            <label onclick="event.stopPropagation()" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+              <input type="checkbox" ${vdDaChon.has(d.maDonSan || d.maHoaDon) ? 'checked' : ''}
+                onchange="vdTick('${escHtml(d.maDonSan || d.maHoaDon)}',this.checked)">
+            </label>
             <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
+            ${d.daInVanDon ? '<span style="font-size:10px;color:var(--green)" title="Đã in vận đơn">🖨</span>' : ''}
             <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
@@ -2705,7 +2731,7 @@ function veDanhSachDon() {
             ? `<span style="color:#DC2626">phí ${phi.toLocaleString('vi-VN')}đ (${tiLePhi}%)</span>`
             : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
           <button class="btn-xs" style="margin-top:6px"
-            onclick="event.stopPropagation();inPhieuSan('${escHtml(d.maDonSan || d.maHoaDon)}')">🖨 In phiếu</button>
+            onclick="event.stopPropagation();inPhieuSan('${escHtml(d.maDonSan || d.maHoaDon)}')">📋 Phiếu soạn</button>
         </div>
       </div>
       ${laHuySauDongGoi ? `
@@ -5365,13 +5391,114 @@ window.tuChoiPhieuTra = async function(idPhieu) {
   veManHinhDonDaBan();
 };
 
-// Lấy link PDF vận đơn từ KiotViet — link chỉ sống 10 phút.
-// Gọi: layVanDon('2608247CR8E45B')
+// ===== IN VẬN ĐƠN =====
+// KiotViet gộp nhiều đơn vào một PDF, nhưng CHỈ khi cùng sàn — mỗi sàn một
+// định dạng vận đơn riêng nên phải tách ra gọi từng lượt.
+const NEN_TANG_SAN = { shopee: 'ShopeeOrder', lazada: 'LazadaOrder', tiktok: 'TiktokOrder' };
+let vdDaChon = new Set();
+
+window.vdTick = function(maDon, tick) {
+  if (tick) vdDaChon.add(maDon); else vdDaChon.delete(maDon);
+  veThanhInVanDon();
+};
+
+window.vdChonHet = function() {
+  const hienCo = layDonDangHien();
+  const chuaIn = hienCo.filter(d => !d.daInVanDon);
+  const tatCaDaChon = chuaIn.length && chuaIn.every(d => vdDaChon.has(d.maDonSan || d.maHoaDon));
+  if (tatCaDaChon) vdDaChon.clear();
+  else chuaIn.forEach(d => vdDaChon.add(d.maDonSan || d.maHoaDon));
+  veDanhSachDon();
+};
+
+window.vdBoChon = function() { vdDaChon.clear(); veDanhSachDon(); };
+
+function veThanhInVanDon() {
+  const el = document.getElementById('vd-thanh-in');
+  if (!el) return;
+  const n = vdDaChon.size;
+  el.style.display = n ? 'flex' : 'none';
+  const nhan = document.getElementById('vd-so-don');
+  if (nhan) nhan.textContent = n;
+}
+
+window.inVanDonHangLoat = async function() {
+  if (!vdDaChon.size) return;
+  const nut = document.getElementById('vd-nut-in');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang lấy vận đơn...'; }
+
+  try {
+    // Gom theo sàn — KiotViet không gộp được đơn khác sàn vào một file
+    const theoSan = new Map();
+    for (const ma of vdDaChon) {
+      const d = allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma);
+      const nt = NEN_TANG_SAN[d?.san] || 'ShopeeOrder';
+      if (!theoSan.has(nt)) theoSan.set(nt, []);
+      theoSan.get(nt).push(ma);
+    }
+
+    const idToken = await currentUser.getIdToken();
+    const cacLink = [];
+    const loi = [];
+
+    for (const [nenTang, cacMa] of theoSan) {
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'lay-van-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cacMaDon: cacMa, nenTang })
+      });
+      const kq = await res.json();
+      if (kq.success) cacLink.push(...(kq.cacLink || []));
+      else loi.push(`${nenTang}: ${kq.error || 'không lấy được'}`);
+      if (kq.donLoi?.length) loi.push(`Đơn lỗi: ${kq.donLoi.join(', ')}`);
+    }
+
+    if (!cacLink.length) throw new Error(loi.join('\n') || 'Không lấy được vận đơn nào');
+
+    // Mở từng file PDF. Trình duyệt chặn mở nhiều tab liên tiếp nên giãn ra chút.
+    cacLink.forEach((u, i) => setTimeout(() => window.open(u, '_blank'), i * 400));
+
+    if (loi.length) alert('Một phần không lấy được:\n\n' + loi.join('\n'));
+    showToast(`Đã mở ${cacLink.length} file vận đơn — bấm in trên từng tab`);
+
+    // Đánh dấu đã in để lần sau khỏi in trùng
+    await danhDauDaInVanDon([...vdDaChon]);
+    vdDaChon.clear();
+    veDanhSachDon();
+  } catch(e) {
+    alert('Lỗi lấy vận đơn: ' + e.message);
+  } finally {
+    if (nut) { nut.disabled = false; nut.innerHTML = '🖨 In vận đơn (<span id="vd-so-don">0</span>)'; }
+  }
+};
+
+async function danhDauDaInVanDon(cacMa) {
+  try {
+    const batch = writeBatch(db);
+    for (const ma of cacMa) {
+      const d = allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma);
+      if (!d?.id) continue;
+      batch.update(doc(db, 'don_hang_san', d.id), {
+        daInVanDon: true,
+        inVanDonLuc: serverTimestamp(),
+        inVanDonBoi: currentUserData?.ten || ''
+      });
+      d.daInVanDon = true;   // cập nhật luôn bộ nhớ để vẽ lại đúng
+    }
+    await batch.commit();
+  } catch(e) { console.warn('Không đánh dấu được đã in:', e.message); }
+}
+
+// Lấy đơn đang hiện trên màn hình, dùng cho nút chọn tất cả
+function layDonDangHien() {
+  return (window._donDangHien || []);
+}
+
+// Lấy link PDF vận đơn cho MỘT đơn — dùng trong Console để chẩn đoán
 window.layVanDon = async function(maDon, nenTang) {
   if (!currentUser) { console.error('Chưa đăng nhập'); return; }
   const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-  const nt = nenTang || (d?.san === 'lazada' ? 'LazadaOrder'
-    : d?.san === 'tiktok' ? 'TiktokOrder' : 'ShopeeOrder');
+  const nt = nenTang || NEN_TANG_SAN[d?.san] || 'ShopeeOrder';
   const idToken = await currentUser.getIdToken();
   const res = await fetch(WORKER_URL, {
     method: 'POST',
@@ -5380,12 +5507,8 @@ window.layVanDon = async function(maDon, nenTang) {
   });
   const kq = await res.json();
   console.log('[vận đơn]', kq);
-  if (kq.success && kq.linkPdf) {
-    console.log('Link PDF (10 phút):', kq.linkPdf);
-    window.open(kq.linkPdf, '_blank');
-  } else {
-    console.error('LỖI:', kq.error, kq.phanHoi || '');
-  }
+  if (kq.success && kq.linkPdf) window.open(kq.linkPdf, '_blank');
+  else console.error('LỖI:', kq.error, kq.phanHoi || '');
   return kq;
 };
 
@@ -13684,7 +13807,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v361</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v362</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13738,7 +13861,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v361</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v362</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13780,7 +13903,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v361</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v362</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
