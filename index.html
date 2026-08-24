@@ -11196,13 +11196,19 @@ async function tinhLuongTatCa(thang) {
         n.thuongThem += n.thuongHong;
         n.ghiChuHong = `Hàng hỏng ${fmt(tongHong)}đ / mốc ${fmt(mocHong)}đ (${Math.round(tyLe)}%) — đạt mốc`;
       } else {
-        const bac = (ct.bacHong || []).find(b => tyLe >= (b.tu || 0) && tyLe <= (b.den || 9999));
+        // Tìm bậc theo NGƯỠNG TRÊN, không so cả hai đầu — nếu so cả hai thì
+        // 15.000.001đ trên mốc 15.000.000đ ra 100,0000067%: quá 100% nhưng chưa
+        // tới 101%, rơi vào khe giữa hai bậc và không bị trừ gì.
+        // Vượt bậc cuối cùng thì áp mức của bậc cuối.
+        const bacSap = [...(ct.bacHong || [])].sort((a, b) => (a.den || 0) - (b.den || 0));
+        const bac = bacSap.find(b => tyLe <= (Number(b.den) || 0)) || bacSap[bacSap.length - 1];
         if (bac) {
           n.truHong = Math.round(tongHong * (Number(bac.truPhanTram) || 0) / 100);
           n.khauTru += n.truHong;
-          n.ghiChuHong = `Hàng hỏng ${Math.round(tyLe)}% mốc — trừ ${bac.truPhanTram}% giá bán = ${fmt(n.truHong)}đ`;
+          n.ghiChuHong = `Hàng hỏng ${tyLe.toFixed(1).replace('.0','')}% mốc`
+            + ` — trừ ${bac.truPhanTram}% giá bán = ${fmt(n.truHong)}đ`;
         } else {
-          n.ghiChuHong = `Hàng hỏng ${Math.round(tyLe)}% mốc — ngoài các bậc đã đặt`;
+          n.ghiChuHong = `Hàng hỏng ${tyLe.toFixed(1).replace('.0','')}% mốc — chưa đặt bậc trừ nào`;
         }
       }
     }
@@ -11243,9 +11249,7 @@ function veDanhSachLuong(dl) {
         ${n.capBac ? `<div style="font-size:10px;color:var(--text2)">${escHtml(n.capBac)}</div>` : ''}
       </td>
       <td>${(n.tongCong || 0).toFixed(2).replace(/\.?0+$/,'')}
-        <div style="font-size:10px;color:var(--text2)">
-          ${n.soCa} ca${n.soTre ? ` · <span style="color:var(--red)">${n.soTre} trễ</span>` : ''}
-        </div></td>
+        ${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
       <td>${fmt(n.luong)}</td>
       <td>${n.lamThem ? fmt(n.lamThem) : '—'}</td>
       <td>${n.thuongDon ? fmt(n.thuongDon) : '—'}</td>
@@ -12085,8 +12089,9 @@ function veKhoiHangHong(vaiTroId, c) {
       onclick="ctThemBac('${escHtml(vaiTroId)}')">+ Thêm bậc</button>
 
     <div style="font-size:11px;color:var(--text2);background:var(--bg);border-radius:6px;padding:8px">
-      Mốc tiền hàng hỏng đặt riêng từng tháng ở màn hình <b>Bảng lương</b>.
-      Phần trăm ở đây là mức hàng hỏng so với mốc đó.
+      Mốc tiền đặt riêng từng tháng ở màn hình <b>Bảng lương</b>.
+      Chỉ số <b>đến</b> của mỗi bậc là mốc thật — vượt 100% một đồng cũng vào bậc đầu,
+      vượt bậc cuối thì áp mức bậc cuối. Nên không có khoảng nào lọt khe.
     </div>`;
 }
 
@@ -13618,7 +13623,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v357</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v358</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13672,7 +13677,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v357</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v358</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13714,7 +13719,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v357</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v358</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
