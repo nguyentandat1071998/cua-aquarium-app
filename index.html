@@ -11920,14 +11920,15 @@ function veKhoiCongThucThuong(vaiTroId) {
     </div>`;
 }
 
-window.ctThemMuc = function(vaiTroId) {
+window.ctThemMuc = async function(vaiTroId) {
   const el = document.getElementById(`ct-${vaiTroId}-them-muc`);
   const key = el?.value;
   if (!key) { showToast('Chọn mục cần thêm', true); return; }
-  ctBatTatMuc(vaiTroId, key, true);
+  await ctBatTatMuc(vaiTroId, key, true);
+  showToast('Đã thêm mục — điền số rồi bấm Lưu');
 };
 
-window.ctBatTatMuc = function(vaiTroId, mucKey, bat) {
+window.ctBatTatMuc = async function(vaiTroId, mucKey, bat) {
   // Chặn bật hai mục cùng tính trên một nguồn doanh thu — bật cả hai là
   // nhân viên ăn thưởng hai lần cho cùng số tiền đó.
   if (bat) {
@@ -11943,25 +11944,20 @@ window.ctBatTatMuc = function(vaiTroId, mucKey, bat) {
       return;
     }
   }
-  // Giữ số đang gõ ở các ô khác trước khi vẽ lại, tránh mất công nhập
-  const dangGo = {};
-  document.querySelectorAll(`[id^="ct-${vaiTroId}-"]`).forEach(o => {
-    if (o.tagName === 'INPUT' && o.type === 'text') dangGo[o.id] = o.value;
-  });
-
-  // congThucCuaVaiTro đã sao chép sâu nên gán vào đây không đụng vai trò khác
+  // LƯU NGAY vào Firestore rồi mới vẽ lại. Trước đây chỉ đổi trong bộ nhớ, mà
+  // renderThietLapLuong lại gọi napCongThucLuong đọc đè từ Firestore — nên mục
+  // vừa bật biến mất ngay lập tức.
   const c = congThucCuaVaiTro(vaiTroId);
   c.bat[mucKey] = !!bat;
-  CONG_THUC_THEO_VAI_TRO[vaiTroId] = c;
-  renderThietLapLuong();
 
-  // Trả lại số đã gõ
-  setTimeout(() => {
-    for (const id in dangGo) {
-      const o = document.getElementById(id);
-      if (o && !o.value) o.value = dangGo[id];
-    }
-  }, 0);
+  try {
+    const tatCa = { ...CONG_THUC_THEO_VAI_TRO, [vaiTroId]: c };
+    await setDoc(doc(db, 'settings', 'cong_thuc_luong'), tatCa);
+    CONG_THUC_THEO_VAI_TRO = tatCa;
+    await renderThietLapLuong();
+  } catch(e) {
+    alert('Không lưu được: ' + e.message);
+  }
 };
 
 window.luuCongThucThuong = async function(vaiTroId) {
@@ -13401,7 +13397,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v355</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v356</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13455,7 +13451,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v355</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v356</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13497,7 +13493,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v355</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v356</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
