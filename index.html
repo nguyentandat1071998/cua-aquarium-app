@@ -642,23 +642,7 @@ async function renderLichCaTab() {
       </div>`;
   }).join('');
 
-  const soChuaIn = trang.filter(d => !d.daInVanDon).length;
   el.innerHTML = `
-    ${trang.length ? `
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button class="btn-xs" onclick="vdChonHet()">
-          ☑ Chọn ${soChuaIn} đơn chưa in
-        </button>
-        ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
-      </div>
-
-      <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
-           background:#F0FDF4;border:1.5px solid var(--green);border-radius:8px;padding:9px 11px;margin-bottom:10px">
-        <span style="flex:1;font-size:13px">Đã chọn <b><span id="vd-so-don">${vdDaChon.size}</span></b> đơn</span>
-        <button class="btn-g" id="vd-nut-in" style="width:auto;padding:7px 14px"
-          onclick="inVanDonHangLoat()">🖨 In vận đơn</button>
-      </div>` : ''}
-
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <button class="btn-xs" onclick="doiTuanLichCa(-1)">← Tuần trước</button>
       <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
@@ -2627,7 +2611,19 @@ function veDanhSachDon() {
   const soChuaNhanLai = allDonHangSan.filter(d =>
     trangThaiHienThi(d) === 'huy_sau_dong_goi' && !daNhanLaiKien(d)).length;
 
+  const soChuaIn = trang.filter(d => !d.daInVanDon).length;
   el.innerHTML = `
+    ${trang.length ? `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <button class="btn-xs" onclick="vdChonHet()">☑ Chọn ${soChuaIn} đơn chưa in</button>
+        ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
+      </div>
+      <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
+           background:#F0FDF4;border:1.5px solid var(--green);border-radius:8px;padding:9px 11px;margin-bottom:10px">
+        <span style="flex:1;font-size:13px">Đã chọn <b><span id="vd-so-don">${vdDaChon.size}</span></b> đơn</span>
+        <button class="btn-g" id="vd-nut-in" style="width:auto;padding:7px 14px"
+          onclick="inVanDonHangLoat()">🖨 In vận đơn</button>
+      </div>` : ''}
     <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
       <button class="btn-g" style="flex:1" onclick="keoDonVe()">🔄 Đồng bộ ${donFilterSan === 'all' ? 'mọi sàn' : TEN_SAN[donFilterSan]}</button>
       <select id="don-songay" style="width:auto;padding:9px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
@@ -2730,8 +2726,7 @@ function veDanhSachDon() {
           <div style="font-size:11px;margin-top:2px">${phi != null
             ? `<span style="color:#DC2626">phí ${phi.toLocaleString('vi-VN')}đ (${tiLePhi}%)</span>`
             : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
-          <button class="btn-xs" style="margin-top:6px"
-            onclick="event.stopPropagation();inPhieuSan('${escHtml(d.maDonSan || d.maHoaDon)}')">📋 Phiếu soạn</button>
+
         </div>
       </div>
       ${laHuySauDongGoi ? `
@@ -5512,35 +5507,6 @@ window.layVanDon = async function(maDon, nenTang) {
   return kq;
 };
 
-// ===== IN PHIẾU SOẠN HÀNG ĐƠN SÀN =====
-// Gửi qua máy in ở quầy, dùng chung hạ tầng với hóa đơn bán lẻ.
-window.inPhieuSan = async function(maDon) {
-  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-  if (!d) { showToast('Không tìm thấy đơn', true); return; }
-  try {
-    await addDoc(collection(db, 'lenh_in'), {
-      loai: 'phieu_soan_san',
-      maDon: d.maDonSan || d.maHoaDon,
-      duLieu: {
-        tenSan: TEN_SAN[d.san] || d.san || '',
-        maDonSan: d.maDonSan || d.maHoaDon || '',
-        ngayDat: d.ngayDat?.toDate ? d.ngayDat.toDate().toISOString() : new Date().toISOString(),
-        nguoiNhan: d.nguoiNhan || '',
-        maVanDon: d.maVanDon || '',
-        ghiChu: d.ghiChu || '',
-        chiTiet: (d.chiTiet || []).map(c => ({
-          sku: c.sku || '', tenHang: c.tenHang || '', soLuong: c.soLuong || 0
-        }))
-      },
-      trangThai: 'cho_in',
-      nguoiYeuCau: currentUserData?.ten || '',
-      taoLuc: serverTimestamp()
-    });
-    showToast('Đã gửi lệnh in — kiểm tra máy in ở quầy');
-  } catch(e) {
-    alert('Không gửi được lệnh in: ' + e.message);
-  }
-};
 
 // ===== IN QUA MÁY TRUNG GIAN =====
 // Trình duyệt không mở được kết nối tới máy in nhiệt trong mạng LAN (rào bảo mật),
@@ -13807,7 +13773,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v362</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v363</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13861,7 +13827,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v362</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v363</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13903,7 +13869,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v362</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v363</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
