@@ -5393,13 +5393,14 @@ window.tuChoiPhieuTra = async function(idPhieu) {
 // Tên tab: unprocessed (chờ xử lý) · processed (đã xử lý)
 //          shipping (đang giao) · to-cancel (đơn hủy)
 // Gọi: layDonBanOnline('unprocessed')
-window.layDonBanOnline = async function(tab = 'processed', soLuong = 50, ghiThat = false, trang = 1) {
+window.layDonBanOnline = async function(tab = 'processed', soLuong = 50, ghiThat = false,
+                                        trang = 1, tuNgay = null, denNgay = null) {
   if (!currentUser) { console.error('Chưa đăng nhập'); return; }
   const idToken = await currentUser.getIdToken();
   const res = await fetch(WORKER_URL, {
     method: 'POST',
     headers: { 'x-action': 'lay-don-ban-online', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tab, soLuong, trang, chiXem: !ghiThat })
+    body: JSON.stringify({ tab, soLuong, trang, tuNgay, denNgay, chiXem: !ghiThat })
   });
   const kq = await res.json();
   if (!kq.success) {
@@ -5419,21 +5420,30 @@ window.layDonBanOnline = async function(tab = 'processed', soLuong = 50, ghiThat
 // Gọi: dongBoBanOnline()
 // kol giới hạn 50 đơn mỗi lần, mà tab Đang giao có tới 786 đơn — nên lấy theo
 // TRANG. Mặc định 3 trang mỗi tab là đủ cho đơn mới; muốn lấy sâu hơn thì tăng.
-window.dongBoBanOnline = async function(soTrang = 3) {
+// Đồng bộ theo SỐ NGÀY GẦN ĐÂY thay vì quét cả 786 đơn tab Đang giao.
+// Đơn cũ đã giao xong thì không cần shopId nữa — chỉ đơn đang xử lý mới cần.
+//   dongBoBanOnline()     -> 7 ngày gần nhất
+//   dongBoBanOnline(30)   -> 30 ngày
+window.dongBoBanOnline = async function(soNgay = 7, soTrangToiDa = 10) {
   const cacTab = ['unprocessed', 'processed', 'shipping', 'to-cancel'];
-  let tongCapNhat = 0, tongLoi = 0;
+  const den = new Date();
+  const tu = new Date(den.getTime() - soNgay * 86400000);
+  const ngay = (d) => d.toISOString().split('T')[0];
+
+  let tongCapNhat = 0, tongLoi = 0, tongQuet = 0;
 
   for (const t of cacTab) {
-    for (let trang = 1; trang <= soTrang; trang++) {
-      const kq = await layDonBanOnline(t, 50, true, trang);
+    for (let trang = 1; trang <= soTrangToiDa; trang++) {
+      const kq = await layDonBanOnline(t, 50, true, trang, ngay(tu), ngay(den));
       if (!kq?.success) { tongLoi++; break; }
+      tongQuet += kq.soLay || 0;
       if (kq.ketQuaGhi?.daCapNhat) tongCapNhat += kq.ketQuaGhi.daCapNhat;
-      // Hết đơn thì thôi, khỏi gọi trang rỗng
-      if ((kq.soLay || 0) < 50) break;
+      if ((kq.soLay || 0) < 50) break;   // hết đơn
     }
   }
 
-  console.log(`✅ Đã cập nhật ${tongCapNhat} đơn${tongLoi ? ` · ${tongLoi} lượt lỗi` : ''}`);
+  console.log(`✅ Quét ${tongQuet} đơn (${soNgay} ngày) · cập nhật ${tongCapNhat}`
+    + (tongLoi ? ` · ${tongLoi} lượt lỗi` : ''));
   showToast(`Đã đồng bộ ${tongCapNhat} đơn từ Bán Online`);
   return tongCapNhat;
 };
@@ -13965,7 +13975,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v371</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v372</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14019,7 +14029,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v371</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v372</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14061,7 +14071,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v371</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v372</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
