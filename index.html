@@ -5557,6 +5557,66 @@ window.soSanhDonChoXuLy = async function() {
   return bang;
 };
 
+// So hai NHÓM đơn: nhóm bấm xác nhận bị lỗi và nhóm còn lại. Trường nào tách được
+// đúng hai nhóm chính là dấu hiệu phân biệt đơn chờ sàn duyệt.
+// Gọi: timDauHieuDonLoi(['2608247WYT2R12','2608247XPHQ9CQ'])
+window.timDauHieuDonLoi = async function(cacMaLoi) {
+  if (!Array.isArray(cacMaLoi) || !cacMaLoi.length) {
+    console.error('Cần danh sách mã đơn báo lỗi'); return;
+  }
+  if (!window._donChoXuLy) await soSanhDonChoXuLy();
+  const ds = window._donChoXuLy || [];
+  if (!ds.length) { console.log('Chưa có dữ liệu đơn'); return; }
+
+  const boLoi = new Set(cacMaLoi.map(x => String(x).trim()));
+  const nhomLoi = ds.filter(o => boLoi.has(String(o.OrderId)));
+  const nhomOn  = ds.filter(o => !boLoi.has(String(o.OrderId)));
+
+  console.log(`${nhomLoi.length} đơn lỗi · ${nhomOn.length} đơn còn lại`);
+  if (!nhomLoi.length) {
+    console.warn('Không tìm thấy mã lỗi nào trong danh sách — có thể đơn không ở tab Chờ xử lý');
+    return;
+  }
+
+  const moiTruong = new Set();
+  ds.forEach(o => Object.keys(o).forEach(k => moiTruong.add(k)));
+
+  const gonGiaTri = (v) => {
+    if (v == null) return '(trống)';
+    if (typeof v === 'object') return Array.isArray(v) ? `[${v.length}]` : JSON.stringify(v).slice(0, 60);
+    return String(v).slice(0, 50);
+  };
+
+  const ketQua = [];
+  for (const k of moiTruong) {
+    const giaTriLoi = new Set(nhomLoi.map(o => gonGiaTri(o[k])));
+    const giaTriOn  = new Set(nhomOn.map(o => gonGiaTri(o[k])));
+    // Dấu hiệu tốt: mọi đơn lỗi cùng một giá trị, và KHÔNG đơn nào bên kia có giá trị đó
+    const tachSach = giaTriLoi.size === 1 && !giaTriOn.has([...giaTriLoi][0]);
+    // Dấu hiệu yếu hơn: hai nhóm không giao nhau chút nào
+    const khongGiaoNhau = [...giaTriLoi].every(v => !giaTriOn.has(v));
+    if (!tachSach && !khongGiaoNhau) continue;
+    ketQua.push({
+      truong: k,
+      mucDo: tachSach ? '★ TÁCH SẠCH' : 'không giao nhau',
+      donLoi: [...giaTriLoi].join(' | '),
+      donOn: [...giaTriOn].slice(0, 3).join(' | ') + (giaTriOn.size > 3 ? ` (+${giaTriOn.size - 3})` : '')
+    });
+  }
+
+  ketQua.sort((a, b) => (b.mucDo.startsWith('★') ? 1 : 0) - (a.mucDo.startsWith('★') ? 1 : 0));
+  if (!ketQua.length) {
+    console.log('Không trường nào tách được hai nhóm — dấu hiệu có thể nằm trong object lồng nhau');
+    console.log('Xem thử một đơn lỗi và một đơn ổn:');
+    console.log('LỖI:', nhomLoi[0]);
+    console.log('ỔN :', nhomOn[0]);
+    return;
+  }
+  console.log('Các trường tách được hai nhóm:');
+  console.table(ketQua);
+  return ketQua;
+};
+
 // Đồng bộ đủ bốn tab, ghi bổ sung vào đơn đã có trong app.
 // Gọi: dongBoBanOnline()
 // kol giới hạn 50 đơn mỗi lần, mà tab Đang giao có tới 786 đơn — nên lấy theo
@@ -14139,7 +14199,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v377</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v378</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14193,7 +14253,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v377</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v378</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14235,7 +14295,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v377</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v378</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
