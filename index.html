@@ -2709,6 +2709,9 @@ function veDanhSachDon() {
             </label>
             <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
             ${d.daInVanDon ? '<span style="font-size:10px;color:var(--green)" title="Đã in vận đơn">🖨</span>' : ''}
+            ${!d.maVanDon && d.san === 'shopee' ? `
+              <button class="btn-xs" style="background:#FEF3C7;color:#92400E;padding:2px 7px;font-size:10px"
+                onclick="event.stopPropagation();xacNhanDon('${escHtml(d.maDonSan || d.maHoaDon)}')">Xác nhận</button>` : ''}
             <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
@@ -5386,6 +5389,138 @@ window.tuChoiPhieuTra = async function(idPhieu) {
   veManHinhDonDaBan();
 };
 
+// ===== XÁC NHẬN ĐƠN SÀN =====
+// Xác nhận là thao tác CÓ HẬU QUẢ THẬT với sàn: báo shipper tới lấy hàng.
+// Nên luôn hiện lựa chọn ngày lấy hàng và hỏi lại trước khi gửi.
+window.xacNhanDon = async function(maDon) {
+  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+  if (!d) { showToast('Không tìm thấy đơn', true); return; }
+  if (d.san !== 'shopee') {
+    alert('Hiện chỉ xác nhận được đơn Shopee.\n\nĐơn sàn khác vào KiotViet xác nhận.');
+    return;
+  }
+  const shopId = d.shopId || d.ShopId;
+  if (!shopId) { alert('Đơn này chưa có thông tin gian hàng (shopId)'); return; }
+
+  showToast('Đang lấy lựa chọn ngày lấy hàng...');
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'thong-tin-xac-nhan', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maDon, shopId })
+    });
+    const kq = await res.json();
+    console.log('[thông tin xác nhận]', kq);
+    if (!kq.success) throw new Error(kq.error || 'Không lấy được thông tin');
+    veKhungXacNhan(maDon, shopId, kq.thongTin);
+  } catch(e) {
+    alert('Lỗi: ' + e.message);
+  }
+};
+
+function veKhungXacNhan(maDon, shopId, tt) {
+  // Cấu trúc phản hồi chưa chắc chắn nên dò vài tên trường thường gặp
+  const cacNgay = tt?.pickUpTimeList || tt?.pickup_time_list || tt?.pickUpTimes
+    || tt?.data?.pickUpTimeList || [];
+  const cacDiaChi = tt?.addressList || tt?.address_list || tt?.addresses
+    || tt?.data?.addressList || [];
+
+  let m = document.getElementById('xn-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'xn-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1400;'
+      + 'display:flex;align-items:flex-end;justify-content:center';
+    m.onclick = (e) => { if (e.target === m) m.style.display = 'none'; };
+    document.body.appendChild(m);
+  }
+
+  const nhanNgay = (x) => {
+    const ts = Number(x.pickUpTimeId || x.pickup_time_id || x.id || 0);
+    if (!ts) return String(x.text || x.date || '');
+    const dd = new Date(ts * 1000);
+    const thu = ['CN','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'][dd.getDay()];
+    return `${thu} ${String(dd.getDate()).padStart(2,'0')}/${String(dd.getMonth()+1).padStart(2,'0')}`;
+  };
+
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:440px;border-radius:14px 14px 0 0">
+      <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;
+                  justify-content:space-between;align-items:center">
+        <div>
+          <b style="font-size:15px">Xác nhận đơn</b>
+          <div style="font-size:12px;color:var(--text2)">${escHtml(maDon)}</div>
+        </div>
+        <button class="btn-outline" style="width:auto;padding:6px 12px"
+          onclick="document.getElementById('xn-modal').style.display='none'">✕</button>
+      </div>
+
+      <div style="padding:14px">
+        ${!cacNgay.length ? `
+          <p class="info-note">Không đọc được danh sách ngày lấy hàng.
+          Xem Console rồi báo lại để chỉnh.</p>` : `
+          <div style="font-size:13px;margin-bottom:6px">Ngày lấy hàng</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            ${cacNgay.map((x, i) => {
+              const id = String(x.pickUpTimeId || x.pickup_time_id || x.id || '');
+              return `
+              <label style="flex:1;min-width:110px;padding:10px;border-radius:8px;cursor:pointer;
+                            border:1.5px solid var(--border);text-align:center;font-size:13px">
+                <input type="radio" name="xn-ngay" value="${escHtml(id)}" ${i === 0 ? 'checked' : ''}
+                  style="margin-right:5px">
+                ${escHtml(nhanNgay(x))}
+              </label>`;
+            }).join('')}
+          </div>`}
+
+        ${cacDiaChi.length > 1 ? `
+          <div style="font-size:13px;margin-bottom:6px">Địa chỉ lấy hàng</div>
+          <select id="xn-diachi" style="width:100%;margin-bottom:14px">
+            ${cacDiaChi.map(a => `<option value="${a.addressId || a.address_id || a.id}">
+              ${escHtml(a.fullAddress || a.address || a.detailAddress || '')}</option>`).join('')}
+          </select>` : cacDiaChi.length === 1 ? `
+          <div style="font-size:12px;color:var(--text2);margin-bottom:14px">
+            Lấy tại: ${escHtml(cacDiaChi[0].fullAddress || cacDiaChi[0].address || '')}
+          </div>
+          <input type="hidden" id="xn-diachi" value="${cacDiaChi[0].addressId || cacDiaChi[0].address_id || cacDiaChi[0].id}">` : ''}
+
+        <div style="background:#FEF3C7;border-radius:8px;padding:9px;font-size:12px;color:#92400E;margin-bottom:12px">
+          Xác nhận xong là báo shipper tới lấy hàng — chỉ bấm khi hàng đã sẵn sàng.
+        </div>
+
+        <button class="btn-g" style="width:100%" ${!cacNgay.length ? 'disabled' : ''}
+          onclick="guiXacNhanDon('${escHtml(maDon)}',${shopId})">Xác nhận đơn</button>
+      </div>
+    </div>`;
+  m.style.display = 'flex';
+}
+
+window.guiXacNhanDon = async function(maDon, shopId) {
+  const ngay = document.querySelector('input[name="xn-ngay"]:checked')?.value;
+  const diaChi = document.getElementById('xn-diachi')?.value;
+  if (!ngay) { showToast('Chưa chọn ngày lấy hàng', true); return; }
+
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'xac-nhan-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maDon, shopId, pickUpTimeId: ngay, addressId: Number(diaChi) || 0 })
+    });
+    const kq = await res.json();
+    console.log('[xác nhận đơn]', kq);
+    if (!kq.success) throw new Error(kq.error || 'Không xác nhận được');
+
+    document.getElementById('xn-modal').style.display = 'none';
+    showToast(kq.maVanDon
+      ? `Đã xác nhận — mã vận đơn ${kq.maVanDon}`
+      : 'Đã xác nhận — sàn đang cấp mã vận đơn, đồng bộ lại sau ít phút');
+  } catch(e) {
+    alert('Lỗi xác nhận: ' + e.message);
+  }
+};
+
 // ===== IN VẬN ĐƠN =====
 // KiotViet gộp nhiều đơn vào một PDF, nhưng CHỈ khi cùng sàn — mỗi sàn một
 // định dạng vận đơn riêng nên phải tách ra gọi từng lượt.
@@ -5445,8 +5580,12 @@ window.inVanDonHangLoat = async function() {
       const kq = await res.json();
       console.log(`[vận đơn ${nenTang}]`, kq);
       if (kq.success) cacLink.push(...(kq.cacLink || []));
-      else loi.push(`${nenTang}: ${kq.error || 'không lấy được'}`);
-      if (kq.donLoi?.length) loi.push(`Đơn lỗi: ${kq.donLoi.join(', ')}`);
+      else loi.push(kq.error || `${nenTang}: không lấy được`);
+      // Liệt kê đơn lỗi kèm lý do, tối đa 5 dòng cho khỏi dài
+      for (const x of (kq.donLoi || []).slice(0, 5)) {
+        loi.push(`  · ${x.maDon || x}: ${x.lyDo || ''}`);
+      }
+      if ((kq.donLoi || []).length > 5) loi.push(`  · và ${kq.donLoi.length - 5} đơn nữa`);
     }
 
     if (!cacLink.length) throw new Error(loi.join('\n') || 'Không lấy được vận đơn nào');
@@ -13774,7 +13913,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v364</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v366</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -13828,7 +13967,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v364</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v366</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -13870,7 +14009,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v364</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v366</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
