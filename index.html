@@ -2547,10 +2547,19 @@ function choDieuPhoi(d) {
   return !hang;
 }
 
-// Sàn từ chối xác nhận — app tự ghi khi bấm Xác nhận bị lỗi. Chỉ tính trong
-// vòng 6 tiếng: sàn duyệt xong thì đơn phải xác nhận lại được, để lâu quá mà
-// vẫn đánh dấu thì lại thành che mất việc cần làm.
+// Sàn chưa duyệt đơn. Dấu hiệu: KHÔNG có hạn "Xác nhận/giao hàng trước" —
+// sàn duyệt xong mới cấp hạn này. Trạng thái thì mọi đơn đều READY_TO_SHIP
+// nên không phân biệt được, phải nhìn vào hạn.
+//
+// Dự phòng: nếu chưa đồng bộ được hanXacNhan thì dùng dấu app tự ghi khi
+// bấm Xác nhận bị sàn từ chối (giữ 6 tiếng).
 function sanChuaDuyet(d) {
+  if (d.coHoaDon === true || d.maVanDon) return false;
+
+  // Đã đồng bộ từ Bán Online: không có hạn xác nhận = sàn chưa duyệt
+  if (d.dongBoBanOnlineLuc) return !d.hanXacNhan;
+
+  // Chưa đồng bộ: dựa vào lần bấm Xác nhận bị từ chối
   if (!d.sanTuChoiLuc) return false;
   const luc = d.sanTuChoiLuc?.toDate ? d.sanTuChoiLuc.toDate().getTime()
     : new Date(d.sanTuChoiLuc).getTime();
@@ -2675,6 +2684,26 @@ window.doiFilterVanChuyen = function(ma) {
   donPage = 1;
   veDanhSachDon();
 };
+
+// Hạn phải xác nhận đơn. Quá hạn là sàn phạt nên tô đỏ khi còn dưới 6 tiếng.
+function veHanXacNhan(d) {
+  const h = d.hanXacNhan?.toDate ? d.hanXacNhan.toDate() : (d.hanXacNhan ? new Date(d.hanXacNhan) : null);
+  if (!h || isNaN(h.getTime())) return '';
+  if (d.coHoaDon === true || d.maVanDon) return '';   // đã xác nhận rồi
+
+  const conLai = h.getTime() - Date.now();
+  const gio = Math.floor(conLai / 3600000);
+  const mau = conLai < 0 ? 'var(--red)' : gio < 6 ? '#D97706' : 'var(--text2)';
+  const nhan = conLai < 0 ? 'QUÁ HẠN'
+    : gio < 24 ? `còn ${gio}h${Math.floor((conLai % 3600000) / 60000)}p`
+    : `còn ${Math.floor(gio / 24)} ngày`;
+
+  return `<div style="font-size:11px;color:${mau};margin-top:2px">
+    ⏱ Xác nhận trước ${String(h.getDate()).padStart(2,'0')}/${String(h.getMonth()+1).padStart(2,'0')}
+    ${String(h.getHours()).padStart(2,'0')}:${String(h.getMinutes()).padStart(2,'0')}
+    · <b>${nhan}</b>
+  </div>`;
+}
 
 function veDanhSachDon() {
   const el = document.getElementById('tmdt-than');
@@ -2824,6 +2853,7 @@ function veDanhSachDon() {
             ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
           </div>
           ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
+          ${veHanXacNhan(d)}
           <div style="font-size:12px;margin-top:4px">
             ${(d.chiTiet || []).slice(0, 3).map(c => `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
             ${(d.chiTiet || []).length > 3 ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 3} món</span>` : ''}
@@ -14270,7 +14300,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v380</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v381</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14324,7 +14354,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v380</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v381</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14366,7 +14396,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v380</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v381</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
