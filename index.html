@@ -2533,10 +2533,25 @@ const TRANG_THAI_NOI_BO = {
 // sàn hoặc các bản cập nhật, còn mã số thì cố định.
 const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN: 5, DA_HUY: 6 };
 
-// Khách chưa trả tiền — sàn chưa đẩy sang bước giao. Đơn kiểu này hay bị hủy.
+// Khách chưa trả tiền. KiotViet tạo phiếu đặt hàng ngay, nhưng đơn KHÔNG xuất
+// hiện ở Bán Online cho tới khi khách thanh toán — đó chính là dấu hiệu.
+//
+// Cách nhận biết: đơn không được cập nhật trong lần đồng bộ gần nhất. Trả tiền
+// rồi thì lần đồng bộ sau nó xuất hiện và tự chuyển sang Chờ xử lý.
 function chuaThanhToan(d) {
   const tt = String(d.trangThaiSanGoc || '').toUpperCase();
-  return tt === 'UNPAID' || tt === 'PENDING_PAYMENT' || tt === 'AWAITING_PAYMENT';
+  if (tt === 'UNPAID' || tt === 'PENDING_PAYMENT' || tt === 'AWAITING_PAYMENT') return true;
+
+  // Chưa từng đồng bộ lần nào thì chưa kết luận được
+  if (!mocDongBoGanNhat) return false;
+  if (d.coHoaDon === true || d.maVanDon) return false;
+
+  const luc = d.dongBoBanOnlineLuc?.toDate
+    ? d.dongBoBanOnlineLuc.toDate().getTime()
+    : (d.dongBoBanOnlineLuc ? new Date(d.dongBoBanOnlineLuc).getTime() : 0);
+
+  // Trừ hao 2 phút cho chênh lệch đồng hồ giữa máy và máy chủ
+  return luc < mocDongBoGanNhat - 120000;
 }
 
 // Sàn chưa gán hãng vận chuyển — chưa xác nhận đơn được, phải đợi sàn điều phối.
@@ -2616,7 +2631,7 @@ async function renderDonHangTab() {
   veDanhSachDon();
   // Hỏi sàn xem có đơn nào vừa được duyệt — chạy NGẦM sau khi đã vẽ xong,
   // để không bắt nhân viên chờ mỗi lần mở tab.
-  tuDongBoNeuCu(5);
+  tuDongBoNeuCu();
 }
 
 async function loadDonHangSan() {
@@ -2643,7 +2658,14 @@ function locDon() {
 }
 
 window.doiFilterDonSan = function(s) { donFilterSan = s; donPage = 1; veDanhSachDon(); };
-window.doiFilterDonTT = function(t) { donFilterTrangThai = t; donPage = 1; veDanhSachDon(); };
+window.doiFilterDonTT = function(t) {
+  donFilterTrangThai = t;
+  donPage = 1;
+  veDanhSachDon();
+  // Đảo tab là lúc nhân viên đang nhìn — dịp tốt để làm mới. Nhưng chỉ gọi nếu
+  // lần đồng bộ trước đã quá 15 phút, tránh bấm qua lại là gọi liên tục.
+  tuDongBoNeuCu();
+};
 window.doiTrangDon = function(p) { donPage = p; veDanhSachDon(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 window.timKiemDon = function(v) {
   donTimKiem = v; donPage = 1;
@@ -2713,6 +2735,14 @@ function veHanXacNhan(d) {
   </div>`;
 }
 
+// Cho nhân viên biết dữ liệu cũ tới đâu, khỏi đoán
+function nhanLanDongBo() {
+  if (!mocDongBoGanNhat) return 'chưa đồng bộ';
+  const phut = Math.floor((Date.now() - mocDongBoGanNhat) / 60000);
+  if (phut < 1) return 'vừa đồng bộ';
+  return `đồng bộ ${phut} phút trước`;
+}
+
 function veDanhSachDon() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
@@ -2749,7 +2779,8 @@ function veDanhSachDon() {
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
         <button class="btn-xs" onclick="vdChonHet()">☑ Chọn ${soChuaIn} đơn chưa in</button>
         ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
-        <button class="btn-xs" id="nut-dong-bo-san" style="margin-left:auto"
+        <span style="margin-left:auto;font-size:11px;color:var(--text2)">${nhanLanDongBo()}</span>
+        <button class="btn-xs" id="nut-dong-bo-san"
           onclick="dongBoNgay()">🔄 Kiểm tra sàn duyệt</button>
       </div>
       <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
@@ -2800,7 +2831,10 @@ function veDanhSachDon() {
       ${nhomKho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
     </div>
 
-    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">CHƯA XỬ LÝ ĐƯỢC</div>
+    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">
+      CHƯA XỬ LÝ ĐƯỢC
+      ${!mocDongBoGanNhat ? ' · <span style="color:#D97706">bấm Kiểm tra sàn duyệt để phân loại chính xác</span>' : ''}
+    </div>
     <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
       ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
     </div>
@@ -5699,14 +5733,24 @@ window.timDauHieuDonLoi = async function(cacMaLoi) {
 // Nên app phải tự đi hỏi. Chỉ đồng bộ tab "Chờ xử lý" cho nhẹ, vì chỉ nhóm đó
 // mới đổi trạng thái duyệt.
 let lanDongBoCuoi = 0;
+// Mốc thời gian của lần đồng bộ gần nhất. Đơn nào có dongBoBanOnlineLuc CŨ HƠN
+// mốc này nghĩa là lần vừa rồi Bán Online không có nó — tức khách chưa thanh toán.
+let mocDongBoGanNhat = 0;
 
-async function tuDongBoNeuCu(phutToiThieu = 5) {
+// Nhịp đồng bộ: chỉ gọi khi có thao tác VÀ đã quá số phút này. Không có hẹn giờ
+// chạy nền — không mở app thì không tốn lượt nào.
+const PHUT_GIUA_HAI_LAN_DONG_BO = 5;
+
+async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
+  if (document.hidden) return 0;   // tab đang ẩn thì không ai xem, khỏi gọi
   if (Date.now() - lanDongBoCuoi < phutToiThieu * 60000) return 0;
   lanDongBoCuoi = Date.now();
   try {
     const den = new Date();
     const tu = new Date(den.getTime() - 7 * 86400000);
     const ngay = (d) => d.toISOString().split('T')[0];
+    // Dừng ngay khi trang trả về ít hơn 50 đơn — thường chỉ cần 1 trang,
+    // lấy đủ 3 trang mỗi lượt là gọi thừa hai lần.
     let n = 0;
     for (let trang = 1; trang <= 3; trang++) {
       const kq = await layDonBanOnline('unprocessed', 50, true, trang, ngay(tu), ngay(den));
@@ -5714,7 +5758,9 @@ async function tuDongBoNeuCu(phutToiThieu = 5) {
       n += kq.ketQuaGhi?.daCapNhat || 0;
       if ((kq.soLay || 0) < 50) break;
     }
-    if (n) { await loadDonHangSan(); veDanhSachDon(); }
+    mocDongBoGanNhat = Date.now();
+    if (n) { await loadDonHangSan(); }
+    veDanhSachDon();   // vẽ lại kể cả khi n=0, vì mốc đổi làm phân loại đổi theo
     return n;
   } catch(e) { console.warn('Không tự đồng bộ được:', e.message); return 0; }
 }
@@ -14372,7 +14418,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v383</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v387</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14426,7 +14472,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v383</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v387</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14468,7 +14514,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v383</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v387</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
