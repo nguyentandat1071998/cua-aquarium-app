@@ -2509,6 +2509,10 @@ const TRANG_THAI_NOI_BO = {
   // sàn chưa gán hãng vận chuyển, hoặc khách chưa trả tiền.
   cho_dieu_phoi:     { ten: 'Chờ điều phối',  mau: '#0EA5E9', nhom: 'cho' },
   chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' },
+  // Dữ liệu KiotViet KHÔNG phân biệt được đơn chờ sàn duyệt — chúng trông y hệt
+  // đơn sẵn sàng giao. Nên app tự ghi nhận: bấm Xác nhận mà sàn báo lỗi thì
+  // đánh dấu, lần sau khỏi bấm lại và biết đây là đơn phải chờ.
+  san_chua_duyet:    { ten: 'Sàn chưa duyệt',  mau: '#F59E0B', nhom: 'cho' },
   cho_dong_goi:      { ten: 'Chờ đóng gói',   mau: '#D97706', nhom: 'kho' },
   da_dong_goi:       { ten: 'Đã đóng gói',    mau: '#0891B2', nhom: 'kho' },
   // KHÔNG gọi là "hủy sau in" vì bấm "Chuẩn bị hàng" mới tạo hóa đơn, còn in tem
@@ -2543,6 +2547,16 @@ function choDieuPhoi(d) {
   return !hang;
 }
 
+// Sàn từ chối xác nhận — app tự ghi khi bấm Xác nhận bị lỗi. Chỉ tính trong
+// vòng 6 tiếng: sàn duyệt xong thì đơn phải xác nhận lại được, để lâu quá mà
+// vẫn đánh dấu thì lại thành che mất việc cần làm.
+function sanChuaDuyet(d) {
+  if (!d.sanTuChoiLuc) return false;
+  const luc = d.sanTuChoiLuc?.toDate ? d.sanTuChoiLuc.toDate().getTime()
+    : new Date(d.sanTuChoiLuc).getTime();
+  return Date.now() - luc < 6 * 3600000;
+}
+
 function trangThaiHienThi(d) {
   const ma = Number(d.trangThaiGiaoMa) || 0;
   const daDongGoi = !!d.thoiGianDongGoi;
@@ -2568,9 +2582,10 @@ function trangThaiHienThi(d) {
   // Bốn bước: chờ xử lý → chờ in → chờ đóng gói → đã đóng gói.
   if (daDongGoi) return 'da_dong_goi';
 
-  // Hai nhóm chờ, xét TRƯỚC tiến trình vì chưa làm gì được với chúng
+  // Ba nhóm chờ, xét TRƯỚC tiến trình vì chưa làm gì được với chúng
   if (chuaThanhToan(d)) return 'chua_thanh_toan';
   if (choDieuPhoi(d))   return 'cho_dieu_phoi';
+  if (sanChuaDuyet(d))  return 'san_chua_duyet';
 
   // Đã in vận đơn thì sang bước đóng gói; chưa in mà đã có mã thì đang chờ in
   if (d.daInVanDon === true) return 'cho_dong_goi';
@@ -5819,7 +5834,40 @@ window.guiXacNhanDon = async function(maDon, shopId) {
     });
     const kq = await res.json();
     console.log('[xác nhận đơn]', kq);
-    if (!kq.success) throw new Error(kq.error || 'Không xác nhận được');
+
+    if (!kq.success) {
+      // Sàn từ chối -> ghi lại để đơn chuyển sang nhóm "Sàn chưa duyệt",
+      // khỏi bấm đi bấm lại và biết đây là đơn phải chờ
+      const loiTuSan = /sàn|thử lại|try again|system|internal/i.test(kq.error || '');
+      if (loiTuSan) {
+        const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+        if (d?.id) {
+          try {
+            await updateDoc(doc(db, 'don_hang_san', d.id), {
+              sanTuChoiLuc: serverTimestamp(),
+              sanTuChoiLyDo: String(kq.error || '').slice(0, 200)
+            });
+            d.sanTuChoiLuc = new Date();
+            d.sanTuChoiLyDo = kq.error;
+          } catch(e) {}
+        }
+        document.getElementById('xn-modal').style.display = 'none';
+        alert(`Sàn chưa duyệt đơn này.\n\n${kq.error}\n\n`
+          + `Đơn đã chuyển sang nhóm "Sàn chưa duyệt" — thử lại sau ít phút.`);
+        veDanhSachDon();
+        return;
+      }
+      throw new Error(kq.error || 'Không xác nhận được');
+    }
+
+    // Xác nhận được rồi thì xóa dấu chờ duyệt
+    const dOk = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+    if (dOk?.id && dOk.sanTuChoiLuc) {
+      try {
+        await updateDoc(doc(db, 'don_hang_san', dOk.id), { sanTuChoiLuc: null, sanTuChoiLyDo: null });
+        dOk.sanTuChoiLuc = null;
+      } catch(e) {}
+    }
 
     document.getElementById('xn-modal').style.display = 'none';
     showToast(kq.maVanDon
@@ -14222,7 +14270,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v379</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v380</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14276,7 +14324,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v379</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v380</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14318,7 +14366,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v379</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v380</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
