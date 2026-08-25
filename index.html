@@ -2612,9 +2612,17 @@ async function renderDonHangTab() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải đơn hàng...</div>';
+  await loadDonHangSan();
+  veDanhSachDon();
+  // Hỏi sàn xem có đơn nào vừa được duyệt — chạy NGẦM sau khi đã vẽ xong,
+  // để không bắt nhân viên chờ mỗi lần mở tab.
+  tuDongBoNeuCu(5);
+}
+
+async function loadDonHangSan() {
   const snap = await getDocs(query(collection(db, 'don_hang_san'), orderBy('ngayDat', 'desc'), limit(1000)));
   allDonHangSan = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  veDanhSachDon();
+  return allDonHangSan;
 }
 
 function locDon() {
@@ -2741,6 +2749,8 @@ function veDanhSachDon() {
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
         <button class="btn-xs" onclick="vdChonHet()">☑ Chọn ${soChuaIn} đơn chưa in</button>
         ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
+        <button class="btn-xs" id="nut-dong-bo-san" style="margin-left:auto"
+          onclick="dongBoNgay()">🔄 Kiểm tra sàn duyệt</button>
       </div>
       <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
            background:#F0FDF4;border:1.5px solid var(--green);border-radius:8px;padding:9px 11px;margin-bottom:10px">
@@ -5681,6 +5691,68 @@ window.timDauHieuDonLoi = async function(cacMaLoi) {
   try {
     navigator.clipboard.writeText(chu);
     console.log('(Đã chép kết quả vào bộ nhớ tạm — dán thẳng vào chat được)');
+  } catch(e) {}
+  return chu;
+};
+
+// Sàn duyệt đơn thì KiotViet KHÔNG đổi phiếu đặt hàng — không webhook nào bắn về.
+// Nên app phải tự đi hỏi. Chỉ đồng bộ tab "Chờ xử lý" cho nhẹ, vì chỉ nhóm đó
+// mới đổi trạng thái duyệt.
+let lanDongBoCuoi = 0;
+
+async function tuDongBoNeuCu(phutToiThieu = 5) {
+  if (Date.now() - lanDongBoCuoi < phutToiThieu * 60000) return 0;
+  lanDongBoCuoi = Date.now();
+  try {
+    const den = new Date();
+    const tu = new Date(den.getTime() - 7 * 86400000);
+    const ngay = (d) => d.toISOString().split('T')[0];
+    let n = 0;
+    for (let trang = 1; trang <= 3; trang++) {
+      const kq = await layDonBanOnline('unprocessed', 50, true, trang, ngay(tu), ngay(den));
+      if (!kq?.success) break;
+      n += kq.ketQuaGhi?.daCapNhat || 0;
+      if ((kq.soLay || 0) < 50) break;
+    }
+    if (n) { await loadDonHangSan(); veDanhSachDon(); }
+    return n;
+  } catch(e) { console.warn('Không tự đồng bộ được:', e.message); return 0; }
+}
+
+window.dongBoNgay = async function() {
+  const nut = document.getElementById('nut-dong-bo-san');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang đồng bộ...'; }
+  lanDongBoCuoi = 0;   // ép chạy dù vừa chạy xong
+  const n = await tuDongBoNeuCu(0);
+  showToast(n ? `Đã cập nhật ${n} đơn` : 'Không có đơn nào đổi trạng thái');
+  if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra sàn duyệt'; }
+};
+
+// Soi đơn chưa có hóa đơn — để tìm cách nhận biết đơn khách chưa thanh toán.
+// Gọi: soiDonChuaXuLy()
+window.soiDonChuaXuLy = function() {
+  const ds = allDonHangSan.filter(d => d.coHoaDon !== true && !d.maVanDon);
+  if (!ds.length) { console.log('Không có đơn nào chưa xử lý'); return; }
+
+  const dong = [`===== ${ds.length} ĐƠN CHƯA XỬ LÝ =====`, ''];
+  for (const d of ds.slice(0, 15)) {
+    const gio = d.ngayDat?.toDate ? d.ngayDat.toDate() : null;
+    dong.push(`${d.maDonSan || d.maHoaDon} · ${d.san}`);
+    dong.push(`   đặt lúc      : ${gio ? gio.toLocaleString('vi-VN') : '?'}`);
+    dong.push(`   trạng thái sàn: ${d.trangThaiSanGoc || '(chưa đồng bộ)'}`);
+    dong.push(`   đặt hàng     : ${d.trangThaiDatHang || ''}`);
+    dong.push(`   hãng VC      : ${d.hangVanChuyen || d.donViVanChuyen || '(trống)'}`);
+    dong.push(`   hạn xác nhận : ${d.hanXacNhan ? 'có' : '(trống)'}`);
+    dong.push(`   có ở BánOnline: ${d.dongBoBanOnlineLuc ? 'có' : 'KHÔNG'}`);
+    dong.push('');
+  }
+  if (ds.length > 15) dong.push(`... và ${ds.length - 15} đơn nữa`);
+
+  const chu = dong.join('\n');
+  console.log(chu);
+  try {
+    navigator.clipboard.writeText(chu);
+    console.log('(Đã chép vào bộ nhớ tạm)');
   } catch(e) {}
   return chu;
 };
@@ -14300,7 +14372,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v381</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v383</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14354,7 +14426,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v381</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v383</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14396,7 +14468,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v381</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v383</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
