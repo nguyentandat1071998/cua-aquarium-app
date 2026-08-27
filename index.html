@@ -5785,14 +5785,14 @@ window.xemRtsSla = async function() {
   return chu;
 };
 
-// Kiểm chứng nghi vấn: phiếu đặt hàng CÓ phụ thu = sàn đã duyệt?
-// Đối chiếu với kết luận từ Bán Online trên nhiều đơn cùng lúc.
-// Gọi: kiemChungPhuThu()
-window.kiemChungPhuThu = async function(soDon = 20) {
+// Kiểm chứng nghi vấn: phiếu đặt hàng có ĐỊA CHỈ GIAO = khách đã thanh toán.
+// Sàn giấu địa chỉ cho tới khi đơn hợp lệ, nên đây có thể là dấu hiệu đáng tin.
+// Gọi: kiemChungDiaChi()
+window.kiemChungDiaChi = async function(soDon = 20) {
   const ds = allDonHangSan
-    .filter(d => d.coHoaDon !== true && !d.maVanDon && d.maDatHang && d.san === 'shopee')
+    .filter(d => d.coHoaDon !== true && !d.maVanDon && d.maDatHang)
     .slice(0, soDon);
-  if (!ds.length) { console.log('Không có đơn Shopee chưa xử lý nào'); return; }
+  if (!ds.length) { console.log('Không có đơn chưa xử lý nào'); return; }
 
   const idToken = await currentUser.getIdToken();
   const res = await fetch(WORKER_URL, {
@@ -5803,29 +5803,35 @@ window.kiemChungPhuThu = async function(soDon = 20) {
   const kq = await res.json();
   if (!kq.success) { console.error('LỖI:', kq.error); return kq; }
 
-  // Ghép với kết luận từ Bán Online để xem hai bên có khớp không
-  const dong = ['===== ĐỐI CHIẾU PHỤ THU vs BÁN ONLINE ====='];
-  let khop = 0, lech = 0, chuaBiet = 0;
+  const dong = ['===== ĐỊA CHỈ GIAO vs BÁN ONLINE ====='];
+  let coDC = 0, khongDC = 0;
+  const nghiNgo = [];
+
   for (const x of kq.ketQua) {
     const d = ds.find(y => y.maDatHang === x.maDat);
     const nhom = Object.prototype.hasOwnProperty.call(d || {}, 'nhomCho')
       ? (d.nhomCho || 'sẵn sàng') : '(chưa đồng bộ)';
-    const duDoan = x.coPhuThu ? 'sẵn sàng' : 'san_chua_duyet';
+    if (x.coDiaChi) coDC++; else khongDC++;
 
-    let danhGia;
-    if (nhom === '(chưa đồng bộ)') { danhGia = '?'; chuaBiet++; }
-    else if (nhom === duDoan) { danhGia = '✓ khớp'; khop++; }
-    else { danhGia = '✗ LỆCH'; lech++; }
+    dong.push(`${x.maDat} · ${d?.san || ''}`);
+    dong.push(`   địa chỉ: ${x.coDiaChi ? 'CÓ' : 'TRỐNG'} · người nhận: ${x.coNguoiNhan ? 'có' : 'trống'}`
+      + ` · phí giao: ${x.coPhiGiao ? 'có' : 'trống'}`);
+    dong.push(`   khách: ${x.khachHang} · Bán Online: ${nhom}`);
 
-    dong.push(`${x.maDat}`);
-    dong.push(`   phụ thu: ${x.coPhuThu ? 'CÓ (' + x.chiTietPhuThu + ')' : 'không'}`);
-    dong.push(`   Bán Online nói: ${nhom} · phụ thu đoán: ${duDoan} → ${danhGia}`);
+    // Đơn KHÔNG có địa chỉ nhưng Bán Online lại thấy -> mâu thuẫn, cần xem kỹ
+    if (!x.coDiaChi && nhom !== '(chưa đồng bộ)') nghiNgo.push(x.maDat);
   }
+
   dong.push('');
-  dong.push(`Khớp ${khop} · Lệch ${lech} · Chưa đồng bộ ${chuaBiet}`);
-  dong.push(lech === 0 && khop >= 3
-    ? '→ Dấu hiệu phụ thu ĐÁNG TIN, dùng được với webhook order.update'
-    : '→ Chưa đủ tin, cần thêm dữ liệu hoặc dấu hiệu khác');
+  dong.push(`Có địa chỉ: ${coDC} · Trống: ${khongDC}`);
+  if (nghiNgo.length) {
+    dong.push('');
+    dong.push('⚠ Đơn TRỐNG địa chỉ nhưng Bán Online vẫn thấy:');
+    nghiNgo.forEach(m => dong.push('   ' + m));
+    dong.push('→ Nếu các đơn này thực tế đã thanh toán thì địa chỉ KHÔNG phải dấu hiệu');
+  } else {
+    dong.push('→ Mọi đơn trống địa chỉ đều vắng mặt ở Bán Online: dấu hiệu ĐÁNG TIN');
+  }
 
   const chu = dong.join('\n');
   console.log(chu);
@@ -14519,7 +14525,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v394</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v395</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14573,7 +14579,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v394</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v395</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14615,7 +14621,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v394</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v395</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
