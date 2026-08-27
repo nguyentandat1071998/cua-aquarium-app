@@ -303,6 +303,22 @@ async function ghiLichCongKhai(shiftId, { ngay, uid, ten, caId, tenCa, loaiCa })
     await setDoc(doc(db, 'lich_cong_khai', shiftId), duLieu, { merge: true });
   } catch (e) { console.error('Lỗi ghi lịch công khai:', e); }
 }
+window.xoaLichCa = async function(shiftId) {
+  if (!confirm('Xóa ca này khỏi lịch?')) return;
+  try {
+    // Đánh dấu xóa thay vì xóa hẳn — giữ dấu vết để đối chiếu khi cần
+    await updateDoc(doc(db, 'lich_ca', shiftId), {
+      deleted: true, xoaLuc: serverTimestamp(),
+      xoaBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' }
+    });
+    await xoaLichCongKhai(shiftId);
+    showToast('Đã xóa ca');
+    renderLichCaTab();
+  } catch(e) {
+    alert('Không xóa được: ' + e.message);
+  }
+};
+
 async function xoaLichCongKhai(shiftId) {
   try {
     await setDoc(doc(db, 'lich_cong_khai', shiftId), { deleted: true }, { merge: true });
@@ -2542,6 +2558,75 @@ const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN:
 // App chỉ ĐỌC trường đó, không suy đoán từ việc thiếu dữ liệu. Đơn chưa đồng bộ
 // hoặc nằm ngoài phạm vi quét thì nhomCho rỗng — giữ nguyên tiến trình bình thường,
 // thà để ở Chờ xử lý còn hơn xếp nhầm vào nhóm chờ.
+function trangThaiHienThi(d) {
+  const ma = Number(d.trangThaiGiaoMa) || 0;
+  const daDongGoi = !!d.thoiGianDongGoi;
+  // Có hóa đơn = đã bấm "Chuẩn bị hàng". CHƯA chắc đã in tem — in là bước riêng sau đó.
+  const daChuanBiHang = d.coHoaDon === true;
+
+  if (ma === MA_GIAO.DANG_HOAN) return 'dang_chuyen_hoan';
+  if (ma === MA_GIAO.DA_HOAN)   return 'da_chuyen_hoan';
+  if (ma === MA_GIAO.DA_GIAO)   return 'da_giao';
+  if (ma === MA_GIAO.DANG_GIAO) return 'dang_giao';
+
+  if (ma === MA_GIAO.DA_HUY) {
+    // Bốn mức hủy tùy hàng đã đi tới đâu — quyết định phải xử lý gì.
+    // Cờ daTungRoiKho do app tự ghi nên đúng kể cả khi sàn đổ trạng thái cuối bị sai
+    // (đơn hỏa tốc TikTok giao thất bại nhưng báo về là "Đã hủy").
+    if (d.daTungRoiKho === true) return 'huy_khi_dang_giao';
+    if (daDongGoi)               return 'huy_sau_dong_goi';
+    if (daChuanBiHang)           return 'huy_khi_cho_dong_goi';
+    return 'da_huy';
+  }
+
+  // Ba nhóm chờ, xét TRƯỚC tiến trình vì chưa làm gì được với chúng
+  const nhomCho = nhomChoCuaDon(d);
+  if (nhomCho) return nhomCho;
+
+  // Chưa giao (mã 1) hoặc chưa có mã — dùng tiến trình trong kho.
+  // Bốn bước: chờ xử lý → chờ in → chờ đóng gói → đã đóng gói.
+  if (daDongGoi) return 'da_dong_goi';
+  // Đã in vận đơn thì sang bước đóng gói; chưa in mà đã có mã thì đang chờ in
+  if (d.daInVanDon === true) return 'cho_dong_goi';
+  if (d.maVanDon) return 'cho_in';
+  if (daChuanBiHang) return 'cho_in';   // có hóa đơn nhưng chưa kịp đồng bộ mã
+  return 'cho_xu_ly';
+}
+
+function locDon() {
+  let ds = allDonHangSan;
+  if (donFilterSan !== 'all') ds = ds.filter(d => d.san === donFilterSan);
+  if (donFilterVanChuyen !== 'all') {
+    ds = ds.filter(d => (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen);
+  }
+  if (donFilterTrangThai !== 'all') ds = ds.filter(d => trangThaiHienThi(d) === donFilterTrangThai);
+  const tu = donTimKiem.trim().toLowerCase();
+  if (tu) ds = ds.filter(d =>
+    String(d.maHoaDon || '').toLowerCase().includes(tu) ||
+    String(d.maDonSan || '').toLowerCase().includes(tu) ||
+    String(d.maVanDon || '').toLowerCase().includes(tu) ||
+    (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu))
+  );
+  return ds;
+}
+
+async function renderDonHangTab() {
+  const el = document.getElementById('tmdt-than');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải đơn hàng...</div>';
+  await loadDonHangSan();
+  veDanhSachDon();
+  // Hỏi sàn xem có đơn nào vừa được duyệt — chạy NGẦM sau khi đã vẽ xong,
+  // để không bắt nhân viên chờ mỗi lần mở tab.
+  tuDongBoNeuCu();
+}
+
+async function loadDonHangSan() {
+  const snap = await getDocs(query(collection(db, 'don_hang_san'), orderBy('ngayDat', 'desc'), limit(1000)));
+  allDonHangSan = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return allDonHangSan;
+}
+
 // ===== PHÂN LOẠI ĐƠN =====
 // Cây quyết định, xét theo đúng thứ tự. Mỗi bước dựa trên dữ liệu THẬT có webhook,
 // không suy đoán từ việc thiếu thông tin:
@@ -2584,6 +2669,73 @@ function nhomChoCuaDon(d) {
     if (Date.now() - luc < 6 * 3600000) return 'san_chua_duyet';
   }
   return '';
+}
+
+// ===== ĐỔI BỘ LỌC =====
+window.doiFilterDonSan = function(san) {
+  donFilterVanChuyen = 'all';   // hãng của sàn cũ không còn nghĩa khi đổi sàn
+  donFilterSan = san;
+  donPage = 1;
+  veDanhSachDon();
+};
+
+window.doiFilterVanChuyen = function(ma) {
+  donFilterVanChuyen = ma;
+  donPage = 1;
+  veDanhSachDon();
+};
+
+window.doiFilterDonTT = function(t) {
+  donFilterTrangThai = t;
+  donPage = 1;
+  veDanhSachDon();
+  // Đảo tab là lúc nhân viên đang nhìn — dịp tốt để làm mới. Nhưng chỉ gọi nếu
+  // lần đồng bộ trước đã quá ngưỡng, tránh bấm qua lại là gọi liên tục.
+  tuDongBoNeuCu();
+};
+
+window.doiTrangDon = function(t) {
+  donPage = Math.max(1, t);
+  veDanhSachDon();
+  document.getElementById('tmdt-than')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+let hnTimKiemDon = null;
+window.timKiemDon = function(v) {
+  donTimKiem = v;
+  donPage = 1;
+  // Gõ tới đâu vẽ lại tới đó thì giật, nên chờ ngừng gõ 250ms mới vẽ
+  clearTimeout(hnTimKiemDon);
+  hnTimKiemDon = setTimeout(() => veDanhSachDon(), 250);
+};
+
+// Lọc theo đơn vị vận chuyển — là nhánh CON của sàn đang chọn, vì mỗi sàn dùng
+// hãng khác nhau (Shopee có SPX, TikTok có J&T...). Gộp chung dễ nhầm.
+function veLocVanChuyen() {
+  const nen = allDonHangSan.filter(d => donFilterSan === 'all' || d.san === donFilterSan);
+  const dem = new Map();
+  for (const d of nen) {
+    const h = d.hangVanChuyen || d.donViVanChuyen || '';
+    if (!h) continue;
+    dem.set(h, (dem.get(h) || 0) + 1);
+  }
+  if (dem.size < 2) return '';   // một hãng thì khỏi lọc
+
+  const ds = [...dem.entries()].sort((a, b) => b[1] - a[1]);
+  const nut = (ma, nhan, so) => `
+    <button onclick="doiFilterVanChuyen('${escHtml(ma)}')"
+      style="border:1.5px solid ${donFilterVanChuyen === ma ? 'var(--green)' : 'var(--border)'};
+             border-radius:6px;padding:6px 10px;font-size:12px;
+             background:${donFilterVanChuyen === ma ? '#F0FDF4' : '#fff'};
+             font-weight:${donFilterVanChuyen === ma ? '600' : '400'}">
+      ${escHtml(nhan)}${so != null ? ` (${so})` : ''}</button>`;
+
+  return `
+    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">ĐƠN VỊ VẬN CHUYỂN</div>
+    <div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
+      ${nut('all', 'Tất cả', nen.length)}
+      ${ds.map(([h, n]) => nut(h, h, n)).join('')}
+    </div>`;
 }
 
 function veHanXacNhan(d) {
@@ -14445,7 +14597,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v403</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v405</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14499,7 +14651,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v403</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v405</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14541,7 +14693,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v403</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v405</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
