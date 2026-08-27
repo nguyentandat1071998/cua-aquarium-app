@@ -2508,10 +2508,10 @@ const TRANG_THAI_NOI_BO = {
   // Hai nhóm KHÔNG xử lý được ngay, tách riêng để khỏi lẫn vào việc cần làm:
   // sàn chưa gán hãng vận chuyển, hoặc khách chưa trả tiền.
   cho_dieu_phoi:     { ten: 'Chờ điều phối',  mau: '#0EA5E9', nhom: 'cho' },
-  chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' },
   // Dữ liệu KiotViet KHÔNG phân biệt được đơn chờ sàn duyệt — chúng trông y hệt
   // đơn sẵn sàng giao. Nên app tự ghi nhận: bấm Xác nhận mà sàn báo lỗi thì
   // đánh dấu, lần sau khỏi bấm lại và biết đây là đơn phải chờ.
+  chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' },
   san_chua_duyet:    { ten: 'Sàn chưa duyệt',  mau: '#F59E0B', nhom: 'cho' },
   cho_dong_goi:      { ten: 'Chờ đóng gói',   mau: '#D97706', nhom: 'kho' },
   da_dong_goi:       { ten: 'Đã đóng gói',    mau: '#0891B2', nhom: 'kho' },
@@ -2542,52 +2542,42 @@ const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN:
 // App chỉ ĐỌC trường đó, không suy đoán từ việc thiếu dữ liệu. Đơn chưa đồng bộ
 // hoặc nằm ngoài phạm vi quét thì nhomCho rỗng — giữ nguyên tiến trình bình thường,
 // thà để ở Chờ xử lý còn hơn xếp nhầm vào nhóm chờ.
-// Đơn còn đang chờ xử lý thật, hay đã kết thúc rồi. Xét mọi dấu hiệu kết thúc mà
-// app có, vì trangThaiGiaoMa chỉ đúng sau khi đã đồng bộ trạng thái từ sàn.
-function dangThucSuChoXuLy(d) {
-  const ma = Number(d.trangThaiGiaoMa) || 0;
-  if (ma !== 0 && ma !== MA_GIAO.CHUA_GIAO) return false;   // đã giao/hủy/hoàn
-
-  // Các dấu hiệu đơn đã đi qua kho
-  if (d.thoiGianDongGoi || d.daTungRoiKho === true) return false;
-
-  // KiotViet đánh dấu phiếu đặt hàng đã hủy
+// ===== PHÂN LOẠI ĐƠN =====
+// Cây quyết định, xét theo đúng thứ tự. Mỗi bước dựa trên dữ liệu THẬT có webhook,
+// không suy đoán từ việc thiếu thông tin:
+//
+//   1. Phiếu đặt hàng đã hủy?        -> Đã hủy            (webhook order.update)
+//   2. Đã có hóa đơn?                -> vào tiến trình kho (webhook invoice.update)
+//   3. Còn lại = đang ở "Chờ xử lý" của Bán Online:
+//        không có mặt ở Bán Online   -> Chưa thanh toán
+//        có mặt, chưa có hạn giao    -> Sàn chưa duyệt
+//        có mặt, có hạn giao         -> Chờ xử lý thật
+//
+// Bước 3 chỉ chạy khi bước 1 và 2 đã loại hết đơn đã kết thúc, nên "vắng mặt"
+// lúc này thực sự có nghĩa là chưa thanh toán.
+function phieuDatDaHuy(d) {
   const tt = String(d.trangThaiDatHang || '').toLowerCase();
-  if (tt.includes('hủy') || tt.includes('huy')) return false;
-
-  const ttGiao = String(d.trangThaiGiao || '').toLowerCase();
-  if (ttGiao.includes('hủy') || ttGiao.includes('thành công') || ttGiao.includes('hoàn')) return false;
-
-  return true;
+  return tt.includes('hủy') || tt.includes('huy');
 }
 
 function nhomChoCuaDon(d) {
-  if (d.coHoaDon === true || d.maVanDon) return '';   // đã xử lý rồi
+  // Bước 1: phiếu đặt hàng bị hủy — kể cả khi chưa có trạng thái giao từ sàn
+  if (phieuDatDaHuy(d)) return 'da_huy';
 
-  // Đơn đã hủy/giao/hoàn thì không phân loại nữa — chúng cũng thiếu địa chỉ và
-  // cũng vắng mặt ở Bán Online, gán nhầm là ra cả đống.
-  if (!dangThucSuChoXuLy(d)) return '';
+  // Bước 2: có hóa đơn = đã bấm xác nhận, in được — không thuộc nhóm chờ nào
+  if (d.coHoaDon === true || d.maVanDon) return '';
 
-  // TikTok: địa chỉ giao trống = chưa thanh toán. Đã kiểm chứng, và phiếu đặt
-  // hàng có webhook order.update nên khách trả tiền là app biết ngay.
-  if (d.coDiaChiGiao === false) return 'chua_thanh_toan';
+  // Worker đã kết luận thì tin hẳn, kể cả khi kết luận là chuỗi rỗng (nghĩa là
+  // "đã kiểm tra, sẵn sàng xử lý")
+  if (Object.prototype.hasOwnProperty.call(d, 'nhomCho')) return d.nhomCho || '';
 
-  // Các sàn khác (Shopee vẫn cấp địa chỉ dù chưa trả tiền): dựa vào việc đơn có
-  // mặt ở Bán Online không. CHỈ kết luận khi lần quét vừa rồi lấy HẾT tab Chờ
-  // xử lý — quét thiếu mà kết luận thì đơn ngoài phạm vi bị gán nhầm.
-  // Vắng mặt ở tab Chờ xử lý chỉ có nghĩa "chưa thanh toán" khi đơn THẬT SỰ đang
-  // chờ. Đơn đã hủy, đã giao, đã hoàn cũng vắng mặt — gán nhầm là ra cả đống.
+  // Bước 3: đơn còn sống, chưa có hóa đơn -> phải đang ở Chờ xử lý của Bán Online.
+  // Vắng mặt lúc này nghĩa là khách chưa trả tiền.
   if (daQuetDuBanOnline && maDonBanOnline && !maDonBanOnline.has(String(d.maDonSan))) {
     return 'chua_thanh_toan';
   }
 
-  // Worker ĐÃ kết luận thì tin hẳn, kể cả khi kết luận là chuỗi rỗng — nghĩa là
-  // "đã kiểm tra, sẵn sàng xử lý". Trước đây coi chuỗi rỗng là chưa có dữ liệu
-  // rồi rơi xuống dự phòng, nên đơn đã duyệt vẫn kẹt ở nhóm chờ vì dấu cũ.
-  if (Object.prototype.hasOwnProperty.call(d, 'nhomCho')) return d.nhomCho || '';
-
-  // Chưa đồng bộ lần nào: dựa vào lần bấm Xác nhận mà sàn từ chối. Đây là dữ liệu
-  // thật (sàn trả lời), không phải suy đoán. Giữ 6 tiếng.
+  // Dự phòng: app tự ghi khi bấm Xác nhận mà sàn từ chối. Dữ liệu thật, giữ 6 tiếng.
   if (d.sanTuChoiLuc) {
     const luc = d.sanTuChoiLuc?.toDate ? d.sanTuChoiLuc.toDate().getTime()
       : new Date(d.sanTuChoiLuc).getTime();
@@ -2596,140 +2586,6 @@ function nhomChoCuaDon(d) {
   return '';
 }
 
-function trangThaiHienThi(d) {
-  const ma = Number(d.trangThaiGiaoMa) || 0;
-  const daDongGoi = !!d.thoiGianDongGoi;
-  // Có hóa đơn = đã bấm "Chuẩn bị hàng". CHƯA chắc đã in tem — in là bước riêng sau đó.
-  const daChuanBiHang = d.coHoaDon === true;
-
-  if (ma === MA_GIAO.DANG_HOAN) return 'dang_chuyen_hoan';
-  if (ma === MA_GIAO.DA_HOAN)   return 'da_chuyen_hoan';
-  if (ma === MA_GIAO.DA_GIAO)   return 'da_giao';
-  if (ma === MA_GIAO.DANG_GIAO) return 'dang_giao';
-
-  if (ma === MA_GIAO.DA_HUY) {
-    // Bốn mức hủy tùy hàng đã đi tới đâu — quyết định phải xử lý gì.
-    // Cờ daTungRoiKho do app tự ghi nên đúng kể cả khi sàn đổ trạng thái cuối bị sai
-    // (đơn hỏa tốc TikTok giao thất bại nhưng báo về là "Đã hủy").
-    if (d.daTungRoiKho === true) return 'huy_khi_dang_giao';
-    if (daDongGoi)               return 'huy_sau_dong_goi';
-    if (daChuanBiHang)           return 'huy_khi_cho_dong_goi';
-    return 'da_huy';
-  }
-
-  // Chưa giao (mã 1) hoặc chưa có mã — dùng tiến trình trong kho.
-  // Bốn bước: chờ xử lý → chờ in → chờ đóng gói → đã đóng gói.
-  if (daDongGoi) return 'da_dong_goi';
-
-  // Ba nhóm chờ, xét TRƯỚC tiến trình vì chưa làm gì được với chúng
-  const nhomCho = nhomChoCuaDon(d);
-  if (nhomCho) return nhomCho;
-
-  // Đã in vận đơn thì sang bước đóng gói; chưa in mà đã có mã thì đang chờ in
-  if (d.daInVanDon === true) return 'cho_dong_goi';
-  if (d.maVanDon) return 'cho_in';
-  if (daChuanBiHang) return 'cho_in';   // có hóa đơn nhưng chưa kịp đồng bộ mã
-  return 'cho_xu_ly';
-}
-
-// Đơn hủy sau đóng gói đã được quản lý nhận lại kiện hàng từ shipper chưa
-function daNhanLaiKien(d) {
-  return !!d.daNhanLaiKien;
-}
-
-async function renderDonHangTab() {
-  const el = document.getElementById('tmdt-than');
-  if (!el) return;
-  el.innerHTML = '<div class="loading">Đang tải đơn hàng...</div>';
-  await loadDonHangSan();
-  veDanhSachDon();
-  // Hỏi sàn xem có đơn nào vừa được duyệt — chạy NGẦM sau khi đã vẽ xong,
-  // để không bắt nhân viên chờ mỗi lần mở tab.
-  tuDongBoNeuCu();
-}
-
-async function loadDonHangSan() {
-  const snap = await getDocs(query(collection(db, 'don_hang_san'), orderBy('ngayDat', 'desc'), limit(1000)));
-  allDonHangSan = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  return allDonHangSan;
-}
-
-function locDon() {
-  let ds = allDonHangSan;
-  if (donFilterSan !== 'all') ds = ds.filter(d => d.san === donFilterSan);
-  if (donFilterVanChuyen !== 'all') {
-    ds = ds.filter(d => (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen);
-  }
-  if (donFilterTrangThai !== 'all') ds = ds.filter(d => trangThaiHienThi(d) === donFilterTrangThai);
-  const tu = donTimKiem.trim().toLowerCase();
-  if (tu) ds = ds.filter(d =>
-    String(d.maHoaDon || '').toLowerCase().includes(tu) ||
-    String(d.maDonSan || '').toLowerCase().includes(tu) ||
-    String(d.maVanDon || '').toLowerCase().includes(tu) ||
-    (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu))
-  );
-  return ds;
-}
-
-window.doiFilterDonSan = function(s) { donFilterSan = s; donPage = 1; veDanhSachDon(); };
-window.doiFilterDonTT = function(t) {
-  donFilterTrangThai = t;
-  donPage = 1;
-  veDanhSachDon();
-  // Đảo tab là lúc nhân viên đang nhìn — dịp tốt để làm mới. Nhưng chỉ gọi nếu
-  // lần đồng bộ trước đã quá 15 phút, tránh bấm qua lại là gọi liên tục.
-  tuDongBoNeuCu();
-};
-window.doiTrangDon = function(p) { donPage = p; veDanhSachDon(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-window.timKiemDon = function(v) {
-  donTimKiem = v; donPage = 1;
-  clearTimeout(window._donTimer);
-  window._donTimer = setTimeout(() => {
-    veDanhSachDon();
-    const o = document.getElementById('don-timkiem');
-    if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
-  }, 300);
-};
-
-// Lọc theo đơn vị vận chuyển — là nhánh CON của sàn đang chọn, vì mỗi sàn dùng
-// hãng khác nhau (Shopee có SPX, TikTok có J&T...). Gộp chung dễ nhầm.
-let donFilterVanChuyen = 'all';
-
-function veLocVanChuyen() {
-  // Chỉ tính trên đơn thuộc sàn đang chọn
-  const nen = allDonHangSan.filter(d => donFilterSan === 'all' || d.san === donFilterSan);
-  const dem = new Map();
-  for (const d of nen) {
-    const h = d.hangVanChuyen || d.donViVanChuyen || '';
-    if (!h) continue;
-    dem.set(h, (dem.get(h) || 0) + 1);
-  }
-  if (dem.size < 2) return '';   // một hãng thì khỏi lọc
-
-  const ds = [...dem.entries()].sort((a, b) => b[1] - a[1]);
-  const nut = (ma, nhan, so) => `
-    <button onclick="doiFilterVanChuyen('${escHtml(ma)}')"
-      style="border:1.5px solid ${donFilterVanChuyen === ma ? 'var(--green)' : 'var(--border)'};
-             border-radius:6px;padding:6px 10px;font-size:12px;
-             background:${donFilterVanChuyen === ma ? '#F0FDF4' : '#fff'};
-             font-weight:${donFilterVanChuyen === ma ? '600' : '400'}">
-      ${escHtml(nhan)}${so != null ? ` (${so})` : ''}</button>`;
-
-  return `
-    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">ĐƠN VỊ VẬN CHUYỂN</div>
-    <div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
-      ${nut('all', 'Tất cả', nen.length)}
-      ${ds.map(([h, n]) => nut(h, h, n)).join('')}
-    </div>`;
-}
-
-window.doiFilterVanChuyen = function(ma) {
-  donFilterVanChuyen = ma;
-  donPage = 1;
-  veDanhSachDon();
-};
-
-// Hạn phải xác nhận đơn. Quá hạn là sàn phạt nên tô đỏ khi còn dưới 6 tiếng.
 function veHanXacNhan(d) {
   const h = d.hanXacNhan?.toDate ? d.hanXacNhan.toDate() : (d.hanXacNhan ? new Date(d.hanXacNhan) : null);
   if (!h || isNaN(h.getTime())) return '';
@@ -5751,7 +5607,7 @@ let mocDongBoGanNhat = 0;
 // Danh sách mã đơn Bán Online trả về ở lần quét gần nhất, VÀ cờ cho biết lần đó
 // có quét hết tab Chờ xử lý không. Chỉ khi quét đủ mới dám kết luận "đơn không
 // nằm trong danh sách = chưa thanh toán".
-let maDonBanOnline = null;   // Set, null = chưa quét lần nào
+let maDonBanOnline = null;   // Set mã đơn Bán Online trả về, dùng để chẩn đoán
 let daQuetDuBanOnline = false;
 
 // Nhịp đồng bộ: chỉ gọi khi có thao tác VÀ đã quá số phút này. Không có hẹn giờ
@@ -5934,7 +5790,8 @@ window.soiDon = function(maDon) {
     trangThaiDatHang: d.trangThaiDatHang || '(trống)',
     thoiGianDongGoi: d.thoiGianDongGoi ? 'có' : '(trống)',
     daTungRoiKho: d.daTungRoiKho,
-    dangThucSuChoXuLy: dangThucSuChoXuLy(d),
+    phieuDatDaHuy: phieuDatDaHuy(d),
+    coTrongBanOnline: maDonBanOnline ? maDonBanOnline.has(String(d.maDonSan)) : '(chưa quét)',
     sanTuChoiLuc: gio(d.sanTuChoiLuc),
     dongBoLuc: gio(d.dongBoBanOnlineLuc)
   });
@@ -14588,7 +14445,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v400</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v403</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14642,7 +14499,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v400</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v403</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14684,7 +14541,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v400</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v403</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
