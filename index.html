@@ -5751,6 +5751,54 @@ window.dongBoNgay = async function() {
   if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra sàn duyệt'; }
 };
 
+// Kiểm chứng nghi vấn: phiếu đặt hàng CÓ phụ thu = sàn đã duyệt?
+// Đối chiếu với kết luận từ Bán Online trên nhiều đơn cùng lúc.
+// Gọi: kiemChungPhuThu()
+window.kiemChungPhuThu = async function(soDon = 20) {
+  const ds = allDonHangSan
+    .filter(d => d.coHoaDon !== true && !d.maVanDon && d.maDatHang && d.san === 'shopee')
+    .slice(0, soDon);
+  if (!ds.length) { console.log('Không có đơn Shopee chưa xử lý nào'); return; }
+
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'kiem-chung-phu-thu', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cacMaDat: ds.map(d => d.maDatHang) })
+  });
+  const kq = await res.json();
+  if (!kq.success) { console.error('LỖI:', kq.error); return kq; }
+
+  // Ghép với kết luận từ Bán Online để xem hai bên có khớp không
+  const dong = ['===== ĐỐI CHIẾU PHỤ THU vs BÁN ONLINE ====='];
+  let khop = 0, lech = 0, chuaBiet = 0;
+  for (const x of kq.ketQua) {
+    const d = ds.find(y => y.maDatHang === x.maDat);
+    const nhom = Object.prototype.hasOwnProperty.call(d || {}, 'nhomCho')
+      ? (d.nhomCho || 'sẵn sàng') : '(chưa đồng bộ)';
+    const duDoan = x.coPhuThu ? 'sẵn sàng' : 'san_chua_duyet';
+
+    let danhGia;
+    if (nhom === '(chưa đồng bộ)') { danhGia = '?'; chuaBiet++; }
+    else if (nhom === duDoan) { danhGia = '✓ khớp'; khop++; }
+    else { danhGia = '✗ LỆCH'; lech++; }
+
+    dong.push(`${x.maDat}`);
+    dong.push(`   phụ thu: ${x.coPhuThu ? 'CÓ (' + x.chiTietPhuThu + ')' : 'không'}`);
+    dong.push(`   Bán Online nói: ${nhom} · phụ thu đoán: ${duDoan} → ${danhGia}`);
+  }
+  dong.push('');
+  dong.push(`Khớp ${khop} · Lệch ${lech} · Chưa đồng bộ ${chuaBiet}`);
+  dong.push(lech === 0 && khop >= 3
+    ? '→ Dấu hiệu phụ thu ĐÁNG TIN, dùng được với webhook order.update'
+    : '→ Chưa đủ tin, cần thêm dữ liệu hoặc dấu hiệu khác');
+
+  const chu = dong.join('\n');
+  console.log(chu);
+  try { navigator.clipboard.writeText(chu); console.log('(Đã chép vào bộ nhớ tạm)'); } catch(e) {}
+  return chu;
+};
+
 // Xem mọi trường của phiếu đặt hàng — tìm trường phân biệt đơn chờ sàn duyệt.
 // Gọi: xemPhieuDat('260827EGF9A17T')   (tự tìm mã phiếu từ mã đơn sàn)
 window.xemPhieuDat = async function(maDon) {
@@ -14437,7 +14485,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v392</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v393</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14491,7 +14539,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v392</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v393</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14533,7 +14581,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v392</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v393</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
