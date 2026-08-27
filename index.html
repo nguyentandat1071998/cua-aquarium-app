@@ -2533,52 +2533,27 @@ const TRANG_THAI_NOI_BO = {
 // sàn hoặc các bản cập nhật, còn mã số thì cố định.
 const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN: 5, DA_HUY: 6 };
 
-// Khách chưa trả tiền. KiotViet tạo phiếu đặt hàng ngay, nhưng đơn KHÔNG xuất
-// hiện ở Bán Online cho tới khi khách thanh toán — đó chính là dấu hiệu.
+// ===== BA NHÓM CHỜ =====
+// Worker ghi thẳng trường nhomCho khi đồng bộ, dựa trên dữ liệu THẬT từ Bán Online:
+//   Status = UNPAID          -> chua_thanh_toan
+//   ShippingCarrier rỗng     -> cho_dieu_phoi
+//   RtsSla rỗng              -> san_chua_duyet
 //
-// Cách nhận biết: đơn không được cập nhật trong lần đồng bộ gần nhất. Trả tiền
-// rồi thì lần đồng bộ sau nó xuất hiện và tự chuyển sang Chờ xử lý.
-function chuaThanhToan(d) {
-  const tt = String(d.trangThaiSanGoc || '').toUpperCase();
-  if (tt === 'UNPAID' || tt === 'PENDING_PAYMENT' || tt === 'AWAITING_PAYMENT') return true;
+// App chỉ ĐỌC trường đó, không suy đoán từ việc thiếu dữ liệu. Đơn chưa đồng bộ
+// hoặc nằm ngoài phạm vi quét thì nhomCho rỗng — giữ nguyên tiến trình bình thường,
+// thà để ở Chờ xử lý còn hơn xếp nhầm vào nhóm chờ.
+function nhomChoCuaDon(d) {
+  if (d.coHoaDon === true || d.maVanDon) return '';   // đã xử lý rồi
+  if (d.nhomCho) return d.nhomCho;
 
-  // Chưa từng đồng bộ lần nào thì chưa kết luận được
-  if (!mocDongBoGanNhat) return false;
-  if (d.coHoaDon === true || d.maVanDon) return false;
-
-  const luc = d.dongBoBanOnlineLuc?.toDate
-    ? d.dongBoBanOnlineLuc.toDate().getTime()
-    : (d.dongBoBanOnlineLuc ? new Date(d.dongBoBanOnlineLuc).getTime() : 0);
-
-  // Trừ hao 2 phút cho chênh lệch đồng hồ giữa máy và máy chủ
-  return luc < mocDongBoGanNhat - 120000;
-}
-
-// Sàn chưa gán hãng vận chuyển — chưa xác nhận đơn được, phải đợi sàn điều phối.
-// Chỉ tính đơn CHƯA có hóa đơn; đơn đã xác nhận mà thiếu hãng chỉ là chưa đồng bộ.
-function choDieuPhoi(d) {
-  if (d.coHoaDon === true || d.maVanDon) return false;
-  const hang = d.hangVanChuyen || d.donViVanChuyen || '';
-  return !hang;
-}
-
-// Sàn chưa duyệt đơn. Dấu hiệu: KHÔNG có hạn "Xác nhận/giao hàng trước" —
-// sàn duyệt xong mới cấp hạn này. Trạng thái thì mọi đơn đều READY_TO_SHIP
-// nên không phân biệt được, phải nhìn vào hạn.
-//
-// Dự phòng: nếu chưa đồng bộ được hanXacNhan thì dùng dấu app tự ghi khi
-// bấm Xác nhận bị sàn từ chối (giữ 6 tiếng).
-function sanChuaDuyet(d) {
-  if (d.coHoaDon === true || d.maVanDon) return false;
-
-  // Đã đồng bộ từ Bán Online: không có hạn xác nhận = sàn chưa duyệt
-  if (d.dongBoBanOnlineLuc) return !d.hanXacNhan;
-
-  // Chưa đồng bộ: dựa vào lần bấm Xác nhận bị từ chối
-  if (!d.sanTuChoiLuc) return false;
-  const luc = d.sanTuChoiLuc?.toDate ? d.sanTuChoiLuc.toDate().getTime()
-    : new Date(d.sanTuChoiLuc).getTime();
-  return Date.now() - luc < 6 * 3600000;
+  // Dự phòng duy nhất: app tự ghi khi bấm Xác nhận mà sàn từ chối. Đây là dữ liệu
+  // thật (sàn trả lời), không phải suy đoán. Giữ 6 tiếng.
+  if (d.sanTuChoiLuc) {
+    const luc = d.sanTuChoiLuc?.toDate ? d.sanTuChoiLuc.toDate().getTime()
+      : new Date(d.sanTuChoiLuc).getTime();
+    if (Date.now() - luc < 6 * 3600000) return 'san_chua_duyet';
+  }
+  return '';
 }
 
 function trangThaiHienThi(d) {
@@ -2607,9 +2582,8 @@ function trangThaiHienThi(d) {
   if (daDongGoi) return 'da_dong_goi';
 
   // Ba nhóm chờ, xét TRƯỚC tiến trình vì chưa làm gì được với chúng
-  if (chuaThanhToan(d)) return 'chua_thanh_toan';
-  if (choDieuPhoi(d))   return 'cho_dieu_phoi';
-  if (sanChuaDuyet(d))  return 'san_chua_duyet';
+  const nhomCho = nhomChoCuaDon(d);
+  if (nhomCho) return nhomCho;
 
   // Đã in vận đơn thì sang bước đóng gói; chưa in mà đã có mã thì đang chờ in
   if (d.daInVanDon === true) return 'cho_dong_goi';
@@ -2833,7 +2807,7 @@ function veDanhSachDon() {
 
     <div style="font-size:10px;color:var(--text2);margin-bottom:4px">
       CHƯA XỬ LÝ ĐƯỢC
-      ${!mocDongBoGanNhat ? ' · <span style="color:#D97706">bấm Kiểm tra sàn duyệt để phân loại chính xác</span>' : ''}
+      ${!mocDongBoGanNhat ? ' · <span style="color:#D97706">bấm Kiểm tra sàn duyệt để lấy dữ liệu</span>' : ''}
     </div>
     <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
       ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
@@ -5733,8 +5707,7 @@ window.timDauHieuDonLoi = async function(cacMaLoi) {
 // Nên app phải tự đi hỏi. Chỉ đồng bộ tab "Chờ xử lý" cho nhẹ, vì chỉ nhóm đó
 // mới đổi trạng thái duyệt.
 let lanDongBoCuoi = 0;
-// Mốc thời gian của lần đồng bộ gần nhất. Đơn nào có dongBoBanOnlineLuc CŨ HƠN
-// mốc này nghĩa là lần vừa rồi Bán Online không có nó — tức khách chưa thanh toán.
+// Chỉ dùng để hiện nhãn "đồng bộ N phút trước" — KHÔNG dùng để phân loại đơn nữa.
 let mocDongBoGanNhat = 0;
 
 // Nhịp đồng bộ: chỉ gọi khi có thao tác VÀ đã quá số phút này. Không có hẹn giờ
@@ -5811,6 +5784,9 @@ window.soiDonChuaXuLy = function() {
 // Đơn cũ đã giao xong thì không cần shopId nữa — chỉ đơn đang xử lý mới cần.
 //   dongBoBanOnline()     -> 7 ngày gần nhất
 //   dongBoBanOnline(30)   -> 30 ngày
+// Đồng bộ DÀI HẠN: chỉ bổ sung dữ liệu (shopId, hạn giao, hãng vận chuyển) cho
+// đơn cũ. KHÔNG đặt mốc suy luận — đơn ngoài 7 ngày giữ nguyên trạng thái đang có,
+// vì quét dài hạn chỉ lấy được một phần, suy đoán từ dữ liệu thiếu là sai.
 window.dongBoBanOnline = async function(soNgay = 7, soTrangToiDa = 10) {
   const cacTab = ['unprocessed', 'processed', 'shipping', 'to-cancel'];
   const den = new Date();
@@ -14418,7 +14394,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v387</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v390</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14472,7 +14448,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v387</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v390</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14514,7 +14490,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v387</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v390</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
