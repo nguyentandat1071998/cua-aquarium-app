@@ -2544,9 +2544,13 @@ const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN:
 // thà để ở Chờ xử lý còn hơn xếp nhầm vào nhóm chờ.
 function nhomChoCuaDon(d) {
   if (d.coHoaDon === true || d.maVanDon) return '';   // đã xử lý rồi
-  if (d.nhomCho) return d.nhomCho;
 
-  // Dự phòng duy nhất: app tự ghi khi bấm Xác nhận mà sàn từ chối. Đây là dữ liệu
+  // Worker ĐÃ kết luận thì tin hẳn, kể cả khi kết luận là chuỗi rỗng — nghĩa là
+  // "đã kiểm tra, sẵn sàng xử lý". Trước đây coi chuỗi rỗng là chưa có dữ liệu
+  // rồi rơi xuống dự phòng, nên đơn đã duyệt vẫn kẹt ở nhóm chờ vì dấu cũ.
+  if (Object.prototype.hasOwnProperty.call(d, 'nhomCho')) return d.nhomCho || '';
+
+  // Chưa đồng bộ lần nào: dựa vào lần bấm Xác nhận mà sàn từ chối. Đây là dữ liệu
   // thật (sàn trả lời), không phải suy đoán. Giữ 6 tiếng.
   if (d.sanTuChoiLuc) {
     const luc = d.sanTuChoiLuc?.toDate ? d.sanTuChoiLuc.toDate().getTime()
@@ -5745,6 +5749,26 @@ window.dongBoNgay = async function() {
   const n = await tuDongBoNeuCu(0);
   showToast(n ? `Đã cập nhật ${n} đơn` : 'Không có đơn nào đổi trạng thái');
   if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra sàn duyệt'; }
+};
+
+// Soi một đơn bất kỳ từ Console: soiDon('260827EGF9A17T')
+window.soiDon = function(maDon) {
+  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+  if (!d) { console.log('Không tìm thấy đơn', maDon); return null; }
+  const gio = (x) => x?.toDate ? x.toDate().toLocaleString('vi-VN') : (x || '(trống)');
+  console.log({
+    maDonSan: d.maDonSan, san: d.san,
+    nhomCho: Object.prototype.hasOwnProperty.call(d, 'nhomCho')
+      ? `"${d.nhomCho}"` : '(chưa đồng bộ)',
+    trangThaiHienThi: trangThaiHienThi(d),
+    trangThaiSanGoc: d.trangThaiSanGoc || '(trống)',
+    hangVanChuyen: d.hangVanChuyen || d.donViVanChuyen || '(trống)',
+    hanXacNhan: gio(d.hanXacNhan),
+    coHoaDon: d.coHoaDon, maVanDon: d.maVanDon || '(trống)',
+    sanTuChoiLuc: gio(d.sanTuChoiLuc),
+    dongBoLuc: gio(d.dongBoBanOnlineLuc)
+  });
+  return d;
 };
 
 // Soi đơn chưa có hóa đơn — để tìm cách nhận biết đơn khách chưa thanh toán.
@@ -14394,7 +14418,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v390</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v391</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14448,7 +14472,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v390</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v391</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14490,7 +14514,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v390</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v391</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
