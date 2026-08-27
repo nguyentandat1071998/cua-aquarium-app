@@ -2545,10 +2545,19 @@ const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN:
 function nhomChoCuaDon(d) {
   if (d.coHoaDon === true || d.maVanDon) return '';   // đã xử lý rồi
 
-  // Địa chỉ giao trống = khách chưa thanh toán. Sàn chỉ cấp địa chỉ khi đã nhận
-  // tiền, nên đây là dữ liệu thật từ phiếu đặt hàng — và phiếu có webhook
-  // order.update, khách trả tiền là app biết ngay.
+  // TikTok: địa chỉ giao trống = chưa thanh toán. Đã kiểm chứng, và phiếu đặt
+  // hàng có webhook order.update nên khách trả tiền là app biết ngay.
   if (d.coDiaChiGiao === false) return 'chua_thanh_toan';
+
+  // Các sàn khác (Shopee vẫn cấp địa chỉ dù chưa trả tiền): dựa vào việc đơn có
+  // mặt ở Bán Online không. CHỈ kết luận khi lần quét vừa rồi lấy HẾT tab Chờ
+  // xử lý — quét thiếu mà kết luận thì đơn ngoài phạm vi bị gán nhầm.
+  // Không xét theo số ngày: đơn ĐÃ CÓ HÓA ĐƠN nghĩa là đã bấm xác nhận, in được,
+  // chắc chắn không phải đơn chờ duyệt hay chờ tiền — mà trường hợp đó đã lọc ở
+  // đầu hàm. Còn lại đều là đơn đang chờ xử lý, dù đặt từ bao giờ.
+  if (daQuetDuBanOnline && maDonBanOnline && !maDonBanOnline.has(String(d.maDonSan))) {
+    return 'chua_thanh_toan';
+  }
 
   // Worker ĐÃ kết luận thì tin hẳn, kể cả khi kết luận là chuỗi rỗng — nghĩa là
   // "đã kiểm tra, sẵn sàng xử lý". Trước đây coi chuỗi rỗng là chưa có dữ liệu
@@ -5716,8 +5725,12 @@ window.timDauHieuDonLoi = async function(cacMaLoi) {
 // Nên app phải tự đi hỏi. Chỉ đồng bộ tab "Chờ xử lý" cho nhẹ, vì chỉ nhóm đó
 // mới đổi trạng thái duyệt.
 let lanDongBoCuoi = 0;
-// Chỉ dùng để hiện nhãn "đồng bộ N phút trước" — KHÔNG dùng để phân loại đơn nữa.
 let mocDongBoGanNhat = 0;
+// Danh sách mã đơn Bán Online trả về ở lần quét gần nhất, VÀ cờ cho biết lần đó
+// có quét hết tab Chờ xử lý không. Chỉ khi quét đủ mới dám kết luận "đơn không
+// nằm trong danh sách = chưa thanh toán".
+let maDonBanOnline = null;   // Set, null = chưa quét lần nào
+let daQuetDuBanOnline = false;
 
 // Nhịp đồng bộ: chỉ gọi khi có thao tác VÀ đã quá số phút này. Không có hẹn giờ
 // chạy nền — không mở app thì không tốn lượt nào.
@@ -5729,18 +5742,34 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
   lanDongBoCuoi = Date.now();
   try {
     const den = new Date();
-    const tu = new Date(den.getTime() - 7 * 86400000);
+    // Quét từ ĐƠN CHƯA CÓ HÓA ĐƠN CŨ NHẤT, không cố định 7 ngày. Đơn đã có hóa
+    // đơn thì đã xác nhận xong, không cần quét lại. Chặn ở 60 ngày cho khỏi
+    // quét quá nặng nếu có đơn treo lâu.
+    let cuNhat = den.getTime();
+    for (const d of allDonHangSan) {
+      if (d.coHoaDon === true || d.maVanDon) continue;
+      const t = d.ngayDat?.toDate ? d.ngayDat.toDate().getTime() : 0;
+      if (t > 0 && t < cuNhat) cuNhat = t;
+    }
+    const gioiHan = den.getTime() - 60 * 86400000;
+    const tu = new Date(Math.max(cuNhat - 86400000, gioiHan));
     const ngay = (d) => d.toISOString().split('T')[0];
     // Dừng ngay khi trang trả về ít hơn 50 đơn — thường chỉ cần 1 trang,
     // lấy đủ 3 trang mỗi lượt là gọi thừa hai lần.
     let n = 0;
-    for (let trang = 1; trang <= 3; trang++) {
+    const boMa = new Set();
+    let quetDu = false;
+    for (let trang = 1; trang <= 8; trang++) {
       const kq = await layDonBanOnline('unprocessed', 50, true, trang, ngay(tu), ngay(den));
       if (!kq?.success) break;
       n += kq.ketQuaGhi?.daCapNhat || 0;
-      if ((kq.soLay || 0) < 50) break;
+      (kq.cacMaDaThay || []).forEach(m => boMa.add(m));
+      quetDu = !!kq.quetDu;
+      if (quetDu || (kq.soLay || 0) < 50) { quetDu = true; break; }
     }
     mocDongBoGanNhat = Date.now();
+    maDonBanOnline = boMa;
+    daQuetDuBanOnline = quetDu;
     if (n) { await loadDonHangSan(); }
     veDanhSachDon();   // vẽ lại kể cả khi n=0, vì mốc đổi làm phân loại đổi theo
     return n;
@@ -14530,7 +14559,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v396</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v398</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14584,7 +14613,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v396</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v398</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14626,7 +14655,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v396</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v398</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
