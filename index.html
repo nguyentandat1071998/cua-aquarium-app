@@ -5787,7 +5787,8 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
     // quét quá nặng nếu có đơn treo lâu.
     let cuNhat = den.getTime();
     for (const d of allDonHangSan) {
-      if (d.coHoaDon === true || d.maVanDon) continue;
+      // Chỉ tính đơn thuộc bước 3: chưa hủy, chưa có hóa đơn
+      if (d.coHoaDon === true || d.maVanDon || phieuDatDaHuy(d)) continue;
       const t = d.ngayDat?.toDate ? d.ngayDat.toDate().getTime() : 0;
       if (t > 0 && t < cuNhat) cuNhat = t;
     }
@@ -5796,28 +5797,26 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
     const ngay = (d) => d.toISOString().split('T')[0];
     // Dừng ngay khi trang trả về ít hơn 50 đơn — thường chỉ cần 1 trang,
     // lấy đủ 3 trang mỗi lượt là gọi thừa hai lần.
-    // Quét CẢ BA tab. Chỉ quét "Chờ xử lý" thì đơn vừa được xác nhận (đã sang
-    // "Đã xử lý") sẽ vắng mặt, mà app chưa kịp nhận hóa đơn nên bị gán nhầm là
-    // chưa thanh toán. Có đủ ba tab thì "vắng mặt" mới thật sự có nghĩa.
+    // CHỈ quét tab "Chờ xử lý". Cây quyết định đã loại đơn hủy (bước 1) và đơn
+    // có hóa đơn (bước 2), nên đơn còn lại bắt buộc phải nằm ở tab này — không
+    // có nghĩa là khách chưa thanh toán. Cả hai bên đều chỉ vài chục đơn.
     let n = 0;
     const boMa = new Set();
-    let quetDu = true;
+    let quetDu = false;
 
-    for (const tab of ['unprocessed', 'processed', 'shipping']) {
-      let duTab = false;
-      for (let trang = 1; trang <= 8; trang++) {
-        const kq = await layDonBanOnline(tab, 50, true, trang, ngay(tu), ngay(den));
-        if (!kq?.success) break;
-        n += kq.ketQuaGhi?.daCapNhat || 0;
-        (kq.cacMaDaThay || []).forEach(m => boMa.add(m));
-        if (kq.quetDu || (kq.soLay || 0) < 50) { duTab = true; break; }
-      }
-      // Tab nào quét chưa hết thì KHÔNG dám kết luận "vắng mặt = chưa thanh toán"
-      if (!duTab) quetDu = false;
+    for (let trang = 1; trang <= 8; trang++) {
+      const kq = await layDonBanOnline('unprocessed', 50, true, trang, ngay(tu), ngay(den));
+      if (!kq?.success) break;
+      n += kq.ketQuaGhi?.daCapNhat || 0;
+      (kq.cacMaDaThay || []).forEach(m => boMa.add(m));
+      if (kq.quetDu || (kq.soLay || 0) < 50) { quetDu = true; break; }
     }
     mocDongBoGanNhat = Date.now();
     maDonBanOnline = boMa;
     daQuetDuBanOnline = quetDu;
+    if (!quetDu) {
+      console.warn('Quét chưa hết Bán Online — tạm không phân loại "Chưa thanh toán"');
+    }
     if (n) { await loadDonHangSan(); }
     veDanhSachDon();   // vẽ lại kể cả khi n=0, vì mốc đổi làm phân loại đổi theo
     return n;
@@ -5962,6 +5961,8 @@ window.soiDon = function(maDon) {
     daTungRoiKho: d.daTungRoiKho,
     phieuDatDaHuy: phieuDatDaHuy(d),
     coTrongBanOnline: maDonBanOnline ? maDonBanOnline.has(String(d.maDonSan)) : '(chưa quét)',
+    daQuetDuBanOnline,
+    soMaDaQuet: maDonBanOnline ? maDonBanOnline.size : 0,
     sanTuChoiLuc: gio(d.sanTuChoiLuc),
     dongBoLuc: gio(d.dongBoBanOnlineLuc)
   });
@@ -14615,7 +14616,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v408</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v410</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14669,7 +14670,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v408</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v410</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14711,7 +14712,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v408</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v410</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
