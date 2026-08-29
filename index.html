@@ -2652,6 +2652,13 @@ function phieuDatDaHuy(d) {
   return tt.includes('hủy') || tt.includes('huy');
 }
 
+// Đơn bấm Chuẩn bị hàng bị lỗi mà KHÔNG phải do sàn: quét Bán Online thấy đơn
+// vẫn ở đó, vẫn có hạn — tức sàn đã duyệt, đơn hợp lệ. Vậy là lỗi phần mềm.
+// Đơn vẫn nằm ở Chờ xử lý nhưng tô đỏ để nhân viên báo ngay.
+function loiHeThong(d) {
+  return !!d.loiHeThongLuc && d.coHoaDon !== true && !d.maVanDon;
+}
+
 // Phiếu đặt hàng đã xong — KiotViet đánh dấu Hoàn thành hoặc Đang giao hàng.
 // Đơn như vậy không thuộc nhóm chờ nào, dù app chưa có hóa đơn.
 function phieuDatDaXong(d) {
@@ -2678,7 +2685,13 @@ function nhomChoCuaDon(d) {
 
   // Bước 3: đơn còn sống, chưa có hóa đơn -> phải đang ở Chờ xử lý của Bán Online.
   // Vắng mặt lúc này nghĩa là khách chưa trả tiền.
-  if (daQuetDuBanOnline && maDonBanOnline && !maDonBanOnline.has(String(d.maDonSan))) {
+  //
+  // CHỈ xét đơn app đã tự nhận là đang chờ (nhomChoTuoc), hoặc đơn đã bấm Chuẩn
+  // bị hàng mà lỗi. Đơn khác thì không đụng — nhiều đơn app chưa biết đã hủy hay
+  // hoàn thành, đối chiếu là gán nhầm hàng loạt.
+  const dangONhomCho = d.nhomChoTruoc === 'san_chua_duyet' || d.nhomChoTruoc === 'chua_thanh_toan';
+  if (daQuetDuBanOnline && maDonBanOnline && (dangONhomCho || d.daThuChuanBi)
+      && !maDonBanOnline.has(String(d.maDonSan))) {
     return 'chua_thanh_toan';
   }
 
@@ -2929,7 +2942,9 @@ function veDanhSachDon() {
             </label>
             <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
             ${d.daInVanDon ? '<span style="font-size:10px;color:var(--green)" title="Đã in vận đơn">🖨</span>' : ''}
-            ${!d.maVanDon && d.san === 'shopee' ? `
+            ${loiHeThong(d) ? `<span style="background:var(--red);color:#fff;padding:2px 7px;
+              border-radius:4px;font-size:10px;font-weight:700">LỖI!!!</span>` : ''}
+            ${!d.maVanDon && d.san === 'shopee' && trangThaiHienThi(d) !== 'chua_thanh_toan' ? `
               <button class="btn-xs" style="background:#FEF3C7;color:#92400E;padding:2px 7px;font-size:10px"
                 onclick="event.stopPropagation();xacNhanDon('${escHtml(d.maDonSan || d.maHoaDon)}')">Xác nhận</button>` : ''}
             <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
@@ -5790,8 +5805,12 @@ const PHUT_GIUA_HAI_LAN_DONG_BO = 5;
 // Đây là dữ liệu THẬT từ KiotViet, không phải suy đoán — và cũng là cách vá khi
 // webhook order.update thất lạc.
 async function traLaiTrangThaiPhieuDat() {
-  const canTra = allDonHangSan.filter(d =>
-    d.coHoaDon !== true && !d.maVanDon && d.maDatHang && !phieuDatDaHuy(d));
+  const canTra = allDonHangSan.filter(d => {
+    if (d.coHoaDon === true || d.maVanDon || !d.maDatHang) return false;
+    // Không bỏ qua theo thời gian: đơn hỏa tốc hạn xử lý chỉ 1 tiếng rưỡi,
+    // trễ nửa tiếng là quá muộn.
+    return !phieuDatDaHuy(d) && !phieuDatDaXong(d);
+  });
   if (!canTra.length) return 0;
 
   // Ưu tiên đơn cũ nhất — đơn mới thì trạng thái còn đúng
@@ -5806,7 +5825,7 @@ async function traLaiTrangThaiPhieuDat() {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': 'dong-bo-trang-thai-dat-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cacMaDat: canTra.slice(0, 30).map(d => d.maDatHang) })
+      body: JSON.stringify({ cacMaDat: canTra.slice(0, 24).map(d => d.maDatHang) })
     });
     const kq = await res.json();
     if (kq.success && kq.daGhi) {
@@ -5878,7 +5897,7 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
 
 window.dongBoNgay = async function() {
   const nut = document.getElementById('nut-dong-bo-san');
-  if (nut) { nut.disabled = true; nut.textContent = 'Đang đồng bộ...'; }
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang kiểm tra...'; }
   lanDongBoCuoi = 0;   // ép chạy dù vừa chạy xong
   const n = await tuDongBoNeuCu(0);
   showToast(n ? `Đã cập nhật ${n} đơn` : 'Không có đơn nào đổi trạng thái');
@@ -6219,6 +6238,76 @@ window.xnDoiDiaChi = function() {
   </div>`;
 };
 
+// Bấm Chuẩn bị hàng thất bại — quét Bán Online tìm đúng đơn này để biết vì sao:
+//   vắng mặt        -> khách chưa thanh toán
+//   có, thiếu hạn   -> sàn chưa duyệt
+//   có, đủ hạn      -> LỖI HỆ THỐNG (sàn ổn, đơn ổn, mà gọi vẫn hỏng)
+async function phanLoaiSauKhiLoi(maDon, loiGoc) {
+  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+  showToast('Đang kiểm tra vì sao...');
+
+  let nhom = null, thongBao = '';
+  try {
+    const idToken = await currentUser.getIdToken();
+    const den = new Date();
+    const tu = new Date(den.getTime() - 30 * 86400000);
+    const ngay = (x) => x.toISOString().split('T')[0];
+
+    let thay = null, quetXong = false;
+    for (let trang = 1; trang <= 8; trang++) {
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'lay-don-ban-online', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tab: 'unprocessed', soLuong: 50, trang, chiXem: true,
+          nguyenBan: true, tuNgay: ngay(tu), denNgay: ngay(den) })
+      });
+      const kq = await res.json();
+      if (!kq.success) break;
+      thay = (kq.nguyenBan || []).find(o => String(o.OrderId) === String(maDon));
+      if (thay) { quetXong = true; break; }
+      if (kq.quetDu || (kq.soLay || 0) < 50) { quetXong = true; break; }
+    }
+
+    if (!quetXong) {
+      thongBao = 'Không kiểm tra được — thử lại sau';
+    } else if (!thay) {
+      nhom = 'chua_thanh_toan';
+      thongBao = 'Khách chưa thanh toán.\n\nĐơn đã chuyển sang nhóm "Chưa thanh toán".';
+    } else if (!thay.RtsSla && !thay.ShipByDate) {
+      nhom = 'san_chua_duyet';
+      thongBao = 'Sàn chưa duyệt đơn này.\n\nĐơn đã chuyển sang nhóm "Sàn chưa duyệt", thử lại sau.';
+    } else {
+      // Sàn đã duyệt, đơn hợp lệ, mà gọi xác nhận vẫn hỏng
+      nhom = 'loi_he_thong';
+      thongBao = 'LỖI HỆ THỐNG!!!\n\nSàn đã duyệt đơn này rồi nhưng không chuẩn bị hàng được.\n\n'
+        + 'Báo quản lý xử lý ngay.';
+    }
+  } catch(e) {
+    thongBao = 'Không kiểm tra được: ' + e.message;
+  }
+
+  // Ghi lại để lần sau khỏi bấm lại, và để quản lý xem được lỗi gì
+  if (d?.id && nhom) {
+    const ghi = { daThuChuanBi: true, thuChuanBiLuc: serverTimestamp() };
+    if (nhom === 'loi_he_thong') {
+      ghi.loiHeThongLuc = serverTimestamp();
+      ghi.loiHeThongNoiDung = String(loiGoc || '').slice(0, 500);
+      d.loiHeThongLuc = new Date();
+      d.loiHeThongNoiDung = loiGoc;
+    } else {
+      ghi.nhomChoTruoc = nhom;
+      ghi.loiHeThongLuc = null;
+      d.nhomChoTruoc = nhom;
+      d.loiHeThongLuc = null;
+    }
+    d.daThuChuanBi = true;
+    try { await updateDoc(doc(db, 'don_hang_san', d.id), ghi); } catch(e) {}
+  }
+
+  alert(thongBao);
+  veDanhSachDon();
+}
+
 window.guiXacNhanDon = async function(maDon, shopId) {
   const ngay = document.querySelector('input[name="xn-ngay"]:checked')?.value;
   const i = Number(document.getElementById('xn-diachi')?.value) || 0;
@@ -6237,28 +6326,11 @@ window.guiXacNhanDon = async function(maDon, shopId) {
     console.log('[xác nhận đơn]', kq);
 
     if (!kq.success) {
-      // Sàn từ chối -> ghi lại để đơn chuyển sang nhóm "Sàn chưa duyệt",
-      // khỏi bấm đi bấm lại và biết đây là đơn phải chờ
-      const loiTuSan = /sàn|thử lại|try again|system|internal/i.test(kq.error || '');
-      if (loiTuSan) {
-        const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-        if (d?.id) {
-          try {
-            await updateDoc(doc(db, 'don_hang_san', d.id), {
-              sanTuChoiLuc: serverTimestamp(),
-              sanTuChoiLyDo: String(kq.error || '').slice(0, 200)
-            });
-            d.sanTuChoiLuc = new Date();
-            d.sanTuChoiLyDo = kq.error;
-          } catch(e) {}
-        }
-        document.getElementById('xn-modal').style.display = 'none';
-        alert(`Sàn chưa duyệt đơn này.\n\n${kq.error}\n\n`
-          + `Đơn đã chuyển sang nhóm "Sàn chưa duyệt" — thử lại sau ít phút.`);
-        veDanhSachDon();
-        return;
-      }
-      throw new Error(kq.error || 'Không xác nhận được');
+      // KiotViet trả về cùng một câu "có lỗi từ phía sàn" cho mọi trường hợp, nên
+      // đọc chuỗi lỗi là đoán mò. Phải HỎI Bán Online mới biết thật sự vì sao.
+      document.getElementById('xn-modal').style.display = 'none';
+      await phanLoaiSauKhiLoi(maDon, kq.error);
+      return;
     }
 
     // Xác nhận được rồi thì xóa dấu chờ duyệt
@@ -14671,7 +14743,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v411</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v413</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14725,7 +14797,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v411</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v413</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14767,7 +14839,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v411</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v413</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
