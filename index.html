@@ -2652,12 +2652,22 @@ function phieuDatDaHuy(d) {
   return tt.includes('hủy') || tt.includes('huy');
 }
 
+// Phiếu đặt hàng đã xong — KiotViet đánh dấu Hoàn thành hoặc Đang giao hàng.
+// Đơn như vậy không thuộc nhóm chờ nào, dù app chưa có hóa đơn.
+function phieuDatDaXong(d) {
+  const ma = Number(d.trangThaiDatHangMa) || 0;
+  if (ma === 3 || ma === 5) return true;   // 3 = hoàn thành, 5 = đang giao
+  const tt = String(d.trangThaiDatHang || '').toLowerCase();
+  return tt.includes('hoàn thành') || tt.includes('đang giao');
+}
+
 function nhomChoCuaDon(d) {
   // Bước 1: phiếu đặt hàng bị hủy — kể cả khi chưa có trạng thái giao từ sàn
   if (phieuDatDaHuy(d)) return 'da_huy';
 
-  // Bước 2: có hóa đơn = đã bấm xác nhận, in được — không thuộc nhóm chờ nào
-  if (d.coHoaDon === true || d.maVanDon) return '';
+  // Bước 2: có hóa đơn = đã bấm xác nhận, in được — không thuộc nhóm chờ nào.
+  // Phiếu đặt đã Hoàn thành hoặc Đang giao cũng vậy, kể cả khi app chưa có hóa đơn.
+  if (d.coHoaDon === true || d.maVanDon || phieuDatDaXong(d)) return '';
 
   // nhomCho lưu trong Firestore nên có thể là kết luận CŨ — đơn giờ đã được sàn
   // duyệt mà trường vẫn ghi "san_chua_duyet". Chỉ tin khi đơn có mặt trong lần
@@ -5776,6 +5786,44 @@ let daQuetDuBanOnline = false;
 // chạy nền — không mở app thì không tốn lượt nào.
 const PHUT_GIUA_HAI_LAN_DONG_BO = 5;
 
+// Tra lại trạng thái phiếu đặt hàng cho đơn app còn tưởng đang chờ xử lý.
+// Đây là dữ liệu THẬT từ KiotViet, không phải suy đoán — và cũng là cách vá khi
+// webhook order.update thất lạc.
+async function traLaiTrangThaiPhieuDat() {
+  const canTra = allDonHangSan.filter(d =>
+    d.coHoaDon !== true && !d.maVanDon && d.maDatHang && !phieuDatDaHuy(d));
+  if (!canTra.length) return 0;
+
+  // Ưu tiên đơn cũ nhất — đơn mới thì trạng thái còn đúng
+  canTra.sort((a, b) => {
+    const ta = a.ngayDat?.toDate ? a.ngayDat.toDate().getTime() : 0;
+    const tb = b.ngayDat?.toDate ? b.ngayDat.toDate().getTime() : 0;
+    return ta - tb;
+  });
+
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'dong-bo-trang-thai-dat-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cacMaDat: canTra.slice(0, 30).map(d => d.maDatHang) })
+    });
+    const kq = await res.json();
+    if (kq.success && kq.daGhi) {
+      console.log(`Đã tra lại trạng thái ${kq.daGhi} phiếu đặt hàng`);
+      // Cập nhật luôn bộ nhớ để không phải tải lại
+      for (const x of (kq.ketQua || [])) {
+        const d = allDonHangSan.find(y => y.maDonSan === x.maDonSan);
+        if (d && x.trangThai) d.trangThaiDatHang = x.trangThai;
+      }
+    }
+    return kq.daGhi || 0;
+  } catch(e) {
+    console.warn('Không tra được trạng thái phiếu đặt:', e.message);
+    return 0;
+  }
+}
+
 async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
   if (document.hidden) return 0;   // tab đang ẩn thì không ai xem, khỏi gọi
   if (Date.now() - lanDongBoCuoi < phutToiThieu * 60000) return 0;
@@ -5797,9 +5845,14 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
     const ngay = (d) => d.toISOString().split('T')[0];
     // Dừng ngay khi trang trả về ít hơn 50 đơn — thường chỉ cần 1 trang,
     // lấy đủ 3 trang mỗi lượt là gọi thừa hai lần.
+    // Trước khi quét Bán Online, tra lại trạng thái phiếu đặt hàng cho đơn app còn
+    // tưởng đang chờ. Webhook order.update có thể thất lạc, app kẹt ở "Phiếu tạm"
+    // dù KiotViet đã đổi sang Hoàn thành hoặc Đã hủy.
     // CHỈ quét tab "Chờ xử lý". Cây quyết định đã loại đơn hủy (bước 1) và đơn
     // có hóa đơn (bước 2), nên đơn còn lại bắt buộc phải nằm ở tab này — không
     // có nghĩa là khách chưa thanh toán. Cả hai bên đều chỉ vài chục đơn.
+    await traLaiTrangThaiPhieuDat();
+
     let n = 0;
     const boMa = new Set();
     let quetDu = false;
@@ -5960,6 +6013,8 @@ window.soiDon = function(maDon) {
     thoiGianDongGoi: d.thoiGianDongGoi ? 'có' : '(trống)',
     daTungRoiKho: d.daTungRoiKho,
     phieuDatDaHuy: phieuDatDaHuy(d),
+    phieuDatDaXong: phieuDatDaXong(d),
+    trangThaiDatHangMa: d.trangThaiDatHangMa,
     coTrongBanOnline: maDonBanOnline ? maDonBanOnline.has(String(d.maDonSan)) : '(chưa quét)',
     daQuetDuBanOnline,
     soMaDaQuet: maDonBanOnline ? maDonBanOnline.size : 0,
@@ -14616,7 +14671,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v410</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v411</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14670,7 +14725,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v410</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v411</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14712,7 +14767,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v410</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v411</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
