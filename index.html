@@ -2629,6 +2629,8 @@ function trangThaiHienThi(d) {
   if (d.daInVanDon === true) return 'cho_dong_goi';
   if (d.maVanDon) return 'cho_in';
   if (daChuanBiHang) return 'cho_in';   // có hóa đơn nhưng chưa kịp đồng bộ mã
+  // App vừa bấm chuẩn bị hàng thành công — sàn nhận rồi, chỉ chưa kịp đẩy dữ liệu về
+  if (d.daChuanBiHang === true) return 'cho_in';
   return 'cho_xu_ly';
 }
 
@@ -2680,18 +2682,25 @@ function ngheDonThayDoi(cacMa, khiXong, giayToiDa = 8) {
     const huy = [];
     let xong = 0;
 
-    const dungLai = () => { huy.forEach(f => { try { f(); } catch(e) {} }); resolve(xong); };
+    const dungLai = () => {
+      huy.forEach(f => { try { f(); } catch(e) {} });
+      veDanhSachDon();   // vẽ lại kể cả khi hết giờ, để thấy thay đổi đã có
+      resolve(xong);
+    };
     const hen = setTimeout(dungLai, giayToiDa * 1000);
 
     for (const ma of cacMa) {
       const u = onSnapshot(doc(db, 'don_hang_san', ma), (snap) => {
         if (!snap.exists()) return;
         const d = { id: snap.id, ...snap.data() };
-        // Cập nhật luôn vào bộ nhớ để vẽ lại là thấy ngay
         const i = allDonHangSan.findIndex(x => x.id === d.id);
         if (i >= 0) allDonHangSan[i] = d; else allDonHangSan.unshift(d);
 
-        if ((d.maVanDon || d.coHoaDon === true) && conCho.has(ma)) {
+        // Coi là xong khi đơn RA KHỎI bước chờ xử lý. Trước đây chỉ chờ hóa đơn
+        // hoặc mã vận đơn, mà Lazada đổi trạng thái theo cách khác nên đợi mãi.
+        const raKhoiChoXuLy = trangThaiHienThi(d) !== 'cho_xu_ly'
+          && trangThaiHienThi(d) !== 'san_chua_duyet';
+        if ((d.maVanDon || d.coHoaDon === true || raKhoiChoXuLy) && conCho.has(ma)) {
           conCho.delete(ma);
           xong++;
           if (khiXong) khiXong(xong, cacMa.length);
@@ -6643,6 +6652,7 @@ window.chuanBiHangLoat = async function() {
     capNhatTienTrinh(60, 'Sàn đang xử lý...');
     const kq = await res.json();
     console.log('[chuẩn bị hàng loạt]', kq);
+    if (kq.sanSangGiao) console.log('Sẵn sàng giao:', kq.sanSangGiao);
 
     if (kq.success) {
       // KiotViet trả về đúng đơn nào xong đơn nào hỏng, dùng luôn thay vì đoán
@@ -6652,6 +6662,19 @@ window.chuanBiHangLoat = async function() {
       // Chỉ bỏ tick đơn đã xong, đơn hỏng giữ lại để xử lý tiếp
       ds.forEach(d => { if (maOk.has(String(d.maDonSan))) vdDaChon.delete(d.maDonSan || d.maHoaDon); });
       if (!maOk.size) ds.forEach(d => vdDaChon.delete(d.maDonSan || d.maHoaDon));
+
+      // Đánh dấu ngay để đơn sang Chờ in, không đợi webhook
+      try {
+        const lo = writeBatch(db);
+        for (const d of ds) {
+          if (maOk.size && !maOk.has(String(d.maDonSan))) continue;
+          lo.update(doc(db, 'don_hang_san', d.id), {
+            daChuanBiHang: true, chuanBiLuc: serverTimestamp()
+          });
+          d.daChuanBiHang = true;
+        }
+        await lo.commit();
+      } catch(e) { console.warn('Không đánh dấu được:', e.message); }
       if ((kq.donThatBai || []).length) console.table(kq.donThatBai);
     } else {
       hong = ds.length;
@@ -6721,10 +6744,19 @@ async function chuanBiDonRiengLe(d) {
     });
     const kq = await res.json();
     console.log(`[chuẩn bị ${d.san}]`, kq);
+    if (kq.sanSangGiao) console.log('Sẵn sàng giao:', kq.sanSangGiao);
 
     if (!kq.success) { await phanLoaiSauKhiLoi(maDon, kq.error); return; }
 
-    // Đợi webhook về rồi mới báo xong, khỏi phải đảo tab
+    // KiotViet đã xác nhận xong nên đánh dấu ngay, không đợi webhook. Webhook về
+    // sau sẽ ghi đè bằng dữ liệu thật (mã vận đơn, trạng thái sàn).
+    try {
+      await updateDoc(doc(db, 'don_hang_san', d.id), {
+        daChuanBiHang: true, chuanBiLuc: serverTimestamp()
+      });
+      d.daChuanBiHang = true;
+    } catch(e) {}
+
     capNhatTienTrinh(85, 'Đang lấy mã vận đơn...');
     await ngheDonThayDoi([d.id || maDon]);
 
@@ -15257,7 +15289,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v436</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v438</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15311,7 +15343,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v436</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v438</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15353,7 +15385,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v436</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v438</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
