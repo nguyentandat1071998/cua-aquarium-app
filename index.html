@@ -6348,6 +6348,43 @@ function hienPopup({ loai, tieuDe, noiDung, maDon, soThanhCong, soThatBai }) {
 // ===== CHUẨN BỊ HÀNG LOẠT =====
 // Xác nhận nhiều đơn một lượt. Chạy tuần tự chứ không song song: sàn hay chặn
 // khi bị dội nhiều yêu cầu, mà lỗi giữa chừng thì khó biết đơn nào đã xong.
+// Hỏi lại trước khi làm việc có hậu quả thật. Dùng popup thay confirm của trình
+// duyệt cho đồng bộ với các thông báo khác.
+function hoiXacNhan({ tieuDe, noiDung, nhanDongY = 'Đồng ý', loai = 'cho' }) {
+  return new Promise(resolve => {
+    const mau = { loi: '#DC2626', cho: '#D97706', thuong: '#16A34A' }[loai] || '#16A34A';
+    const nen = { loi: '#FEF2F2', cho: '#FFFBEB', thuong: '#F0FDF4' }[loai] || '#F0FDF4';
+    const icon = { loi: '⛔', cho: '📦', thuong: '✓' }[loai] || '';
+
+    let m = document.getElementById('hoi-modal');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'hoi-modal';
+      m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1700;'
+        + 'display:flex;align-items:center;justify-content:center;padding:20px';
+      document.body.appendChild(m);
+    }
+    const dong = (kq) => { m.style.display = 'none'; resolve(kq); };
+    m.onclick = (e) => { if (e.target === m) dong(false); };
+    window._hoiTraLoi = dong;
+
+    m.innerHTML = `
+      <div style="background:var(--surface);width:100%;max-width:360px;border-radius:14px;
+                  overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.25)">
+        <div style="background:${nen};border-bottom:2px solid ${mau};padding:16px;text-align:center">
+          <div style="font-size:32px;line-height:1">${icon}</div>
+          <div style="font-size:15px;font-weight:700;color:${mau};margin-top:6px">${escHtml(tieuDe)}</div>
+        </div>
+        <div style="padding:16px;font-size:13px;line-height:1.5;white-space:pre-line">${escHtml(noiDung)}</div>
+        <div style="padding:0 16px 16px;display:flex;gap:8px">
+          <button class="btn-outline" style="flex:1" onclick="_hoiTraLoi(false)">Hủy</button>
+          <button class="btn-g" style="flex:1;background:${mau}" onclick="_hoiTraLoi(true)">${escHtml(nhanDongY)}</button>
+        </div>
+      </div>`;
+    m.style.display = 'flex';
+  });
+}
+
 window.chuanBiHangLoat = async function() {
   const ds = [...vdDaChon].map(ma =>
     allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean)
@@ -6374,8 +6411,13 @@ window.chuanBiHangLoat = async function() {
   }
 
   const sanChon = [...san][0];
-  if (!confirm(`Chuẩn bị hàng cho ${ds.length} đơn ${TEN_SAN[sanChon] || sanChon}?\n\n`
-    + `Báo hãng vận chuyển tới lấy — chỉ bấm khi hàng đã sẵn sàng.`)) return;
+  const dongY = await hoiXacNhan({
+    tieuDe: `Chuẩn bị ${ds.length} đơn`,
+    noiDung: `${TEN_SAN[sanChon] || sanChon} · ${[...hang][0] || ''}\n\n`
+      + `Báo hãng vận chuyển tới lấy hàng.\nChỉ bấm khi hàng đã sẵn sàng.`,
+    nhanDongY: 'Chuẩn bị hàng'
+  });
+  if (!dongY) return;
 
   const nut = document.getElementById('vd-nut-chuanbi');
   if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
@@ -6453,8 +6495,12 @@ async function xacNhanDonTikTok(d) {
     return;
   }
 
-  if (!confirm(`Xác nhận đơn ${maDon}?\n\nBáo hãng vận chuyển tới lấy hàng — `
-    + `chỉ bấm khi hàng đã sẵn sàng.`)) return;
+  const dongY = await hoiXacNhan({
+    tieuDe: 'Chuẩn bị hàng',
+    noiDung: `${maDon}\n\nBáo hãng vận chuyển tới lấy hàng.\nChỉ bấm khi hàng đã sẵn sàng.`,
+    nhanDongY: 'Chuẩn bị hàng'
+  });
+  if (!dongY) return;
 
   try {
     const idToken = await currentUser.getIdToken();
@@ -6625,7 +6671,7 @@ window.guiXacNhanDon = async function(maDon, shopId) {
           : 'Sàn chưa cấp mã vận đơn. Bấm "Kiểm tra sàn duyệt" sau ít phút.' });
     }
   } catch(e) {
-    alert('Lỗi xác nhận: ' + e.message);
+    hienPopup({ loai: 'loi', maDon, tieuDe: 'Không chuẩn bị được', noiDung: e.message });
   }
 };
 
@@ -6710,15 +6756,20 @@ window.inVanDonHangLoat = async function() {
     // Mở từng file PDF. Trình duyệt chặn mở nhiều tab liên tiếp nên giãn ra chút.
     cacLink.forEach((u, i) => setTimeout(() => window.open(u, '_blank'), i * 400));
 
-    if (loi.length) alert('Một phần không lấy được:\n\n' + loi.join('\n'));
-    showToast(`Đã mở ${cacLink.length} file vận đơn — bấm in trên từng tab`);
+    if (loi.length) {
+      hienPopup({ loai: 'cho', tieuDe: 'In vận đơn',
+        soThanhCong: cacLink.length, soThatBai: loi.length,
+        noiDung: loi.slice(0, 4).join('\n') });
+    } else {
+      showToast(`Đã mở ${cacLink.length} file vận đơn — bấm in trên từng tab`);
+    }
 
     // Đánh dấu đã in để lần sau khỏi in trùng
     await danhDauDaInVanDon([...vdDaChon]);
     vdDaChon.clear();
     veDanhSachDon();
   } catch(e) {
-    alert('Lỗi lấy vận đơn: ' + e.message);
+    hienPopup({ loai: 'loi', tieuDe: 'Không in được vận đơn', noiDung: e.message });
   } finally {
     if (nut) { nut.disabled = false; nut.innerHTML = '🖨 In vận đơn (<span id="vd-so-don">0</span>)'; }
   }
@@ -15030,7 +15081,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v423</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v424</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15084,7 +15135,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v423</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v424</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15126,7 +15177,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v423</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v424</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
