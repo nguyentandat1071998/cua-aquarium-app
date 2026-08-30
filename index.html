@@ -2869,7 +2869,8 @@ function veDanhSachDon() {
   el.innerHTML = `
     ${trang.length ? `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button class="btn-xs" onclick="vdChonHet()">☑ Chọn ${soChuaIn} đơn chưa in</button>
+        <button class="btn-xs" onclick="vdChonHetTrang()">☑ Chọn tất cả trang này (${trang.length})</button>
+        <button class="btn-xs" onclick="vdChonHet()">Chọn ${soChuaIn} đơn chưa in</button>
         ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
         <span style="margin-left:auto;font-size:11px;color:var(--text2)">${nhanLanDongBo()}</span>
         <button class="btn-xs" id="nut-dong-bo-san"
@@ -2878,7 +2879,9 @@ function veDanhSachDon() {
       <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
            background:#F0FDF4;border:1.5px solid var(--green);border-radius:8px;padding:9px 11px;margin-bottom:10px">
         <span style="flex:1;font-size:13px">Đã chọn <b><span id="vd-so-don">${vdDaChon.size}</span></b> đơn</span>
-        <button class="btn-g" id="vd-nut-in" style="width:auto;padding:7px 14px"
+        <button class="btn-outline" id="vd-nut-chuanbi" style="width:auto;padding:7px 12px"
+          onclick="chuanBiHangLoat()">📦 Chuẩn bị hàng</button>
+        <button class="btn-g" id="vd-nut-in" style="width:auto;padding:7px 12px"
           onclick="inVanDonHangLoat()">🖨 In vận đơn</button>
       </div>` : ''}
     <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
@@ -6302,7 +6305,7 @@ window.xnDoiDiaChi = function() {
 //   đỏ  = lỗi hệ thống, phải báo quản lý ngay
 //   vàng = chờ sàn, lát thử lại
 //   xám = chờ khách trả tiền, không làm gì được
-function hienPopup({ loai, tieuDe, noiDung, maDon }) {
+function hienPopup({ loai, tieuDe, noiDung, maDon, soThanhCong, soThatBai }) {
   const mau = { loi: '#DC2626', cho: '#D97706', thuong: '#64748B' }[loai] || '#64748B';
   const nen = { loi: '#FEF2F2', cho: '#FFFBEB', thuong: '#F8FAFC' }[loai] || '#F8FAFC';
   const icon = { loi: '⛔', cho: '⏳', thuong: '💤' }[loai] || '';
@@ -6326,6 +6329,12 @@ function hienPopup({ loai, tieuDe, noiDung, maDon }) {
           ${escHtml(tieuDe)}
         </div>
         ${maDon ? `<div style="font-size:11px;color:var(--text2);margin-top:3px">${escHtml(maDon)}</div>` : ''}
+        ${(soThanhCong != null || soThatBai != null) ? `
+          <div style="display:flex;gap:16px;justify-content:center;margin-top:10px;font-size:13px">
+            <span style="color:#16A34A;font-weight:600">Thành công: ${soThanhCong || 0}</span>
+            <span style="color:${soThatBai ? 'var(--red)' : 'var(--text2)'};font-weight:600">
+              Thất bại: ${soThatBai || 0}</span>
+          </div>` : ''}
       </div>
       <div style="padding:16px;font-size:13px;line-height:1.5;white-space:pre-line">${escHtml(noiDung)}</div>
       <div style="padding:0 16px 16px">
@@ -6335,6 +6344,102 @@ function hienPopup({ loai, tieuDe, noiDung, maDon }) {
     </div>`;
   m.style.display = 'flex';
 }
+
+// ===== CHUẨN BỊ HÀNG LOẠT =====
+// Xác nhận nhiều đơn một lượt. Chạy tuần tự chứ không song song: sàn hay chặn
+// khi bị dội nhiều yêu cầu, mà lỗi giữa chừng thì khó biết đơn nào đã xong.
+window.chuanBiHangLoat = async function() {
+  const ds = [...vdDaChon].map(ma =>
+    allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean)
+    .filter(d => !d.maVanDon && d.coHoaDon !== true
+      && (d.san === 'shopee' || d.san === 'tiktok')
+      && trangThaiHienThi(d) !== 'chua_thanh_toan');
+
+  if (!ds.length) {
+    hienPopup({ loai: 'thuong', tieuDe: 'Không có đơn nào',
+      noiDung: 'Đơn đã chuẩn bị rồi, hoặc chưa thanh toán, hoặc là đơn Lazada.' });
+    return;
+  }
+
+  // Bắt buộc cùng sàn và cùng hãng vận chuyển: KiotViet gộp theo lô nên trộn lẫn
+  // là hỏng cả loạt, mà lúc đó khó biết đơn nào đã xong đơn nào chưa.
+  const san = new Set(ds.map(d => d.san));
+  const hang = new Set(ds.map(d => d.hangVanChuyen || d.donViVanChuyen || ''));
+  if (san.size > 1 || hang.size > 1) {
+    hienPopup({ loai: 'cho', tieuDe: 'Chọn cùng một loại',
+      noiDung: `Đang chọn ${san.size} sàn và ${hang.size} hãng vận chuyển.\n\n`
+        + `Chuẩn bị hàng loạt chỉ chạy được khi các đơn cùng sàn và cùng hãng.\n\n`
+        + `Dùng bộ lọc bên trên để lọc rồi chọn lại.` });
+    return;
+  }
+
+  const sanChon = [...san][0];
+  if (!confirm(`Chuẩn bị hàng cho ${ds.length} đơn ${TEN_SAN[sanChon] || sanChon}?\n\n`
+    + `Báo hãng vận chuyển tới lấy — chỉ bấm khi hàng đã sẵn sàng.`)) return;
+
+  const nut = document.getElementById('vd-nut-chuanbi');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+
+  let ok = 0, hong = 0, loiChinh = '';
+  try {
+    const idToken = await currentUser.getIdToken();
+    const action = sanChon === 'tiktok' ? 'xac-nhan-don-tiktok' : 'chuan-bi-hang-loat-shopee';
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cacDon: ds.map(d => ({
+          maDon: d.maDonSan || d.maHoaDon, shopId: d.shopId,
+          packageId: d.packageId || '', tenShop: d.tenShop || ''
+        }))
+      })
+    });
+    const kq = await res.json();
+    console.log('[chuẩn bị hàng loạt]', kq);
+
+    if (kq.success) {
+      ok = kq.soGui || ds.length;
+      hong = (kq.khongLayDuocLich || []).length;
+      ds.forEach(d => vdDaChon.delete(d.maDonSan || d.maHoaDon));
+    } else {
+      hong = ds.length;
+      loiChinh = kq.error || 'Không gửi được';
+    }
+  } catch(e) {
+    hong = ds.length;
+    loiChinh = e.message;
+  } finally {
+    if (nut) { nut.disabled = false; nut.textContent = '📦 Chuẩn bị hàng'; }
+  }
+
+  // Đợi sàn cấp mã vận đơn rồi tự lấy về
+  let coMa = 0;
+  if (ok) {
+    if (nut) nut.textContent = 'Đang lấy mã vận đơn...';
+    await new Promise(r => setTimeout(r, 4000));
+    lanDongBoCuoi = 0;
+    await tuDongBoNeuCu(0);
+    if (nut) nut.textContent = '📦 Chuẩn bị hàng';
+    coMa = ds.filter(d => {
+      const m = allDonHangSan.find(x => x.maDonSan === d.maDonSan);
+      return m?.maVanDon;
+    }).length;
+  }
+
+  hienPopup({
+    loai: hong ? (ok ? 'cho' : 'loi') : 'thuong',
+    tieuDe: 'Chuẩn bị hàng',
+    soThanhCong: ok, soThatBai: hong,
+    noiDung: [
+      loiChinh,
+      ok ? (coMa >= ok
+        ? 'Đã có mã vận đơn, in tem được rồi.'
+        : `Lấy được ${coMa}/${ok} mã vận đơn. Số còn lại sàn cấp chậm hơn — bấm "Kiểm tra sàn duyệt" sau ít phút.`)
+        : ''
+    ].filter(Boolean).join('\n\n')
+  });
+  veDanhSachDon();
+};
 
 // TikTok xác nhận trong MỘT lần gọi, không cần chọn ngày lấy hàng như Shopee.
 // Nhưng cần PackageId — trường này chỉ có sau khi đồng bộ Bán Online.
@@ -6356,15 +6461,24 @@ async function xacNhanDonTikTok(d) {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': 'xac-nhan-don-tiktok', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ maDon, shopId, packageId: d.packageId, tenShop: d.tenShop || '' })
+      body: JSON.stringify({ cacDon: [{ maDon, shopId, packageId: d.packageId, tenShop: d.tenShop || '' }] })
     });
     const kq = await res.json();
     console.log('[xác nhận TikTok]', kq);
 
     if (!kq.success) { await phanLoaiSauKhiLoi(maDon, kq.error); return; }
 
-    hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã xác nhận',
-      noiDung: 'Sàn đang cấp mã vận đơn.\n\nBấm "Kiểm tra sàn duyệt" sau ít phút để lấy về, rồi in tem.' });
+    // Đợi sàn cấp mã rồi tự lấy về
+    showToast('Đã chuẩn bị hàng — đang lấy mã vận đơn...');
+    await new Promise(r => setTimeout(r, 4000));
+    lanDongBoCuoi = 0;
+    await tuDongBoNeuCu(0);
+
+    const sau = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+    hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã chuẩn bị hàng',
+      noiDung: sau?.maVanDon
+        ? `Mã vận đơn: ${sau.maVanDon}\n\nIn tem được rồi.`
+        : 'Sàn chưa cấp mã vận đơn. Bấm "Kiểm tra sàn duyệt" sau ít phút.' });
     veDanhSachDon();
   } catch(e) {
     await phanLoaiSauKhiLoi(maDon, e.message);
@@ -6494,9 +6608,22 @@ window.guiXacNhanDon = async function(maDon, shopId) {
     }
 
     document.getElementById('xn-modal').style.display = 'none';
-    showToast(kq.maVanDon
-      ? `Đã xác nhận — mã vận đơn ${kq.maVanDon}`
-      : 'Đã xác nhận — sàn đang cấp mã vận đơn, đồng bộ lại sau ít phút');
+
+    if (kq.maVanDon) {
+      hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã chuẩn bị hàng',
+        noiDung: `Mã vận đơn: ${kq.maVanDon}\n\nIn tem được rồi.` });
+    } else {
+      // Đợi sàn cấp mã rồi tự lấy, khỏi bắt bấm thêm nút
+      showToast('Đã chuẩn bị hàng — đang lấy mã vận đơn...');
+      await new Promise(r => setTimeout(r, 4000));
+      lanDongBoCuoi = 0;
+      await tuDongBoNeuCu(0);
+      const sau = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+      hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã chuẩn bị hàng',
+        noiDung: sau?.maVanDon
+          ? `Mã vận đơn: ${sau.maVanDon}\n\nIn tem được rồi.`
+          : 'Sàn chưa cấp mã vận đơn. Bấm "Kiểm tra sàn duyệt" sau ít phút.' });
+    }
   } catch(e) {
     alert('Lỗi xác nhận: ' + e.message);
   }
@@ -6511,6 +6638,15 @@ let vdDaChon = new Set();
 window.vdTick = function(maDon, tick) {
   if (tick) vdDaChon.add(maDon); else vdDaChon.delete(maDon);
   veThanhInVanDon();
+};
+
+// Chọn hết đơn trong trang đang xem — tick lại lần nữa thì bỏ chọn
+window.vdChonHetTrang = function() {
+  const trang = layDonDangHien();
+  const daChonHet = trang.length && trang.every(d => vdDaChon.has(d.maDonSan || d.maHoaDon));
+  if (daChonHet) trang.forEach(d => vdDaChon.delete(d.maDonSan || d.maHoaDon));
+  else trang.forEach(d => vdDaChon.add(d.maDonSan || d.maHoaDon));
+  veDanhSachDon();
 };
 
 window.vdChonHet = function() {
@@ -14894,7 +15030,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v420</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v423</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14948,7 +15084,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v420</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v423</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14990,7 +15126,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v420</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v423</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
