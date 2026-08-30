@@ -2521,29 +2521,33 @@ const DON_MOI_TRANG = 25;
 // Tiến trình trong kho theo đúng thứ tự việc phải làm:
 //   Chờ xử lý (chưa xác nhận) → Chờ in (đã có mã vận đơn) → Chờ đóng gói → Đã đóng gói
 const TRANG_THAI_NOI_BO = {
+  // Tiến trình xử lý đơn, theo đúng thứ tự việc phải làm
   cho_xu_ly:         { ten: 'Chờ xử lý',      mau: '#2563EB', nhom: 'kho' },
   cho_in:            { ten: 'Chờ in',         mau: '#7C3AED', nhom: 'kho' },
-  // Hai nhóm KHÔNG xử lý được ngay, tách riêng để khỏi lẫn vào việc cần làm:
-  // sàn chưa gán hãng vận chuyển, hoặc khách chưa trả tiền.
-  cho_dieu_phoi:     { ten: 'Chờ điều phối',  mau: '#0EA5E9', nhom: 'cho' },
-  // Dữ liệu KiotViet KHÔNG phân biệt được đơn chờ sàn duyệt — chúng trông y hệt
-  // đơn sẵn sàng giao. Nên app tự ghi nhận: bấm Xác nhận mà sàn báo lỗi thì
-  // đánh dấu, lần sau khỏi bấm lại và biết đây là đơn phải chờ.
-  chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' },
-  san_chua_duyet:    { ten: 'Sàn chưa duyệt',  mau: '#F59E0B', nhom: 'cho' },
   cho_dong_goi:      { ten: 'Chờ đóng gói',   mau: '#D97706', nhom: 'kho' },
   da_dong_goi:       { ten: 'Đã đóng gói',    mau: '#0891B2', nhom: 'kho' },
-  // KHÔNG gọi là "hủy sau in" vì bấm "Chuẩn bị hàng" mới tạo hóa đơn, còn in tem
-  // là bước riêng sau đó. Đơn ở đây có thể đã in hoặc chưa — phải kiểm tra mới biết.
-  huy_khi_cho_dong_goi: { ten: 'Hủy khi chờ đóng gói', mau: '#F59E0B', nhom: 'canh_bao' },
-  huy_sau_dong_goi:  { ten: 'Hủy sau đóng gói', mau: '#EA580C', nhom: 'canh_bao' },
-  huy_khi_dang_giao: { ten: 'Hủy khi đang giao', mau: '#DC2626', nhom: 'canh_bao' },
-  dang_chuyen_hoan:  { ten: 'Đang chuyển hoàn', mau: '#C2410C', nhom: 'canh_bao' },
-  da_chuyen_hoan:    { ten: 'Đã chuyển hoàn',  mau: '#9333EA', nhom: 'canh_bao' },
-  dang_giao:         { ten: 'Đang giao',      mau: '#16A34A', nhom: 'san' },
-  da_giao:           { ten: 'Đã giao',        mau: '#15803D', nhom: 'san' },
-  da_huy:            { ten: 'Đã hủy',         mau: '#DC2626', nhom: 'san' }
+  dang_giao:         { ten: 'Đang giao',      mau: '#0284C7', nhom: 'kho' },
+  da_giao:           { ten: 'Đã giao',        mau: '#16A34A', nhom: 'kho' },
+  // Ba mức hủy gộp làm một: đều là "Đã hủy", chỉ khác ở chỗ có phải lấy lại hàng
+  // hay không — chuyện đó báo riêng bằng ô cảnh báo, không cần thành trạng thái.
+  da_huy:            { ten: 'Đã hủy',         mau: '#DC2626', nhom: 'kho' },
+  dang_chuyen_hoan:  { ten: 'Đang chuyển hoàn', mau: '#EA580C', nhom: 'kho' },
+  da_chuyen_hoan:    { ten: 'Đã chuyển hoàn',   mau: '#9333EA', nhom: 'kho' },
+
+  // Chưa xử lý được, không phải việc của kho
+  cho_dieu_phoi:     { ten: 'Chờ điều phối',  mau: '#0EA5E9', nhom: 'cho' },
+  chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' }
 };
+
+// Đơn hủy có cần lấy lại hàng không — dùng cho ô cảnh báo, không phải trạng thái
+function mucDoHuy(d) {
+  if (trangThaiHienThi(d) !== 'da_huy') return null;
+  if (d.daTungRoiKho === true) return 'dang_giao';    // shipper đã cầm đi
+  if (d.thoiGianDongGoi) return 'sau_dong_goi';       // đã đóng gói, còn trong kho
+  if (d.daInVanDon === true) return 'sau_in';         // đã in tem
+  return null;
+}
+
 
 // Mã trạng thái giao hàng của KiotViet (theo tài liệu chính thức):
 //   1 chưa giao · 2 đang giao · 3 đã giao · 4 đang chuyển hoàn · 5 đã chuyển hoàn · 6 đã hủy
@@ -2576,15 +2580,7 @@ function trangThaiHienThi(d) {
   if (ma === MA_GIAO.DA_GIAO)   return 'da_giao';
   if (ma === MA_GIAO.DANG_GIAO) return 'dang_giao';
 
-  if (ma === MA_GIAO.DA_HUY) {
-    // Bốn mức hủy tùy hàng đã đi tới đâu — quyết định phải xử lý gì.
-    // Cờ daTungRoiKho do app tự ghi nên đúng kể cả khi sàn đổ trạng thái cuối bị sai
-    // (đơn hỏa tốc TikTok giao thất bại nhưng báo về là "Đã hủy").
-    if (d.daTungRoiKho === true) return 'huy_khi_dang_giao';
-    if (daDongGoi)               return 'huy_sau_dong_goi';
-    if (daChuanBiHang)           return 'huy_khi_cho_dong_goi';
-    return 'da_huy';
-  }
+  if (ma === MA_GIAO.DA_HUY) return 'da_huy';
 
   // Ba nhóm chờ, xét TRƯỚC tiến trình vì chưa làm gì được với chúng
   const nhomCho = nhomChoCuaDon(d);
@@ -2628,10 +2624,47 @@ async function renderDonHangTab() {
   tuDongBoNeuCu();
 }
 
+// Tải 300 đơn gần nhất thay vì 1000. Nhân viên chỉ nhìn vài chục đơn đầu, mà
+// số đơn thì chỉ tăng theo thời gian.
+const SO_DON_TAI_VE = 300;
+
 async function loadDonHangSan() {
-  const snap = await getDocs(query(collection(db, 'don_hang_san'), orderBy('ngayDat', 'desc'), limit(1000)));
+  const snap = await getDocs(query(collection(db, 'don_hang_san'),
+    orderBy('ngayDat', 'desc'), limit(SO_DON_TAI_VE)));
   allDonHangSan = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   return allDonHangSan;
+}
+
+// Nghe thay đổi của đúng những đơn vừa thao tác. Firestore đẩy về ngay khi
+// webhook ghi xong — nhanh hơn hẳn vòng lặp tải lại cả danh sách.
+function ngheDonThayDoi(cacMa, khiXong, giayToiDa = 8) {
+  return new Promise(resolve => {
+    if (!cacMa.length) return resolve(0);
+    const conCho = new Set(cacMa);
+    const huy = [];
+    let xong = 0;
+
+    const dungLai = () => { huy.forEach(f => { try { f(); } catch(e) {} }); resolve(xong); };
+    const hen = setTimeout(dungLai, giayToiDa * 1000);
+
+    for (const ma of cacMa) {
+      const u = onSnapshot(doc(db, 'don_hang_san', ma), (snap) => {
+        if (!snap.exists()) return;
+        const d = { id: snap.id, ...snap.data() };
+        // Cập nhật luôn vào bộ nhớ để vẽ lại là thấy ngay
+        const i = allDonHangSan.findIndex(x => x.id === d.id);
+        if (i >= 0) allDonHangSan[i] = d; else allDonHangSan.unshift(d);
+
+        if ((d.maVanDon || d.coHoaDon === true) && conCho.has(ma)) {
+          conCho.delete(ma);
+          xong++;
+          if (khiXong) khiXong(xong, cacMa.length);
+          if (!conCho.size) { clearTimeout(hen); dungLai(); }
+        }
+      }, () => {});
+      huy.push(u);
+    }
+  });
 }
 
 // ===== PHÂN LOẠI ĐƠN =====
@@ -2706,9 +2739,15 @@ function nhomChoCuaDon(d) {
 
 // ===== ĐỔI BỘ LỌC =====
 window.doiFilterDonSan = function(san) {
-  donFilterVanChuyen = 'all';   // hãng của sàn cũ không còn nghĩa khi đổi sàn
   donFilterSan = san;
   donPage = 1;
+  // Hãng của sàn cũ có thể không tồn tại ở sàn mới — bỏ lọc nếu vậy
+  if (donFilterVanChuyen !== 'all') {
+    const con = allDonHangSan.some(d =>
+      (san === 'all' || d.san === san) &&
+      (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen);
+    if (!con) donFilterVanChuyen = 'all';
+  }
   veDanhSachDon();
 };
 
@@ -2742,68 +2781,64 @@ window.timKiemDon = function(v) {
   hnTimKiemDon = setTimeout(() => veDanhSachDon(), 250);
 };
 
-// Lọc theo đơn vị vận chuyển — là nhánh CON của sàn đang chọn, vì mỗi sàn dùng
-// hãng khác nhau (Shopee có SPX, TikTok có J&T...). Gộp chung dễ nhầm.
+// ===== BỘ LỌC PHÂN CẤP =====
+// Thứ tự: trạng thái -> sàn -> đơn vị vận chuyển. Mỗi cấp chỉ đếm và hiện những
+// lựa chọn CÒN ĐƠN sau khi áp các cấp trên — chọn "Chờ in (2)" mà vẫn liệt kê
+// đủ mọi hãng vận chuyển thì nhìn vào không biết cái nào có đơn.
+function nenLocDon(bo) {
+  return allDonHangSan.filter(d => {
+    if (bo !== 'trangThai' && donFilterTrangThai !== 'all'
+        && trangThaiHienThi(d) !== donFilterTrangThai) return false;
+    if (bo !== 'san' && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
+    if (bo !== 'vanChuyen' && donFilterVanChuyen !== 'all'
+        && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
+    return true;
+  });
+}
+
+function veLocSan() {
+  const nen = nenLocDon('san');
+  const dem = new Map();
+  for (const d of nen) if (d.san) dem.set(d.san, (dem.get(d.san) || 0) + 1);
+  if (!dem.size) return '';
+
+  const nut = (ma, nhan, so, dangChon) => `
+    <button onclick="doiFilterDonSan('${escHtml(ma)}')"
+      style="border:1.5px solid ${dangChon ? 'var(--green)' : 'var(--border)'};
+             border-radius:6px;padding:6px 10px;font-size:12px;
+             background:${dangChon ? '#F0FDF4' : '#fff'};
+             font-weight:${dangChon ? '600' : '400'}">
+      ${escHtml(nhan)} (${so})</button>`;
+
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap">
+    ${nut('all', 'Tất cả', nen.length, donFilterSan === 'all')}
+    ${[...dem.entries()].sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => nut(k, TEN_SAN[k] || k, n, donFilterSan === k)).join('')}
+  </div>`;
+}
+
 function veLocVanChuyen() {
-  const nen = allDonHangSan.filter(d => donFilterSan === 'all' || d.san === donFilterSan);
+  const nen = nenLocDon('vanChuyen');
   const dem = new Map();
   for (const d of nen) {
     const h = d.hangVanChuyen || d.donViVanChuyen || '';
-    if (!h) continue;
-    dem.set(h, (dem.get(h) || 0) + 1);
+    if (h) dem.set(h, (dem.get(h) || 0) + 1);
   }
   if (dem.size < 2) return '';   // một hãng thì khỏi lọc
 
-  const ds = [...dem.entries()].sort((a, b) => b[1] - a[1]);
-  const nut = (ma, nhan, so) => `
+  const nut = (ma, nhan, so, dangChon) => `
     <button onclick="doiFilterVanChuyen('${escHtml(ma)}')"
-      style="border:1.5px solid ${donFilterVanChuyen === ma ? 'var(--green)' : 'var(--border)'};
+      style="border:1.5px solid ${dangChon ? 'var(--green)' : 'var(--border)'};
              border-radius:6px;padding:6px 10px;font-size:12px;
-             background:${donFilterVanChuyen === ma ? '#F0FDF4' : '#fff'};
-             font-weight:${donFilterVanChuyen === ma ? '600' : '400'}">
-      ${escHtml(nhan)}${so != null ? ` (${so})` : ''}</button>`;
+             background:${dangChon ? '#F0FDF4' : '#fff'};
+             font-weight:${dangChon ? '600' : '400'}">
+      ${escHtml(nhan)} (${so})</button>`;
 
-  return `
-    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">ĐƠN VỊ VẬN CHUYỂN</div>
-    <div style="display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap">
-      ${nut('all', 'Tất cả', nen.length)}
-      ${ds.map(([h, n]) => nut(h, h, n)).join('')}
-    </div>`;
-}
-
-// ===== HẠN XỬ LÝ =====
-// Mốc hạn lấy nguyên từ KiotViet, không tự tính:
-//   Shopee -> ShipByDate    TikTok -> RtsSla    Lazada -> không có
-// App chỉ đổi màu theo thời gian còn lại.
-const GIO_HAN_DO = 4;     // dưới 4 giờ: đỏ
-const GIO_HAN_CAM = 24;   // dưới 24 giờ: cam
-
-// Hãng chỉ chạy dịch vụ hỏa tốc. Cần vì CheckoutShippingCarrier thường trống,
-// nhất là đơn TikTok — chỉ dựa vào nó là bỏ sót quá nửa.
-const HANG_HOA_TOC = /instant|ahamove|green\s*sm|grab|hỏa tốc|hoa toc/i;
-
-function laHoaToc(d) {
-  if (/hỏa tốc|hoa toc/i.test(String(d.loaiGiao || ''))) return true;
-  return HANG_HOA_TOC.test(String(d.hangVanChuyen || d.donViVanChuyen || ''));
-}
-
-function hanXacNhanCua(d) {
-  const h = d.hanXacNhan?.toDate ? d.hanXacNhan.toDate()
-    : (d.hanXacNhan ? new Date(d.hanXacNhan) : null);
-  return (h && !isNaN(h.getTime())) ? h : null;
-}
-
-// Đơn còn phải xử lý mới tính hạn — in tem hoặc đóng gói rồi thì thôi
-function conPhaiXuLy(d) {
-  if (d.daInVanDon === true || d.thoiGianDongGoi) return false;
-  const tt = trangThaiHienThi(d);
-  return tt === 'cho_xu_ly' || tt === 'cho_in' || tt === 'san_chua_duyet';
-}
-
-function phutConLai(d) {
-  if (!conPhaiXuLy(d)) return null;
-  const h = hanXacNhanCua(d);
-  return h ? Math.round((h.getTime() - Date.now()) / 60000) : null;
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap">
+    ${nut('all', 'Tất cả', nen.length, donFilterVanChuyen === 'all')}
+    ${[...dem.entries()].sort((a, b) => b[1] - a[1])
+      .map(([h, n]) => nut(h, h, n, donFilterVanChuyen === h)).join('')}
+  </div>`;
 }
 
 function veHanXacNhan(d) {
@@ -2835,16 +2870,40 @@ function nhanLanDongBo() {
   return `đồng bộ ${phut} phút trước`;
 }
 
+// Thanh chọn đơn, nằm ngay trên danh sách. Nút thao tác hiện theo trạng thái đang
+// lọc: chờ xử lý thì Chuẩn bị hàng, chờ in hoặc đã in thì In vận đơn.
+function veThanhChon(trang) {
+  const tt = donFilterTrangThai;
+  const hienChuanBi = tt === 'cho_xu_ly' || tt === 'san_chua_duyet' || tt === 'all';
+  const hienIn = tt === 'cho_in' || tt === 'cho_dong_goi' || tt === 'all';
+  const daChonHet = trang.length && trang.every(d => vdDaChon.has(d.maDonSan || d.maHoaDon));
+
+  return `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;
+                border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px">
+        <input type="checkbox" ${daChonHet ? 'checked' : ''} onchange="vdChonHetTrang()">
+        Chọn tất cả trang này (${trang.length})
+      </label>
+      ${vdDaChon.size ? `<span style="font-size:12px;color:var(--green);font-weight:600">
+        đã chọn ${vdDaChon.size}</span>` : ''}
+      <span style="flex:1"></span>
+      ${hienChuanBi ? `<button class="btn-outline" id="vd-nut-chuanbi"
+        style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
+        onclick="chuanBiHangLoat()">📦 Chuẩn bị hàng</button>` : ''}
+      ${hienIn ? `<button class="btn-g" id="vd-nut-in"
+        style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
+        onclick="inVanDonHangLoat()">🖨 In vận đơn</button>` : ''}
+    </div>`;
+}
+
 function veDanhSachDon() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
   const ds = locDon();
   // Đếm trên tập ĐÃ LỌC sàn và vận chuyển, không phải toàn bộ đơn — chọn Shopee
   // mà số vẫn tính cả TikTok thì nhìn vào không biết còn bao nhiêu việc phải làm.
-  const nenDem = allDonHangSan.filter(d =>
-    (donFilterSan === 'all' || d.san === donFilterSan) &&
-    (donFilterVanChuyen === 'all'
-      || (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen));
+  const nenDem = nenLocDon('trangThai');
   const demTT = (t) => nenDem.filter(d => trangThaiHienThi(d) === t).length;
   const tongTrang = Math.max(1, Math.ceil(ds.length / DON_MOI_TRANG));
   if (donPage > tongTrang) donPage = tongTrang;
@@ -2859,92 +2918,60 @@ function veDanhSachDon() {
   const nhomCho = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'cho');
   const nhomCanhBao = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'canh_bao');
   const nhomSan = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'san');
-  const soHuySauDongGoi = demTT('huy_sau_dong_goi');
-  const soHuyChoDongGoi = demTT('huy_khi_cho_dong_goi');
-  const soHuyDangGiao = demTT('huy_khi_dang_giao');
-  const soChuaNhanLai = allDonHangSan.filter(d =>
-    trangThaiHienThi(d) === 'huy_sau_dong_goi' && !daNhanLaiKien(d)).length;
+  // Đơn hủy cần lấy lại hàng — báo bằng ô cảnh báo chứ không thành trạng thái riêng
+  const huySauIn = allDonHangSan.filter(d => mucDoHuy(d) === 'sau_in').length;
+  const huySauDongGoi = allDonHangSan.filter(d =>
+    mucDoHuy(d) === 'sau_dong_goi' && !daNhanLaiKien(d)).length;
+  const huyDangGiao = allDonHangSan.filter(d =>
+    mucDoHuy(d) === 'dang_giao' && !daNhanLaiKien(d)).length;
 
-  const soChuaIn = trang.filter(d => !d.daInVanDon).length;
+  const oCanhBao = (mau, nen, tieu, mo) => `
+    <div style="background:${nen};border:1.5px solid ${mau};border-radius:8px;
+                padding:9px 11px;margin-bottom:8px;cursor:pointer"
+      onclick="doiFilterDonTT('da_huy')">
+      <b style="font-size:13px;color:${mau}">${tieu}</b>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${mo}</div>
+    </div>`;
+
+  const khoiLoc = (tieuDe, noiDung) => noiDung ? `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
+      <div style="font-size:10px;color:var(--text2);margin-bottom:5px">${tieuDe}</div>
+      ${noiDung}
+    </div>` : '';
+
   el.innerHTML = `
-    ${trang.length ? `
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-        <button class="btn-xs" onclick="vdChonHetTrang()">☑ Chọn tất cả trang này (${trang.length})</button>
-        <button class="btn-xs" onclick="vdChonHet()">Chọn ${soChuaIn} đơn chưa in</button>
-        ${vdDaChon.size ? `<button class="btn-xs" onclick="vdBoChon()">Bỏ chọn</button>` : ''}
-        <span style="margin-left:auto;font-size:11px;color:var(--text2)">${nhanLanDongBo()}</span>
-        <button class="btn-xs" id="nut-dong-bo-san"
-          onclick="dongBoNgay()">🔄 Kiểm tra sàn duyệt</button>
-      </div>
-      <div id="vd-thanh-in" style="display:${vdDaChon.size ? 'flex' : 'none'};gap:8px;align-items:center;
-           background:#F0FDF4;border:1.5px solid var(--green);border-radius:8px;padding:9px 11px;margin-bottom:10px">
-        <span style="flex:1;font-size:13px">Đã chọn <b><span id="vd-so-don">${vdDaChon.size}</span></b> đơn</span>
-        <button class="btn-outline" id="vd-nut-chuanbi" style="width:auto;padding:7px 12px"
-          onclick="chuanBiHangLoat()">📦 Chuẩn bị hàng</button>
-        <button class="btn-g" id="vd-nut-in" style="width:auto;padding:7px 12px"
-          onclick="inVanDonHangLoat()">🖨 In vận đơn</button>
-      </div>` : ''}
-    <div style="display:flex;gap:6px;margin-bottom:8px;align-items:center">
-      <button class="btn-g" style="flex:1" onclick="keoDonVe()">🔄 Đồng bộ ${donFilterSan === 'all' ? 'mọi sàn' : TEN_SAN[donFilterSan]}</button>
-      <select id="don-songay" style="width:auto;padding:9px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
-        <option value="1">1 ngày</option>
-        <option value="3" selected>3 ngày</option>
-        <option value="7">7 ngày</option>
-        <option value="30">30 ngày</option>
-      </select>
-      <button class="btn-outline" style="flex:1" onclick="capNhatPhiSanDon()">💰 Cập nhật phí sàn</button>
-    </div>
-    <div class="admin-block" style="margin-bottom:10px;padding:10px 12px">
-      <p class="info-note" style="margin:0 0 8px 0">Vận hành hằng ngày dùng <b>webhook</b> — KiotViet tự đẩy đơn mới về app ngay khi phát sinh. Nút "Đồng bộ" phía trên chỉ dùng để nạp dữ liệu ban đầu hoặc vá khi webhook lỡ mất đơn.</p>
-      <button class="btn-outline" style="width:100%" onclick="dangKyWebhookDonHang()">🔌 Đăng ký webhook đơn hàng (chạy 1 lần)</button>
-    </div>
-    <div style="display:flex;gap:5px;margin-bottom:8px">
-      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='all'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('all')">Tất cả (${allDonHangSan.length})</button>
-      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='shopee'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('shopee')">Shopee (${allDonHangSan.filter(d=>d.san==='shopee').length})</button>
-      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='tiktok'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('tiktok')">TikTok (${allDonHangSan.filter(d=>d.san==='tiktok').length})</button>
-      <button style="flex:1;border:1px solid var(--border);border-radius:6px;padding:8px;background:${donFilterSan==='lazada'?'var(--bg)':'#fff'}" onclick="doiFilterDonSan('lazada')">Lazada (${allDonHangSan.filter(d=>d.san==='lazada').length})</button>
-    </div>
-    ${soHuyDangGiao ? `
-    <div style="background:#FEF2F2;border:1.5px solid #DC2626;border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="doiFilterDonTT('huy_khi_dang_giao')">
-      <b style="font-size:13px;color:#DC2626">🚚 ${soHuyDangGiao} đơn hủy khi đã rời kho</b>
-      <div style="font-size:11px;color:var(--text2);margin-top:2px">Hàng đang trên đường về — theo dõi để nhận lại, đối chiếu với shipper</div>
-    </div>` : ''}
-    ${soHuyChoDongGoi ? `
-    <div style="background:#FFFBEB;border:1.5px solid #F59E0B;border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer" onclick="doiFilterDonTT('huy_khi_cho_dong_goi')">
-      <b style="font-size:13px;color:#B45309">🏷️ ${soHuyChoDongGoi} đơn hủy khi đang chờ đóng gói</b>
-      <div style="font-size:11px;color:var(--text2);margin-top:2px">Đã bấm "Chuẩn bị hàng" — kiểm tra xem có tem đã in chưa, có thì bỏ đi</div>
-    </div>` : ''}
-    ${soHuySauDongGoi ? `
-    <div style="background:${soChuaNhanLai ? '#FEF3C7' : '#F0FDF4'};border:1.5px solid ${soChuaNhanLai ? '#EA580C' : '#16A34A'};border-radius:8px;padding:10px 12px;margin-bottom:10px;cursor:pointer" onclick="doiFilterDonTT('huy_sau_dong_goi')">
-      <b style="font-size:13px;color:${soChuaNhanLai ? '#EA580C' : '#16A34A'}">
-        ${soChuaNhanLai ? `⚠ ${soChuaNhanLai} kiện hủy chưa nhận lại từ shipper` : `✓ Đã nhận lại đủ ${soHuySauDongGoi} kiện hủy`}
-      </b>
-      <div style="font-size:11px;color:var(--text2);margin-top:2px">Đối chiếu khi bàn giao hàng cho đơn vị vận chuyển</div>
-    </div>` : ''}
-    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">XỬ LÝ TRONG KHO</div>
-    <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
-      ${nhomKho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+    ${huyDangGiao ? oCanhBao('#DC2626', '#FEF2F2', `${huyDangGiao} đơn hủy khi đang giao`,
+      'Liên hệ đơn vị vận chuyển lấy lại hàng') : ''}
+    ${huySauDongGoi ? oCanhBao('#EA580C', '#FFFBEB', `${huySauDongGoi} đơn hủy sau khi đóng gói`,
+      'Kiện hàng còn trong kho — cần tháo ra nhập lại') : ''}
+    ${huySauIn ? oCanhBao('#D97706', '#FFFBEB', `${huySauIn} đơn hủy sau khi in tem`,
+      'Bỏ tem đã in, hàng chưa đóng gói') : ''}
+
+    ${khoiLoc('XỬ LÝ ĐƠN HÀNG', `
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${nhomKho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+        ${nutTT('all', 'Tất cả', nenDem.length, 'var(--text2)')}
+      </div>`)}
+
+    ${khoiLoc(`CHƯA XỬ LÝ ĐƯỢC${!mocDongBoGanNhat
+        ? ' · <span style="color:#D97706">bấm Kiểm tra sàn duyệt để lấy dữ liệu</span>' : ''}`, `
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+      </div>`)}
+
+    ${khoiLoc('SÀN', veLocSan())}
+    ${khoiLoc('ĐƠN VỊ VẬN CHUYỂN', veLocVanChuyen())}
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng..."
+        value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)"
+        style="flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
+      <span style="font-size:11px;color:var(--text2);white-space:nowrap">${nhanLanDongBo()}</span>
+      <button class="btn-xs" id="nut-dong-bo-san" style="white-space:nowrap"
+        onclick="dongBoNgay()">🔄 Kiểm tra</button>
     </div>
 
-    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">
-      CHƯA XỬ LÝ ĐƯỢC
-      ${!mocDongBoGanNhat ? ' · <span style="color:#D97706">bấm Kiểm tra sàn duyệt để lấy dữ liệu</span>' : ''}
-    </div>
-    <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
-      ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
-    </div>
-    ${nhomCanhBao.map(([k, v]) => `<div style="margin-bottom:8px">${nutTT(k, v.ten, demTT(k), v.mau)}</div>`).join('')}
-    <div style="font-size:10px;color:var(--text2);margin-bottom:4px">TRẠNG THÁI TỪ SÀN</div>
-    <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
-      ${nhomSan.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
-    </div>
-
-    ${veLocVanChuyen()}
-
-    <div style="margin-bottom:10px">
-      ${nutTT('all', 'Tất cả đơn', nenDem.length, 'var(--text2)')}
-    </div>
-    <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng..." value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:10px">
+    ${trang.length ? veThanhChon(trang) : ''}
     <div id="don-list"></div>
     <div id="don-phantrang"></div>`;
 
@@ -2962,7 +2989,8 @@ function veDanhSachDon() {
     const gio = ngay ? ngay.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
     const phi = d.phiSanTong;
     const tiLePhi = (phi && d.tongTien) ? ((phi / d.tongTien) * 100).toFixed(1) : null;
-    const laHuySauDongGoi = maTT === 'huy_sau_dong_goi';
+    const mucHuy = mucDoHuy(d);
+    const laHuySauDongGoi = mucHuy === 'sau_dong_goi' || mucHuy === 'dang_giao';
     const daNhan = daNhanLaiKien(d);
 
     // Thời điểm đóng gói — dùng để tua camera khi cần tìm kiện hàng
@@ -3316,7 +3344,7 @@ async function napCongThucLuong() {
 // không được hưởng, dù đã đóng gói. Riêng "hủy khi chờ đóng gói" cũng không tính
 // vì chưa quét đóng gói thì chưa có ai để trả thưởng.
 const TT_KHONG_TINH_THUONG = new Set([
-  'da_huy', 'huy_khi_cho_dong_goi', 'huy_sau_dong_goi', 'huy_khi_dang_giao',
+  'da_huy',
   'dang_chuyen_hoan', 'da_chuyen_hoan'
 ]);
 
@@ -6516,16 +6544,10 @@ window.chuanBiHangLoat = async function() {
   // nhân viên phải đảo tab mới thấy đơn sang Chờ in.
   if (ok) {
     capNhatTienTrinh(85, 'Đang lấy mã vận đơn...');
-    for (let lan = 0; lan < 5; lan++) {
-      await new Promise(r => setTimeout(r, 1200));
-      await loadDonHangSan();
-      const xong = ds.filter(d => {
-        const m = allDonHangSan.find(x => x.maDonSan === d.maDonSan);
-        return m?.maVanDon || m?.coHoaDon === true;
-      }).length;
-      capNhatTienTrinh(85 + lan * 3, `Đã nhận ${xong}/${ok} đơn...`);
-      if (xong >= ok) break;
-    }
+    await ngheDonThayDoi(
+      ds.map(d => d.id || d.maDonSan),
+      (n, tong) => capNhatTienTrinh(85 + Math.round(n / tong * 14), `Đã nhận ${n}/${tong} đơn...`)
+    );
   }
 
   // Chỉ báo kết quả của việc vừa làm. Nhân viên biết bước tiếp theo là gì,
@@ -6573,12 +6595,7 @@ async function xacNhanDonTikTok(d) {
 
     // Đợi webhook về rồi mới báo xong, khỏi phải đảo tab
     capNhatTienTrinh(85, 'Đang lấy mã vận đơn...');
-    for (let lan = 0; lan < 5; lan++) {
-      await new Promise(r => setTimeout(r, 1200));
-      await loadDonHangSan();
-      const m = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-      if (m?.maVanDon || m?.coHoaDon === true) break;
-    }
+    await ngheDonThayDoi([d.id || maDon]);
 
     hienPopup({ loai: 'thuong', maDon, tieuDe: 'Chuẩn bị hàng',
       soThanhCong: 1, soThatBai: 0, noiDung: '' });
@@ -6739,25 +6756,9 @@ window.vdChonHetTrang = function() {
   veDanhSachDon();
 };
 
-window.vdChonHet = function() {
-  const hienCo = layDonDangHien();
-  const chuaIn = hienCo.filter(d => !d.daInVanDon);
-  const tatCaDaChon = chuaIn.length && chuaIn.every(d => vdDaChon.has(d.maDonSan || d.maHoaDon));
-  if (tatCaDaChon) vdDaChon.clear();
-  else chuaIn.forEach(d => vdDaChon.add(d.maDonSan || d.maHoaDon));
-  veDanhSachDon();
-};
 
-window.vdBoChon = function() { vdDaChon.clear(); veDanhSachDon(); };
 
-function veThanhInVanDon() {
-  const el = document.getElementById('vd-thanh-in');
-  if (!el) return;
-  const n = vdDaChon.size;
-  el.style.display = n ? 'flex' : 'none';
-  const nhan = document.getElementById('vd-so-don');
-  if (nhan) nhan.textContent = n;
-}
+function veThanhInVanDon() { veDanhSachDon(); }
 
 window.inVanDonHangLoat = async function() {
   if (!vdDaChon.size) return;
@@ -15125,7 +15126,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v429</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v430</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15179,7 +15180,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v429</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v430</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15221,7 +15222,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v429</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v430</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
