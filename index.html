@@ -2844,6 +2844,41 @@ function veLocVanChuyen() {
   </div>`;
 }
 
+// ===== HẠN XỬ LÝ =====
+// Mốc hạn lấy nguyên từ KiotViet, không tự tính:
+//   Shopee -> ShipByDate    TikTok -> RtsSla    Lazada -> không có
+// App chỉ đổi màu theo thời gian còn lại.
+const GIO_HAN_DO = 4;     // dưới 4 giờ: đỏ
+const GIO_HAN_CAM = 24;   // dưới 24 giờ: cam
+
+// Hãng chỉ chạy dịch vụ hỏa tốc. Cần vì CheckoutShippingCarrier thường trống,
+// nhất là đơn TikTok — chỉ dựa vào nó là bỏ sót quá nửa.
+const HANG_HOA_TOC = /instant|ahamove|green\s*sm|grab|hỏa tốc|hoa toc/i;
+
+function laHoaToc(d) {
+  if (/hỏa tốc|hoa toc/i.test(String(d.loaiGiao || ''))) return true;
+  return HANG_HOA_TOC.test(String(d.hangVanChuyen || d.donViVanChuyen || ''));
+}
+
+function hanXacNhanCua(d) {
+  const h = d.hanXacNhan?.toDate ? d.hanXacNhan.toDate()
+    : (d.hanXacNhan ? new Date(d.hanXacNhan) : null);
+  return (h && !isNaN(h.getTime())) ? h : null;
+}
+
+// Đơn còn phải xử lý mới tính hạn — in tem hoặc đóng gói rồi thì thôi
+function conPhaiXuLy(d) {
+  if (d.daInVanDon === true || d.thoiGianDongGoi) return false;
+  const tt = trangThaiHienThi(d);
+  return tt === 'cho_xu_ly' || tt === 'cho_in' || tt === 'san_chua_duyet';
+}
+
+function phutConLai(d) {
+  if (!conPhaiXuLy(d)) return null;
+  const h = hanXacNhanCua(d);
+  return h ? Math.round((h.getTime() - Date.now()) / 60000) : null;
+}
+
 function veHanXacNhan(d) {
   const p = phutConLai(d);
   if (p === null) return '';
@@ -15142,7 +15177,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v431</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v432</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15196,7 +15231,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v431</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v432</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15238,7 +15273,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v431</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v432</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
