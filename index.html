@@ -1822,6 +1822,37 @@ window.doiSoLuongTrangHangHoa = function(v) {
 
 // ===== LIÊN KẾT SÀN (Lazada/TikTok...) — sản phẩm đăng trên sàn + liên kết SKU chỉ để đồng bộ tồn kho =====
 let allSanPhamDang = [];
+// Logo sàn nhúng thẳng vào app (48x48, ~13KB tổng) — không phụ thuộc mạng ngoài,
+// không lo link chết. Màu nền lấy theo màu thương hiệu để nhìn là nhận ra ngay.
+const LOGO_SAN = {
+  shopee: 'data:image/png;base64,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',
+  tiktok: 'data:image/png;base64,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',
+  lazada: 'data:image/png;base64,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'
+};
+
+const MAU_SAN = {
+  shopee: '#EE4D2D',
+  tiktok: '#000000',
+  lazada: '#0F146D'
+};
+
+function veLogoSan(san, cao = 16) {
+  const src = LOGO_SAN[san];
+  if (!src) return '';
+  return `<img src="${src}" alt="" style="height:${cao}px;width:${cao}px;
+    object-fit:contain;vertical-align:middle;flex-shrink:0">`;
+}
+
+// Nhãn sàn có logo và màu thương hiệu, chữ trắng
+function veNhanSan(san) {
+  const ten = TEN_SAN[san] || san || '';
+  if (!ten) return '';
+  const mau = MAU_SAN[san] || 'var(--text2)';
+  return `<span style="display:inline-flex;align-items:center;gap:4px;background:${mau};
+    color:#fff;padding:2px 7px 2px 4px;border-radius:4px;font-size:10px;font-weight:600">
+    ${veLogoSan(san, 13)}${escHtml(ten)}</span>`;
+}
+
 const TEN_SAN = { lazada: 'Lazada', tiktok: 'TikTok Shop', shopee: 'Shopee' };
 
 let sanPhamTMDTFilterSan = 'all';
@@ -2785,12 +2816,18 @@ window.timKiemDon = function(v) {
 // Thứ tự: trạng thái -> sàn -> đơn vị vận chuyển. Mỗi cấp chỉ đếm và hiện những
 // lựa chọn CÒN ĐƠN sau khi áp các cấp trên — chọn "Chờ in (2)" mà vẫn liệt kê
 // đủ mọi hãng vận chuyển thì nhìn vào không biết cái nào có đơn.
+// Ba cấp: trạng thái -> sàn -> vận chuyển. Mỗi cấp chỉ chịu ảnh hưởng của cấp
+// TRÊN nó, không phải cấp dưới. Nếu đếm sàn mà vẫn áp lọc vận chuyển thì chọn
+// "TikTok + J&T" xong Shopee hiện 0 — trong khi Shopee vốn có đơn, chỉ là không
+// dùng J&T.
 function nenLocDon(bo) {
+  const capTren = { trangThai: 0, san: 1, vanChuyen: 2 };
+  const cap = capTren[bo] ?? 3;
   return allDonHangSan.filter(d => {
-    if (bo !== 'trangThai' && donFilterTrangThai !== 'all'
+    if (cap > 0 && donFilterTrangThai !== 'all'
         && trangThaiHienThi(d) !== donFilterTrangThai) return false;
-    if (bo !== 'san' && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
-    if (bo !== 'vanChuyen' && donFilterVanChuyen !== 'all'
+    if (cap > 1 && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
+    if (cap > 2 && donFilterVanChuyen !== 'all'
         && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
     return true;
   });
@@ -2809,21 +2846,22 @@ function veLocSan() {
   return `<div style="display:flex;gap:5px;flex-wrap:wrap">
     ${nutLoc('all', 'Tất cả', nen.length, donFilterSan === 'all', 'doiFilterDonSan')}
     ${moiSan.map(k => nutLoc(k, TEN_SAN[k] || k, dem.get(k) || 0,
-      donFilterSan === k, 'doiFilterDonSan')).join('')}
+      donFilterSan === k, 'doiFilterDonSan', veLogoSan(k, 15))).join('')}
   </div>`;
 }
 
 // Nút lọc dùng chung cho sàn và đơn vị vận chuyển
-function nutLoc(ma, nhan, so, dangChon, hamGoi) {
+function nutLoc(ma, nhan, so, dangChon, hamGoi, icon = '') {
   const rong = so === 0 && ma !== 'all';
   return `<button onclick="${hamGoi}('${escHtml(ma)}')"
-    style="border:1.5px solid ${dangChon ? 'var(--green)' : 'var(--border)'};
+    style="display:inline-flex;align-items:center;gap:5px;
+           border:1.5px solid ${dangChon ? 'var(--green)' : 'var(--border)'};
            border-radius:6px;padding:6px 10px;font-size:12px;white-space:nowrap;
            background:${dangChon ? '#F0FDF4' : '#fff'};
            color:${rong && !dangChon ? 'var(--text2)' : 'var(--text)'};
            opacity:${rong && !dangChon ? '.5' : '1'};
            font-weight:${dangChon ? '600' : '400'}">
-    ${escHtml(nhan)} (${so})</button>`;
+    ${icon}${escHtml(nhan)} (${so})</button>`;
 }
 
 function veLocVanChuyen() {
@@ -2910,6 +2948,36 @@ function nhanLanDongBo() {
 
 // Thanh chọn đơn, nằm ngay trên danh sách. Nút thao tác hiện theo trạng thái đang
 // lọc: chờ xử lý thì Chuẩn bị hàng, chờ in hoặc đã in thì In vận đơn.
+// Nút thao tác trên từng thẻ đơn, đổi theo bước đang ở:
+//   Chờ xử lý  -> Chuẩn bị    (Shopee/TikTok, chưa có mã vận đơn)
+//   Chờ in     -> In đơn
+//   Chờ đóng gói -> In lại    (đã in rồi, in thêm nếu hỏng tem)
+function veNutThaoTac(d, maTT) {
+  const ma = escHtml(d.maDonSan || d.maHoaDon);
+  const nut = (nhan, ham, nen, chu) => `
+    <button onclick="event.stopPropagation();${ham}"
+      style="flex-shrink:0;align-self:center;background:${nen};color:${chu};border:none;
+             border-radius:6px;padding:7px 11px;font-size:12px;font-weight:600;
+             cursor:pointer;white-space:nowrap">${nhan}</button>`;
+
+  if (maTT === 'cho_xu_ly' || maTT === 'san_chua_duyet') {
+    if (d.san !== 'shopee' && d.san !== 'tiktok') return '';
+    return nut('Chuẩn bị', `xacNhanDon('${ma}')`, '#FEF3C7', '#92400E');
+  }
+  if (maTT === 'cho_in') return nut('In đơn', `inMotVanDon('${ma}')`, '#EDE9FE', '#6D28D9');
+  if (maTT === 'cho_dong_goi') return nut('In lại', `inMotVanDon('${ma}')`, 'var(--bg)', 'var(--text2)');
+  return '';
+}
+
+// In vận đơn cho một đơn — dùng lại luồng in hàng loạt cho khỏi lặp code
+window.inMotVanDon = async function(maDon) {
+  const nho = new Set(vdDaChon);
+  vdDaChon.clear();
+  vdDaChon.add(maDon);
+  try { await inVanDonHangLoat(); }
+  finally { vdDaChon.clear(); nho.forEach(m => vdDaChon.add(m)); veDanhSachDon(); }
+};
+
 function veThanhChon(trang) {
   const tt = donFilterTrangThai;
   const hienChuanBi = tt === 'cho_xu_ly' || tt === 'san_chua_duyet' || tt === 'all';
@@ -3057,7 +3125,7 @@ function veDanhSachDon() {
       <div style="display:flex;gap:8px;align-items:flex-start">
         <div style="flex:1;min-width:0">
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <span style="font-size:10px;background:var(--bg);padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[d.san] || d.san)}</span>
+            ${veNhanSan(d.san)}
             <label onclick="event.stopPropagation()" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px">
               <input type="checkbox" ${vdDaChon.has(d.maDonSan || d.maHoaDon) ? 'checked' : ''}
                 onchange="vdTick('${escHtml(d.maDonSan || d.maHoaDon)}',this.checked)">
@@ -3068,10 +3136,7 @@ function veDanhSachDon() {
               border-radius:4px;font-size:10px;font-weight:700">HỎA TỐC</span>` : ''}
             ${loiHeThong(d) ? `<span style="background:var(--red);color:#fff;padding:2px 7px;
               border-radius:4px;font-size:10px;font-weight:700">LỖI!!!</span>` : ''}
-            ${!d.maVanDon && (d.san === 'shopee' || d.san === 'tiktok')
-              && trangThaiHienThi(d) !== 'chua_thanh_toan' ? `
-              <button class="btn-xs" style="background:#FEF3C7;color:#92400E;padding:2px 7px;font-size:10px"
-                onclick="event.stopPropagation();xacNhanDon('${escHtml(d.maDonSan || d.maHoaDon)}')">Xác nhận</button>` : ''}
+
             <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
@@ -3090,8 +3155,8 @@ function veDanhSachDon() {
           <div style="font-size:11px;margin-top:2px">${phi != null
             ? `<span style="color:#DC2626">phí ${phi.toLocaleString('vi-VN')}đ (${tiLePhi}%)</span>`
             : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
-
         </div>
+        ${veNutThaoTac(d, maTT)}
       </div>
       ${laHuySauDongGoi ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
@@ -15177,7 +15242,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v432</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v433</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15231,7 +15296,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v432</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v433</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15273,7 +15338,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v432</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v433</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
