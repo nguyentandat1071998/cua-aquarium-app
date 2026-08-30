@@ -6336,7 +6336,7 @@ function hienPopup({ loai, tieuDe, noiDung, maDon, soThanhCong, soThatBai }) {
               Thất bại: ${soThatBai || 0}</span>
           </div>` : ''}
       </div>
-      <div style="padding:16px;font-size:13px;line-height:1.5;white-space:pre-line">${escHtml(noiDung)}</div>
+      ${noiDung ? `<div style="padding:16px;font-size:13px;line-height:1.5;white-space:pre-line">${escHtml(noiDung)}</div>` : '<div style="height:8px"></div>'}
       <div style="padding:0 16px 16px">
         <button class="btn-g" style="width:100%;background:${mau}"
           onclick="document.getElementById('tb-modal').style.display='none'">Đã hiểu</button>
@@ -6527,31 +6527,23 @@ window.chuanBiHangLoat = async function() {
     if (nut) { nut.disabled = false; nut.textContent = '📦 Chuẩn bị hàng'; }
   }
 
-  // Đợi sàn cấp mã vận đơn rồi tự lấy về
-  let coMa = 0;
+  // Lấy mã vận đơn về luôn cho đơn vừa chuẩn bị. Chạy ngầm, không báo gì —
+  // nhân viên chỉ quan tâm chuẩn bị hàng có xong không.
   if (ok) {
     if (nut) nut.textContent = 'Đang lấy mã vận đơn...';
     await new Promise(r => setTimeout(r, 4000));
     lanDongBoCuoi = 0;
     await tuDongBoNeuCu(0);
     if (nut) nut.textContent = '📦 Chuẩn bị hàng';
-    coMa = ds.filter(d => {
-      const m = allDonHangSan.find(x => x.maDonSan === d.maDonSan);
-      return m?.maVanDon;
-    }).length;
   }
 
+  // Chỉ báo kết quả của việc vừa làm. Nhân viên biết bước tiếp theo là gì,
+  // không cần nhắc.
   hienPopup({
     loai: hong ? (ok ? 'cho' : 'loi') : 'thuong',
     tieuDe: 'Chuẩn bị hàng',
     soThanhCong: ok, soThatBai: hong,
-    noiDung: [
-      loiChinh,
-      ok ? (coMa >= ok
-        ? 'Đã có mã vận đơn, in tem được rồi.'
-        : `Lấy được ${coMa}/${ok} mã vận đơn. Số còn lại sàn cấp chậm hơn — bấm "Kiểm tra sàn duyệt" sau ít phút.`)
-        : ''
-    ].filter(Boolean).join('\n\n')
+    noiDung: loiChinh || ''
   });
   veDanhSachDon();
 };
@@ -6593,11 +6585,8 @@ async function xacNhanDonTikTok(d) {
     lanDongBoCuoi = 0;
     await tuDongBoNeuCu(0);
 
-    const sau = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-    hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã chuẩn bị hàng',
-      noiDung: sau?.maVanDon
-        ? `Mã vận đơn: ${sau.maVanDon}\n\nIn tem được rồi.`
-        : 'Sàn chưa cấp mã vận đơn. Bấm "Kiểm tra sàn duyệt" sau ít phút.' });
+    hienPopup({ loai: 'thuong', maDon, tieuDe: 'Chuẩn bị hàng',
+      soThanhCong: 1, soThatBai: 0, noiDung: '' });
     veDanhSachDon();
   } catch(e) {
     await phanLoaiSauKhiLoi(maDon, e.message);
@@ -6728,21 +6717,14 @@ window.guiXacNhanDon = async function(maDon, shopId) {
 
     document.getElementById('xn-modal').style.display = 'none';
 
-    if (kq.maVanDon) {
-      hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã chuẩn bị hàng',
-        noiDung: `Mã vận đơn: ${kq.maVanDon}\n\nIn tem được rồi.` });
-    } else {
-      // Đợi sàn cấp mã rồi tự lấy, khỏi bắt bấm thêm nút
-      showToast('Đã chuẩn bị hàng — đang lấy mã vận đơn...');
+    // Lấy mã vận đơn về luôn, chạy ngầm không báo
+    if (!kq.maVanDon) {
       await new Promise(r => setTimeout(r, 4000));
       lanDongBoCuoi = 0;
       await tuDongBoNeuCu(0);
-      const sau = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-      hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đã chuẩn bị hàng',
-        noiDung: sau?.maVanDon
-          ? `Mã vận đơn: ${sau.maVanDon}\n\nIn tem được rồi.`
-          : 'Sàn chưa cấp mã vận đơn. Bấm "Kiểm tra sàn duyệt" sau ít phút.' });
     }
+    hienPopup({ loai: 'thuong', maDon, tieuDe: 'Chuẩn bị hàng',
+      soThanhCong: 1, soThatBai: 0, noiDung: '' });
   } catch(e) {
     hienPopup({ loai: 'loi', maDon, tieuDe: 'Không chuẩn bị được', noiDung: e.message });
   }
@@ -15154,7 +15136,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v426</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v427</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15208,7 +15190,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v426</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v427</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15250,7 +15232,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v426</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v427</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
