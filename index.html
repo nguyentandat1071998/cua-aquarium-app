@@ -6305,7 +6305,41 @@ window.xnDoiDiaChi = function() {
 //   đỏ  = lỗi hệ thống, phải báo quản lý ngay
 //   vàng = chờ sàn, lát thử lại
 //   xám = chờ khách trả tiền, không làm gì được
+// Chuyển popup đang mở sang trạng thái "đang chạy" — giữ nguyên khung, chỉ đổi
+// ruột. Đóng rồi mở popup mới thì màn hình nhấp nháy, nhìn như bị lỗi.
+function popupDangChay(tieuDe, moTa) {
+  const m = document.getElementById('hoi-modal');
+  if (!m) return;
+  m.onclick = null;   // đang chạy thì không cho bấm ra ngoài để tắt
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:360px;border-radius:14px;
+                overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.25)">
+      <div style="background:#FFFBEB;border-bottom:2px solid #D97706;padding:16px;text-align:center">
+        <div style="font-size:32px;line-height:1">📦</div>
+        <div style="font-size:15px;font-weight:700;color:#D97706;margin-top:6px">${escHtml(tieuDe)}</div>
+      </div>
+      <div style="padding:16px">
+        <div id="pu-mota" style="font-size:13px;text-align:center;margin-bottom:12px">${escHtml(moTa || '')}</div>
+        <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+          <div id="pu-thanh" style="height:100%;width:30%;background:#D97706;border-radius:3px;
+               transition:width .3s"></div>
+        </div>
+      </div>
+    </div>`;
+  m.style.display = 'flex';
+}
+
+function capNhatTienTrinh(phanTram, moTa) {
+  const t = document.getElementById('pu-thanh');
+  const d = document.getElementById('pu-mota');
+  if (t) t.style.width = Math.min(100, Math.max(5, phanTram)) + '%';
+  if (d && moTa) d.textContent = moTa;
+}
+
 function hienPopup({ loai, tieuDe, noiDung, maDon, soThanhCong, soThatBai }) {
+  // Nếu đang có popup tiến trình thì đóng nó trước, khỏi chồng hai lớp
+  const mHoi = document.getElementById('hoi-modal');
+  if (mHoi) mHoi.style.display = 'none';
   const mau = { loi: '#DC2626', cho: '#D97706', thuong: '#64748B' }[loai] || '#64748B';
   const nen = { loi: '#FEF2F2', cho: '#FFFBEB', thuong: '#F8FAFC' }[loai] || '#F8FAFC';
   const icon = { loi: '⛔', cho: '⏳', thuong: '💤' }[loai] || '';
@@ -6438,6 +6472,7 @@ window.chuanBiHangLoat = async function() {
 
   const nut = document.getElementById('vd-nut-chuanbi');
   if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+  popupDangChay('Đang chuẩn bị hàng', `${ds.length} đơn — đang gửi cho sàn...`);
 
   let ok = 0, hong = 0, loiChinh = '';
   try {
@@ -6453,10 +6488,9 @@ window.chuanBiHangLoat = async function() {
         }))
       })
     });
+    capNhatTienTrinh(60, 'Sàn đang xử lý...');
     const kq = await res.json();
     console.log('[chuẩn bị hàng loạt]', kq);
-    if (kq.cacCachDaThu) console.table(kq.cacCachDaThu);
-    if (kq.cachDung) console.log('Cách chạy được:', kq.cachDung);
 
     if (kq.success) {
       // KiotViet trả về đúng đơn nào xong đơn nào hỏng, dùng luôn thay vì đoán
@@ -6476,6 +6510,22 @@ window.chuanBiHangLoat = async function() {
     loiChinh = e.message;
   } finally {
     if (nut) { nut.disabled = false; nut.textContent = '📦 Chuẩn bị hàng'; }
+  }
+
+  // Webhook invoice.update cần vài giây để về. Đợi rồi tải lại đơn, chứ không thì
+  // nhân viên phải đảo tab mới thấy đơn sang Chờ in.
+  if (ok) {
+    capNhatTienTrinh(85, 'Đang lấy mã vận đơn...');
+    for (let lan = 0; lan < 5; lan++) {
+      await new Promise(r => setTimeout(r, 1200));
+      await loadDonHangSan();
+      const xong = ds.filter(d => {
+        const m = allDonHangSan.find(x => x.maDonSan === d.maDonSan);
+        return m?.maVanDon || m?.coHoaDon === true;
+      }).length;
+      capNhatTienTrinh(85 + lan * 3, `Đã nhận ${xong}/${ok} đơn...`);
+      if (xong >= ok) break;
+    }
   }
 
   // Chỉ báo kết quả của việc vừa làm. Nhân viên biết bước tiếp theo là gì,
@@ -6507,6 +6557,7 @@ async function xacNhanDonTikTok(d) {
     nhanDongY: 'Chuẩn bị hàng'
   });
   if (!dongY) return;
+  popupDangChay('Đang chuẩn bị hàng', 'Đang gửi cho sàn...');
 
   try {
     const idToken = await currentUser.getIdToken();
@@ -6519,6 +6570,15 @@ async function xacNhanDonTikTok(d) {
     console.log('[xác nhận TikTok]', kq);
 
     if (!kq.success) { await phanLoaiSauKhiLoi(maDon, kq.error); return; }
+
+    // Đợi webhook về rồi mới báo xong, khỏi phải đảo tab
+    capNhatTienTrinh(85, 'Đang lấy mã vận đơn...');
+    for (let lan = 0; lan < 5; lan++) {
+      await new Promise(r => setTimeout(r, 1200));
+      await loadDonHangSan();
+      const m = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+      if (m?.maVanDon || m?.coHoaDon === true) break;
+    }
 
     hienPopup({ loai: 'thuong', maDon, tieuDe: 'Chuẩn bị hàng',
       soThanhCong: 1, soThatBai: 0, noiDung: '' });
@@ -15065,7 +15125,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v428</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v429</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15119,7 +15179,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v428</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v429</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15161,7 +15221,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v428</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v429</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
