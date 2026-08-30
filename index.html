@@ -6251,6 +6251,44 @@ window.xnDoiDiaChi = function() {
   </div>`;
 };
 
+// Popup thông báo kết quả. Ba loại một màu, để nhân viên liếc là biết mức độ:
+//   đỏ  = lỗi hệ thống, phải báo quản lý ngay
+//   vàng = chờ sàn, lát thử lại
+//   xám = chờ khách trả tiền, không làm gì được
+function hienPopup({ loai, tieuDe, noiDung, maDon }) {
+  const mau = { loi: '#DC2626', cho: '#D97706', thuong: '#64748B' }[loai] || '#64748B';
+  const nen = { loi: '#FEF2F2', cho: '#FFFBEB', thuong: '#F8FAFC' }[loai] || '#F8FAFC';
+  const icon = { loi: '⛔', cho: '⏳', thuong: '💤' }[loai] || '';
+
+  let m = document.getElementById('tb-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'tb-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1600;'
+      + 'display:flex;align-items:center;justify-content:center;padding:20px';
+    m.onclick = (e) => { if (e.target === m) m.style.display = 'none'; };
+    document.body.appendChild(m);
+  }
+
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:360px;border-radius:14px;
+                overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.25)">
+      <div style="background:${nen};border-bottom:2px solid ${mau};padding:16px;text-align:center">
+        <div style="font-size:34px;line-height:1">${icon}</div>
+        <div style="font-size:${loai === 'loi' ? '17' : '15'}px;font-weight:700;color:${mau};margin-top:6px">
+          ${escHtml(tieuDe)}
+        </div>
+        ${maDon ? `<div style="font-size:11px;color:var(--text2);margin-top:3px">${escHtml(maDon)}</div>` : ''}
+      </div>
+      <div style="padding:16px;font-size:13px;line-height:1.5;white-space:pre-line">${escHtml(noiDung)}</div>
+      <div style="padding:0 16px 16px">
+        <button class="btn-g" style="width:100%;background:${mau}"
+          onclick="document.getElementById('tb-modal').style.display='none'">Đã hiểu</button>
+      </div>
+    </div>`;
+  m.style.display = 'flex';
+}
+
 // Bấm Chuẩn bị hàng thất bại — quét Bán Online tìm đúng đơn này để biết vì sao:
 //   vắng mặt        -> khách chưa thanh toán
 //   có, thiếu hạn   -> sàn chưa duyệt
@@ -6259,7 +6297,7 @@ async function phanLoaiSauKhiLoi(maDon, loiGoc) {
   const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
   showToast('Đang kiểm tra vì sao...');
 
-  let nhom = null, thongBao = '';
+  let nhom = null, thongBao = '', tieuDe = '', loaiTB = 'thuong';
   try {
     const idToken = await currentUser.getIdToken();
     const den = new Date();
@@ -6282,21 +6320,33 @@ async function phanLoaiSauKhiLoi(maDon, loiGoc) {
     }
 
     if (!quetXong) {
-      thongBao = 'Không kiểm tra được — thử lại sau';
+      tieuDe = 'Không kiểm tra được';
+      thongBao = 'Mạng hoặc KiotViet đang trục trặc. Thử lại sau ít phút.';
+      loaiTB = 'cho';
     } else if (!thay) {
       nhom = 'chua_thanh_toan';
-      thongBao = 'Khách chưa thanh toán.\n\nĐơn đã chuyển sang nhóm "Chưa thanh toán".';
+      loaiTB = 'thuong';
+      tieuDe = 'Khách chưa thanh toán';
+      thongBao = 'Đơn chưa có ở Bán Online vì khách chưa trả tiền.\n\n'
+        + 'Đã chuyển sang nhóm "Chưa thanh toán". Khách trả tiền thì đơn tự quay lại.';
     } else if (!thay.RtsSla && !thay.ShipByDate) {
       nhom = 'san_chua_duyet';
-      thongBao = 'Sàn chưa duyệt đơn này.\n\nĐơn đã chuyển sang nhóm "Sàn chưa duyệt", thử lại sau.';
+      loaiTB = 'cho';
+      tieuDe = 'Sàn chưa duyệt đơn';
+      thongBao = 'Sàn còn đang xét đơn này, chưa cho chuẩn bị hàng.\n\n'
+        + 'Đã chuyển sang nhóm "Sàn chưa duyệt". Thử lại sau ít phút.';
     } else {
       // Sàn đã duyệt, đơn hợp lệ, mà gọi xác nhận vẫn hỏng
       nhom = 'loi_he_thong';
-      thongBao = 'LỖI HỆ THỐNG!!!\n\nSàn đã duyệt đơn này rồi nhưng không chuẩn bị hàng được.\n\n'
-        + 'Báo quản lý xử lý ngay.';
+      loaiTB = 'loi';
+      tieuDe = 'LỖI HỆ THỐNG!!!';
+      thongBao = 'Sàn đã duyệt đơn này rồi nhưng không chuẩn bị hàng được.\n\n'
+        + 'BÁO QUẢN LÝ XỬ LÝ NGAY.';
     }
   } catch(e) {
-    thongBao = 'Không kiểm tra được: ' + e.message;
+    tieuDe = 'Không kiểm tra được';
+    thongBao = e.message;
+    loaiTB = 'cho';
   }
 
   // Ghi lại để lần sau khỏi bấm lại, và để quản lý xem được lỗi gì
@@ -6323,7 +6373,7 @@ async function phanLoaiSauKhiLoi(maDon, loiGoc) {
     try { await updateDoc(doc(db, 'don_hang_san', d.id), ghi); } catch(e) {}
   }
 
-  alert(thongBao);
+  hienPopup({ loai: loaiTB, tieuDe, noiDung: thongBao, maDon });
   veDanhSachDon();
 }
 
@@ -14762,7 +14812,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v415</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v416</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -14816,7 +14866,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v415</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v416</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -14858,7 +14908,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v415</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v416</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
