@@ -6385,6 +6385,57 @@ function hoiXacNhan({ tieuDe, noiDung, nhanDongY = 'Đồng ý', loai = 'cho' })
   });
 }
 
+// Đường dự phòng khi gộp hỏng: làm từng đơn một. Chậm hơn nhưng biết chính xác
+// đơn nào lỗi, và không phụ thuộc endpoint gộp có đổi hay không.
+async function chuanBiTungDon(ds, nut) {
+  let ok = 0, hong = 0;
+  const dsHong = [];
+  const idToken = await currentUser.getIdToken();
+
+  for (let i = 0; i < ds.length; i++) {
+    const d = ds[i];
+    const ma = d.maDonSan || d.maHoaDon;
+    if (nut) nut.textContent = `Đang làm ${i + 1}/${ds.length}...`;
+
+    try {
+      let kq;
+      if (d.san === 'tiktok') {
+        const res = await fetch(WORKER_URL, {
+          method: 'POST',
+          headers: { 'x-action': 'xac-nhan-don-tiktok', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cacDon: [{ maDon: ma, shopId: d.shopId, packageId: d.packageId }] })
+        });
+        kq = await res.json();
+      } else {
+        const r1 = await fetch(WORKER_URL, {
+          method: 'POST',
+          headers: { 'x-action': 'thong-tin-xac-nhan', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ maDon: ma, shopId: d.shopId })
+        });
+        const tt = await r1.json();
+        const dc = tt?.thongTin?.pickup?.address_list?.[0];
+        const ngay = dc?.time_slot_list?.[0];
+        if (!tt.success || !dc || !ngay) kq = { success: false, error: tt.error || 'Không lấy được lịch lấy hàng' };
+        else {
+          const r2 = await fetch(WORKER_URL, {
+            method: 'POST',
+            headers: { 'x-action': 'xac-nhan-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ maDon: ma, shopId: d.shopId,
+              pickUpTimeId: String(ngay.pickup_time_id), addressId: dc.address_id })
+          });
+          kq = await r2.json();
+        }
+      }
+      if (kq.success) { ok++; vdDaChon.delete(ma); }
+      else { hong++; dsHong.push({ ma, loi: kq.error }); }
+    } catch(e) {
+      hong++; dsHong.push({ ma, loi: e.message });
+    }
+  }
+  if (dsHong.length) console.table(dsHong);
+  return { ok, hong };
+}
+
 window.chuanBiHangLoat = async function() {
   const ds = [...vdDaChon].map(ma =>
     allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean)
@@ -6407,6 +6458,16 @@ window.chuanBiHangLoat = async function() {
       noiDung: `Đang chọn ${san.size} sàn và ${hang.size} hãng vận chuyển.\n\n`
         + `Chuẩn bị hàng loạt chỉ chạy được khi các đơn cùng sàn và cùng hãng.\n\n`
         + `Dùng bộ lọc bên trên để lọc rồi chọn lại.` });
+    return;
+  }
+
+  // Đơn hỏa tốc và đơn thường có khung giờ lấy hàng khác nhau — gộp chung thì
+  // KiotViet áp cùng một ngày cho cả loạt, sai với đơn hỏa tốc.
+  const loaiGiao = new Set(ds.map(d => laHoaToc(d) ? 'hoatoc' : 'thuong'));
+  if (loaiGiao.size > 1) {
+    hienPopup({ loai: 'cho', tieuDe: 'Đừng trộn hỏa tốc',
+      noiDung: 'Đang chọn cả đơn hỏa tốc lẫn đơn thường.\n\n'
+        + 'Hai loại có khung giờ lấy hàng khác nhau — tách ra làm riêng.' });
     return;
   }
 
@@ -6442,12 +6503,22 @@ window.chuanBiHangLoat = async function() {
     if (kq.cachDung) console.log('Cách chạy được:', kq.cachDung);
 
     if (kq.success) {
-      ok = kq.soGui || ds.length;
-      hong = (kq.khongLayDuocLich || []).length;
-      ds.forEach(d => vdDaChon.delete(d.maDonSan || d.maHoaDon));
+      // KiotViet trả về đúng đơn nào xong đơn nào hỏng, dùng luôn thay vì đoán
+      const maOk = new Set(kq.maThanhCong || []);
+      ok = maOk.size || kq.soGui || ds.length;
+      hong = ds.length - ok;
+      // Chỉ bỏ tick đơn đã xong, đơn hỏng giữ lại để xử lý tiếp
+      ds.forEach(d => { if (maOk.has(String(d.maDonSan))) vdDaChon.delete(d.maDonSan || d.maHoaDon); });
+      if (!maOk.size) ds.forEach(d => vdDaChon.delete(d.maDonSan || d.maHoaDon));
+      if ((kq.donThatBai || []).length) console.table(kq.donThatBai);
     } else {
-      hong = ds.length;
-      loiChinh = kq.error || 'Không gửi được';
+      // Gộp hỏng thì chạy lại từng đơn — chậm hơn nhưng biết chính xác đơn nào lỗi,
+      // và không phụ thuộc endpoint gộp có đổi hay không.
+      console.warn('Gộp thất bại, chuyển sang làm từng đơn:', kq.error);
+      if (nut) nut.textContent = 'Đang làm từng đơn...';
+      const r = await chuanBiTungDon(ds, nut);
+      ok = r.ok; hong = r.hong;
+      if (!ok) loiChinh = kq.error || 'Không gửi được';
     }
   } catch(e) {
     hong = ds.length;
@@ -15083,7 +15154,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v425</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v426</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15137,7 +15208,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v425</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v426</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15179,7 +15250,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v425</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v426</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
