@@ -2966,7 +2966,7 @@ function veNutThaoTac(d, maTT) {
              cursor:pointer;white-space:nowrap">${nhan}</button>`;
 
   if (maTT === 'cho_xu_ly' || maTT === 'san_chua_duyet') {
-    if (d.san !== 'shopee' && d.san !== 'tiktok') return '';
+    if (!['shopee', 'tiktok', 'lazada'].includes(d.san)) return '';
     return nut('Chuẩn bị', `xacNhanDon('${ma}')`, '#FEF3C7', '#92400E');
   }
   if (maTT === 'cho_in') return nut('In đơn', `inMotVanDon('${ma}')`, '#EDE9FE', '#6D28D9');
@@ -3142,7 +3142,7 @@ function veDanhSachDon() {
             ${loiHeThong(d) ? `<span style="background:var(--red);color:#fff;padding:2px 7px;
               border-radius:4px;font-size:10px;font-weight:700">LỖI!!!</span>` : ''}
 
-            <span style="font-size:10px;color:#fff;background:${tt.mau};padding:2px 7px;border-radius:4px">${tt.ten}</span>
+            <span style="font-size:10px;color:var(--text2)">${tt.ten}</span>
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
@@ -6308,8 +6308,8 @@ window.dongBoBanOnline = async function(soNgay = 7, soTrangToiDa = 10) {
 window.xacNhanDon = async function(maDon) {
   const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
   if (!d) { showToast('Không tìm thấy đơn', true); return; }
-  // TikTok đi đường riêng: một lần gọi, không có bước chọn ngày lấy hàng
-  if (d.san === 'tiktok') { await xacNhanDonTikTok(d); return; }
+  // TikTok và Lazada đi đường riêng: một lần gọi, không có bước chọn ngày lấy hàng
+  if (d.san === 'tiktok' || d.san === 'lazada') { await chuanBiDonRiengLe(d); return; }
 
   if (d.san !== 'shopee') {
     hienPopup({ loai: 'thuong', maDon,
@@ -6579,12 +6579,12 @@ window.chuanBiHangLoat = async function() {
   const ds = [...vdDaChon].map(ma =>
     allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean)
     .filter(d => !d.maVanDon && d.coHoaDon !== true
-      && (d.san === 'shopee' || d.san === 'tiktok')
+      && (d.san === 'shopee' || d.san === 'tiktok' || d.san === 'lazada')
       && trangThaiHienThi(d) !== 'chua_thanh_toan');
 
   if (!ds.length) {
     hienPopup({ loai: 'thuong', tieuDe: 'Không có đơn nào',
-      noiDung: 'Đơn đã chuẩn bị rồi, hoặc chưa thanh toán, hoặc là đơn Lazada.' });
+      noiDung: 'Đơn đã chuẩn bị rồi hoặc khách chưa thanh toán.' });
     return;
   }
 
@@ -6626,14 +6626,17 @@ window.chuanBiHangLoat = async function() {
   let ok = 0, hong = 0, loiChinh = '';
   try {
     const idToken = await currentUser.getIdToken();
-    const action = sanChon === 'tiktok' ? 'xac-nhan-don-tiktok' : 'chuan-bi-hang-loat-shopee';
+    const action = sanChon === 'tiktok' ? 'xac-nhan-don-tiktok'
+      : sanChon === 'lazada' ? 'chuan-bi-hang-lazada'
+      : 'chuan-bi-hang-loat-shopee';
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         cacDon: ds.map(d => ({
           maDon: d.maDonSan || d.maHoaDon, shopId: d.shopId,
-          packageId: d.packageId || '', tenShop: d.tenShop || ''
+          packageId: d.packageId || '', orderItemIds: d.orderItemIds || [],
+          tenShop: d.tenShop || ''
         }))
       })
     });
@@ -6684,13 +6687,16 @@ window.chuanBiHangLoat = async function() {
 
 // TikTok xác nhận trong MỘT lần gọi, không cần chọn ngày lấy hàng như Shopee.
 // Nhưng cần PackageId — trường này chỉ có sau khi đồng bộ Bán Online.
-async function xacNhanDonTikTok(d) {
+async function chuanBiDonRiengLe(d) {
   const maDon = d.maDonSan || d.maHoaDon;
   const shopId = d.shopId || d.ShopId;
+  const laLazada = d.san === 'lazada';
+  const thieu = !shopId || (laLazada ? !d.orderItemIds?.length : !d.packageId);
 
-  if (!shopId || !d.packageId) {
+  if (thieu) {
     hienPopup({ loai: 'cho', maDon, tieuDe: 'Thiếu dữ liệu',
-      noiDung: 'Đơn chưa có mã kiện hàng.\n\nBấm "Kiểm tra sàn duyệt" để lấy về rồi thử lại.' });
+      noiDung: `Đơn chưa có ${laLazada ? 'mã món hàng' : 'mã kiện hàng'}.\n\n`
+        + 'Bấm "Kiểm tra" để lấy về rồi thử lại.' });
     return;
   }
 
@@ -6706,11 +6712,15 @@ async function xacNhanDonTikTok(d) {
     const idToken = await currentUser.getIdToken();
     const res = await fetch(WORKER_URL, {
       method: 'POST',
-      headers: { 'x-action': 'xac-nhan-don-tiktok', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cacDon: [{ maDon, shopId, packageId: d.packageId, tenShop: d.tenShop || '' }] })
+      headers: {
+        'x-action': laLazada ? 'chuan-bi-hang-lazada' : 'xac-nhan-don-tiktok',
+        'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ cacDon: [{ maDon, shopId,
+        packageId: d.packageId, orderItemIds: d.orderItemIds || [], tenShop: d.tenShop || '' }] })
     });
     const kq = await res.json();
-    console.log('[xác nhận TikTok]', kq);
+    console.log(`[chuẩn bị ${d.san}]`, kq);
 
     if (!kq.success) { await phanLoaiSauKhiLoi(maDon, kq.error); return; }
 
@@ -15247,7 +15257,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v435</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v436</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15301,7 +15311,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v435</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v436</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15343,7 +15353,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v435</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v436</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
