@@ -2588,9 +2588,11 @@ const TRANG_THAI_NOI_BO = {
   // KiotViet đã chốt phiếu đặt (Đang giao / Hoàn thành) nhưng app chưa nhận được
   // hóa đơn — nghĩa là webhook invoice.update rơi mất. Đang giao thì CHẮC CHẮN
   // phải có hóa đơn, nên đây là lỗi thiếu dữ liệu của app, không phải một bước
-  // trong kho. Không đoán bước kho từ phiếu đặt: chỉ nói thật là còn thiếu,
-  // và cho đường đồng bộ lại.
-  thieu_hoa_don:     { ten: 'Thiếu hóa đơn',  mau: '#E11D48', nhom: 'cho' }
+  // trong kho.
+  // Tên hiển thị nói theo VIỆC PHẢI LÀM chứ không theo nguyên nhân kỹ thuật —
+  // nhân viên không cần biết webhook là gì, chỉ cần biết đơn này đang chờ lấy
+  // dữ liệu về. Nguyên nhân in ra Console cho người sửa code.
+  thieu_hoa_don:     { ten: 'Cần đồng bộ',    mau: '#E11D48', nhom: 'cho' }
 };
 
 // Trạng thái lạ (dữ liệu cũ, hoặc worker thêm mã mới mà app chưa cập nhật) vẫn
@@ -2751,6 +2753,10 @@ async function renderDonHangTab() {
   // Hỏi sàn xem có đơn nào vừa được duyệt — chạy NGẦM sau khi đã vẽ xong,
   // để không bắt nhân viên chờ mỗi lần mở tab.
   tuDongBoNeuCu();
+  // Và tự lấy về những đơn KiotViet đã chốt mà app còn thiếu dữ liệu. Gọi riêng
+  // ở đây vì tuDongBoNeuCu có nhịp chờ 5 phút của nó, mở tab lúc đang trong nhịp
+  // đó thì đơn thiếu vẫn phải được vá.
+  tuDongBoDonThieuHoaDon();
 }
 
 // Tải 300 đơn gần nhất thay vì 1000. Nhân viên chỉ nhìn vài chục đơn đầu, mà
@@ -2837,6 +2843,25 @@ function phieuDatDaXong(d) {
   return tt.includes('hoàn thành') || tt.includes('đang giao');
 }
 
+// Bán Online lập chỉ mục không tức thời. Đơn vừa đặt xong chưa chắc đã hiện ở đó,
+// nên chờ đủ số phút này rồi mới dám kết luận "vắng mặt = chưa thanh toán".
+const PHUT_CHO_BAN_ONLINE = 15;
+
+function duTuoiKetLuanChuaTra(d) {
+  const t = ngayCua(d.ngayDat);
+  if (!t) return false;   // không biết đặt lúc nào thì không kết luận
+  return Date.now() - t.getTime() >= PHUT_CHO_BAN_ONLINE * 60000;
+}
+
+// Đơn có nằm trong khoảng ngày mà lần quét vừa rồi đã phủ không. Đơn ngoài khoảng
+// thì vắng mặt là đương nhiên — kết luận từ đó là sai.
+function ngayDatTrongKhoangQuet(d) {
+  if (!khoangQuetBanOnline) return false;
+  const t = ngayCua(d.ngayDat);
+  if (!t) return false;
+  return t.getTime() >= khoangQuetBanOnline.tu && t.getTime() <= khoangQuetBanOnline.den;
+}
+
 function nhomChoCuaDon(d) {
   // Bước 1: phiếu đặt hàng bị hủy — kể cả khi chưa có trạng thái giao từ sàn
   if (phieuDatDaHuy(d)) return 'da_huy';
@@ -2855,12 +2880,20 @@ function nhomChoCuaDon(d) {
   // Bước 3: đơn còn sống, chưa có hóa đơn -> phải đang ở Chờ xử lý của Bán Online.
   // Vắng mặt lúc này nghĩa là khách chưa trả tiền.
   //
-  // CHỈ xét đơn app đã tự nhận là đang chờ (nhomChoTuoc), hoặc đơn đã bấm Chuẩn
-  // bị hàng mà lỗi. Đơn khác thì không đụng — nhiều đơn app chưa biết đã hủy hay
-  // hoàn thành, đối chiếu là gán nhầm hàng loạt.
-  const dangONhomCho = d.nhomChoTruoc === 'san_chua_duyet' || d.nhomChoTruoc === 'chua_thanh_toan';
-  if (daQuetDuBanOnline && maDonBanOnline && (dangONhomCho || d.daThuChuanBi)
-      && !maDonBanOnline.has(String(d.maDonSan))) {
+  // Trước đây chỉ xét đơn app đã tự nhận là đang chờ, hoặc đơn đã bấm Chuẩn bị mà
+  // lỗi — nên đơn chưa thanh toán phải chờ có người bấm Chuẩn bị mới lộ ra. Giờ xét
+  // mọi đơn, nhưng phải đủ BA điều kiện dưới thì kết luận mới đứng vững:
+  //   1. Lần quét vừa rồi phải quét HẾT tab Chờ xử lý (daQuetDuBanOnline).
+  //      Quét thiếu mà kết luận thì đơn nằm ngoài phạm vi bị gán nhầm hàng loạt.
+  //   2. Ngày đặt phải NẰM TRONG khoảng đã quét. Đơn cũ hơn mốc quét thì vắng mặt
+  //      là chuyện đương nhiên, không nói lên điều gì.
+  //   3. Đơn phải đủ tuổi (PHUT_CHO_BAN_ONLINE). Bán Online lập chỉ mục có độ trễ;
+  //      đơn vừa đặt xong chưa kịp hiện, gán ngay là sai — mà gán nhầm đơn ĐÃ trả
+  //      tiền thì nhân viên bỏ qua và trễ hạn xử lý, đắt hơn nhiều so với để sót.
+  if (daQuetDuBanOnline && maDonBanOnline
+      && !maDonBanOnline.has(String(d.maDonSan))
+      && ngayDatTrongKhoangQuet(d)
+      && duTuoiKetLuanChuaTra(d)) {
     return 'chua_thanh_toan';
   }
 
@@ -3424,8 +3457,9 @@ function veDanhSachDon() {
       ${noiDung}
     </div>` : '';
 
-  // Đơn KiotViet đã chốt mà app chưa có hóa đơn = webhook rơi mất. Báo ngay ở đầu
-  // danh sách kèm đường đồng bộ lại, mở sẵn từ ngày của đơn cũ nhất bị thiếu.
+  // Đơn KiotViet đã chốt mà app chưa có hóa đơn. App tự đi lấy về (xem
+  // tuDongBoDonThieuHoaDon), ô này chỉ để nhân viên biết là đang có việc đó —
+  // nói bằng tiếng người, lý do kỹ thuật đã in ra Console.
   const dsThieuHoaDon = allDonHangSan.filter(d => trangThaiHienThi(d) === 'thieu_hoa_don');
   const tuNgayThieu = dsThieuHoaDon.length
     ? ngayYMD(new Date(Math.min(...dsThieuHoaDon
@@ -3440,9 +3474,9 @@ function veDanhSachDon() {
                 gap:8px;align-items:center"
       onclick="moKhungDongBoDon('${tuNgayThieu}')">
       <div style="flex:1">
-        <b style="font-size:13px;color:#E11D48">${dsThieuHoaDon.length} đơn thiếu hóa đơn</b>
+        <b style="font-size:13px;color:#E11D48">Có ${dsThieuHoaDon.length} đơn hàng cần đồng bộ!!!</b>
         <div style="font-size:11px;color:var(--text2);margin-top:2px">
-          KiotViet đã chốt phiếu đặt nhưng app chưa nhận được hóa đơn — bấm để đồng bộ lại</div>
+          App đang tự lấy về — bấm nếu muốn làm ngay</div>
       </div>
       <span style="font-size:11px;color:#E11D48;font-weight:600;white-space:nowrap">Đồng bộ →</span>
     </div>` : ''}
@@ -3457,7 +3491,7 @@ function veDanhSachDon() {
       </div>`)}
 
     ${khoiLoc(`CHƯA XỬ LÝ ĐƯỢC${!mocDongBoGanNhat
-        ? ' · <span style="color:#D97706">bấm Kiểm tra sàn duyệt để lấy dữ liệu</span>' : ''}`, `
+        ? ' · <span style="color:#D97706">bấm Kiểm tra để lấy dữ liệu mới</span>' : ''}`, `
       <div style="display:flex;gap:5px;flex-wrap:wrap">
         ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
       </div>`)}
@@ -3574,6 +3608,75 @@ function veDanhSachDon() {
 // chỉ tổ bấm vào báo lỗi.
 // ==========================================================================
 let dbdDangChay = false;
+
+// ===== TỰ ĐỘNG ĐỒNG BỘ ĐƠN CẦN ĐỒNG BỘ =====
+// Nhân viên không phải hiểu "webhook thất lạc" là gì, cũng không phải nhớ bấm nút.
+// App thấy đơn thiếu dữ liệu thì tự đi lấy; mọi chi tiết kỹ thuật in ra Console.
+let lanTuVaCuoi = 0;
+const PHUT_GIUA_HAI_LAN_TU_VA = 5;
+const SO_NGAY_NHAN_VIEN_VA = 3;   // worker cũng chặn 3 ngày cho vai trò không phải Admin
+
+async function tuDongBoDonThieuHoaDon() {
+  if (!currentUser || dbdDangChay) return 0;
+  if (Date.now() - lanTuVaCuoi < PHUT_GIUA_HAI_LAN_TU_VA * 60000) return 0;
+
+  const thieu = allDonHangSan.filter(d => trangThaiHienThi(d) === 'thieu_hoa_don');
+  if (!thieu.length) return 0;
+  lanTuVaCuoi = Date.now();
+
+  // Khoảng ngày lấy đúng theo các đơn đang thiếu, không quét thừa.
+  const cacMoc = thieu.map(d => ngayCua(d.ngayDat)?.getTime()).filter(Boolean);
+  if (!cacMoc.length) return 0;
+  let tuNgay = ngayYMD(new Date(Math.min(...cacMoc)));
+  const denNgay = ngayYMD(new Date(Math.max(...cacMoc)));
+
+  // Vai trò không phải Admin bị worker chặn 3 ngày — tự cắt sẵn ở đây để biết
+  // trước là lần này chỉ vá được một phần, khỏi tưởng đã xong.
+  const laAdmin = currentUserData?.role === 'admin';
+  const gioiHan = laAdmin ? 60 : SO_NGAY_NHAN_VIEN_VA;
+  const soNgay = Math.round((new Date(denNgay) - new Date(tuNgay)) / 86400000) + 1;
+  const biCat = soNgay > gioiHan;
+  if (biCat) {
+    tuNgay = ngayYMD(new Date(new Date(denNgay).getTime() - (gioiHan - 1) * 86400000));
+  }
+
+  console.log(`[tự vá] ${thieu.length} đơn KiotViet đã chốt mà app chưa có hóa đơn:`,
+    thieu.map(d => d.maDonSan || d.maHoaDon));
+  console.log(`[tự vá] đồng bộ khoảng ${tuNgay} → ${denNgay}`
+    + (biCat ? ` (đã cắt còn ${gioiHan} ngày — vai trò ${currentUserData?.role || '?'})` : ''));
+
+  let tongGhi = 0;
+  try {
+    const idToken = await currentUser.getIdToken();
+    let viTri = 0;
+    for (let vong = 1; vong <= 6; vong++) {
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'dong-bo-don-thieu', 'Authorization': `Bearer ${idToken}`,
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({ tuNgay, denNgay, viTri })
+      });
+      const data = await res.json();
+      console.log(`[tự vá] vòng ${vong}:`, data);
+      if (!data.success) { console.warn('[tự vá] không đồng bộ được:', data.error); break; }
+      tongGhi += data.soDonGhi || 0;
+      if (!data.conNua) break;
+      viTri = data.viTriTiepTheo;
+    }
+  } catch(e) {
+    console.warn('[tự vá] lỗi:', e.message);
+    return 0;
+  }
+
+  if (tongGhi) {
+    await loadDonHangSan();
+    veDanhSachDon();
+    const conThieu = allDonHangSan.filter(d => trangThaiHienThi(d) === 'thieu_hoa_don').length;
+    console.log(`[tự vá] đã cập nhật ${tongGhi} đơn, còn thiếu ${conThieu}`);
+    showToast(`Đã đồng bộ ${tongGhi} đơn hàng`);
+  }
+  return tongGhi;
+}
 
 window.moKhungDongBoDon = function(tuNgayGoiY) {
   const homNay = ngayYMD(new Date());
@@ -6718,6 +6821,9 @@ let mocDongBoGanNhat = 0;
 // nằm trong danh sách = chưa thanh toán".
 let maDonBanOnline = null;   // Set mã đơn Bán Online trả về, dùng để chẩn đoán
 let daQuetDuBanOnline = false;
+// Khoảng ngày mà lần quét vừa rồi đã phủ, dạng mốc thời gian. Đơn nằm ngoài khoảng
+// này thì việc nó vắng mặt không nói lên điều gì — không được kết luận chưa trả tiền.
+let khoangQuetBanOnline = null;   // { tu, den } tính bằng ms
 
 // Nhịp đồng bộ: chỉ gọi khi có thao tác VÀ đã quá số phút này. Không có hẹn giờ
 // chạy nền — không mở app thì không tốn lượt nào.
@@ -6808,11 +6914,20 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
     mocDongBoGanNhat = Date.now();
     maDonBanOnline = boMa;
     daQuetDuBanOnline = quetDu;
+    // Ghi lại khoảng vừa phủ. kol lọc theo NGÀY nên lấy trọn ngày hai đầu, khỏi
+    // hụt đơn đặt lúc rạng sáng hay cuối ngày.
+    const dauNgay = new Date(tu); dauNgay.setHours(0, 0, 0, 0);
+    const cuoiNgay = new Date(den); cuoiNgay.setHours(23, 59, 59, 999);
+    khoangQuetBanOnline = quetDu ? { tu: dauNgay.getTime(), den: cuoiNgay.getTime() } : null;
     if (!quetDu) {
-      console.warn('Quét chưa hết Bán Online — tạm không phân loại "Chưa thanh toán"');
+      console.warn('[Bán Online] Quét chưa hết tab Chờ xử lý — tạm không phân loại "Chưa thanh toán"');
+    } else {
+      console.log(`[Bán Online] Đã quét đủ ${boMa.size} mã, khoảng ${ngay(tu)} → ${ngay(den)}`);
     }
     if (n) { await loadDonHangSan(); }
     veDanhSachDon();   // vẽ lại kể cả khi n=0, vì mốc đổi làm phân loại đổi theo
+    // Vá nốt đơn KiotViet đã chốt mà app chưa có hóa đơn — chạy ngầm, không chặn
+    tuDongBoDonThieuHoaDon();
     return n;
   } catch(e) { console.warn('Không tự đồng bộ được:', e.message); return 0; }
 }
@@ -6823,7 +6938,7 @@ window.dongBoNgay = async function() {
   lanDongBoCuoi = 0;   // ép chạy dù vừa chạy xong
   const n = await tuDongBoNeuCu(0);
   showToast(n ? `Đã cập nhật ${n} đơn` : 'Không có đơn nào đổi trạng thái');
-  if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra sàn duyệt'; }
+  if (nut) { nut.disabled = false; nut.textContent = '🔄 Kiểm tra'; }
 };
 
 // Xem kol trả mã đơn Lazada dạng nào — có đuôi kiện (.1) hay không.
@@ -16051,7 +16166,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v446</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v447</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16105,7 +16220,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v446</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v447</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16147,7 +16262,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v446</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v447</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
