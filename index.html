@@ -2583,7 +2583,14 @@ const TRANG_THAI_NOI_BO = {
   // Sàn còn đang xét, chưa cho bấm Chuẩn bị hàng. Worker ghi đúng mã này vào
   // trường nhomCho, và trangThaiHienThi trả nó ra — thiếu ở bảng này thì thẻ đơn
   // không có tên lẫn màu, và cả danh sách vỡ ngay khi gặp một đơn như vậy.
-  san_chua_duyet:    { ten: 'Sàn chưa duyệt', mau: '#A855F7', nhom: 'cho' }
+  san_chua_duyet:    { ten: 'Sàn chưa duyệt', mau: '#A855F7', nhom: 'cho' },
+
+  // KiotViet đã chốt phiếu đặt (Đang giao / Hoàn thành) nhưng app chưa nhận được
+  // hóa đơn — nghĩa là webhook invoice.update rơi mất. Đang giao thì CHẮC CHẮN
+  // phải có hóa đơn, nên đây là lỗi thiếu dữ liệu của app, không phải một bước
+  // trong kho. Không đoán bước kho từ phiếu đặt: chỉ nói thật là còn thiếu,
+  // và cho đường đồng bộ lại.
+  thieu_hoa_don:     { ten: 'Thiếu hóa đơn',  mau: '#E11D48', nhom: 'cho' }
 };
 
 // Trạng thái lạ (dữ liệu cũ, hoặc worker thêm mã mới mà app chưa cập nhật) vẫn
@@ -2708,6 +2715,13 @@ function trangThaiHienThi(d) {
   if (daChuanBiHang) return 'cho_in';   // có hóa đơn nhưng chưa kịp đồng bộ mã
   // App vừa bấm chuẩn bị hàng thành công — sàn nhận rồi, chỉ chưa kịp đẩy dữ liệu về
   if (d.daChuanBiHang === true) return 'cho_in';
+
+  // Phiếu đặt bên KiotViet đã Đang giao / Hoàn thành mà app không có một dấu vết
+  // hóa đơn nào: hóa đơn CHẮC CHẮN tồn tại bên KiotViet, app chỉ chưa nhận được.
+  // Trước đây rơi thẳng xuống "Chờ xử lý" — đơn shipper đã cầm đi vẫn nằm trong
+  // việc phải làm của kho, và không có gì báo là dữ liệu đang thiếu.
+  if (phieuDatDaXong(d)) return 'thieu_hoa_don';
+
   return 'cho_xu_ly';
 }
 
@@ -3054,6 +3068,11 @@ function veNutThaoTac(d, maTT) {
   if (maTT === 'cho_xu_ly' || maTT === 'san_chua_duyet') {
     if (!['shopee', 'tiktok', 'lazada'].includes(d.san)) return '';
     return nut('Chuẩn bị', `xacNhanDon('${ma}')`, '#FEF3C7', '#92400E');
+  }
+  if (maTT === 'thieu_hoa_don') {
+    // Mở sẵn khoảng ngày từ ngày đặt của chính đơn này — khỏi phải nhớ đơn từ hôm nào
+    const ngay = ngayYMD(ngayCua(d.ngayDat)) || '';
+    return nut('Đồng bộ', `moKhungDongBoDon('${ngay}')`, '#FFE4E6', '#BE123C');
   }
   if (maTT === 'cho_in') return nut('In đơn', `inMotVanDon('${ma}')`, '#EDE9FE', '#6D28D9');
   if (maTT === 'cho_dong_goi') return nut('In lại', `inMotVanDon('${ma}')`, 'var(--bg)', 'var(--text2)');
@@ -3405,8 +3424,28 @@ function veDanhSachDon() {
       ${noiDung}
     </div>` : '';
 
+  // Đơn KiotViet đã chốt mà app chưa có hóa đơn = webhook rơi mất. Báo ngay ở đầu
+  // danh sách kèm đường đồng bộ lại, mở sẵn từ ngày của đơn cũ nhất bị thiếu.
+  const dsThieuHoaDon = allDonHangSan.filter(d => trangThaiHienThi(d) === 'thieu_hoa_don');
+  const tuNgayThieu = dsThieuHoaDon.length
+    ? ngayYMD(new Date(Math.min(...dsThieuHoaDon
+        .map(d => ngayCua(d.ngayDat)?.getTime() || Date.now()))))
+    : '';
+
   el.innerHTML = `
     ${veThanhTabDon()}
+    ${dsThieuHoaDon.length ? `
+    <div style="background:#FFF1F2;border:1.5px solid #E11D48;border-radius:8px;
+                padding:9px 11px;margin-bottom:8px;cursor:pointer;display:flex;
+                gap:8px;align-items:center"
+      onclick="moKhungDongBoDon('${tuNgayThieu}')">
+      <div style="flex:1">
+        <b style="font-size:13px;color:#E11D48">${dsThieuHoaDon.length} đơn thiếu hóa đơn</b>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">
+          KiotViet đã chốt phiếu đặt nhưng app chưa nhận được hóa đơn — bấm để đồng bộ lại</div>
+      </div>
+      <span style="font-size:11px;color:#E11D48;font-weight:600;white-space:nowrap">Đồng bộ →</span>
+    </div>` : ''}
     ${huyDangGiao ? oCanhBao('dang_giao', huyDangGiao) : ''}
     ${huySauDongGoi ? oCanhBao('sau_dong_goi', huySauDongGoi) : ''}
     ${huySauIn ? oCanhBao('sau_in', huySauIn) : ''}
@@ -3433,6 +3472,8 @@ function veDanhSachDon() {
       <span style="font-size:11px;color:var(--text2);white-space:nowrap">${nhanLanDongBo()}</span>
       <button class="btn-xs" id="nut-dong-bo-san" style="white-space:nowrap"
         onclick="dongBoNgay()">🔄 Kiểm tra</button>
+      <button class="btn-xs" style="white-space:nowrap"
+        onclick="moKhungDongBoDon()" title="Kéo lại đơn từ KiotViet theo khoảng ngày">⤓ Đồng bộ</button>
     </div>
 
     ${trang.length ? veThanhChon(trang) : ''}
@@ -3523,6 +3564,180 @@ function veDanhSachDon() {
       <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage>=tongTrang?'disabled':''} onclick="doiTrangDon(${donPage+1})">→</button>
     </div>` : '';
 }
+
+// ==========================================================================
+// ===== ĐỒNG BỘ ĐƠN THEO KHOẢNG NGÀY =====
+// Đường vá khi webhook invoice.update rơi mất đơn: chọn khoảng ngày rồi kéo lại
+// toàn bộ hóa đơn và phiếu đặt trong khoảng đó từ KiotViet.
+// Worker chỉ quét được ~1000 hóa đơn mỗi lượt nên phải gọi lặp theo viTriTiepTheo.
+// Chỉ Admin — worker chặn bằng xacMinhNguoiGoiLaAdmin, hiện nút cho người khác
+// chỉ tổ bấm vào báo lỗi.
+// ==========================================================================
+let dbdDangChay = false;
+
+window.moKhungDongBoDon = function(tuNgayGoiY) {
+  const homNay = ngayYMD(new Date());
+  const macDinh = tuNgayGoiY || ngayYMD(new Date(Date.now() - 7 * 86400000));
+  let m = document.getElementById('dongbo-don-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'dongbo-don-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1400;'
+      + 'display:flex;align-items:flex-end;justify-content:center';
+    m.onclick = (e) => { if (e.target === m && !dbdDangChay) window.dongKhungDongBoDon(); };
+    document.body.appendChild(m);
+  }
+  const laAdmin = currentUserData?.role === 'admin';
+
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:520px;max-height:88vh;
+                border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+      <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;
+                  justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <b style="font-size:15px">Đồng bộ đơn theo khoảng ngày</b>
+          <div style="font-size:12px;color:var(--text2)">
+            Kéo lại hóa đơn và phiếu đặt từ KiotViet cho mọi đơn đặt trong khoảng này</div>
+        </div>
+        <button class="btn-outline" style="width:auto;padding:6px 12px"
+          onclick="dongKhungDongBoDon()">✕</button>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:14px">
+        ${!laAdmin ? `<p class="info-note" style="color:#B45309">
+          Chỉ Admin đồng bộ được — KiotViet chỉ cấp quyền kéo dữ liệu cho tài khoản Admin.
+          Báo Admin chạy giúp, hoặc gửi khoảng ngày cần đồng bộ.</p>` : ''}
+
+        <div style="display:flex;gap:10px;margin-bottom:10px">
+          <label style="flex:1;font-size:12px;color:var(--text2)">Từ ngày
+            <input type="date" id="dbd-tu" value="${macDinh}" max="${homNay}"
+              style="width:100%;margin-top:4px;padding:9px;border:1.5px solid var(--border);
+                     border-radius:8px;font-size:14px"></label>
+          <label style="flex:1;font-size:12px;color:var(--text2)">Đến ngày
+            <input type="date" id="dbd-den" value="${homNay}" max="${homNay}"
+              style="width:100%;margin-top:4px;padding:9px;border:1.5px solid var(--border);
+                     border-radius:8px;font-size:14px"></label>
+        </div>
+
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px">
+          ${[['Hôm nay', 0], ['3 ngày', 3], ['7 ngày', 7], ['30 ngày', 30]].map(([n, s]) =>
+            `<button class="btn-xs" onclick="dbdChonNhanh(${s})">${n}</button>`).join('')}
+        </div>
+
+        <label style="display:flex;align-items:center;gap:7px;font-size:13px;margin-bottom:12px;cursor:pointer">
+          <input type="checkbox" id="dbd-phieu-dat" checked>
+          Kéo cả phiếu đặt (đơn khách vừa đặt, chưa lên hóa đơn)
+        </label>
+
+        <div id="dbd-tien-trinh" style="font-size:12px;color:var(--text2);
+             white-space:pre-wrap;line-height:1.6;max-height:34vh;overflow-y:auto"></div>
+      </div>
+
+      <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg)">
+        <button class="btn-g" id="dbd-nut" style="width:100%;padding:13px"
+          ${laAdmin ? '' : 'disabled'} onclick="chayDongBoDon()">⤓ Đồng bộ khoảng ngày này</button>
+      </div>
+    </div>`;
+};
+
+window.dongKhungDongBoDon = function() {
+  if (dbdDangChay) return;
+  document.getElementById('dongbo-don-modal')?.remove();
+};
+
+window.dbdChonNhanh = function(soNgay) {
+  const den = new Date();
+  document.getElementById('dbd-tu').value = ngayYMD(new Date(den.getTime() - soNgay * 86400000));
+  document.getElementById('dbd-den').value = ngayYMD(den);
+};
+
+function dbdGhi(dong) {
+  const el = document.getElementById('dbd-tien-trinh');
+  if (!el) return;
+  el.textContent += (el.textContent ? '\n' : '') + dong;
+  el.scrollTop = el.scrollHeight;
+}
+
+window.chayDongBoDon = async function() {
+  if (dbdDangChay || !currentUser) return;
+  const tuNgay = document.getElementById('dbd-tu')?.value;
+  const denNgay = document.getElementById('dbd-den')?.value;
+  if (!tuNgay || !denNgay) { alert('Chọn đủ từ ngày và đến ngày'); return; }
+  if (tuNgay > denNgay) { alert('"Từ ngày" phải trước "Đến ngày"'); return; }
+  const keoPhieuDat = document.getElementById('dbd-phieu-dat')?.checked !== false;
+
+  const soNgay = Math.round((new Date(denNgay) - new Date(tuNgay)) / 86400000) + 1;
+  if (soNgay > 60 && !confirm(`Khoảng ${soNgay} ngày là khá dài, có thể mất vài phút và
+tốn nhiều lượt gọi KiotViet. Vẫn chạy?`)) return;
+
+  dbdDangChay = true;
+  const nut = document.getElementById('dbd-nut');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang đồng bộ...'; }
+  const el = document.getElementById('dbd-tien-trinh');
+  if (el) el.textContent = '';
+  dbdGhi(`Khoảng: ${tuNgay} → ${denNgay} (${soNgay} ngày)`);
+
+  let tongGhi = 0, tongMoi = 0, tongQuet = 0, soPhieuDat = 0;
+  const gomTheoSan = {};
+  const MAX_VONG = 40;   // chặn trên, tránh lặp vô hạn nếu API trả dữ liệu lạ
+
+  try {
+    const idToken = await currentUser.getIdToken();
+    let viTri = 0;
+    for (let vong = 1; vong <= MAX_VONG; vong++) {
+      dbdGhi(`Vòng ${vong} — đã quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn, ghi ${tongGhi} đơn sàn...`);
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'keo-don-hang-san', 'Authorization': `Bearer ${idToken}`,
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({ tuNgay, denNgay, san: 'all', viTri })
+      });
+      const data = await res.json();
+      console.log(`[đồng bộ khoảng ngày] vòng ${vong}:`, data);
+      if (!data.success) { dbdGhi('LỖI: ' + data.error); break; }
+
+      tongGhi += data.soDonGhi || 0;
+      tongMoi += data.donMoi || 0;
+      tongQuet += data.tongQuet || 0;
+      Object.entries(data.theoSan || {}).forEach(([s, n]) => { gomTheoSan[s] = (gomTheoSan[s] || 0) + n; });
+
+      if (!data.conNua) break;
+      viTri = data.viTriTiepTheo;
+      if (vong === MAX_VONG) dbdGhi('Đã chạm giới hạn 40 vòng — thu hẹp khoảng ngày rồi chạy tiếp.');
+    }
+
+    if (keoPhieuDat) {
+      dbdGhi('Đang kéo phiếu đặt (đơn chưa lên hóa đơn)...');
+      const r = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'x-action': 'keo-phieu-dat-hang', 'Authorization': `Bearer ${idToken}`,
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({ tuNgay, denNgay })
+      });
+      const d = await r.json();
+      console.log('[đồng bộ khoảng ngày] phiếu đặt:', d);
+      if (d.success) soPhieuDat = d.soGhi || 0;
+      else dbdGhi('Không kéo được phiếu đặt: ' + d.error);
+    }
+
+    const moTaSan = Object.entries(gomTheoSan)
+      .map(([s, n]) => `${TEN_SAN[s] || s}: ${n}`).join(', ');
+    dbdGhi(`\nXONG — quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn, cập nhật ${tongGhi} đơn sàn`
+      + (tongMoi ? ` (${tongMoi} đơn mới)` : '')
+      + (moTaSan ? `\n${moTaSan}` : '')
+      + (soPhieuDat ? `\nPhiếu đặt: ${soPhieuDat}` : ''));
+
+    await loadDonHangSan();
+    veDanhSachDon();
+    showToast(`Đồng bộ xong: ${tongGhi} đơn`);
+  } catch(e) {
+    dbdGhi('LỖI: ' + e.message);
+  } finally {
+    dbdDangChay = false;
+    const n2 = document.getElementById('dbd-nut');
+    if (n2) { n2.disabled = false; n2.textContent = '⤓ Đồng bộ khoảng ngày này'; }
+  }
+};
 
 window.keoDonVe = async function() {
   if (!currentUser) return;
@@ -15836,7 +16051,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v445</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v446</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15890,7 +16105,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v445</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v446</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15932,7 +16147,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v445</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v446</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
