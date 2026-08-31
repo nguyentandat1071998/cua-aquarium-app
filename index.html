@@ -2540,6 +2540,13 @@ let donTimKiem = '';
 let donPage = 1;
 const DON_MOI_TRANG = 25;
 
+// Hai tab lớn của màn hình Đơn hàng:
+//   xuly    — tiến trình bình thường (mặc định, việc hằng ngày)
+//   hoantra — hàng quay về kho, hai mục con: Giao thất bại · Trả hàng/Hoàn tiền
+let donTabChinh = 'xuly';
+let donTabHoan = 'giao_that_bai';
+let donHoanHienDaXuLy = false;   // mặc định chỉ hiện việc còn phải làm
+
 // HAI TRỤC TRẠNG THÁI:
 //   1. Nội bộ (app tự quản): chỉ còn đúng MỘT bước là "đã đóng gói" — do nhân viên quét.
 //   2. Giao hàng (KiotViet đồng bộ từ sàn): Chờ xử lý -> Đang giao -> Đã giao / Hủy / Trả hàng
@@ -2572,8 +2579,31 @@ const TRANG_THAI_NOI_BO = {
 
   // Chưa xử lý được, không phải việc của kho
   cho_dieu_phoi:     { ten: 'Chờ điều phối',  mau: '#0EA5E9', nhom: 'cho' },
-  chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' }
+  chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' },
+  // Sàn còn đang xét, chưa cho bấm Chuẩn bị hàng. Worker ghi đúng mã này vào
+  // trường nhomCho, và trangThaiHienThi trả nó ra — thiếu ở bảng này thì thẻ đơn
+  // không có tên lẫn màu, và cả danh sách vỡ ngay khi gặp một đơn như vậy.
+  san_chua_duyet:    { ten: 'Sàn chưa duyệt', mau: '#A855F7', nhom: 'cho' }
 };
+
+// Trạng thái lạ (dữ liệu cũ, hoặc worker thêm mã mới mà app chưa cập nhật) vẫn
+// phải vẽ được — thà hiện mã thô còn hơn vỡ cả danh sách.
+const TRANG_THAI_LA = { ten: '(không rõ)', mau: 'var(--text2)', nhom: 'kho' };
+function moTaTrangThai(maTT) {
+  return TRANG_THAI_NOI_BO[maTT] || { ...TRANG_THAI_LA, ten: maTT || '(không rõ)' };
+}
+
+// Đổi giá trị thời gian của Firestore (Timestamp) hay chuỗi ISO về Date.
+// Trả null nếu không đọc được, để nơi gọi tự quyết định hiển thị gì.
+function ngayCua(v) {
+  if (!v) return null;
+  const d = v?.toDate ? v.toDate() : new Date(v);
+  return isNaN(d?.getTime()) ? null : d;
+}
+function ngayYMD(d) {
+  if (!d) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // Đơn hủy có cần lấy lại hàng không — dùng cho ô cảnh báo, không phải trạng thái
 function mucDoHuy(d) {
@@ -2583,6 +2613,53 @@ function mucDoHuy(d) {
   if (d.daInVanDon === true) return 'sau_in';         // đã in tem
   return null;
 }
+
+// Ba mức hủy, mỗi mức một việc phải làm khác nhau. Gom vào một bảng để ô cảnh
+// báo, cửa sổ chi tiết và nút thao tác dùng chung một cách gọi tên.
+const MUC_HUY = {
+  dang_giao:    { ten: 'Hủy khi đang giao',      mau: '#DC2626', nen: '#FEF2F2',
+                  viec: 'Liên hệ đơn vị vận chuyển lấy lại hàng',
+                  nutXong: '✓ Đã nhận lại từ shipper' },
+  sau_dong_goi: { ten: 'Hủy sau khi đóng gói',   mau: '#EA580C', nen: '#FFFBEB',
+                  viec: 'Kiện hàng còn trong kho — cần tháo ra nhập lại',
+                  nutXong: '✓ Đã tháo kiện, nhập lại' },
+  sau_in:       { ten: 'Hủy sau khi in tem',     mau: '#D97706', nen: '#FFFBEB',
+                  viec: 'Bỏ tem đã in, hàng chưa đóng gói',
+                  nutXong: '✓ Đã bỏ tem' }
+};
+
+// ===== ĐƠN HOÀN TRẢ =====
+// Hai đường hàng quay về kho, khác nhau ở chỗ khách đã cầm hàng hay chưa:
+//   Giao thất bại      — shipper không giao được, hàng chuyển hoàn (mã giao 4, 5)
+//   Trả hàng/Hoàn tiền — khách đã nhận rồi trả lại, KiotViet ghi returnQuantity
+// Cả hai đều lấy từ dữ liệu đã đồng bộ sẵn, không hỏi thêm KiotViet.
+function laGiaoThatBai(d) {
+  const ma = Number(d.trangThaiGiaoMa) || 0;
+  return ma === MA_GIAO.DANG_HOAN || ma === MA_GIAO.DA_HOAN;
+}
+function soMonTraCua(d) {
+  return (d.chiTiet || []).reduce((s, c) => s + (Number(c.soLuongTra) || 0), 0);
+}
+function tienTraCua(d) {
+  if (Number(d.tienHangTra) > 0) return Number(d.tienHangTra);
+  // Dữ liệu cũ chưa có tienHangTra — tính lại từ từng dòng hàng
+  return (d.chiTiet || []).reduce((s, c) => {
+    const sl = Number(c.soLuong) || 0, tra = Number(c.soLuongTra) || 0;
+    return s + (sl > 0 ? (Number(c.thanhTien) || 0) / sl * tra : 0);
+  }, 0);
+}
+function laTraHangHoanTien(d) {
+  return soMonTraCua(d) > 0 || Number(d.tienHangTra) > 0;
+}
+// Đơn vừa chuyển hoàn vừa có dòng trả thì xếp vào Giao thất bại — việc phải làm
+// trước mắt là nhận kiện hàng về, chuyện hoàn tiền tính sau.
+function loaiHoanTra(d) {
+  if (laGiaoThatBai(d)) return 'giao_that_bai';
+  if (laTraHangHoanTien(d)) return 'tra_hang';
+  return null;
+}
+// Hàng hoàn đã nhập lại kho chưa. Dùng chung một cờ cho cả hai mục con.
+function daNhapLaiKho(d) { return !!d.daNhapLaiKho; }
 
 
 // Mã trạng thái giao hàng của KiotViet (theo tài liệu chính thức):
@@ -3022,9 +3099,249 @@ function veThanhChon(trang) {
     </div>`;
 }
 
+// Thanh hai tab lớn. Đếm trên TOÀN BỘ đơn tải về, không theo bộ lọc đang chọn —
+// con số này là để biết bên kia còn việc hay không, lọc mà giấu đi thì vô nghĩa.
+function veThanhTabDon() {
+  const conPhaiNhap = allDonHangSan.filter(d => loaiHoanTra(d) && !daNhapLaiKho(d)).length;
+  const nut = (ma, nhan, so, mau) => {
+    const chon = donTabChinh === ma;
+    return `<button onclick="doiTabDon('${ma}')"
+      style="flex:1;border:none;border-bottom:2.5px solid ${chon ? mau : 'transparent'};
+             background:none;padding:10px 6px;font-size:13px;cursor:pointer;
+             color:${chon ? mau : 'var(--text2)'};font-weight:${chon ? '700' : '500'}">
+      ${nhan}${so ? ` <span style="background:${chon ? mau : 'var(--text2)'};color:#fff;
+        border-radius:9px;padding:1px 7px;font-size:11px">${so}</span>` : ''}</button>`;
+  };
+  return `<div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:10px">
+    ${nut('xuly', 'Xử lý đơn', 0, 'var(--green)')}
+    ${nut('hoantra', 'Đơn hoàn trả', conPhaiNhap, '#EA580C')}
+  </div>`;
+}
+
+window.doiTabDon = function(t) {
+  donTabChinh = t;
+  donPage = 1;
+  vdDaChon.clear();
+  veDanhSachDon();
+};
+
+window.doiTabHoan = function(t) {
+  donTabHoan = t;
+  donPage = 1;
+  veDanhSachDon();
+};
+
+window.doiHienHoanDaXuLy = function(v) {
+  donHoanHienDaXuLy = !!v;
+  donPage = 1;
+  veDanhSachDon();
+};
+
+// Lọc chung cho tab hoàn trả: sàn, đơn vị vận chuyển và ô tìm kiếm vẫn có tác
+// dụng, chỉ thay bộ lọc trạng thái bằng loại hoàn trả.
+function locDonHoanTra() {
+  const tu = donTimKiem.trim().toLowerCase();
+  return allDonHangSan.filter(d => {
+    if (loaiHoanTra(d) !== donTabHoan) return false;
+    if (!donHoanHienDaXuLy && daNhapLaiKho(d)) return false;
+    if (donFilterSan !== 'all' && d.san !== donFilterSan) return false;
+    if (donFilterVanChuyen !== 'all'
+      && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
+    if (tu && !(String(d.maHoaDon || '').toLowerCase().includes(tu)
+      || String(d.maDonSan || '').toLowerCase().includes(tu)
+      || String(d.maVanDon || '').toLowerCase().includes(tu)
+      || (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu)))) return false;
+    return true;
+  });
+}
+
+// Đánh dấu hàng hoàn đã nhập lại kho. Không tự cộng tồn — KiotViet mới là nơi
+// giữ tồn thật, app chỉ ghi lại ai đã kiểm và lúc nào, để đối soát khi lệch.
+window.doiNhapLaiKho = async function(idDon, giaTri) {
+  const d = allDonHangSan.find(x => x.id === idDon);
+  if (!d) return;
+  try {
+    await updateDoc(doc(db, 'don_hang_san', idDon), {
+      daNhapLaiKho: giaTri,
+      nhapLaiKhoLuc: giaTri ? serverTimestamp() : null,
+      nguoiNhapLaiKho: giaTri ? (currentUserData?.ten || currentUser?.email || '') : ''
+    });
+  } catch(e) {
+    alert('Không ghi được: ' + e.message
+      + '\n\n(Chỉ quản lý mới đánh dấu được hàng hoàn đã nhập kho)');
+    return;
+  }
+  d.daNhapLaiKho = giaTri;
+  d.nhapLaiKhoLuc = giaTri ? new Date() : null;
+  showToast(giaTri ? 'Đã đánh dấu nhập lại kho' : 'Đã bỏ đánh dấu');
+  veDanhSachDon();
+};
+
+// Bộ lọc sàn riêng cho tab hoàn trả. Không dùng lại veLocSan() vì hàm đó đếm
+// theo bộ lọc trạng thái của tab Xử lý đơn — sang đây con số sẽ sai.
+function veLocSanHoan() {
+  const nen = allDonHangSan.filter(d =>
+    loaiHoanTra(d) === donTabHoan && (donHoanHienDaXuLy || !daNhapLaiKho(d)));
+  const dem = new Map();
+  for (const d of nen) if (d.san) dem.set(d.san, (dem.get(d.san) || 0) + 1);
+  const moiSan = [...dem.keys()];
+  if (moiSan.length < 2) return '';   // một sàn thì khỏi lọc
+
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap">
+    ${nutLoc('all', 'Tất cả', nen.length, donFilterSan === 'all', 'doiFilterDonSan')}
+    ${moiSan.map(k => nutLoc(k, TEN_SAN[k] || k, dem.get(k) || 0,
+      donFilterSan === k, 'doiFilterDonSan', veLogoSan(k, 15))).join('')}
+  </div>`;
+}
+
+// Vẽ lại cả khối là mất con trỏ đang gõ trong ô tìm kiếm. Trả lại tiêu điểm và
+// đặt con trỏ ở cuối để gõ tiếp liền mạch.
+function giuTieuDiemTimKiem(dangGo) {
+  if (!dangGo) return;
+  const o = document.getElementById('don-timkiem');
+  if (!o) return;
+  o.focus();
+  const n = o.value.length;
+  try { o.setSelectionRange(n, n); } catch(e) {}
+}
+
+function veDanhSachHoanTra(el) {
+  const dangGoTimKiem = document.activeElement?.id === 'don-timkiem';
+  const conLai = (loai) => allDonHangSan.filter(d =>
+    loaiHoanTra(d) === loai && !daNhapLaiKho(d)).length;
+  const nutCon = (ma, nhan, mau) => {
+    const chon = donTabHoan === ma;
+    const so = conLai(ma);
+    return `<button onclick="doiTabHoan('${ma}')"
+      style="border:1.5px solid ${chon ? mau : 'var(--border)'};border-radius:6px;
+             padding:7px 12px;font-size:12px;white-space:nowrap;
+             background:${chon ? mau : '#fff'};color:${chon ? '#fff' : 'var(--text)'};
+             font-weight:${chon ? '600' : '400'}">${nhan} (${so})</button>`;
+  };
+
+  const ds = locDonHoanTra().sort((a, b) => {
+    const ta = ngayCua(a.ngayDat)?.getTime() || 0;
+    const tb = ngayCua(b.ngayDat)?.getTime() || 0;
+    return tb - ta;
+  });
+  const tongTrang = Math.max(1, Math.ceil(ds.length / DON_MOI_TRANG));
+  if (donPage > tongTrang) donPage = tongTrang;
+  const trang = ds.slice((donPage - 1) * DON_MOI_TRANG, donPage * DON_MOI_TRANG);
+
+  const moTaMuc = donTabHoan === 'giao_that_bai'
+    ? 'Shipper không giao được, hàng đang hoặc đã chuyển hoàn về kho. Nhận đủ kiện rồi bấm đánh dấu.'
+    : 'Khách đã nhận hàng rồi trả lại một phần hoặc toàn bộ. Kiểm hàng, nhập lại kho rồi bấm đánh dấu.';
+
+  el.innerHTML = `
+    ${veThanhTabDon()}
+    <div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
+      <div style="font-size:10px;color:var(--text2);margin-bottom:5px">LOẠI HOÀN TRẢ</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${nutCon('giao_that_bai', 'Giao thất bại', '#EA580C')}
+        ${nutCon('tra_hang', 'Trả hàng/Hoàn tiền', '#9333EA')}
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:7px">${moTaMuc}</div>
+    </div>
+
+    ${(() => { const s = veLocSanHoan(); return s
+      ? `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
+           <div style="font-size:10px;color:var(--text2);margin-bottom:5px">SÀN</div>${s}</div>`
+      : ''; })()}
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng..."
+        value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)"
+        style="flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;
+                    color:var(--text2);white-space:nowrap;cursor:pointer">
+        <input type="checkbox" ${donHoanHienDaXuLy ? 'checked' : ''}
+          onchange="doiHienHoanDaXuLy(this.checked)"> Hiện cả đã xử lý
+      </label>
+    </div>
+
+    <div id="don-list"></div>
+    <div id="don-phantrang"></div>`;
+  giuTieuDiemTimKiem(dangGoTimKiem);
+
+  const listEl = document.getElementById('don-list');
+  if (!ds.length) {
+    listEl.innerHTML = `<p class="info-note">${donHoanHienDaXuLy
+      ? 'Không có đơn hoàn trả nào khớp bộ lọc.'
+      : 'Không còn đơn hoàn trả nào phải xử lý. Tick "Hiện cả đã xử lý" để xem lịch sử.'}</p>`;
+    document.getElementById('don-phantrang').innerHTML = '';
+    return;
+  }
+
+  listEl.innerHTML = trang.map(d => {
+    const xong = daNhapLaiKho(d);
+    const mau = donTabHoan === 'giao_that_bai' ? '#EA580C' : '#9333EA';
+    const ngay = ngayCua(d.ngayDat);
+    const gio = ngay ? ngay.toLocaleString('vi-VN',
+      { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
+    const lucXong = ngayCua(d.nhapLaiKhoLuc);
+    const soTra = soMonTraCua(d);
+    const tienTra = Math.round(tienTraCua(d));
+
+    return `
+    <div style="border:1px solid ${xong ? 'var(--border)' : mau};border-left:3px solid ${mau};
+      border-radius:8px;padding:10px 12px;margin-bottom:8px;background:${xong ? '#fff' : '#FFFBEB'}">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            ${veNhanSan(d.san)}
+            <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
+            <span style="font-size:10px;color:${mau};font-weight:600">
+              ${escHtml(moTaTrangThai(trangThaiHienThi(d)).ten)}</span>
+            ${xong ? `<span style="font-size:10px;color:#fff;background:#16A34A;
+              padding:2px 7px;border-radius:4px">✓ Đã nhập lại kho</span>` : ''}
+          </div>
+          <div style="font-size:11px;color:var(--text2);margin-top:3px">
+            ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${
+              d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
+          </div>
+          ${soTra ? `<div style="font-size:11px;color:#9333EA;margin-top:2px">
+            ↩ Khách trả <b>${soTra}</b> món · hoàn <b>${fmt(tienTra)}đ</b></div>` : ''}
+          ${xong && lucXong ? `<div style="font-size:11px;color:#16A34A;margin-top:2px">
+            Nhập lại lúc ${lucXong.toLocaleString('vi-VN',
+              { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' })}${
+              d.nguoiNhapLaiKho ? ` · ${escHtml(d.nguoiNhapLaiKho)}` : ''}</div>` : ''}
+          <div style="font-size:12px;margin-top:4px">
+            ${(d.chiTiet || []).slice(0, 4).map(c =>
+              `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}${
+                Number(c.soLuongTra) ? ` (trả ${c.soLuongTra})` : ''}</span>`).join(' · ')}
+            ${(d.chiTiet || []).length > 4
+              ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 4} món</span>` : ''}
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <b style="font-size:14px">${fmt(d.tongTien || 0)}đ</b>
+        </div>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
+                  display:flex;gap:8px;align-items:center;justify-content:flex-end">
+        <button class="btn-xs" style="background:${xong ? '#FEE2E2' : '#16A34A'};
+          color:${xong ? '#DC2626' : '#fff'}"
+          onclick="doiNhapLaiKho('${escHtml(d.id)}', ${!xong})">
+          ${xong ? 'Bỏ đánh dấu' : '✓ Đã nhập lại kho'}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('don-phantrang').innerHTML = tongTrang > 1 ? `
+    <div style="display:flex;gap:6px;align-items:center;justify-content:center;margin:12px 0">
+      <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage<=1?'disabled':''}
+        onclick="doiTrangDon(${donPage-1})">←</button>
+      <span style="font-size:13px;color:var(--text2)">Trang ${donPage}/${tongTrang} · ${ds.length} đơn</span>
+      <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage>=tongTrang?'disabled':''}
+        onclick="doiTrangDon(${donPage+1})">→</button>
+    </div>` : '';
+}
+
 function veDanhSachDon() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
+  if (donTabChinh === 'hoantra') { veDanhSachHoanTra(el); return; }
+  const dangGoTimKiem = document.activeElement?.id === 'don-timkiem';
   const ds = locDon();
   // Đếm trên tập ĐÃ LỌC sàn và vận chuyển, không phải toàn bộ đơn — chọn Shopee
   // mà số vẫn tính cả TikTok thì nhìn vào không biết còn bao nhiêu việc phải làm.
@@ -3056,20 +3373,31 @@ function veDanhSachDon() {
   const nhomCho = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'cho');
   const nhomCanhBao = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'canh_bao');
   const nhomSan = Object.entries(TRANG_THAI_NOI_BO).filter(([,v]) => v.nhom === 'san');
-  // Đơn hủy cần lấy lại hàng — báo bằng ô cảnh báo chứ không thành trạng thái riêng
-  const huySauIn = allDonHangSan.filter(d => mucDoHuy(d) === 'sau_in').length;
-  const huySauDongGoi = allDonHangSan.filter(d =>
-    mucDoHuy(d) === 'sau_dong_goi' && !daNhanLaiKien(d)).length;
-  const huyDangGiao = allDonHangSan.filter(d =>
-    mucDoHuy(d) === 'dang_giao' && !daNhanLaiKien(d)).length;
+  // Đơn hủy cần lấy lại hàng — báo bằng ô cảnh báo chứ không thành trạng thái riêng.
+  // Cả ba mức đều bỏ qua đơn ĐÃ xử lý; trước đây "sau khi in tem" đếm cả đơn đã
+  // bỏ tem nên con số không bao giờ về 0.
+  const demHuy = (muc) => allDonHangSan.filter(d =>
+    mucDoHuy(d) === muc && !daNhanLaiKien(d)).length;
+  const huySauIn = demHuy('sau_in');
+  const huySauDongGoi = demHuy('sau_dong_goi');
+  const huyDangGiao = demHuy('dang_giao');
 
-  const oCanhBao = (mau, nen, tieu, mo) => `
-    <div style="background:${nen};border:1.5px solid ${mau};border-radius:8px;
-                padding:9px 11px;margin-bottom:8px;cursor:pointer"
-      onclick="doiFilterDonTT('da_huy')">
-      <b style="font-size:13px;color:${mau}">${tieu}</b>
-      <div style="font-size:11px;color:var(--text2);margin-top:2px">${mo}</div>
+  // Bấm vào ô mở cửa sổ chi tiết đúng mức hủy đó, thay vì chỉ lọc sang "Đã hủy"
+  // (lọc thì trộn cả ba mức lẫn đơn hủy không phải làm gì, tìm rất mệt).
+  const oCanhBao = (muc, so) => {
+    const m = MUC_HUY[muc];
+    return `
+    <div style="background:${m.nen};border:1.5px solid ${m.mau};border-radius:8px;
+                padding:9px 11px;margin-bottom:8px;cursor:pointer;display:flex;
+                gap:8px;align-items:center"
+      onclick="moKhungDonHuy('${muc}')">
+      <div style="flex:1">
+        <b style="font-size:13px;color:${m.mau}">${so} đơn ${m.ten.toLowerCase()}</b>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${m.viec}</div>
+      </div>
+      <span style="font-size:11px;color:${m.mau};font-weight:600;white-space:nowrap">Xem →</span>
     </div>`;
+  };
 
   const khoiLoc = (tieuDe, noiDung) => noiDung ? `
     <div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
@@ -3078,12 +3406,10 @@ function veDanhSachDon() {
     </div>` : '';
 
   el.innerHTML = `
-    ${huyDangGiao ? oCanhBao('#DC2626', '#FEF2F2', `${huyDangGiao} đơn hủy khi đang giao`,
-      'Liên hệ đơn vị vận chuyển lấy lại hàng') : ''}
-    ${huySauDongGoi ? oCanhBao('#EA580C', '#FFFBEB', `${huySauDongGoi} đơn hủy sau khi đóng gói`,
-      'Kiện hàng còn trong kho — cần tháo ra nhập lại') : ''}
-    ${huySauIn ? oCanhBao('#D97706', '#FFFBEB', `${huySauIn} đơn hủy sau khi in tem`,
-      'Bỏ tem đã in, hàng chưa đóng gói') : ''}
+    ${veThanhTabDon()}
+    ${huyDangGiao ? oCanhBao('dang_giao', huyDangGiao) : ''}
+    ${huySauDongGoi ? oCanhBao('sau_dong_goi', huySauDongGoi) : ''}
+    ${huySauIn ? oCanhBao('sau_in', huySauIn) : ''}
 
     ${khoiLoc('XỬ LÝ ĐƠN HÀNG', `
       <div style="display:flex;gap:5px;flex-wrap:wrap">
@@ -3112,6 +3438,7 @@ function veDanhSachDon() {
     ${trang.length ? veThanhChon(trang) : ''}
     <div id="don-list"></div>
     <div id="don-phantrang"></div>`;
+  giuTieuDiemTimKiem(dangGoTimKiem);
 
   const listEl = document.getElementById('don-list');
   if (!allDonHangSan.length) {
@@ -3122,13 +3449,15 @@ function veDanhSachDon() {
 
   listEl.innerHTML = trang.map(d => {
     const maTT = trangThaiHienThi(d);
-    const tt = TRANG_THAI_NOI_BO[maTT] || TRANG_THAI_NOI_BO.moi;
+    const tt = moTaTrangThai(maTT);
     const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : (d.ngayDat ? new Date(d.ngayDat) : null);
     const gio = ngay ? ngay.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
     const phi = d.phiSanTong;
     const tiLePhi = (phi && d.tongTien) ? ((phi / d.tongTien) * 100).toFixed(1) : null;
     const mucHuy = mucDoHuy(d);
-    const laHuySauDongGoi = mucHuy === 'sau_dong_goi' || mucHuy === 'dang_giao';
+    // Cả ba mức hủy đều có việc phải làm (bỏ tem / tháo kiện / đòi lại hàng),
+    // nên đều cần nút đánh dấu đã xử lý — không chỉ hai mức nặng.
+    const laHuySauDongGoi = !!mucHuy;
     const daNhan = daNhanLaiKien(d);
 
     // Thời điểm đóng gói — dùng để tua camera khi cần tìm kiện hàng
@@ -3179,9 +3508,9 @@ function veDanhSachDon() {
       </div>
       ${laHuySauDongGoi ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center">
-        <span style="font-size:11px;color:var(--text2);flex:1">Kiện hàng này đã đóng gói — cần nhận lại từ shipper khi bàn giao</span>
+        <span style="font-size:11px;color:var(--text2);flex:1">${MUC_HUY[mucHuy].viec}</span>
         <button class="btn-xs" style="background:${daNhan ? '#FEE2E2' : '#16A34A'};color:${daNhan ? '#DC2626' : '#fff'}"
-          onclick="doiNhanLaiKien('${escHtml(d.id)}', ${!daNhan})">${daNhan ? 'Bỏ đánh dấu' : '✓ Đã nhận lại kiện'}</button>
+          onclick="doiNhanLaiKien('${escHtml(d.id)}', ${!daNhan})">${daNhan ? 'Bỏ đánh dấu' : MUC_HUY[mucHuy].nutXong}</button>
       </div>` : ''}
     </div>`;
   }).join('');
@@ -3346,15 +3675,184 @@ window.chanDoanKenhBan = async function(soNgay = 30) {
 window.doiNhanLaiKien = async function(idDon, giaTri) {
   const d = allDonHangSan.find(x => x.id === idDon);
   if (!d) return;
-  await updateDoc(doc(db, 'don_hang_san', idDon), {
-    daNhanLaiKien: giaTri,
-    nhanLaiLuc: giaTri ? serverTimestamp() : null,
-    nguoiNhanLai: giaTri ? (currentUserData?.ten || currentUser?.email || '') : ''
-  });
+  try {
+    await updateDoc(doc(db, 'don_hang_san', idDon), {
+      daNhanLaiKien: giaTri,
+      nhanLaiLuc: giaTri ? serverTimestamp() : null,
+      nguoiNhanLai: giaTri ? (currentUserData?.ten || currentUser?.email || '') : ''
+    });
+  } catch(e) {
+    alert('Không ghi được: ' + e.message
+      + '\n\n(Chỉ quản lý mới đánh dấu được đơn hủy đã xử lý)');
+    return;
+  }
   d.daNhanLaiKien = giaTri;
-  showToast(giaTri ? 'Đã đánh dấu nhận lại kiện' : 'Đã bỏ đánh dấu');
+  // Giữ luôn mốc ở bộ nhớ để cửa sổ Đã xử lý lọc đúng ngày ngay, khỏi chờ tải lại
+  d.nhanLaiLuc = giaTri ? new Date() : null;
+  d.nguoiNhanLai = giaTri ? (currentUserData?.ten || currentUser?.email || '') : '';
+  showToast(giaTri ? 'Đã đánh dấu xử lý xong' : 'Đã bỏ đánh dấu');
   veDanhSachDon();
+  if (document.getElementById('don-huy-modal')) veKhungDonHuy();
 };
+
+// ==========================================================================
+// ===== CỬA SỔ CHI TIẾT ĐƠN HỦY =====
+// Mở từ ô cảnh báo màu ở đầu danh sách. Hai tab:
+//   Chưa xử lý — việc còn phải làm, không lọc ngày (đơn treo từ tuần trước vẫn
+//                phải hiện, giấu đi là mất hàng)
+//   Đã xử lý   — lịch sử, lọc theo ngày đánh dấu, mặc định hôm nay
+// ==========================================================================
+let dhMuc = 'dang_giao';          // mức hủy đang xem
+let dhTab = 'chua';               // 'chua' | 'roi'
+let dhNgay = '';                  // yyyy-mm-dd, chỉ dùng cho tab Đã xử lý
+
+window.moKhungDonHuy = function(muc) {
+  dhMuc = MUC_HUY[muc] ? muc : 'dang_giao';
+  dhTab = 'chua';
+  dhNgay = ngayYMD(new Date());
+  veKhungDonHuy();
+};
+
+window.dongKhungDonHuy = function() {
+  document.getElementById('don-huy-modal')?.remove();
+};
+
+window.dhDoiTab = function(t) { dhTab = t; veKhungDonHuy(); };
+window.dhDoiMuc = function(m) { dhMuc = m; veKhungDonHuy(); };
+window.dhDoiNgay = function(v) { dhNgay = v; veKhungDonHuy(); };
+
+function dhLocDon() {
+  const ds = allDonHangSan.filter(d => mucDoHuy(d) === dhMuc);
+  if (dhTab === 'chua') return ds.filter(d => !daNhanLaiKien(d));
+  return ds.filter(d => {
+    if (!daNhanLaiKien(d)) return false;
+    if (!dhNgay) return true;
+    const t = ngayCua(d.nhanLaiLuc);
+    // Đơn đánh dấu từ trước khi app ghi mốc thì không có nhanLaiLuc — vẫn cho
+    // hiện, thà thừa một dòng còn hơn nhân viên tưởng mất bản ghi.
+    return !t || ngayYMD(t) === dhNgay;
+  });
+}
+
+function veKhungDonHuy() {
+  let m = document.getElementById('don-huy-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'don-huy-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1400;'
+      + 'display:flex;align-items:flex-end;justify-content:center';
+    m.onclick = (e) => { if (e.target === m) window.dongKhungDonHuy(); };
+    document.body.appendChild(m);
+  }
+
+  const cfg = MUC_HUY[dhMuc];
+  const ds = dhLocDon().sort((a, b) => {
+    const ta = ngayCua(dhTab === 'chua' ? a.ngayDat : a.nhanLaiLuc)?.getTime() || 0;
+    const tb = ngayCua(dhTab === 'chua' ? b.ngayDat : b.nhanLaiLuc)?.getTime() || 0;
+    return tb - ta;
+  });
+  const soChua = allDonHangSan.filter(d => mucDoHuy(d) === dhMuc && !daNhanLaiKien(d)).length;
+
+  const nutMuc = (k) => `<button onclick="dhDoiMuc('${k}')"
+    style="border:1.5px solid ${dhMuc === k ? MUC_HUY[k].mau : 'var(--border)'};border-radius:6px;
+           padding:5px 9px;font-size:11px;white-space:nowrap;
+           background:${dhMuc === k ? MUC_HUY[k].mau : '#fff'};
+           color:${dhMuc === k ? '#fff' : 'var(--text)'};
+           font-weight:${dhMuc === k ? '600' : '400'}">${MUC_HUY[k].ten}
+    (${allDonHangSan.filter(d => mucDoHuy(d) === k && !daNhanLaiKien(d)).length})</button>`;
+
+  const nutTab = (k, nhan) => `<button onclick="dhDoiTab('${k}')"
+    style="flex:1;border:none;border-bottom:2.5px solid ${dhTab === k ? cfg.mau : 'transparent'};
+           background:none;padding:9px 6px;font-size:13px;cursor:pointer;
+           color:${dhTab === k ? cfg.mau : 'var(--text2)'};
+           font-weight:${dhTab === k ? '700' : '500'}">${nhan}</button>`;
+
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:560px;max-height:90vh;
+                border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+      <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;
+                  justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <b style="font-size:15px;color:${cfg.mau}">${cfg.ten}</b>
+          <div style="font-size:12px;color:var(--text2)">${cfg.viec}</div>
+        </div>
+        <button class="btn-outline" style="width:auto;padding:6px 12px"
+          onclick="dongKhungDonHuy()">✕</button>
+      </div>
+
+      <div style="padding:9px 14px;border-bottom:1px solid var(--border);
+                  display:flex;gap:5px;flex-wrap:wrap">
+        ${Object.keys(MUC_HUY).map(nutMuc).join('')}
+      </div>
+
+      <div style="display:flex;gap:4px;border-bottom:1px solid var(--border)">
+        ${nutTab('chua', `Chưa xử lý (${soChua})`)}
+        ${nutTab('roi', 'Đã xử lý')}
+      </div>
+
+      ${dhTab === 'roi' ? `
+      <div style="padding:9px 14px;border-bottom:1px solid var(--border);
+                  display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:var(--text2)">Ngày xử lý</span>
+        <input type="date" value="${escHtml(dhNgay)}" onchange="dhDoiNgay(this.value)"
+          style="flex:1;padding:7px 10px;border:1.5px solid var(--border);
+                 border-radius:6px;font-size:13px">
+        <button class="btn-xs" onclick="dhDoiNgay('')">Tất cả</button>
+      </div>` : ''}
+
+      <div style="flex:1;overflow-y:auto;padding:12px 14px">
+        ${!ds.length ? `<p class="info-note">${dhTab === 'chua'
+            ? 'Không còn đơn nào phải xử lý ở mức này.'
+            : 'Không có đơn nào được xử lý trong ngày đã chọn.'}</p>`
+        : ds.map(d => {
+          const ngay = ngayCua(d.ngayDat);
+          const gio = ngay ? ngay.toLocaleString('vi-VN',
+            { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
+          const tDG = ngayCua(d.thoiGianDongGoi);
+          const lucXong = ngayCua(d.nhanLaiLuc);
+          const daNhan = daNhanLaiKien(d);
+          return `
+          <div style="border:1px solid var(--border);border-left:3px solid ${cfg.mau};
+                      border-radius:8px;padding:10px 12px;margin-bottom:8px">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              ${veNhanSan(d.san)}
+              <b style="font-size:13px">${escHtml(d.maDonSan || d.maHoaDon)}</b>
+              ${d.maVanDon ? `<span style="font-size:11px;color:var(--text2)">VĐ:
+                <b>${escHtml(d.maVanDon)}</b></span>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--text2);margin-top:3px">
+              Đặt ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}
+            </div>
+            ${tDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">
+              📦 Đóng gói lúc <b>${tDG.toLocaleString('vi-VN', { hour:'2-digit',
+                minute:'2-digit', second:'2-digit', day:'2-digit', month:'2-digit' })}</b>${
+                d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
+            <div style="font-size:12px;margin-top:4px">
+              ${(d.chiTiet || []).slice(0, 4).map(c =>
+                `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
+              ${(d.chiTiet || []).length > 4
+                ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 4} món</span>` : ''}
+            </div>
+            ${daNhan && lucXong ? `<div style="font-size:11px;color:#16A34A;margin-top:3px">
+              ✓ Xử lý lúc ${lucXong.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit',
+                day:'2-digit', month:'2-digit' })}${
+                d.nguoiNhanLai ? ` · ${escHtml(d.nguoiNhanLai)}` : ''}</div>` : ''}
+            <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn-xs" style="background:${daNhan ? '#FEE2E2' : '#16A34A'};
+                color:${daNhan ? '#DC2626' : '#fff'}"
+                onclick="doiNhanLaiKien('${escHtml(d.id)}', ${!daNhan})">
+                ${daNhan ? 'Bỏ đánh dấu' : cfg.nutXong}</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <div style="padding:10px 14px;border-top:1px solid var(--border);background:var(--bg);
+                  font-size:11px;color:var(--text2)">
+        ${ds.length} đơn${dhTab === 'roi' && dhNgay ? ` · ngày ${dhNgay}` : ''}
+      </div>
+    </div>`;
+}
 
 // ==========================================================================
 // ===== QUÉT ĐÓNG GÓI BẰNG CAMERA ĐIỆN THOẠI =====
@@ -15338,7 +15836,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v444</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v445</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -15392,7 +15890,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v444</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v445</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -15434,7 +15932,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v444</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v445</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
