@@ -7103,6 +7103,32 @@ window.soiDon = function(maDon) {
   return d;
 };
 
+// Gộp những tài liệu đơn bị tách đôi vì khóa sai (hóa đơn Lazada mang đuôi kiện,
+// và tài liệu rác "HDLZD_…" do máy quét đóng gói ghi nhầm khóa).
+// Gọi: gopDonTachDoi()        -> chạy thử, chỉ liệt kê
+//      gopDonTachDoi(true)    -> ghi thật
+window.gopDonTachDoi = async function(chayThat = false) {
+  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
+  if (chayThat && !confirm('Gộp thật và XÓA các tài liệu thừa?\n\n'
+    + 'Chạy gopDonTachDoi() trước để xem danh sách.')) return;
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'gop-don-tach-doi', 'Authorization': `Bearer ${idToken}`,
+               'Content-Type': 'application/json' },
+    body: JSON.stringify({ chayThat })
+  });
+  const kq = await res.json();
+  if (!kq.success) { console.error('LỖI:', kq.error); return kq; }
+  console.log(`===== ${kq.cheDo} =====`);
+  console.log(`Đã đọc ${kq.tongTaiLieuDaDoc} tài liệu · ${kq.soTaiLieuBiTach} bản bị tách`);
+  if (kq.bienBan?.length) console.table(kq.bienBan);
+  if (kq.conTrangChuaDoc) console.warn('Còn trang chưa đọc — chạy lại để xử lý nốt.');
+  if (!chayThat && kq.soTaiLieuBiTach) console.log('Muốn ghi thật: gopDonTachDoi(true)');
+  if (chayThat) { await loadDonHangSan(); veDanhSachDon(); }
+  return kq;
+};
+
 // Chẩn đoán đơn kẹt ở "Cần đồng bộ": đồng bộ mãi mà không ra thì lý do nằm ở một
 // trong bốn chỗ, hàm này hỏi thẳng KiotViet rồi in ra.
 // Gọi: chanDoanDon('MÃ_ĐƠN')
@@ -7156,7 +7182,10 @@ window.chanDoanDon = async function(maDon) {
 
   const chu = dong.join('\n');
   console.log(chu);
-  try { navigator.clipboard.writeText(chu); console.log('(Đã chép vào bộ nhớ tạm)'); } catch(e) {}
+  // Chép vào bộ nhớ tạm chỉ là tiện thêm. Trình duyệt chặn khi cửa sổ không được
+  // focus (đang gõ trong Console là dính) — bắt lỗi cả nhánh Promise, đừng để nó
+  // ném ra và làm tưởng hàm chẩn đoán hỏng.
+  try { navigator.clipboard?.writeText(chu).catch(() => {}); } catch(e) {}
   return kq;
 };
 
@@ -16223,7 +16252,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v448</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v449</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16277,7 +16306,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v448</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v449</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16319,7 +16348,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v448</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v449</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
