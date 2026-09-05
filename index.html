@@ -2757,6 +2757,9 @@ async function renderDonHangTab() {
   // ở đây vì tuDongBoNeuCu có nhịp chờ 5 phút của nó, mở tab lúc đang trong nhịp
   // đó thì đơn thiếu vẫn phải được vá.
   tuDongBoDonThieuHoaDon();
+  // Đếm đơn hoàn trả cho con số trên thanh tab. Chạy ngầm, xong thì vẽ lại —
+  // không bắt nhân viên chờ chỉ để thấy một con số.
+  loadDonHoanTra().then(() => veDanhSachDon()).catch(() => {});
 }
 
 // Tải 300 đơn gần nhất thay vì 1000. Nhân viên chỉ nhìn vài chục đơn đầu, mà
@@ -3154,7 +3157,7 @@ function veThanhChon(trang) {
 // Thanh hai tab lớn. Đếm trên TOÀN BỘ đơn tải về, không theo bộ lọc đang chọn —
 // con số này là để biết bên kia còn việc hay không, lọc mà giấu đi thì vô nghĩa.
 function veThanhTabDon() {
-  const conPhaiNhap = allDonHangSan.filter(d => loaiHoanTra(d) && !daNhapLaiKho(d)).length;
+  const conPhaiNhap = donHoanTra.filter(d => loaiHoanTra(d) && !daNhapLaiKho(d)).length;
   const nut = (ma, nhan, so, mau) => {
     const chon = donTabChinh === ma;
     return `<button onclick="doiTabDon('${ma}')"
@@ -3170,10 +3173,17 @@ function veThanhTabDon() {
   </div>`;
 }
 
-window.doiTabDon = function(t) {
+window.doiTabDon = async function(t) {
   donTabChinh = t;
   donPage = 1;
   vdDaChon.clear();
+  // Bỏ mọi bộ lọc khi đổi tab. Bộ lọc sàn/vận chuyển/tìm kiếm dính lại từ tab kia
+  // là bẫy: đang lọc Shopee mà đơn hoàn trả toàn Lazada thì danh sách trống trơn,
+  // lại còn không thấy nút lọc nào để bỏ (khối lọc tự ẩn khi chỉ có một sàn).
+  donFilterSan = 'all';
+  donFilterVanChuyen = 'all';
+  donTimKiem = '';
+  if (t === 'hoantra') { await loadDonHoanTra(); }
   veDanhSachDon();
 };
 
@@ -3193,7 +3203,7 @@ window.doiHienHoanDaXuLy = function(v) {
 // dụng, chỉ thay bộ lọc trạng thái bằng loại hoàn trả.
 function locDonHoanTra() {
   const tu = donTimKiem.trim().toLowerCase();
-  return allDonHangSan.filter(d => {
+  return donHoanTra.filter(d => {
     if (loaiHoanTra(d) !== donTabHoan) return false;
     if (!donHoanHienDaXuLy && daNhapLaiKho(d)) return false;
     if (donFilterSan !== 'all' && d.san !== donFilterSan) return false;
@@ -3210,7 +3220,9 @@ function locDonHoanTra() {
 // Đánh dấu hàng hoàn đã nhập lại kho. Không tự cộng tồn — KiotViet mới là nơi
 // giữ tồn thật, app chỉ ghi lại ai đã kiểm và lúc nào, để đối soát khi lệch.
 window.doiNhapLaiKho = async function(idDon, giaTri) {
-  const d = allDonHangSan.find(x => x.id === idDon);
+  // Đơn hoàn trả có thể chỉ nằm ở danh sách riêng (ngoài cửa sổ 300 đơn mới nhất)
+  const cacBan = [allDonHangSan, donHoanTra].map(ds => ds.find(x => x.id === idDon)).filter(Boolean);
+  const d = cacBan[0];
   if (!d) return;
   try {
     await updateDoc(doc(db, 'don_hang_san', idDon), {
@@ -3223,21 +3235,61 @@ window.doiNhapLaiKho = async function(idDon, giaTri) {
       + '\n\n(Chỉ quản lý mới đánh dấu được hàng hoàn đã nhập kho)');
     return;
   }
-  d.daNhapLaiKho = giaTri;
-  d.nhapLaiKhoLuc = giaTri ? new Date() : null;
+  for (const b of cacBan) {
+    b.daNhapLaiKho = giaTri;
+    b.nhapLaiKhoLuc = giaTri ? new Date() : null;
+    b.nguoiNhapLaiKho = giaTri ? (currentUserData?.ten || currentUser?.email || '') : '';
+  }
   showToast(giaTri ? 'Đã đánh dấu nhập lại kho' : 'Đã bỏ đánh dấu');
   veDanhSachDon();
 };
 
+// ===== TẢI RIÊNG ĐƠN HOÀN TRẢ =====
+// KHÔNG dùng chung allDonHangSan được: danh sách đó chỉ lấy 300 đơn MỚI NHẤT theo
+// ngày đặt, mà đơn hoàn trả theo bản chất là đơn CŨ — giao thất bại mất vài ngày
+// mới lộ, khách trả hàng còn lâu hơn. Đơn chuyển hoàn của tuần trước nằm ngoài
+// cửa sổ đó, nên tab trống dù Firestore có đủ dữ liệu.
+//
+// Hai truy vấn riêng, không orderBy nên chỉ cần chỉ mục một trường (Firestore tự có).
+let donHoanTra = [];
+let dangTaiHoanTra = false;
+
+async function loadDonHoanTra() {
+  dangTaiHoanTra = true;
+  const theoId = new Map();
+  const nhan = (id, dl) => { if (!theoId.has(id)) theoId.set(id, { id, ...dl }); };
+  try {
+    const [sGiao, sTra] = await Promise.all([
+      getDocs(query(collection(db, 'don_hang_san'),
+        where('trangThaiGiaoMa', 'in', [4, 5]), limit(300))),
+      getDocs(query(collection(db, 'don_hang_san'),
+        where('tienHangTra', '>', 0), limit(300)))
+    ]);
+    sGiao.docs.forEach(d => nhan(d.id, d.data()));
+    sTra.docs.forEach(d => nhan(d.id, d.data()));
+    console.log(`[hoàn trả] Firestore: ${sGiao.size} đơn chuyển hoàn · ${sTra.size} đơn có hàng trả`);
+  } catch(e) {
+    console.warn('[hoàn trả] không truy vấn được, tạm dùng danh sách đang tải:', e.message);
+  }
+  // Gộp thêm đơn trong bộ nhớ — đơn vừa đổi trạng thái xong, truy vấn có thể chưa thấy
+  for (const d of allDonHangSan) if (loaiHoanTra(d)) nhan(d.id, d);
+  donHoanTra = [...theoId.values()];
+  dangTaiHoanTra = false;
+  return donHoanTra;
+}
+
 // Bộ lọc sàn riêng cho tab hoàn trả. Không dùng lại veLocSan() vì hàm đó đếm
 // theo bộ lọc trạng thái của tab Xử lý đơn — sang đây con số sẽ sai.
 function veLocSanHoan() {
-  const nen = allDonHangSan.filter(d =>
+  const nen = donHoanTra.filter(d =>
     loaiHoanTra(d) === donTabHoan && (donHoanHienDaXuLy || !daNhapLaiKho(d)));
   const dem = new Map();
   for (const d of nen) if (d.san) dem.set(d.san, (dem.get(d.san) || 0) + 1);
-  const moiSan = [...dem.keys()];
-  if (moiSan.length < 2) return '';   // một sàn thì khỏi lọc
+  const moiSan = [...new Set([...dem.keys(),
+    ...(donFilterSan !== 'all' ? [donFilterSan] : [])])];
+  // Vẫn hiện khối lọc nếu đang lọc một sàn cụ thể — nếu không, lọc trúng sàn không
+  // có đơn hoàn trả nào là danh sách trống mà không có nút nào để bỏ lọc.
+  if (moiSan.length < 2 && donFilterSan === 'all') return '';
 
   return `<div style="display:flex;gap:5px;flex-wrap:wrap">
     ${nutLoc('all', 'Tất cả', nen.length, donFilterSan === 'all', 'doiFilterDonSan')}
@@ -3259,7 +3311,7 @@ function giuTieuDiemTimKiem(dangGo) {
 
 function veDanhSachHoanTra(el) {
   const dangGoTimKiem = document.activeElement?.id === 'don-timkiem';
-  const conLai = (loai) => allDonHangSan.filter(d =>
+  const conLai = (loai) => donHoanTra.filter(d =>
     loaiHoanTra(d) === loai && !daNhapLaiKho(d)).length;
   const nutCon = (ma, nhan, mau) => {
     const chon = donTabHoan === ma;
@@ -3317,7 +3369,9 @@ function veDanhSachHoanTra(el) {
 
   const listEl = document.getElementById('don-list');
   if (!ds.length) {
-    listEl.innerHTML = `<p class="info-note">${donHoanHienDaXuLy
+    listEl.innerHTML = `<p class="info-note">${dangTaiHoanTra
+      ? 'Đang tải đơn hoàn trả...'
+      : donHoanHienDaXuLy
       ? 'Không có đơn hoàn trả nào khớp bộ lọc.'
       : 'Không còn đơn hoàn trả nào phải xử lý. Tick "Hiện cả đã xử lý" để xem lịch sử.'}</p>`;
     document.getElementById('don-phantrang').innerHTML = '';
@@ -7101,6 +7155,72 @@ window.soiDon = function(maDon) {
     dongBoLuc: gio(d.dongBoBanOnlineLuc)
   });
   return d;
+};
+
+// Vì sao tab Đơn hoàn trả trống. Ba khả năng, hàm này phân biệt được:
+//   a. App chỉ tải 300 đơn mới nhất — mà đơn hoàn trả theo bản chất là đơn CŨ
+//      (giao thất bại phát hiện sau nhiều ngày), nên nằm ngoài cửa sổ đó
+//   b. Có trong Firestore nhưng trangThaiGiaoMa chưa bao giờ được cập nhật lên 4/5
+//      (webhook invoice.update thất lạc)
+//   c. Thật sự chưa có đơn hoàn trả nào
+// Hai truy vấn cuối chạy thẳng trên Firestore, KHÔNG qua cửa sổ 300 đơn.
+// Gọi: soiHoanTra()
+window.soiHoanTra = async function() {
+  const TEN_MA_GIAO = { 0: '(trống)', 1: 'chưa giao', 2: 'đang giao', 3: 'đã giao',
+    4: 'ĐANG chuyển hoàn', 5: 'ĐÃ chuyển hoàn', 6: 'đã hủy' };
+
+  const moc = allDonHangSan.map(d => ngayCua(d.ngayDat)?.getTime()).filter(Boolean);
+  const dong = ['===== VÌ SAO TAB ĐƠN HOÀN TRẢ TRỐNG =====', '',
+    `--- Tập đang tải trong app: ${allDonHangSan.length} đơn (trần ${SO_DON_TAI_VE}) ---`];
+  if (moc.length) {
+    dong.push(`  cũ nhất : ${new Date(Math.min(...moc)).toLocaleString('vi-VN')}`);
+    dong.push(`  mới nhất: ${new Date(Math.max(...moc)).toLocaleString('vi-VN')}`);
+  }
+
+  const dem = {};
+  for (const d of allDonHangSan) {
+    const k = Number(d.trangThaiGiaoMa) || 0;
+    dem[k] = (dem[k] || 0) + 1;
+  }
+  dong.push('', '--- Đếm theo trạng thái giao (trong tập đang tải) ---');
+  for (const k of Object.keys(dem).sort()) {
+    dong.push(`  mã ${k} ${TEN_MA_GIAO[k] || '?'} : ${dem[k]}`);
+  }
+  dong.push(`  có hàng khách trả (soLuongTra > 0): ${allDonHangSan.filter(laTraHangHoanTien).length}`);
+  dong.push(`  => tab Đơn hoàn trả đang thấy: ${allDonHangSan.filter(d => loaiHoanTra(d)).length}`);
+
+  // Hỏi thẳng Firestore, bỏ qua cửa sổ 300 đơn
+  dong.push('', '--- Hỏi thẳng Firestore (KHÔNG giới hạn 300 đơn) ---');
+  try {
+    const s1 = await getDocs(query(collection(db, 'don_hang_san'),
+      where('trangThaiGiaoMa', 'in', [4, 5]), limit(200)));
+    dong.push(`  đơn có trangThaiGiaoMa 4 hoặc 5 : ${s1.size}${s1.size >= 200 ? '+' : ''}`);
+    s1.docs.slice(0, 10).forEach(x => {
+      const d = x.data();
+      const t = ngayCua(d.ngayDat);
+      dong.push(`     ${x.id} · ${d.san || '?'} · mã ${d.trangThaiGiaoMa}`
+        + ` · ${t ? t.toLocaleDateString('vi-VN') : '?'}`);
+    });
+  } catch(e) { dong.push('  lỗi truy vấn 4/5: ' + e.message); }
+
+  try {
+    const s2 = await getDocs(query(collection(db, 'don_hang_san'),
+      where('tienHangTra', '>', 0), limit(200)));
+    dong.push(`  đơn có tienHangTra > 0          : ${s2.size}${s2.size >= 200 ? '+' : ''}`);
+    s2.docs.slice(0, 10).forEach(x => {
+      const d = x.data();
+      dong.push(`     ${x.id} · ${d.san || '?'} · hoàn ${fmt(d.tienHangTra || 0)}đ`);
+    });
+  } catch(e) { dong.push('  lỗi truy vấn tienHangTra: ' + e.message); }
+
+  dong.push('', 'Đọc kết quả:');
+  dong.push('  Firestore CÓ mà tập đang tải KHÔNG  -> do trần 300 đơn, phải tải riêng cho tab này');
+  dong.push('  Firestore cũng KHÔNG có              -> KiotViet chưa từng đẩy trạng thái 4/5 về app');
+
+  const chu = dong.join('\n');
+  console.log(chu);
+  try { navigator.clipboard?.writeText(chu).catch(() => {}); } catch(e) {}
+  return chu;
 };
 
 // Gộp những tài liệu đơn bị tách đôi vì khóa sai (hóa đơn Lazada mang đuôi kiện,
@@ -16252,7 +16372,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v449</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v451</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16306,7 +16426,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v449</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v451</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16348,7 +16468,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v449</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v451</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
