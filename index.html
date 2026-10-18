@@ -1788,6 +1788,7 @@ async function renderHangHoaTab() {
   el.innerHTML = `
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="flex:1">
+      <button class="btn-outline" id="nut-gio-tem" onclick="moGioTem()" style="white-space:nowrap">🏷 In tem giá${tongSoTem() ? ` (${tongSoTem()})` : ''}</button>
     </div>
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
     ${qHH.hh_them ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
@@ -9902,6 +9903,7 @@ function renderHangHoaList() {
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
           <button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho</button>
+          <button class="btn-xs" id="nut-tem-${s.id}" onclick="themVaoGioTem('${s.id}')">🏷 Tem${gioTem.get(s.id) ? ` (${gioTem.get(s.id).soLuong})` : ''}</button>
           ${qHH2.hh_sua ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>` : ''}
           ${qHH2.hh_xoa ? `<button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
         </div>
@@ -9912,6 +9914,158 @@ function renderHangHoaList() {
 }
 
 window.doiTrangHangHoa = function(p) { hangHoaPage = p; renderHangHoaList(); };
+
+// ===== IN TEM GIÁ =====
+// Chọn hàng ở danh sách hàng hóa (nút 🏷 Tem) -> giỏ tem -> gửi lệnh in. Lệnh vào
+// lenh_in (loai tem_gia), app "Trạm in CUA" trên máy POS vẽ tem 35x22mm rồi đẩy ra
+// máy in tem Xprinter. App chỉ gửi dữ liệu (tên, giá, SKU), không vẽ hình.
+const gioTem = new Map();   // id SKU -> { ten, gia, sku, soLuong }
+const TEM_TOI_DA_MOI_LENH = 80;
+
+function tongSoTem() {
+  let n = 0;
+  gioTem.forEach(t => { n += t.soLuong; });
+  return n;
+}
+
+function capNhatNutTem(id) {
+  const nutDau = document.getElementById('nut-gio-tem');
+  if (nutDau) nutDau.textContent = '🏷 In tem giá' + (tongSoTem() ? ` (${tongSoTem()})` : '');
+  if (id) {
+    const nut = document.getElementById('nut-tem-' + id);
+    if (nut) nut.textContent = '🏷 Tem' + (gioTem.get(id) ? ` (${gioTem.get(id).soLuong})` : '');
+  }
+}
+
+window.themVaoGioTem = function(id, soThem = 1) {
+  const s = allSKUs.find(x => x.id === id);
+  if (!s) return;
+  const t = gioTem.get(id) || { ten: s.ten || '', gia: Number(s.gia) || 0, sku: s.sku || '', soLuong: 0 };
+  t.soLuong = Math.max(0, Math.min(500, t.soLuong + soThem));
+  // Giá/tên lấy mới nhất mỗi lần bấm — lỡ vừa sửa giá thì tem in theo giá mới
+  t.ten = s.ten || ''; t.gia = Number(s.gia) || 0; t.sku = s.sku || '';
+  if (t.soLuong) gioTem.set(id, t); else gioTem.delete(id);
+  capNhatNutTem(id);
+  if (soThem > 0) showToast(`Đã thêm tem "${t.ten}" (${t.soLuong})`);
+};
+
+window.moGioTem = function() {
+  document.getElementById('khung-gio-tem')?.remove();
+  const nen = document.createElement('div');
+  nen.id = 'khung-gio-tem';
+  nen.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
+  nen.onclick = (e) => { if (e.target === nen) nen.remove(); };
+  nen.innerHTML = `
+    <div style="background:var(--surface,#fff);width:100%;max-width:560px;max-height:88vh;border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <b style="flex:1;font-size:16px">🏷 In tem giá</b>
+        <button class="btn-xs" onclick="document.getElementById('khung-gio-tem').remove()">Đóng</button>
+      </div>
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <input type="text" id="tem-tim" placeholder="Thêm nhanh: gõ tên hoặc mã SKU..." oninput="timHangChoTem(this.value)" style="width:100%">
+        <div id="tem-goi-y"></div>
+      </div>
+      <div id="tem-ds" style="overflow:auto;padding:10px 14px;flex:1"></div>
+      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px">
+        <button class="btn-outline" onclick="xoaHetGioTem()">Xóa hết</button>
+        <button class="btn-g" id="tem-gui" style="flex:1" onclick="guiLenhInTem()">Gửi in</button>
+      </div>
+    </div>`;
+  document.body.appendChild(nen);
+  veGioTem();
+};
+
+function veGioTem() {
+  const el = document.getElementById('tem-ds');
+  if (!el) return;
+  const nutGui = document.getElementById('tem-gui');
+  const n = tongSoTem();
+  if (nutGui) { nutGui.textContent = n ? `Gửi in ${n} tem` : 'Gửi in'; nutGui.disabled = !n; }
+  if (!gioTem.size) {
+    el.innerHTML = '<p class="info-note">Chưa có tem nào. Bấm nút <b>🏷 Tem</b> ở từng hàng hóa, hoặc gõ tìm ở ô phía trên.</p>';
+    return;
+  }
+  el.innerHTML = [...gioTem.entries()].map(([id, t]) => `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+      <div style="width:105px;height:66px;flex-shrink:0;border:1px solid #999;border-radius:3px;background:#fff;color:#000;
+                  display:flex;flex-direction:column;justify-content:space-between;align-items:center;padding:3px 4px;box-sizing:border-box;text-align:center">
+        <div style="font-weight:700;font-size:8.5px;line-height:1.15;overflow:hidden;max-height:20px">${escHtml(t.ten)}</div>
+        <div style="font-weight:800;font-size:15px;line-height:1">${fmt(t.gia)}đ</div>
+        <div style="font-size:7px;line-height:1">${escHtml(t.sku)}</div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.ten)}</div>
+        <div style="font-size:12px;color:var(--text2)">${escHtml(t.sku)} · ${fmt(t.gia)}đ</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+          <button class="btn-xs" onclick="doiSoTem('${id}', -1)">−</button>
+          <input type="number" min="0" max="500" value="${t.soLuong}" onchange="datSoTem('${id}', this.value)"
+                 style="width:60px;text-align:center;padding:4px">
+          <button class="btn-xs" onclick="doiSoTem('${id}', 1)">+</button>
+          <button class="btn-xs danger" style="margin-left:auto" onclick="datSoTem('${id}', 0)">Bỏ</button>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+window.doiSoTem = function(id, d) { themVaoGioTem(id, d); veGioTem(); };
+window.datSoTem = function(id, v) {
+  const t = gioTem.get(id);
+  if (!t) return;
+  themVaoGioTem(id, (Math.max(0, Math.min(500, parseInt(v, 10) || 0))) - t.soLuong);
+  veGioTem();
+};
+window.xoaHetGioTem = function() {
+  const ids = [...gioTem.keys()];
+  gioTem.clear();
+  ids.forEach(capNhatNutTem);
+  capNhatNutTem();
+  veGioTem();
+};
+
+window.timHangChoTem = function(q) {
+  const el = document.getElementById('tem-goi-y');
+  if (!el) return;
+  q = (q || '').trim().toLowerCase();
+  if (q.length < 2) { el.innerHTML = ''; return; }
+  const kq = allSKUs.filter(s => (s.ten || '').toLowerCase().includes(q) || (s.sku || '').toLowerCase().includes(q)).slice(0, 8);
+  el.innerHTML = kq.length ? kq.map(s => `
+    <div onclick="themVaoGioTem('${s.id}'); veGioTem();"
+         style="padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+      <b>${escHtml(s.ten || '')}</b> <span style="color:var(--text2)">· ${escHtml(s.sku || '')} · ${fmt(s.gia || 0)}đ</span>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:6px 0">Không thấy hàng nào</div>';
+};
+
+window.guiLenhInTem = async function() {
+  const ds = [...gioTem.values()].filter(t => t.soLuong > 0)
+    .map(t => ({ ten: t.ten, gia: t.gia, sku: t.sku, soLuong: t.soLuong }));
+  if (!ds.length) return;
+  const nut = document.getElementById('tem-gui');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+  try {
+    // Chia nhỏ lệnh lớn — mỗi lệnh tối đa 80 mặt hàng cho tài liệu Firestore gọn
+    for (let i = 0; i < ds.length; i += TEM_TOI_DA_MOI_LENH) {
+      const phan = ds.slice(i, i + TEM_TOI_DA_MOI_LENH);
+      await addDoc(collection(db, 'lenh_in'), {
+        loai: 'tem_gia',
+        maDon: '',
+        duLieu: { tem: phan },
+        soTem: phan.reduce((a, t) => a + t.soLuong, 0),
+        trangThai: 'cho_in',
+        nguoiYeuCau: currentUserData?.ten || '',
+        taoLuc: serverTimestamp()
+      });
+    }
+    const tong = tongSoTem();
+    xoaHetGioTem();
+    document.getElementById('khung-gio-tem')?.remove();
+    showToast(`Đã gửi ${tong} tem tới máy in tem`);
+  } catch (e) {
+    console.error('[in tem]', e);
+    showToast('Không gửi được lệnh in tem — thử lại', true);
+    if (nut) { nut.disabled = false; veGioTem(); }
+  }
+};
+
 
 window.filterHangHoaList = function(v) {
   hangHoaSearchQuery = v;
@@ -16863,7 +17017,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v457</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v458</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16917,7 +17071,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v457</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v458</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16959,7 +17113,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v457</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v458</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
