@@ -636,7 +636,7 @@ async function renderLichCaTab() {
   const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
   lichCaShiftsCache = shifts;
   lichCaDatesCache = dates;
-  const canEdit = coQuyenXepCa();
+  const canEdit = coQuyen('lichca_xepca');
   const today = getTodayISO();
   const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
 
@@ -868,8 +868,14 @@ async function renderChamCongTab() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const dates = getWeekDatesISO(chamCongWeekOffset);
   const start = dates[0], end = dates[6];
-  const snap = await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)));
-  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
+  // Không có quyền xem chấm công mọi người: chỉ hỏi máy chủ ca của chính mình
+  // (rules chặn tải ca người khác) rồi lọc tuần ở máy
+  const xemHetCC = coQuyen('cc_xemtatca');
+  const snap = xemHetCC
+    ? await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)))
+    : await getDocs(query(collection(db,'lich_ca'), where('uid','==',currentUser.uid)));
+  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()}))
+    .filter(s => !s.deleted && s.ngay >= start && s.ngay <= end);
   const today = getTodayISO();
   const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
 
@@ -1340,8 +1346,12 @@ async function xuLyCheckout() {
 }
 
 async function loadBenhDanhSach() {
-  const snap = await getDocs(query(collection(db,'ca_benh'), where('hetBenh','==',false)));
-  benhDanhSach = snap.docs.map(d => ({id:d.id,...d.data()}));
+  // Chỉ người có quyền Checklist mới đọc được danh sách cá bệnh — không có thì bỏ qua, không chặn chấm công
+  if (!coQuyen('checklist')) { benhDanhSach = []; return; }
+  try {
+    const snap = await getDocs(query(collection(db,'ca_benh'), where('hetBenh','==',false)));
+    benhDanhSach = snap.docs.map(d => ({id:d.id,...d.data()}));
+  } catch(e) { console.warn('[checklist] không tải được cá bệnh:', e.message); benhDanhSach = []; }
 }
 
 // ===== AUTH =====
@@ -1424,7 +1434,7 @@ onAuthStateChanged(auth, async (user) => {
           // để listener theo dõi Vai trò được gắn ngay từ đầu (bắt được cả khi Admin chỉ sửa
           // nội dung Vai trò mà không đổi ai đang được gán vào — user doc lúc đó không đổi gì).
           currentUserData = duLieuMoi;
-          apDungQuyenNgayLapTuc();
+          lamMoiTheNeuQuyenDoi(duLieuMoi).finally(apDungQuyenNgayLapTuc);
         }, (error) => {
           // Rules mới chặn đọc hồ sơ không còn tồn tại -> lỗi permission-denied ở đây
           // đồng nghĩa hồ sơ đã bị xóa. Xử lý giống trường hợp !snap.exists().
@@ -1530,11 +1540,6 @@ function showApp() {
     if (ttl2) ttl2.style.display = 'none';
     // (Hiển thị module theo Vai trò đã được xử lý sớm hơn bởi apDungQuyenNgayLapTuc() qua theo dõi hồ sơ user)
   }
-  // Lưu quyền xuất file vào biến global
-  const canExport = currentUserData.role === 'admin' || currentUserData.role === 'quan_ly';
-  window._canExport = canExport;
-  if (!canExport) document.body.classList.add('hide-export');
-  else document.body.classList.remove('hide-export');
 
   // Ép Safari (iOS) tính lại vùng cuộn ngang của thanh tab ngay lập tức —
   // tránh lỗi phải vuốt "mồi" 1 lần mới cuộn được, do các nút vừa đổi display ở trên
@@ -1559,34 +1564,21 @@ function roleLabel(r) {
   return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên bán hàng';
 }
 
+// Tab -> quyền lớn. Tab không có trong bảng và không phải Admin thì không vào được.
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'baocao', hanghoa: 'hanghoa', banhang: 'banhang',
-  thanhtoan: 'tmdt_ketnoi', donbanle: 'banhang', tmdt: 'tmdt',
-  quetdonggoi: 'quetdonggoi',
-  danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
-  // luongnv: kiểm tra riêng bên dưới (OR của 2 quyền con — chỉ xem của mình / xem tất cả)
-  // thietlapluong: kiểm tra riêng bên dưới (chỉ Admin, không thuộc quyền module "nhanvien" thông thường)
+  donbanle: 'donbanle', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
+  chamcong: 'chamcong', luongnv: 'luong'
 };
 
 window.switchModule = function(mod) {
   if (mod === 'hanghoach') mod = 'hanghoa';   // màn "Hàng hóa CH" cũ đã gộp vào Hàng hóa
   // Chặn thật ở tầng hàm — không chỉ ẩn nút, còn chặn cả gọi trực tiếp qua Console
   if (currentUserData.role !== 'admin') {
-    if (mod === 'thietlapluong' || mod === 'calamviec' || mod === 'hethong' || mod === 'baocao') {
-      showToast('Chỉ Admin mới vào được mục này', true);
-      return;
-    }
-    if (mod === 'luongnv') {
-      const coXemLuong = !!(quyenModuleHienTai && (quyenModuleHienTai.nv_luong_minh || quyenModuleHienTai.nv_luong_tatca));
-      if (!coXemLuong) { showToast('Bạn không có quyền truy cập mục này', true); return; }
-    } else {
-      const key = ANH_XA_QUYEN_THEO_MOD[mod];
-      if (key && !(quyenModuleHienTai && quyenModuleHienTai[key])) {
-        showToast('Bạn không có quyền truy cập mục này', true);
-        return;
-      }
-    }
+    const key = ANH_XA_QUYEN_THEO_MOD[mod];
+    if (!key) { showToast('Chỉ Admin mới vào được mục này', true); return; }
+    if (!coQuyen(key)) { showToast('Bạn không có quyền truy cập mục này', true); return; }
   }
   activeModule = mod;
   if (mod === 'checklist') {
@@ -1716,11 +1708,18 @@ window.switchModule = function(mod) {
     b.style.setProperty('--accent', color);
   });
   document.getElementById('sub-tab-bar').dataset.mod = mod;
+  // Danh sách & Thống kê phiếu: chỉ hiện khi có quyền xem danh sách của đúng tab
+  const xemDS = mod === 'baoca' || coQuyen(mod + '_xemds');
+  ['ds', 'thongke'].forEach(t => { const b = document.getElementById('stab-' + t); if (b) b.style.display = xemDS ? '' : 'none'; });
   // Switch to tao subtab
   switchSub('tao');
 };
 
 window.switchSub = function(sub) {
+  if ((sub === 'ds' || sub === 'thongke') && activeModule !== 'baoca' && !coQuyen(activeModule + '_xemds')) {
+    showToast('Bạn không có quyền xem danh sách phiếu', true);
+    sub = 'tao';
+  }
   activeSubTab = sub;
   document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
   document.getElementById('stab-' + sub).classList.add('active');
@@ -1795,7 +1794,7 @@ function veChonKhoHangHoa() {
       onclick="chonKhoHangHoa('${k}')">${ten[k]}</button>`).join('') : '';
   el.style.display = ds.length > 1 ? 'flex' : 'none';
   const nutTem = document.getElementById('nut-gio-tem');
-  if (nutTem) nutTem.style.display = (dang === 'ch' || dang === 'ca') ? '' : 'none';
+  if (nutTem) nutTem.style.display = (dang === 'ch' || dang === 'ca') && coQuyen('hh_intem') ? '' : 'none';
 }
 
 window.chonKhoHangHoa = function(k) {
@@ -1833,14 +1832,14 @@ async function renderHangHoaTab() {
       <button class="btn-outline" id="nut-gio-tem" onclick="moGioTem()" style="white-space:nowrap">🏷 In tem giá${tongSoTem() ? ` (${tongSoTem()})` : ''}</button>
     </div>
     <div id="hanghoa-nhom-filters" style="margin-bottom:10px"></div>
-    ${qHH.hh_them ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
+    ${currentUserData.role === 'admin' ? `<button class="btn-g" style="width:100%;margin-bottom:8px" onclick="toggleMenuThemHangHoa()">+ Thêm hàng hóa</button>
     <div id="hanghoa-them-menu" class="user-menu-dropdown" style="display:none;position:static;margin-bottom:8px">
       <button onclick="moFormThemHangDon()">Thêm hàng hóa</button>
       <button onclick="moFormThemHangCombo()">Thêm combo hàng hóa</button>
     </div>
     <div id="hanghoa-form"></div>` : ''}
     ${qHH.hh_xuatfile ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="exportDanhSachHangHoaExcel()">Xuất Excel danh sách hàng hóa</button>` : ''}
-    ${(qHH.hh_them || qHH.hh_sua) ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
+    ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>` : ''}
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px">
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
@@ -3465,8 +3464,7 @@ async function congTonHangHoan(d, chiTiet, nguoi) {
     try {
       const sku = allSKUs?.find(x => x.sku === c.maHang);
       if (sku?.id) {
-        await updateDoc(doc(db, 'skus', sku.id), { soLuongTon: increment(c.soLuongNhap) });
-        sku.soLuongTon = (Number(sku.soLuongTon) || 0) + c.soLuongNhap;
+        await setDoc(doc(db, 'ton_san', sku.id), { soLuongTon: increment(c.soLuongNhap) }, { merge: true });
       }
       await addDoc(collection(db, 'the_kho'), {
         sku: c.maHang, kho: 'san', loaiGiaoDich: 'Nhập lại hàng hoàn',
@@ -5847,11 +5845,17 @@ let ddbPhieuTraCho = [];
 async function napDonDaBan() {
   const dau = new Date(ddbNgay + 'T00:00:00');
   const cuoi = new Date(ddbNgay + 'T23:59:59');
+  const xemHet = coQuyen('dbl_xemtatca');
   try {
-    const snap = await getDocs(query(collection(db, 'don_ban_le'),
-      where('taoLuc', '>=', dau), where('taoLuc', '<=', cuoi),
-      orderBy('taoLuc', 'desc'), limit(300)));
-    ddbDanhSach = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // Không có quyền xem đơn mọi người: chỉ hỏi máy chủ đơn của chính mình (rules chặn đơn
+    // người khác), lọc ngày và sắp xếp ở máy — khỏi cần chỉ mục ghép
+    const snap = await getDocs(xemHet
+      ? query(collection(db, 'don_ban_le'), where('taoLuc', '>=', dau), where('taoLuc', '<=', cuoi), orderBy('taoLuc', 'desc'), limit(300))
+      : query(collection(db, 'don_ban_le'), where('nguoiBan.uid', '==', currentUser.uid), limit(1000)));
+    const ms = (d) => d.taoLuc?.toMillis?.() || 0;
+    ddbDanhSach = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .filter(d => ms(d) >= dau.getTime() && ms(d) <= cuoi.getTime())
+      .sort((a, b) => ms(b) - ms(a));
   } catch(e) {
     console.error('Lỗi tải đơn:', e);
     ddbDanhSach = [];
@@ -5859,9 +5863,12 @@ async function napDonDaBan() {
   // Lấy cả phiếu đã xử lý để nhân viên biết phiếu mình gửi đi tới đâu.
   // Không lọc theo ngày vì phiếu cũ chưa duyệt vẫn phải hiện.
   try {
-    const s2 = await getDocs(query(collection(db, 'phieu_tra_hang'),
-      orderBy('taoLuc', 'desc'), limit(60)));
-    ddbPhieuTraCho = s2.docs.map(d => ({ id: d.id, ...d.data() }));
+    const xemPhieuHet = xemHet || coQuyen('dbl_duyettra');
+    const s2 = await getDocs(xemPhieuHet
+      ? query(collection(db, 'phieu_tra_hang'), orderBy('taoLuc', 'desc'), limit(60))
+      : query(collection(db, 'phieu_tra_hang'), where('nguoiTao.uid', '==', currentUser.uid), limit(200)));
+    ddbPhieuTraCho = s2.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.taoLuc?.toMillis?.() || 0) - (a.taoLuc?.toMillis?.() || 0)).slice(0, 60);
   } catch(e) {
     console.warn('Không tải được phiếu trả:', e.message);
     ddbPhieuTraCho = [];
@@ -5871,7 +5878,7 @@ async function napDonDaBan() {
 function veManHinhDonDaBan() {
   const el = document.getElementById('donbanle-content');
   if (!el) return;
-  const xemHet = !!currentUserData?.quyen?.nv_luong_tatca || currentUserData?.role === 'admin';
+  const xemHet = coQuyen('dbl_xemtatca');
   const ds = ddbDanhSach.filter(d => {
     if (!xemHet && d.nguoiBan?.uid !== currentUser.uid) return false;
     if (ddbLocNguoiBan && d.nguoiBan?.ten !== ddbLocNguoiBan) return false;
@@ -5964,7 +5971,7 @@ function veManHinhDonDaBan() {
           </div>
           <div style="display:flex;flex-direction:column;gap:4px">
             <button class="btn-xs" onclick="guiLenhIn('${d.id}')">🖨 In bill</button>
-            ${d.maHoaDonKiotViet && !d.daHuy ? `<button class="btn-xs" style="background:#FEF3C7;color:#92400E" onclick="moTraHang('${d.id}')">↩ Trả hàng</button>` : ''}
+            ${d.maHoaDonKiotViet && !d.daHuy && coQuyen('dbl_trahang') ? `<button class="btn-xs" style="background:#FEF3C7;color:#92400E" onclick="moTraHang('${d.id}')">↩ Trả hàng</button>` : ''}
           </div>
           ${d.lanTra?.length ? `<div style="font-size:11px;color:#D97706;margin-top:4px">
             Đã trả ${d.lanTra.length} lần · hoàn ${fmt(d.lanTra.reduce((s,x)=>s+(x.tienHoan||0),0))}đ
@@ -5987,6 +5994,7 @@ let thDon = null;
 let thSoLuongTra = {};
 
 window.moTraHang = function(idDon) {
+  if (!coQuyen('dbl_trahang')) { showToast('Bạn không có quyền tạo phiếu trả hàng', true); return; }
   const d = ddbDanhSach.find(x => x.id === idDon);
   if (!d) return;
   thDon = d;
@@ -6126,8 +6134,7 @@ window.xacNhanTraHang = async function() {
 // ===== DUYỆT PHIẾU TRẢ HÀNG =====
 // Chỉ quản lý/Admin. Duyệt xong mới sửa hóa đơn KiotViet và cộng lại kho.
 window.duyetPhieuTra = async function(idPhieu) {
-  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
-  if (!laQL) { showToast('Chỉ quản lý mới duyệt được', true); return; }
+  if (!coQuyen('dbl_duyettra')) { showToast('Bạn không có quyền duyệt phiếu trả hàng', true); return; }
 
   const snap = await getDoc(doc(db, 'phieu_tra_hang', idPhieu));
   if (!snap.exists()) return;
@@ -6190,8 +6197,7 @@ window.duyetPhieuTra = async function(idPhieu) {
 };
 
 window.tuChoiPhieuTra = async function(idPhieu) {
-  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
-  if (!laQL) { showToast('Chỉ quản lý mới xử lý được', true); return; }
+  if (!coQuyen('dbl_duyettra')) { showToast('Bạn không có quyền duyệt phiếu trả hàng', true); return; }
   const lyDo = prompt('Lý do từ chối:');
   if (lyDo === null) return;
   await updateDoc(doc(db, 'phieu_tra_hang', idPhieu), {
@@ -7829,8 +7835,8 @@ function veGioHang() {
         <input type="number" min="1" value="${d.soLuong}" onchange="bhDatSL(${i},this.value)"
           style="width:52px;padding:8px;text-align:center;font-size:16px;font-weight:600">
         <button class="btn-xs" style="width:34px;padding:8px" onclick="bhDoiSL(${i},1)">+</button>
-        <input type="number" min="0" value="${d.giamGia || ''}" placeholder="Giảm"
-          onchange="bhDatGiam(${i},this.value)" style="flex:1;min-width:60px;padding:8px;text-align:right">
+        ${coQuyen('bh_giamgia') ? `<input type="number" min="0" value="${d.giamGia || ''}" placeholder="Giảm"
+          onchange="bhDatGiam(${i},this.value)" style="flex:1;min-width:60px;padding:8px;text-align:right">` : '<div style="flex:1"></div>'}
         <div style="font-weight:700;font-size:14px;min-width:76px;text-align:right">${fmt(thanhTien)}đ</div>
       </div>
     </div>`;
@@ -7954,6 +7960,10 @@ window.bhMoKhungQR = async function() {
     const sku = allSKUs.find(s => s.sku === d.sku);
     return sku && d.soLuong > layTon(sku, 'cuahang');
   });
+  if (vuot.length && !coQuyen('bh_vuotton')) {
+    alert(`Kho Cửa hàng không đủ hàng:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nBạn không có quyền bán khi thiếu hàng — báo quản lý kiểm tra tồn kho.`);
+    return;
+  }
   if (vuot.length && !confirm(
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán?`)) return;
 
@@ -8319,6 +8329,7 @@ function bhSuaDong(f) {
 window.bhDoiSL = function(i, d) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, (Number(p.gio[i].soLuong) || 1) + d); }); };
 window.bhDatSL = function(i, v) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, parseInt(v) || 1); }); };
 window.bhDatGiam = function(i, v) {
+  if (!coQuyen('bh_giamgia')) { showToast('Bạn không có quyền giảm giá', true); return; }
   bhSuaDong(p => {
     const toiDa = (Number(p.gio[i].gia) || 0) * (Number(p.gio[i].soLuong) || 0);
     p.gio[i].giamGia = Math.min(toiDa, Math.max(0, parseFloat(v) || 0));
@@ -8447,6 +8458,10 @@ window.bhHoanThanh = async function(daTraQuaQR) {
     const sku = allSKUs.find(s => s.sku === d.sku);
     return sku && d.soLuong > layTon(sku, 'cuahang');
   });
+  if (vuot.length && !coQuyen('bh_vuotton')) {
+    alert(`Kho Cửa hàng không đủ hàng:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nBạn không có quyền bán khi thiếu hàng — báo quản lý kiểm tra tồn kho.`);
+    return;
+  }
   if (vuot.length && !confirm(
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán? Tồn kho sẽ về âm.`)) return;
 
@@ -8592,6 +8607,18 @@ async function renderHeThong() {
         Admin luôn thấy (có dấu 🔒 khi đang tắt).</span></span>
       </label>`),
 
+    htThe('Phân quyền & bảo mật dữ liệu', `
+      <p style="font-size:13px;margin-bottom:8px">Quyền tick trong vai trò được ghi vào thẻ đăng nhập của từng người.
+        Quy tắc bảo mật trên máy chủ dựa vào đó: không có quyền thì không nhận được dữ liệu.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn-outline" onclick="htDongBoQuyen()">① Ghi quyền cho tất cả tài khoản</button>
+        <button class="btn-outline" onclick="htChuyenTonSan()">② Chuyển tồn kho Sàn sang chỗ riêng (làm một lần)</button>
+        <button class="btn-outline" onclick="htKiemThuRules()">③ Kiểm thử quy tắc bảo mật</button>
+        <button class="btn-g" id="ht-ap-dung-rules" disabled onclick="htApDungRules()">④ Áp dụng quy tắc bảo mật</button>
+        <button class="btn-outline" onclick="htQuayLaiRules()">↩ Quay lại quy tắc trước</button>
+      </div>
+      <div id="ht-baomat" style="font-size:13px;margin-top:10px"></div>`),
+
     htThe('Thông tin in trên bill', `
       <div class="field"><label>Tên cửa hàng</label><input id="ht-ten" value="${v(ch.ten, 'CUA AQUARIUM')}"></div>
       <div class="field"><label>Địa chỉ</label><input id="ht-diachi" value="${v(ch.diaChi, '451A-451B Vườn Lài, TP.HCM')}"></div>
@@ -8656,7 +8683,74 @@ async function renderHeThong() {
 window.htLuuTinhNang = async function() {
   const bat = document.getElementById('ht-tmdt').checked;
   await setDoc(doc(db, 'cau_hinh', 'tinh_nang'), { batTMDT: bat, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
-  showToast(bat ? 'Đã bật Sàn TMĐT cho nhân viên' : 'Đã ẩn Sàn TMĐT với nhân viên');
+  // Quyền Sàn nằm trong thẻ đăng nhập -> bật/tắt Sàn phải ghi lại quyền cho mọi người
+  const kq = await dongBoQuyen({ tatCa: true });
+  showToast((bat ? 'Đã bật Sàn TMĐT cho nhân viên' : 'Đã ẩn Sàn TMĐT với nhân viên')
+    + (kq.success ? '' : ' · chưa ghi được quyền: ' + (kq.error || '')), !kq.success);
+};
+
+// ---------- Phân quyền & bảo mật ----------
+function htBaoMat(html) { const el = document.getElementById('ht-baomat'); if (el) el.innerHTML = html; }
+
+window.htDongBoQuyen = async function() {
+  if (!confirm('Ghi quyền theo vai trò cho TẤT CẢ tài khoản?\n\nVai trò còn lưu theo cây quyền cũ sẽ được quy đổi sang cây mới (giữ bản cũ để đối chiếu).')) return;
+  htBaoMat('<div class="loading">Đang ghi quyền...</div>');
+  const kq = await dongBoQuyen({ tatCa: true });
+  htBaoMat(kq.success
+    ? `✅ Đã ghi quyền cho <b>${kq.soNguoi}</b> tài khoản${kq.soVaiTroQuyDoi ? ` · quy đổi <b>${kq.soVaiTroQuyDoi}</b> vai trò sang cây mới` : ''}.
+       ${(kq.loi || []).length ? `<div style="color:#B91C1C">Lỗi: ${kq.loi.map(escHtml).join('<br>')}</div>` : ''}
+       <div style="color:var(--text2)">Mở Quản trị hệ thống › Vai trò kiểm tra lại từng vai trò.</div>`
+    : `<span style="color:#B91C1C">Không ghi được: ${escHtml(kq.error || '')}</span>`);
+};
+
+window.htChuyenTonSan = async function() {
+  if (!confirm('Chuyển tồn kho Sàn (và số đang đặt) từ danh sách hàng sang chỗ riêng có khóa quyền?\n\nChỉ cần làm một lần; bấm lại cũng không sao.')) return;
+  htBaoMat('<div class="loading">Đang chuyển...</div>');
+  const kq = await goiWorkerAdmin('chuyen-ton-san');
+  htBaoMat(kq.success ? `✅ Đã chuyển tồn Sàn của <b>${kq.soMa}</b> mã hàng.` : `<span style="color:#B91C1C">Không chuyển được: ${escHtml(kq.error || '')}</span>`);
+};
+
+let htRulesDaKiemThu = null;   // nội dung rules vừa kiểm thử đạt
+window.htKiemThuRules = async function() {
+  htBaoMat('<div class="loading">Đang kiểm thử trên máy chủ Google...</div>');
+  const nut = document.getElementById('ht-ap-dung-rules');
+  if (nut) nut.disabled = true;
+  try {
+    const moi = '?v=' + Date.now();
+    const [source, cases] = await Promise.all([
+      fetch('firestore.rules' + moi, { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error('Không tải được firestore.rules'); return r.text(); }),
+      fetch('firestore.rules.test.json' + moi, { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error('Không tải được bộ kiểm thử'); return r.json(); })
+    ]);
+    const kq = await goiWorkerAdmin('kiem-thu-rules', { source, testCases: cases.map(c => c.test) });
+    if (!kq.success) throw new Error(kq.error || 'lỗi');
+    const hong = (kq.ketQua || []).map((r, i) => ({ ...r, ten: cases[i]?.ten, mongDoi: cases[i]?.test.expectation })).filter(r => r.state !== 'SUCCESS');
+    if (!hong.length) {
+      htRulesDaKiemThu = source;
+      if (nut) nut.disabled = false;
+      htBaoMat(`✅ Đạt <b>${cases.length}/${cases.length}</b> ca kiểm thử. Có thể bấm ④ để áp dụng.`);
+    } else {
+      htBaoMat(`<span style="color:#B91C1C">❌ Hỏng ${hong.length}/${cases.length} ca:</span><br>`
+        + hong.map(h => `· ${escHtml(h.ten || '')} (mong đợi ${h.mongDoi})${h.debug?.length ? ` — ${escHtml(h.debug.join('; ').slice(0, 200))}` : ''}`).join('<br>'));
+      console.log('[kiểm thử rules]', hong, kq.canhBao);
+    }
+  } catch(e) {
+    htBaoMat(`<span style="color:#B91C1C">Không kiểm thử được: ${escHtml(e.message)}</span>`);
+  }
+};
+
+window.htApDungRules = async function() {
+  if (!htRulesDaKiemThu) { showToast('Kiểm thử đạt trước đã', true); return; }
+  if (!confirm('Áp dụng quy tắc bảo mật mới cho toàn hệ thống?\n\nNhớ làm bước ① trước. Có lỗi thì bấm "Quay lại quy tắc trước".')) return;
+  htBaoMat('<div class="loading">Đang áp dụng...</div>');
+  const kq = await goiWorkerAdmin('ap-dung-rules', { source: htRulesDaKiemThu });
+  htBaoMat(kq.success ? '✅ Đã áp dụng quy tắc bảo mật mới. Mất khoảng 1 phút để có hiệu lực ở mọi máy.'
+    : `<span style="color:#B91C1C">Không áp dụng được: ${escHtml(kq.error || '')}</span>`);
+};
+
+window.htQuayLaiRules = async function() {
+  if (!confirm('Quay lại bộ quy tắc bảo mật trước đó?')) return;
+  const kq = await goiWorkerAdmin('quay-lai-rules');
+  htBaoMat(kq.success ? '↩ Đã quay lại quy tắc trước.' : `<span style="color:#B91C1C">Không quay lại được: ${escHtml(kq.error || '')}</span>`);
 };
 
 window.htLuuCuaHang = async function() {
@@ -8903,7 +8997,8 @@ window.htDatTon = async function() {
   if (sku.laCombo) { showToast('Combo tự tính tồn từ hàng thành phần — chỉnh từng thành phần', true); return; }
   const tenKho = kho === 'cuahang' ? 'Cửa hàng' : 'Sàn';
   if (!confirm(`Đặt tồn ${tenKho} của ${sku.sku} = ${sl}?`)) return;
-  await updateDoc(doc(db, 'skus', sku.id), { [kho === 'cuahang' ? 'tonCuaHang' : 'soLuongTon']: Number(sl) || 0 });
+  if (kho === 'cuahang') await updateDoc(doc(db, 'skus', sku.id), { tonCuaHang: Number(sl) || 0 });
+  else await setDoc(doc(db, 'ton_san', sku.id), { soLuongTon: Number(sl) || 0 }, { merge: true });
   showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0}`);
   htXemTon();
 };
@@ -9095,7 +9190,7 @@ function renderHangHoaList() {
   el.innerHTML = pageList.map(s => {
     const tonSan = layTon(s, 'san');
     const tonCH = layTon(s, 'cuahang');
-    const dat = Number(s.soLuongDatHang) || 0;
+    const dat = layDatHangSan(s);
     const khaDung = tonSan - dat;
     const kho = khoHangHoaDangXem();
     const hienCH = kho === 'ch' || kho === 'ca', hienSan = kho === 'san' || kho === 'ca';
@@ -9123,9 +9218,9 @@ function renderHangHoaList() {
         <div style="display:flex;flex-direction:column;gap:6px">
           ${hienCH ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','cuahang')">Thẻ kho${kho === 'ca' ? ' CH' : ''}</button>` : ''}
           ${hienSan ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho${kho === 'ca' ? ' Sàn' : ''}</button>` : ''}
-          ${hienCH ? `<button class="btn-xs" id="nut-tem-${s.id}" onclick="themVaoGioTem('${s.id}')">🏷 Tem${gioTem.get(s.id) ? ` (${gioTem.get(s.id).soLuong})` : ''}</button>` : ''}
-          ${qHH2.hh_sua ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>` : ''}
-          ${qHH2.hh_xoa ? `<button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
+          ${hienCH && coQuyen('hh_intem') ? `<button class="btn-xs" id="nut-tem-${s.id}" onclick="themVaoGioTem('${s.id}')">🏷 Tem${gioTem.get(s.id) ? ` (${gioTem.get(s.id).soLuong})` : ''}</button>` : ''}
+          ${currentUserData.role === 'admin' ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
+          <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
         </div>
       </div>
       <div id="hh-sua-${s.id}"></div>
@@ -9158,6 +9253,7 @@ function capNhatNutTem(id) {
 }
 
 window.themVaoGioTem = function(id, soThem = 1) {
+  if (!coQuyen('hh_intem')) { showToast('Bạn không có quyền in tem giá', true); return; }
   const s = allSKUs.find(x => x.id === id);
   if (!s) return;
   const t = gioTem.get(id) || { ten: s.ten || '', gia: Number(s.gia) || 0, sku: s.sku || '', soLuong: 0 };
@@ -9320,7 +9416,7 @@ window.moFormThemHangDon = async function() {
       ${truongCoNhan('Mã SKU', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
       ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hh-giavon" placeholder="Ô nhập liệu">`) : ''}
       ${truongCoNhan('Giá bán', `<input type="number" id="hh-gia" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Số lượng tồn', `<input type="number" id="hh-soluong" placeholder="0" value="0">`)}
+      ${truongCoNhan('Tồn kho Sàn', `<input type="number" id="hh-soluong" placeholder="0" value="0">`)}
       ${renderNhomHangSelector('hh')}
       <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
       <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -9437,8 +9533,36 @@ const KHO = {
 function layTon(sku, maKho = 'san') {
   if (!sku) return 0;
   if (sku.laCombo) return tinhTonKhoCombo(sku, maKho);
-  const truong = maKho === 'cuahang' ? 'tonCuaHang' : 'soLuongTon';
-  return Number(sku[truong]) || 0;
+  if (maKho === 'cuahang') return Number(sku.tonCuaHang) || 0;
+  return Number(tonSanMap.get(sku.id)?.soLuongTon) || 0;
+}
+function layDatHangSan(sku) { return Number(tonSanMap.get(sku?.id)?.soLuongDatHang) || 0; }
+
+// ===== TỒN KHO SÀN (ton_san/{id SKU}) =====
+// Tách khỏi skus để chỉ người có quyền xem kho Sàn mới nhận được số này (Firestore rules chặn
+// theo từng tài liệu, không chặn theo từng trường). Người khác vẫn trừ/cộng được khi chuyển kho
+// nhưng không đọc được.
+let tonSanMap = new Map();
+let tonSanUnsub = null;
+const KHOA_DOC_TON_SAN = ['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho'];
+function capNhatTheoDoiTonSan() {
+  const duocDoc = KHOA_DOC_TON_SAN.some(k => coQuyen(k));
+  if (duocDoc && !tonSanUnsub) {
+    tonSanUnsub = onSnapshot(collection(db, 'ton_san'), (snap) => {
+      tonSanMap = new Map(snap.docs.map(d => [d.id, d.data()]));
+      if (document.getElementById('hanghoa-list') && typeof dangThaoTacHangHoa === 'function' && !dangThaoTacHangHoa()) renderHangHoaList();
+    }, (e) => console.warn('[tồn Sàn] không đọc được:', e.message));
+  } else if (!duocDoc && tonSanUnsub) {
+    tonSanUnsub(); tonSanUnsub = null; tonSanMap = new Map();
+  }
+}
+
+// Tồn Sàn trong dữ liệu ghi vào skus (form thêm/sửa, nhập Excel) -> chuyển sang ton_san
+async function tachTonSanKhiGhi(idTaiLieu, data) {
+  if (!data || !('soLuongTon' in data)) return;
+  const so = Number(data.soLuongTon) || 0;
+  delete data.soLuongTon;
+  await setDoc(doc(db, 'ton_san', idTaiLieu), { soLuongTon: so }, { merge: true });
 }
 
 function tinhTonKhoCombo(sku, maKho = 'san') {
@@ -9494,9 +9618,9 @@ window.luuHangHoa = async function(laComboParam) {
   const daTonTai = await getDoc(doc(db, 'skus', sku));
   if (daTonTai.exists()) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể tạo trùng`, true); return; }
 
+  if (!laCombo) await setDoc(doc(db, 'ton_san', sku), { soLuongTon: parseInt(document.getElementById('hh-soluong')?.value) || 0 }, { merge: true });
   await setDoc(doc(db, 'skus', sku), {
     ten, sku, gia, anhFileId, anhUrl, ...nhom, deleted: false,
-    soLuongTon: laCombo ? 0 : (parseInt(document.getElementById('hh-soluong')?.value) || 0),
     // giaVon KHÔNG lưu ở đây nữa — nằm ở collection gia_von, chỉ Admin đọc được
     kichThuoc: {
       dai: parseFloat(document.getElementById('hh-dai')?.value) || 0,
@@ -9544,7 +9668,7 @@ window.moFormSuaHangHoa = async function(id) {
       ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hhs-giavon-${id}" placeholder="Ô nhập liệu" value="${s.giaVon||0}">`) : ''}
       ${truongCoNhan('Giá bán', `<input type="number" id="hhs-gia-${id}" placeholder="Ô nhập liệu" value="${s.gia||0}">`)}
       <input type="hidden" id="hhs-la-combo-${id}" value="${s.laCombo ? '1':'0'}">
-      ${!s.laCombo ? `${truongCoNhan('Số lượng tồn', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${s.soLuongTon||0}">`)}` : `
+      ${!s.laCombo ? `${truongCoNhan('Tồn kho Sàn', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${layTon(s, 'san')}">`)}` : `
       <div style="margin-bottom:8px">
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
         <div class="field sku-wrap">
@@ -9643,7 +9767,9 @@ window.luuSuaHangHoa = async function(id) {
     // Mã SKU đã đổi -> tên tài liệu phải đổi theo. Kiểm tra không trùng mã khác trước khi đổi.
     const daTonTai = await getDoc(doc(db, 'skus', sku));
     if (daTonTai.exists()) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể đổi trùng`, true); return; }
-    await setDoc(doc(db, 'skus', sku), { ...(s||{}), ...updateData });
+    await tachTonSanKhiGhi(sku, updateData);
+    const { soLuongTon: _bo, soLuongDatHang: _bo2, ...sCu } = (s || {});
+    await setDoc(doc(db, 'skus', sku), { ...sCu, ...updateData });
     await deleteDoc(doc(db, 'skus', id));
     // Giá vốn dùng mã SKU làm tên tài liệu nên cũng phải dọn bản cũ,
     // nếu không sẽ để lại rác và mã mới mất giá vốn.
@@ -9651,6 +9777,7 @@ window.luuSuaHangHoa = async function(id) {
       try { await deleteDoc(doc(db, 'gia_von', id)); } catch(e) {}
     }
   } else {
+    await tachTonSanKhiGhi(id, updateData);
     await updateDoc(doc(db,'skus', id), updateData);
   }
   if (giaVonMoi !== null) await luuGiaVon(sku, giaVonMoi);
@@ -9735,53 +9862,98 @@ let allNhomHang = []; // [{id, ten, chaId, cap}]
 // ===== VAI TRÒ (phân quyền tùy chỉnh — module nào hiển thị cho từng vai trò) =====
 // Admin luôn full quyền, không cần gán vai trò (bypass toàn bộ hệ thống này).
 let allVaiTro = [];
+// CÂY QUYỀN — mỗi tab là một quyền lớn, mỗi chức năng trong tab là một quyền con.
+// Admin luôn toàn quyền và làm các việc chỉ Admin (tài khoản, vai trò, thiết lập, giá vốn,
+// thêm/sửa/xóa hàng hóa) — những việc đó KHÔNG có ô tick ở đây.
+// Quyền thật nằm ở máy chủ: worker ghi danh sách quyền vào thẻ đăng nhập (custom claims),
+// Firestore rules và worker kiểm tra theo đúng các khóa này.
+// Mục có nhom: true chỉ là tiêu đề gom các tab (không có ô tick riêng).
 const DANH_SACH_MODULE = [
-  { key: 'checklist', ten: 'Checklist' },
+  { key: 'banhang', ten: 'Bán hàng', con: [
+    { key: 'bh_giamgia', ten: 'Giảm giá trên đơn' },
+    { key: 'bh_vuotton', ten: 'Bán khi kho Cửa hàng không đủ hàng (tồn về âm)' }
+  ]},
+  { key: 'donbanle', ten: 'Đơn đã bán', con: [
+    { key: 'dbl_xemtatca', ten: 'Xem đơn của mọi người (không tick: chỉ đơn mình bán)' },
+    { key: 'dbl_trahang', ten: 'Tạo phiếu trả hàng' },
+    { key: 'dbl_duyettra', ten: 'Duyệt / từ chối phiếu trả hàng' }
+  ]},
+  { key: 'checklist', ten: 'Checklist', con: [] },
   { key: 'nhap', ten: 'Chuyển kho', con: [
+    { key: 'nhap_xemds', ten: 'Xem danh sách & thống kê phiếu' },
+    { key: 'nhap_sua', ten: 'Sửa / xóa phiếu' },
     { key: 'nhap_xuatfile', ten: 'Xuất file' }
   ]},
   { key: 'xuat', ten: 'Xuất hủy', con: [
+    { key: 'xuat_xemds', ten: 'Xem danh sách & thống kê phiếu' },
+    { key: 'xuat_sua', ten: 'Sửa / xóa phiếu' },
     { key: 'xuat_xuatfile', ten: 'Xuất file' }
   ]},
-  { key: 'lichca', ten: 'Lịch làm việc', con: [
-    { key: 'lichca_xepca', ten: 'Xếp ca, chỉnh sửa ca' }
-  ]},
-  { key: 'baocao', ten: 'Báo cáo', chiAdmin: true },
-  { key: 'nhanvien', ten: 'Nhân viên', con: [
-    // 4 quyền tài khoản: worker và Firestore rules chỉ cho Admin làm -> không giao được
-    { key: 'nv_taotk', ten: 'Tạo tài khoản', chiAdmin: true },
-    { key: 'nv_capmk', ten: 'Cấp lại mật khẩu', chiAdmin: true },
-    { key: 'nv_xoatk', ten: 'Xóa tài khoản', chiAdmin: true },
-    { key: 'nv_ganvaitro', ten: 'Gán vai trò', chiAdmin: true },
-    { key: 'nv_chamcong', ten: 'Chấm công' },
-    { key: 'nv_luong_minh', ten: 'Bảng lương — chỉ xem của mình' },
-    { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
-  ]},
-  { key: 'banhang', ten: 'Bán hàng tại quầy', con: [] },
-  // Hàng hóa: MỘT màn hình, xem kho nào do 2 quyền con quyết định.
-  // Thông tin hàng (tên, giá bán, ảnh, nhóm) là chung cho cả 2 kho.
   { key: 'hanghoa', ten: 'Hàng hóa', con: [
-    { key: 'hh_kho_ch', ten: 'Xem kho Cửa hàng (tồn, giá bán, in tem giá)' },
-    { key: 'hh_kho_san', ten: 'Xem kho Sàn (tồn, đang đặt) — chỉ hiện khi bật Sàn TMĐT' },
-    // Thêm / sửa / xóa hàng: Firestore rules chỉ cho Admin (nhân viên chỉ được đổi 2 trường tồn kho)
-    { key: 'hh_them', ten: 'Thêm hàng', chiAdmin: true },
-    { key: 'hh_sua', ten: 'Sửa thông tin hàng', chiAdmin: true },
-    { key: 'hh_xoa', ten: 'Xóa hàng', chiAdmin: true },
-    { key: 'hh_xuatfile', ten: 'Xuất file Excel danh sách hàng' }
+    { key: 'hh_kho_ch', ten: 'Xem kho Cửa hàng (tồn, giá bán)' },
+    { key: 'hh_kho_san', ten: 'Xem kho Sàn (tồn, đang đặt) — chỉ khi bật Sàn TMĐT' },
+    { key: 'hh_intem', ten: 'In tem giá' },
+    { key: 'hh_xuatfile', ten: 'Xuất file Excel' }
   ]},
-  // Màn hình nhân viên đóng gói dùng hằng ngày — quét 1 lần, xem hàng, bấm hoàn thành.
-  // Để riêng ngoài sidebar vì họ chỉ dùng đúng cái này.
-  { key: 'quetdonggoi', ten: 'Đóng gói', con: [] },
-  // Sàn TMĐT — phần quản trị, chỉ quản lý và admin cần.
-  // Thêm màn hình mới: thêm 1 dòng ở đây + 1 dòng trong MAN_HINH_TMDT, không sửa gì khác.
-  { key: 'tmdt', ten: 'Sàn TMĐT', con: [
-    { key: 'tmdt_donhang', ten: 'Đơn hàng' },
-    { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
-    { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' },
+  { key: 'lichca', ten: 'Lịch làm việc', con: [
+    { key: 'lichca_xepca', ten: 'Xếp ca, sửa ca' }
+  ]},
+  { key: 'chamcong', ten: 'Chấm công', con: [
+    { key: 'cc_xemtatca', ten: 'Xem chấm công mọi người (không tick: chỉ của mình)' }
+  ]},
+  { key: 'luong', ten: 'Bảng lương', con: [
+    { key: 'luong_xemtatca', ten: 'Xem lương mọi người (không tick: chỉ của mình)' },
+    { key: 'luong_duyet', ten: 'Duyệt làm thêm giờ, thêm thưởng / phạt' }
+  ]},
+  { key: 'baocao', ten: 'Báo cáo ngày', con: [] },
+  { key: 'tmdt', nhom: true, ten: 'Sàn TMĐT — chỉ có hiệu lực khi Admin bật Sàn TMĐT', con: [
+    { key: 'tmdt_donhang', ten: 'Đơn hàng sàn' },
+    { key: 'tmdt_hoantra', ten: 'Đơn hoàn trả & nhập lại kho' },
+    { key: 'quetdonggoi', ten: 'Đóng gói' },
     { key: 'tmdt_nhaphang', ten: 'Nhập hàng' },
-    { key: 'tmdt_ketnoi', ten: 'Kết nối sàn (OAuth)' }
+    { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
+    { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
   ]}
 ];
+const PHIEN_BAN_QUYEN = 2;
+
+// Quy đổi vai trò lưu theo cây quyền cũ (trước phiên bản 2). Worker dùng đúng bảng này
+// khi ghi quyền vào thẻ đăng nhập, rồi ghi lại vai trò theo khóa mới.
+function quyDoiQuyenCu(cu) {
+  const q = {};
+  const co = (k) => !!cu[k];
+  const them = (...ds) => ds.forEach(k => { q[k] = true; });
+  if (co('banhang')) them('banhang', 'donbanle', 'dbl_trahang', 'bh_giamgia', 'bh_vuotton');
+  if (co('checklist')) them('checklist');
+  if (co('nhap')) them('nhap', 'nhap_xemds');
+  if (co('nhap_xuatfile')) them('nhap_xuatfile');
+  if (co('xuat')) them('xuat', 'xuat_xemds');
+  if (co('xuat_xuatfile')) them('xuat_xuatfile');
+  if (co('lichca')) them('lichca');
+  if (co('lichca_xepca')) them('lichca_xepca', 'nhap_sua', 'xuat_sua');
+  if (co('nv_chamcong')) them('chamcong', 'cc_xemtatca');
+  if (co('nv_luong_minh')) them('luong');
+  if (co('nv_luong_tatca')) them('luong', 'luong_xemtatca');
+  if (co('hanghoa_ch')) them('hanghoa', 'hh_kho_ch', 'hh_intem');
+  if (co('hanghoa')) {
+    them('hanghoa');
+    const coKho = cu.hh_kho_ch !== undefined || cu.hh_kho_san !== undefined;
+    if (!coKho || co('hh_kho_ch')) them('hh_kho_ch', 'hh_intem');
+    if (!coKho || co('hh_kho_san')) them('hh_kho_san');
+  }
+  if (co('hh_xuatfile')) them('hh_xuatfile');
+  if (co('baocao')) them('baocao');
+  if (co('quetdonggoi')) them('quetdonggoi');
+  if (co('tmdt_donhang')) them('tmdt_donhang', 'tmdt_hoantra');
+  ['tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho'].forEach(k => { if (co(k)) them(k); });
+  return q;
+}
+
+function tatCaKhoaQuyen() {
+  const ds = [];
+  DANH_SACH_MODULE.forEach(m => { if (!m.nhom) ds.push(m.key); (m.con || []).forEach(c => ds.push(c.key)); });
+  return ds;
+}
 
 async function loadVaiTro() {
   const snap = await getDocs(collection(db, 'vai_tro'));
@@ -9790,25 +9962,15 @@ async function loadVaiTro() {
 
 // Admin luôn full mọi quyền, kể cả quyền con — tính tự động từ DANH_SACH_MODULE, không cần liệt kê tay
 function layQuyenFullAdmin() {
-  const q = {};
-  DANH_SACH_MODULE.forEach(m => { q[m.key] = true; (m.con||[]).forEach(c => { q[c.key] = true; }); });
+  const q = { tmdt: true };
+  tatCaKhoaQuyen().forEach(k => { q[k] = true; });
   return q;
 }
 
-// User chưa được gán Vai trò mới (chưa migrate) -> khớp đúng hành vi CŨ trước khi có hệ thống Vai trò:
-// Quản lý full quyền các hành động (trừ quản lý tài khoản, vốn trước đây chỉ Admin làm được);
-// Nhân viên chỉ thấy 4 module chính, không có quyền hành động nào thêm.
-function layQuyenFallbackChuaMigrate() {
-  const laQuanLy = currentUserData.role === 'quan_ly';
-  return {
-    checklist:true, nhap:true, nhap_xuatfile:laQuanLy, xuat:true, xuat_xuatfile:laQuanLy,
-    lichca:true, lichca_xepca:laQuanLy, baocao:false,
-    nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
-    nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
-    hanghoa:false, hh_kho_ch:false, hh_kho_san:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
-    tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_nhaphang:false, tmdt_ketnoi:false,
-    quetdonggoi:false
-  };
+// Một chỗ duy nhất để hỏi "người này có quyền X không" — Admin luôn có
+function coQuyen(k) {
+  if (currentUserData?.role === 'admin') return true;
+  return !!(quyenModuleHienTai && quyenModuleHienTai[k]);
 }
 
 // ==========================================================================
@@ -9827,7 +9989,7 @@ function layQuyenFallbackChuaMigrate() {
 const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
     { key: 'banhang',   ten: 'Bán hàng',       quyen: 'banhang',   moGi: () => switchModule('banhang') },
-    { key: 'donbanle',  ten: 'Đơn đã bán',     quyen: 'banhang',   moGi: () => switchModule('donbanle') },
+    { key: 'donbanle',  ten: 'Đơn đã bán',     quyen: 'donbanle',  moGi: () => switchModule('donbanle') },
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
@@ -9846,25 +10008,23 @@ const NHOM_MENU = [
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('daytonkho', true); } }
   ]},
   { key: 'nhansu', ten: 'Nhân sự', muc: [
-    { key: 'danhsachnv', ten: 'Danh sách nhân viên', quyen: 'nhanvien',    moGi: () => moNVTab('danhsachnv') },
-    { key: 'chamcong',   ten: 'Chấm công',           quyen: 'nv_chamcong', moGi: () => moNVTab('chamcong') },
+    { key: 'danhsachnv', ten: 'Danh sách nhân viên', chiAdmin: true,       moGi: () => moNVTab('danhsachnv') },
+    { key: 'chamcong',   ten: 'Chấm công',           quyen: 'chamcong',    moGi: () => moNVTab('chamcong') },
     // Lịch làm việc là mục phụ: nhân viên xem ca của mình ngay ở hàng mục con,
     // quản lý xếp ca thì vào nhóm Nhân sự.
     { key: 'lichca',     ten: 'Lịch làm việc',       quyen: 'lichca', phu: true, moGi: () => switchModule('lichca') },
-    // Bảng lương: quản lý có quyền "xem tất cả" cũng phải thấy, không chỉ "xem của mình"
-    { key: 'luong',      ten: 'Bảng lương',
-      quyen: ['nv_luong_minh', 'nv_luong_tatca'], phu: true, moGi: () => moNVTab('luongnv') },
+    { key: 'luong',      ten: 'Bảng lương',          quyen: 'luong', phu: true, moGi: () => moNVTab('luongnv') },
     // Thiết lập lương chỉ Admin — đơn giá theo giờ và công thức thưởng
     { key: 'calamviec', ten: 'Ca làm việc', chiAdmin: true, moGi: () => moNVTab('calamviec') },
     { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') }
   ]},
-  { key: 'baocao', ten: 'Báo cáo', moTrucTiep: true, chiAdmin: true, quyen: 'baocao',
+  { key: 'baocao', ten: 'Báo cáo', moTrucTiep: true, quyen: 'baocao',
     muc: [], moGi: () => switchModule('baocao') },
   { key: 'thietlap', ten: 'Thiết lập', chiAdmin: true, muc: [
-    { key: 'hethong',    ten: 'Hệ thống',          quyen: 'tmdt_ketnoi', moGi: () => switchModule('hethong') },
-    { key: 'thanhtoan',  ten: 'Thanh toán',        quyen: 'tmdt_ketnoi', moGi: () => switchModule('thanhtoan') },
-    { key: 'adminpanel', ten: 'Quản trị hệ thống', quyen: 'tmdt_ketnoi', moGi: () => switchAdmin() },
-    { key: 'ketnoisan',  ten: 'Kết nối sàn',       quyen: 'tmdt_ketnoi',
+    { key: 'hethong',    ten: 'Hệ thống',          chiAdmin: true, moGi: () => switchModule('hethong') },
+    { key: 'thanhtoan',  ten: 'Thanh toán',        chiAdmin: true, moGi: () => switchModule('thanhtoan') },
+    { key: 'adminpanel', ten: 'Quản trị hệ thống', chiAdmin: true, moGi: () => switchAdmin() },
+    { key: 'ketnoisan',  ten: 'Kết nối sàn',       chiAdmin: true,
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
   ]}
 ];
@@ -9875,7 +10035,7 @@ let nhomMenuDangChon = null;
 // Ví dụ Bảng lương: ai có "xem của mình" HOẶC "xem tất cả" đều thấy.
 function coQuyenMuc(quyen) {
   if (currentUserData?.role === 'admin') return true;
-  if (!quyenModuleHienTai) return false;
+  if (!quyen || !quyenModuleHienTai) return false;
   const ds = Array.isArray(quyen) ? quyen : [quyen];
   return ds.some(k => !!quyenModuleHienTai[k]);
 }
@@ -9927,7 +10087,6 @@ function veMenuHaiCap() {
   if (!hangTren || !hangDuoi) return;
 
   const laAdmin = currentUserData?.role === 'admin';
-  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
   // Nhóm được phép:
   //   - moTrucTiep: xét quyền của chính nhóm (Báo cáo, Thiết lập)
   //   - còn lại: có ít nhất một mục CHÍNH được phép (mục phụ không tính)
@@ -10015,11 +10174,6 @@ const ANH_XA_HIEN_MODULE = {
   tmdt: [['mod-tmdt','flex'], ['sidebar-tmdt','flex']]
 };
 
-// Áp dụng đủ cả 2 chiều: module được tick -> hiện đúng kiểu display gốc; module không tick -> ẩn hẳn
-// Admin luôn full quyền, Quản lý/Nhân viên khác thì theo đúng quyền con "lichca_xepca" của Vai trò
-function coQuyenXepCa() {
-  return currentUserData.role === 'admin' || !!(quyenModuleHienTai && quyenModuleHienTai.lichca_xepca);
-}
 
 function apDungHienThiModule(quyenModule) {
   DANH_SACH_MODULE.forEach(m => {
@@ -10031,19 +10185,12 @@ function apDungHienThiModule(quyenModule) {
   });
   // Vẽ lại menu hai cấp theo quyền mới — quyền đổi giữa chừng thì menu đổi ngay
   veMenuHaiCap();
+  capNhatTheoDoiTonSan();
   // Quyền con "Xuất file" riêng cho Chuyển kho / Xuất hủy (Admin luôn có sẵn qua nhánh khác)
   const nhapExport = document.getElementById('nhap-export-card');
   if (nhapExport) nhapExport.style.display = quyenModule.nhap_xuatfile ? 'block' : 'none';
   const xuatExport = document.getElementById('xuat-export-card');
   if (xuatExport) xuatExport.style.display = quyenModule.xuat_xuatfile ? 'block' : 'none';
-  // Quyền con trong menu "Nhân viên": Chấm công, Bảng lương
-  const coXemLuong = !!(quyenModule.nv_luong_minh || quyenModule.nv_luong_tatca);
-  ['nv-menu-chamcong-sidebar','nv-menu-chamcong-mobile'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.style.display = quyenModule.nv_chamcong ? 'block' : 'none';
-  });
-  ['nv-menu-luongnv-sidebar','nv-menu-luongnv-mobile'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.style.display = coXemLuong ? 'block' : 'none';
-  });
 }
 
 // Bộ nhớ đệm quyền module của người dùng đang đăng nhập — dùng để switchModule() tự kiểm tra,
@@ -10058,7 +10205,7 @@ let unsubscribeVaiTroDoc = null;
 // Sàn TMĐT tắt -> nhân viên không thấy cả nhóm Sàn (kể cả Đóng gói); Admin vẫn thấy để làm tiếp.
 let batTMDT = false;
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt', 'tmdt_donhang', 'tmdt_sanpham', 'tmdt_daytonkho', 'tmdt_nhaphang', 'tmdt_ketnoi', 'quetdonggoi', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_sanpham', 'tmdt_daytonkho', 'tmdt_nhaphang', 'quetdonggoi', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -10081,21 +10228,41 @@ function theoDoiTinhNang() {
   }, () => {});
 }
 
-// Quyền thật của nhân viên = quyền vai trò, trừ các khóa chỉ Admin và tính năng đang tắt
-function locQuyen(q) {
-  const r = { ...(q || {}) };
-  // Vai trò lưu từ trước khi có quyền theo kho (Admin lưu lại vai trò là hết cần đoạn này):
-  //   "Hàng hóa cửa hàng" cũ  -> Hàng hóa, chỉ xem kho Cửa hàng
-  //   "Danh sách hàng hóa" cũ -> Hàng hóa, xem cả 2 kho (đúng như màn cũ)
-  if (r.hanghoa_ch && !r.hanghoa) { r.hanghoa = true; if (r.hh_kho_ch === undefined) r.hh_kho_ch = true; }
-  if (r.hanghoa && r.hh_kho_ch === undefined && r.hh_kho_san === undefined) { r.hh_kho_ch = true; r.hh_kho_san = true; }
-  delete r.hanghoa_ch;
-  DANH_SACH_MODULE.forEach(m => {
-    if (m.chiAdmin) r[m.key] = false;
-    (m.con || []).forEach(c => { if (c.chiAdmin) r[c.key] = false; });
-  });
+// Quyền thật của nhân viên = quyền vai trò (quy đổi nếu vai trò còn theo cây cũ),
+// chỉ giữ khóa có trong cây quyền, Sàn TMĐT tắt thì bỏ các khóa Sàn.
+function locQuyen(goc, phienBan) {
+  const q = (phienBan || 0) >= PHIEN_BAN_QUYEN ? (goc || {}) : quyDoiQuyenCu(goc || {});
+  const r = {};
+  tatCaKhoaQuyen().forEach(k => { r[k] = !!q[k]; });
   if (!batTMDT) KHOA_TMDT.forEach(k => { r[k] = false; });
+  r.tmdt = KHOA_TMDT.some(k => k !== 'hh_kho_san' && r[k]);
   return r;
+}
+
+// Nhờ worker ghi quyền vào thẻ đăng nhập (custom claims) — Firestore rules đọc quyền từ đó.
+// { uid } một người · { vaiTroId } mọi người giữ vai trò · { tatCa: true } toàn bộ (kèm quy đổi vai trò cũ)
+async function dongBoQuyen(phamVi) {
+  try {
+    const idToken = await currentUser.getIdToken();
+    const r = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'dong-bo-quyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(phamVi || {})
+    });
+    return await r.json();
+  } catch(e) { return { success: false, error: e.message }; }
+}
+window.dongBoQuyen = dongBoQuyen;
+
+// Worker ghi quyenCapNhat vào hồ sơ mỗi lần đổi quyền -> lấy thẻ đăng nhập mới để rules thấy quyền mới
+let quyenCapNhatDaBiet = null;
+async function lamMoiTheNeuQuyenDoi(hoSo) {
+  const moc = hoSo?.quyenCapNhat?.toMillis?.() || 0;
+  if (quyenCapNhatDaBiet === null) { quyenCapNhatDaBiet = moc; return; }
+  if (moc && moc !== quyenCapNhatDaBiet) {
+    quyenCapNhatDaBiet = moc;
+    try { await currentUser?.getIdToken(true); } catch(e) {}
+  }
 }
 
 async function apDungQuyenNgayLapTuc() {
@@ -10109,14 +10276,17 @@ async function apDungQuyenNgayLapTuc() {
   }
 
   if (!currentUserData.vaiTroId) {
-    quyenModuleHienTai = locQuyen(layQuyenFallbackChuaMigrate());
+    // Chưa gán vai trò: chỉ chấm công được, không vào tab nào — Admin gán vai trò là có ngay
+    quyenModuleHienTai = locQuyen({}, PHIEN_BAN_QUYEN);
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
     return;
   }
 
   unsubscribeVaiTroDoc = onSnapshot(doc(db, 'vai_tro', currentUserData.vaiTroId), (snap) => {
-    quyenModuleHienTai = locQuyen(snap.exists() ? (snap.data().quyenModule || {}) : { checklist:true, nhap:true, xuat:true, lichca:true });
+    quyenModuleHienTai = snap.exists()
+      ? locQuyen(snap.data().quyenModule || {}, snap.data().phienBanQuyen)
+      : locQuyen({}, PHIEN_BAN_QUYEN);
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
   }, () => {
@@ -10147,13 +10317,12 @@ async function tinhQuyenModuleHienTai() {
     return quyenModuleHienTai;
   }
   if (!currentUserData.vaiTroId) {
-    // Chưa migrate -> giữ hành vi cũ
-    quyenModuleHienTai = layQuyenFallbackChuaMigrate();
+    quyenModuleHienTai = locQuyen({}, PHIEN_BAN_QUYEN);
     return quyenModuleHienTai;
   }
   if (!allVaiTro.length) await loadVaiTro();
   const vt = allVaiTro.find(v => v.id === currentUserData.vaiTroId);
-  quyenModuleHienTai = vt?.quyenModule || { checklist:true, nhap:true, xuat:true, lichca:true };
+  quyenModuleHienTai = locQuyen(vt?.quyenModule || {}, vt?.phienBanQuyen);
   return quyenModuleHienTai;
 }
 
@@ -10162,64 +10331,15 @@ async function tinhQuyenModuleHienTai() {
 async function moModuleMacDinhTheoQuyen() {
   const quyen = await tinhQuyenModuleHienTai();
   const thuTuUuTien = [
-    ['checklist','checklist'], ['nhap','nhap'], ['xuat','xuat'], ['lichca','lichca'],
-    ['baocao','baocao'], ['nhanvien','danhsachnv'], ['hanghoa','hanghoa']
+    ['banhang','banhang'], ['donbanle','donbanle'], ['checklist','checklist'], ['nhap','nhap'],
+    ['xuat','xuat'], ['hanghoa','hanghoa'], ['lichca','lichca'], ['chamcong','chamcong'],
+    ['luong','luongnv'], ['baocao','baocao']
   ];
   const found = thuTuUuTien.find(([key]) => quyen[key]);
   if (found) switchModule(found[1]);
   // Nếu không có module nào được phép -> không mở gì cả, an toàn tuyệt đối (màn hình để trống)
 }
 
-// Chạy 1 lần: tạo sẵn 2 vai trò mặc định khớp đúng hành vi cũ (Quản lý/Nhân viên hiện có),
-// và gán vaiTroId cho user hiện có theo đúng role cũ của họ — đảm bảo không ai bị mất quyền khi chuyển hệ thống.
-window.khoiTaoVaiTroMacDinh = async function() {
-  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới làm được', true); return; }
-  await loadVaiTro();
-  const coQuanLy = allVaiTro.find(v => v.ten === 'Quản lý');
-  const coNhanVien = allVaiTro.find(v => v.ten === 'Nhân viên');
-  let idQuanLy = coQuanLy?.id, idNhanVien = coNhanVien?.id;
-
-  if (!coQuanLy) {
-    const ref = await addDoc(collection(db, 'vai_tro'), {
-      ten: 'Quản lý', capDo: 'quan_ly',
-      quyenModule: {
-        checklist: true, nhap: true, nhap_xuatfile: true, xuat: true, xuat_xuatfile: true,
-        lichca: true, lichca_xepca: true, baocao: false,
-        nhanvien: true, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
-        nv_chamcong: true, nv_luong_minh: true, nv_luong_tatca: true,
-        hanghoa: false, hh_kho_ch: false, hh_kho_san: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
-      },
-      createdAt: serverTimestamp()
-    });
-    idQuanLy = ref.id;
-  }
-  if (!coNhanVien) {
-    const ref = await addDoc(collection(db, 'vai_tro'), {
-      ten: 'Nhân viên', capDo: 'nhan_vien',
-      quyenModule: {
-        checklist: true, nhap: true, nhap_xuatfile: false, xuat: true, xuat_xuatfile: false,
-        lichca: true, lichca_xepca: false, baocao: false,
-        nhanvien: false, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
-        nv_chamcong: false, nv_luong_minh: false, nv_luong_tatca: false,
-        hanghoa: false, hh_kho_ch: false, hh_kho_san: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
-      },
-      createdAt: serverTimestamp()
-    });
-    idNhanVien = ref.id;
-  }
-
-  // Gán vaiTroId cho user chưa có (migrate êm, giữ nguyên hành vi cũ theo đúng role hiện tại của họ)
-  const usersSnap = await getDocs(collection(db, 'users'));
-  let daGan = 0;
-  for (const uDoc of usersSnap.docs) {
-    const u = uDoc.data();
-    if (u.vaiTroId || u.role === 'admin') continue;
-    const idPhuHop = u.role === 'quan_ly' ? idQuanLy : (u.role === 'nhan_vien' ? idNhanVien : null);
-    if (idPhuHop) { await updateDoc(doc(db, 'users', uDoc.id), { vaiTroId: idPhuHop }); daGan++; }
-  }
-  showToast(`Đã khởi tạo vai trò mặc định, gán cho ${daGan} người dùng`);
-  await loadVaiTro();
-};
 
 
 
@@ -11700,7 +11820,7 @@ window.loadBaoCaList = async function() {
   const totalPages = Math.max(1, Math.ceil(docs.length / 20));
   if (baocaDsPage > totalPages) baocaDsPage = totalPages;
   const pageDocs = docs.slice((baocaDsPage-1)*20, baocaDsPage*20);
-  const canEdit = coQuyenXepCa();
+  const canEdit = currentUserData.role === 'admin';
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-baoca${p.deleted ? ' deleted' : ''}">
@@ -11858,12 +11978,15 @@ async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san', chungTu = null
     const sku = allSKUs.find(s => s.sku === ma);
     if (sku?.laCombo) { boQuaCombo.push(ma); continue; }
     const idTaiLieu = sku?.id || ma;
-    batch.update(doc(db, 'skus', idTaiLieu), { [truong]: increment(dau * sl) });
+    if (maKho === 'cuahang') batch.update(doc(db, 'skus', idTaiLieu), { tonCuaHang: increment(dau * sl) });
+    else batch.set(doc(db, 'ton_san', idTaiLieu), { soLuongTon: increment(dau * sl) }, { merge: true });
 
     // Ghi thẻ kho — mỗi biến động một dòng, để truy vết được vì sao tồn thay đổi.
     // Không có sổ này thì tồn lệch mà không biết lệch từ đâu.
     if (chungTu) {
-      const tonTruoc = layTon(sku, maKho);
+      // Không được xem kho Sàn thì không biết tồn trước -> để trống, thẻ kho vẫn ghi đủ số biến động
+      const biet = maKho === 'cuahang' || tonSanUnsub;
+      const tonTruoc = biet ? layTon(sku, maKho) : null;
       batch.set(doc(collection(db, 'the_kho')), {
         sku: ma,
         tenHang: sku?.ten || '',
@@ -11872,7 +11995,7 @@ async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san', chungTu = null
         maChungTu: chungTu.ma || '',
         soLuong: dau * sl,
         tonTruoc,
-        tonSau: tonTruoc + dau * sl,
+        tonSau: tonTruoc === null ? null : tonTruoc + dau * sl,
         nguoiTao: currentUserData?.ten || currentUser?.email || '',
         thoiGian: serverTimestamp()
       });
@@ -12248,7 +12371,7 @@ window.loadNhapList = async function(filter={}) {
   const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
   if (nhapDsPage > totalPages) nhapDsPage = totalPages;
   const pageDocs = docs.slice((nhapDsPage-1)*DS_PAGE_SIZE, nhapDsPage*DS_PAGE_SIZE);
-  const canEdit = coQuyenXepCa();
+  const canEdit = coQuyen('nhap_sua');
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card green${p.deleted ? ' deleted' : ''}">
@@ -12347,7 +12470,7 @@ window.loadXuatList = async function(filter={}) {
   const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
   if (xuatDsPage > totalPages) xuatDsPage = totalPages;
   const pageDocs = docs.slice((xuatDsPage-1)*DS_PAGE_SIZE, xuatDsPage*DS_PAGE_SIZE);
-  const canEdit = coQuyenXepCa();
+  const canEdit = coQuyen('xuat_sua');
   el.innerHTML = pageDocs.map(p => {
     const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
     return `<div class="phieu-card red${p.deleted ? ' deleted' : ''}">
@@ -13276,13 +13399,16 @@ async function renderBangLuong() {
     blThang = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
   }
   el.innerHTML = '<div class="loading">Đang tính lương...</div>';
-  const xemHet = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
+  const xemHet = coQuyen('luong_xemtatca');
   try {
     // Bảng lương cần vai trò và cấp bậc từng người. Vào thẳng tab này thì
     // allUsersCache còn rỗng — phải nạp trước, nếu không không nhóm được ai.
-    if (!allUsersCache.length) {
+    if (xemHet && allUsersCache.length < 2) {
       const sU = await getDocs(collection(db, 'users'));
       allUsersCache = sU.docs.map(d => ({ id: d.id, ...d.data() }));
+    } else if (!xemHet && !allUsersCache.some(u => u.id === currentUser.uid)) {
+      // Chỉ xem lương mình: chỉ đọc hồ sơ của chính mình (rules chặn đọc hồ sơ người khác)
+      allUsersCache = [{ id: currentUser.uid, ...currentUserData }];
     }
     if (!allVaiTro.length) await loadVaiTro();
     // Thưởng đóng gói tra trạng thái từ đơn sàn — chưa nạp thì phần trăm doanh thu
@@ -13322,42 +13448,51 @@ async function tinhLuongThang(thang) {
   const ngayCuoi = new Date(nam, th, 0).getDate();
   const cuoiThang = `${thang}-${String(ngayCuoi).padStart(2, '0')}`;
 
-  const xemHet = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
+  const xemHet = coQuyen('luong_xemtatca');
   const uidXem = blNhanVienDangXem || currentUser.uid;
 
   const cfg = await getLuongConfig();
   await napCongThucLuong();
 
   // --- Ca làm việc ---
-  const sCa = await getDocs(query(collection(db, 'lich_ca'),
-    where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
+  // Xem lương mọi người: tải cả tháng rồi lọc. Chỉ xem lương mình: hỏi máy chủ đúng dữ liệu
+  // của mình (rules chặn dữ liệu người khác), lọc tháng ở máy.
+  const sCa = await getDocs(xemHet
+    ? query(collection(db, 'lich_ca'), where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang))
+    : query(collection(db, 'lich_ca'), where('uid', '==', uidXem)));
   let cacCa = sCa.docs.map(d => ({ id: d.id, ...d.data() }))
-    .filter(s => !s.deleted && s.uid === uidXem);
+    .filter(s => !s.deleted && s.uid === uidXem && s.ngay >= dauThang && s.ngay <= cuoiThang);
 
   // --- Đơn bán tại quầy ---
   const dauTS = new Date(dauThang + 'T00:00:00');
   const cuoiTS = new Date(cuoiThang + 'T23:59:59');
   let donBan = [];
   try {
-    const sDon = await getDocs(query(collection(db, 'don_ban_le'),
-      where('taoLuc', '>=', dauTS), where('taoLuc', '<=', cuoiTS), limit(2000)));
-    donBan = sDon.docs.map(d => d.data()).filter(x => x.nguoiBan?.uid === uidXem);
+    const sDon = await getDocs(xemHet
+      ? query(collection(db, 'don_ban_le'), where('taoLuc', '>=', dauTS), where('taoLuc', '<=', cuoiTS), limit(2000))
+      : query(collection(db, 'don_ban_le'), where('nguoiBan.uid', '==', uidXem), limit(3000)));
+    donBan = sDon.docs.map(d => d.data()).filter(x => {
+      const t = x.taoLuc?.toDate ? x.taoLuc.toDate() : null;
+      return x.nguoiBan?.uid === uidXem && t && t >= dauTS && t <= cuoiTS;
+    });
   } catch(e) { console.warn('Không tải được đơn bán lẻ:', e.message); }
 
   // --- Đơn đóng gói ---
   let cacLanQuet = [];
   try {
-    const sQuet = await getDocs(query(collection(db, 'nhat_ky_dong_goi'),
-      where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
-    cacLanQuet = sQuet.docs.map(d => d.data()).filter(x => x.uid === uidXem);
+    const sQuet = await getDocs(xemHet
+      ? query(collection(db, 'nhat_ky_dong_goi'), where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang))
+      : query(collection(db, 'nhat_ky_dong_goi'), where('uid', '==', uidXem)));
+    cacLanQuet = sQuet.docs.map(d => d.data()).filter(x => x.uid === uidXem && x.ngay >= dauThang && x.ngay <= cuoiThang);
   } catch(e) { console.warn('Không tải được nhật ký đóng gói:', e.message); }
 
   // --- Khấu trừ ---
   let cacKhauTru = [];
   try {
-    const sKT = await getDocs(query(collection(db, 'khau_tru'),
-      where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang)));
-    cacKhauTru = sKT.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.uid === uidXem);
+    const sKT = await getDocs(xemHet
+      ? query(collection(db, 'khau_tru'), where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang))
+      : query(collection(db, 'khau_tru'), where('uid', '==', uidXem)));
+    cacKhauTru = sKT.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.uid === uidXem && x.ngay >= dauThang && x.ngay <= cuoiThang);
   } catch(e) { console.warn('Không tải được khấu trừ:', e.message); }
 
   // Đơn giá theo vai trò và cấp bậc của chính người đang xem
@@ -13367,9 +13502,9 @@ async function tinhLuongThang(thang) {
 
   // Người này làm việc gì — lấy từ vai trò, quyết định hiện cột thưởng nào
   const vtNguoi = allVaiTro.find(v => v.id === nguoi.vaiTroId);
-  const q = vtNguoi?.quyenModule || {};
+  const q = locQuyenXem(vtNguoi);
   const laBanHang = !!q.banhang;
-  const laDongGoi = !!q.tmdt_donggoi || !!q.tmdt;
+  const laDongGoi = !!q.quetdonggoi;
   // Công thức thưởng của chính vai trò người này
   const ct = congThucCuaVaiTro(nguoi.vaiTroId);
 
@@ -13791,7 +13926,7 @@ function veDanhSachLuong(dl) {
   const { thang, danhSach } = dl;
   const [nam, th] = thang.split('-');
   const laAdmin = currentUserData?.role === 'admin';
-  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
+  const laQuanLy = coQuyen('luong_duyet');
 
   // Chia theo VAI TRÒ — tên do Admin đặt nên chính xác, không phải đoán từ quyền
   const tenNhom = [...new Set(danhSach.map(n => n.tenVaiTro))].sort();
@@ -13985,7 +14120,7 @@ function veBangLuong(dl) {
   const { thang, xemHet, ngay, tong, laBanHang, laDongGoi, donGia, tenNguoi, uidXem } = dl;
   const [nam, th] = thang.split('-');
   const laAdmin = currentUserData?.role === 'admin';
-  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
+  const laQuanLy = coQuyen('luong_duyet');
   const coThuong = laBanHang || laDongGoi;
 
   const nvKhac = xemHet
@@ -14151,8 +14286,7 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
 // Ở lại sau giờ ra không tự thành làm thêm — có thể chỉ là dọn dẹp hoặc quên
 // check-out. Quản lý duyệt thì mới tính, hưởng 150% đơn giá.
 window.duyetLamThem = async function(ngay, soPhut) {
-  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
-  if (!laQL) { showToast('Chỉ quản lý mới duyệt được', true); return; }
+  if (!coQuyen('luong_duyet')) { showToast('Bạn không có quyền duyệt làm thêm', true); return; }
   const uid = blNhanVienDangXem || currentUser.uid;
 
   if (!confirm(`Duyệt ${soPhut} phút làm thêm ngày ${ngay}?\n\n`
@@ -14178,8 +14312,7 @@ window.duyetLamThem = async function(ngay, soPhut) {
 // Điều chỉnh thưởng: cộng thêm (KPI, thưởng nóng) hoặc trừ đi (đi trễ, làm hỏng).
 // Bắt buộc ghi lý do — nhân viên nhìn bảng lương phải biết vì sao số đổi.
 window.moDieuChinh = function(ngay) {
-  const laQL = currentUserData?.role === 'admin' || currentUserData?.quyen?.nv_luong_tatca;
-  if (!laQL) return;
+  if (!coQuyen('luong_duyet')) return;
 
   let m = document.getElementById('dc-modal');
   if (!m) {
@@ -14300,10 +14433,8 @@ async function loadDanhSachNV() {
   batDauTheoDoiNhanVien(); // tự khởi động theo dõi thời gian thực (chỉ chạy 1 lần, các lần sau bỏ qua)
   const laAdmin = currentUserData.role === 'admin';
   const q = quyenModuleHienTai || {};
-  const coQuyenTaoTk = laAdmin || !!q.nv_taotk;
-  const coQuyenCapMk = laAdmin || !!q.nv_capmk;
-  const coQuyenXoaTk = laAdmin || !!q.nv_xoatk;
-  const coQuyenGanVaiTro = laAdmin || !!q.nv_ganvaitro;
+  // Tài khoản & vai trò: luôn chỉ Admin
+  const coQuyenTaoTk = laAdmin, coQuyenCapMk = laAdmin, coQuyenXoaTk = laAdmin, coQuyenGanVaiTro = laAdmin;
   // Danh sách nhân viên không hiện tài khoản Admin (không thuộc phạm vi "nhân viên")
   const users = allUsersCache.filter(u => u.role !== 'admin');
   if (!users.length) return; // đang chờ dữ liệu đầu tiên từ listener, nó sẽ tự gọi lại loadDanhSachNV() khi có
@@ -14363,15 +14494,12 @@ window.doiCapBac = async function(uid, capBac) {
 };
 
 window.doiVaiTroNhanVien = async function(uid, vaiTroId) {
-  if (!vaiTroId) {
-    await updateDoc(doc(db,'users',uid), { vaiTroId: null });
-    showToast('Đã bỏ gán vai trò — người này sẽ không thấy module nào ngoài mặc định');
-    return;
-  }
-  const vt = allVaiTro.find(v => v.id === vaiTroId);
-  if (!vt) return;
-  await updateDoc(doc(db,'users',uid), { vaiTroId, role: vt.capDo });
-  showToast(`Đã gán vai trò "${vt.ten}"`);
+  const vt = vaiTroId ? allVaiTro.find(v => v.id === vaiTroId) : null;
+  if (vaiTroId && !vt) return;
+  await updateDoc(doc(db,'users',uid), { vaiTroId: vaiTroId || null });
+  const kq = await dongBoQuyen({ uid });
+  showToast((vt ? `Đã gán vai trò "${vt.ten}"` : 'Đã bỏ gán vai trò — người này chỉ còn chấm công được')
+    + (kq.success ? '' : ' · chưa ghi được quyền lên máy chủ: ' + (kq.error || '')), !kq.success);
 };
 
 // ===== THIẾT LẬP BẢNG LƯƠNG (Cấp bậc + lương theo giờ) =====
@@ -14911,17 +15039,18 @@ async function renderVaiTroList() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   await loadVaiTro();
   if (!allVaiTro.length) {
-    el.innerHTML = `<p class="info-note">Chưa có vai trò nào. Bấm <button class="btn-outline" style="width:auto;padding:4px 10px;display:inline" onclick="khoiTaoVaiTroMacDinh().then(renderVaiTroList)">Khởi tạo vai trò mặc định</button> để bắt đầu từ 2 vai trò sẵn có (Quản lý/Nhân viên), hoặc tự thêm vai trò mới.</p>`;
+    el.innerHTML = `<p class="info-note">Chưa có vai trò nào. Bấm "Thêm vai trò" để tạo vai trò đầu tiên.</p>`;
     return;
   }
   el.innerHTML = allVaiTro.map(v => {
-    const soModule = DANH_SACH_MODULE.filter(m => v.quyenModule?.[m.key]).length;
+    const qv = locQuyenXem(v);
+    const soTab = DANH_SACH_MODULE.flatMap(m => m.nhom ? (m.con || []) : [m]).filter(m => qv[m.key]).length;
     return `
     <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
           <b>${escHtml(v.ten)}</b>
-          <span style="font-size:11px;color:var(--text2);margin-left:6px">${v.capDo === 'quan_ly' ? 'Cấp Quản lý' : 'Cấp Nhân viên'} · ${soModule} module</span>
+          <span style="font-size:11px;color:var(--text2);margin-left:6px">${soTab} tab${(v.phienBanQuyen || 0) < PHIEN_BAN_QUYEN ? ' · <span style="color:#B45309">cây quyền cũ — mở Sửa, kiểm tra rồi Lưu</span>' : ''}</span>
         </div>
         <div style="display:flex;gap:6px">
           <button class="btn-xs" onclick="moFormSuaVaiTro('${v.id}')">Sửa</button>
@@ -14933,35 +15062,35 @@ async function renderVaiTroList() {
   }).join('');
 }
 
+// Quyền của một vai trò theo cây hiện tại (quy đổi nếu vai trò còn lưu theo cây cũ)
+function locQuyenXem(v) {
+  if (!v) return {};
+  return (v.phienBanQuyen || 0) >= PHIEN_BAN_QUYEN ? (v.quyenModule || {}) : quyDoiQuyenCu(v.quyenModule || {});
+}
+
 function renderFormVaiTro(prefix, v) {
   const ten = v?.ten || '';
-  const capDo = v?.capDo || 'nhan_vien';
-  const quyen = v?.quyenModule || {};
+  const quyen = locQuyenXem(v);
+  const o = (k, nhan, dam) => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:${dam ? '13px' : '12.5px'};cursor:pointer;${dam ? 'font-weight:600' : 'color:var(--text2)'}">
+      <input type="checkbox" id="${prefix}-m-${k}" ${quyen[k] ? 'checked' : ''}> ${escHtml(nhan)}
+    </label>`;
   return `
     <div class="admin-block" style="margin-top:8px">
       <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Tên vai trò</label>
-      <input type="text" id="${prefix}-ten" placeholder="VD: Nhân viên kho" value="${escHtml(ten)}" style="margin-bottom:10px">
-      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Cấp độ quyền (quyết định các quyền sâu như Giá vốn, sửa Hàng hóa...)</label>
-      <select id="${prefix}-capdo" style="margin-bottom:10px">
-        <option value="nhan_vien" ${capDo==='nhan_vien'?'selected':''}>Nhân viên</option>
-        <option value="quan_ly" ${capDo==='quan_ly'?'selected':''}>Quản lý</option>
-      </select>
-      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Module hiển thị & quyền chi tiết</label>
+      <input type="text" id="${prefix}-ten" placeholder="VD: Nhân viên bán hàng" value="${escHtml(ten)}" style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Tab được vào và chức năng trong từng tab</label>
       <div style="display:flex;flex-direction:column;gap:2px;margin-bottom:10px">
-        ${DANH_SACH_MODULE.filter(m => !m.chiAdmin).map(m => `
+        ${DANH_SACH_MODULE.map(m => m.nhom ? `
+          <div style="margin:8px 0 4px;font-size:12px;font-weight:700;color:#0369A1">${escHtml(m.ten)}</div>
+          ${(m.con || []).map(c => o(c.key, c.ten, true)).join('')}` : `
           <div style="margin-bottom:4px">
-            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;font-weight:600">
-              <input type="checkbox" id="${prefix}-m-${m.key}" ${quyen[m.key]?'checked':''}> ${m.ten}
-            </label>
-            ${m.con ? `<div style="padding-left:26px;margin-top:4px;display:flex;flex-direction:column;gap:4px">
-              ${m.con.filter(c => !c.chiAdmin).map(c => `
-                <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2);cursor:pointer">
-                  <input type="checkbox" id="${prefix}-m-${c.key}" ${quyen[c.key]?'checked':''}> ${c.ten}
-                </label>`).join('')}
-            </div>` : ''}
+            ${o(m.key, m.ten, true)}
+            ${(m.con || []).length ? `<div style="padding-left:26px;margin-top:4px;display:flex;flex-direction:column;gap:4px">
+              ${m.con.map(c => o(c.key, c.ten, false)).join('')}</div>` : ''}
           </div>`).join('')}
       </div>
-      <p class="info-note" style="margin-bottom:10px">Luôn chỉ Admin làm: Báo cáo; tạo/xóa tài khoản, cấp lại mật khẩu, gán vai trò; thêm/sửa/xóa hàng hóa.</p>
+      <p class="info-note" style="margin-bottom:10px">Luôn chỉ Admin làm: tài khoản & vai trò, thiết lập, giá vốn, thêm/sửa/xóa hàng hóa, ca làm việc, thiết lập lương. Chấm công vào/ra ca thì ai cũng làm được.</p>
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuVaiTro('${prefix}','${v?.id||''}')">Lưu</button>
         <button class="btn-outline" onclick="dongFormVaiTro('${prefix}')">Hủy</button>
@@ -14993,20 +15122,19 @@ window.dongFormVaiTro = function(prefix) {
 window.luuVaiTro = async function(prefix, id) {
   const ten = document.getElementById(`${prefix}-ten`).value.trim();
   if (!ten) { showToast('Nhập tên vai trò', true); return; }
-  const capDo = document.getElementById(`${prefix}-capdo`).value;
   const quyenModule = {};
-  DANH_SACH_MODULE.forEach(m => {
-    quyenModule[m.key] = !!document.getElementById(`${prefix}-m-${m.key}`)?.checked;
-    (m.con||[]).forEach(c => { quyenModule[c.key] = !!document.getElementById(`${prefix}-m-${c.key}`)?.checked; });
-  });
+  tatCaKhoaQuyen().forEach(k => { quyenModule[k] = !!document.getElementById(`${prefix}-m-${k}`)?.checked; });
 
+  let idVaiTro = id;
   if (id) {
-    await updateDoc(doc(db, 'vai_tro', id), { ten, capDo, quyenModule });
-    showToast('Đã cập nhật vai trò');
+    await updateDoc(doc(db, 'vai_tro', id), { ten, quyenModule, phienBanQuyen: PHIEN_BAN_QUYEN });
   } else {
-    await addDoc(collection(db, 'vai_tro'), { ten, capDo, quyenModule, createdAt: serverTimestamp() });
-    showToast('Đã thêm vai trò mới');
+    const ref = await addDoc(collection(db, 'vai_tro'), { ten, quyenModule, phienBanQuyen: PHIEN_BAN_QUYEN, createdAt: serverTimestamp() });
+    idVaiTro = ref.id;
   }
+  // Ghi quyền vào thẻ đăng nhập của mọi người đang giữ vai trò này
+  const kq = await dongBoQuyen({ vaiTroId: idVaiTro });
+  showToast(kq.success ? `Đã lưu vai trò · cập nhật quyền cho ${kq.soNguoi ?? 0} người` : 'Đã lưu vai trò, nhưng chưa ghi được quyền lên máy chủ: ' + (kq.error || ''), !kq.success);
   document.getElementById('vaitro-form').innerHTML = '';
   renderVaiTroList();
 };
@@ -15195,7 +15323,7 @@ window.taoTaiKhoanMoi = async function() {
   } else {
     const vt = allVaiTro.find(v => v.id === chonVaiTro);
     if (!vt) { showToast('Vui lòng chọn vai trò hợp lệ', true); return; }
-    role = vt.capDo;
+    role = 'nhan_vien';
     vaiTroId = vt.id;
   }
 
@@ -15206,6 +15334,7 @@ window.taoTaiKhoanMoi = async function() {
     const uid = cred.user.uid;
     await setDoc(doc(db, 'users', uid), { ten, email, role, vaiTroId, createdAt: serverTimestamp() });
     await signOut(secondaryAuth); // đóng phiên phụ, không ảnh hưởng phiên Admin chính
+    await dongBoQuyen({ uid });
 
     document.getElementById('new-ten').value = '';
     document.getElementById('new-email').value = '';
@@ -15359,6 +15488,7 @@ window.importSKU = async function(input) {
           };
         }
         if (canNangO.co) updateData.canNang = canNangO.val;
+        await tachTonSanKhiGhi(existing.id, updateData);
         await updateDoc(doc(db,'skus', existing.id), updateData);
         if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
         skuMap.set(sku.toLowerCase(), { ...existing, ...updateData, id: existing.id });
@@ -15373,6 +15503,7 @@ window.importSKU = async function(input) {
           laCombo, thanhPhanCombo: laCombo ? thanhPhanComboMoi : []
         };
         if (nhom) Object.assign(newData, nhom);
+        await tachTonSanKhiGhi(sku, newData);
         await setDoc(doc(db, 'skus', sku), newData);
         if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
         skuMap.set(sku.toLowerCase(), { id: sku, ...newData });
@@ -15431,8 +15562,8 @@ function getThuKeyChoNgay(ngayISO) {
 async function renderBaoCaoTab() {
   const el = document.getElementById('baocao-content');
   if (!el) return;
-  if (currentUserData.role !== 'admin') {
-    el.innerHTML = `<p class="info-note">Chỉ Admin mới có quyền xem Báo cáo.</p>`;
+  if (!coQuyen('baocao')) {
+    el.innerHTML = `<p class="info-note">Bạn không có quyền xem Báo cáo.</p>`;
     return;
   }
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -15443,7 +15574,7 @@ async function renderBaoCaoTab() {
   const caTheoUid = {};
   snap.docs.forEach(d => { if (!d.data().deleted) caTheoUid[d.data().uid] = { id: d.id, ...d.data() }; });
 
-  const nhanVien = allUsersCache.filter(u => u.role === 'nhan_vien' || u.role === 'quan_ly');
+  const nhanVien = allUsersCache.filter(u => u.role !== 'admin');
 
   el.innerHTML = `
     <div class="admin-block">
@@ -16090,7 +16221,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v462</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v463</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16144,7 +16275,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v462</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v463</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16186,7 +16317,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v462</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v463</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>

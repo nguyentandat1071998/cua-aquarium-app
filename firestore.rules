@@ -1,0 +1,253 @@
+rules_version = '2';
+// ==========================================================================
+// CUA Aquarium — Firestore rules theo QUYỀN TRONG VAI TRÒ
+//
+// Admin tick quyền trong vai trò (app: Quản trị hệ thống › Vai trò). Worker ghi quyền
+// hiệu lực vào thẻ đăng nhập của từng người (custom claims):
+//   adm: true          -> Admin, toàn quyền
+//   q:   ['banhang',…] -> danh sách quyền của nhân viên
+//   kh:  true          -> tài khoản bị khóa
+// Rules chỉ đọc quyền từ thẻ (không tốn lượt đọc). Không có quyền thì máy chủ KHÔNG
+// trả dữ liệu — ẩn trên giao diện chỉ là phụ.
+// Bộ khóa quyền phải khớp DANH_SACH_MODULE trong app và KHOA_QUYEN trong worker.
+// Worker ghi bằng quyền Admin của Firebase nên không chịu ràng buộc các rule này.
+// ==========================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function dn() { return request.auth != null; }
+    function toi() { return request.auth.uid; }
+    function the() { return request.auth.token; }
+    // Admin: theo thẻ; thẻ chưa đồng bộ thì xem hồ sơ (để Admin không tự khóa mình)
+    function adm() {
+      return dn() && (the().adm == true
+        || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+    // Nhân viên đã được cấp quyền (thẻ đã đồng bộ) và không bị khóa
+    function nv() { return dn() && the().get('kh', false) != true && (the().get('q', null) is list || the().get('adm', false) == true); }
+    function coQ(k) { return nv() && the().get('q', []) is list && k in the().get('q', []); }
+    function q(k) { return coQ(k) || adm(); }
+    function qMot(ds) { return (nv() && the().get('q', []) is list && the().get('q', []).hasAny(ds)) || adm(); }
+    function chiDoi(ds) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(ds); }
+    function chiCo(ds) { return request.resource.data.keys().hasOnly(ds); }
+
+    // ===== NGƯỜI DÙNG =====
+    // Đọc hồ sơ người khác chỉ khi có việc cần: xếp ca, xem lương mọi người, báo cáo.
+    match /users/{uid} {
+      allow get: if (dn() && toi() == uid) || qMot(['lichca_xepca', 'luong_xemtatca', 'baocao']);
+      allow list: if qMot(['lichca_xepca', 'luong_xemtatca', 'baocao']);
+      // Tự đổi mật khẩu: chỉ ghi được mốc đổi mật khẩu của chính mình
+      allow update: if adm() || (dn() && toi() == uid && chiDoi(['pwUpdatedAt']));
+      allow create, delete: if adm();
+    }
+
+    // Vai trò: tên + danh sách quyền, không nhạy cảm; app cần để hiện menu
+    match /vai_tro/{id} {
+      allow read: if nv();
+      allow write: if adm();
+    }
+
+    // ===== CẤU HÌNH =====
+    // cham_cong chứa nội dung QR chấm công: app so mã QR ở máy nên ai chấm công cũng cần đọc.
+    match /cau_hinh/{id} {
+      allow read: if adm() || (nv() && !(id in ['ket_noi_kol', 'tram_in', 'rules_lich_su']));
+      allow write: if adm();
+    }
+    // settings: đơn giá lương, công thức thưởng, và token kết nối sàn (chỉ Admin)
+    match /settings/{id} {
+      allow read: if adm() || (id in ['luong_theo_gio', 'cong_thuc_luong'] && q('luong'));
+      allow write: if adm();
+    }
+    match /bi_mat/{id} {
+      allow read, write: if false;
+    }
+
+    // ===== HÀNG HÓA =====
+    // Thông tin hàng + tồn kho Cửa hàng: nhân viên nào cũng cần (bán hàng, chuyển kho, xuất hủy).
+    // Nhân viên chỉ đổi được tồn Cửa hàng (bán, chuyển kho, duyệt trả) và cờ đẩy tồn của Sàn.
+    match /skus/{id} {
+      allow read: if nv();
+      allow create, delete: if adm();
+      allow update: if adm()
+        || (qMot(['banhang', 'nhap', 'nhap_sua', 'dbl_duyettra']) && chiDoi(['tonCuaHang']))
+        || (q('tmdt_daytonkho') && chiDoi(['dayTonKho', 'demTonKho']));
+    }
+    // Tồn kho Sàn tách riêng: chỉ người có quyền xem kho Sàn / làm Sàn TMĐT mới đọc được.
+    // Chuyển kho trừ kho Sàn, nhập lại hàng hoàn cộng kho Sàn — ghi được, không cần đọc.
+    match /ton_san/{id} {
+      allow read: if qMot(['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho']);
+      allow create: if adm() || (qMot(['nhap', 'nhap_sua', 'tmdt_hoantra']) && chiCo(['soLuongTon']));
+      allow update: if adm() || (qMot(['nhap', 'nhap_sua', 'tmdt_hoantra']) && chiDoi(['soLuongTon']));
+      allow delete: if adm();
+    }
+    match /gia_von/{id} {
+      allow read, write: if adm();
+    }
+    match /nhom_hang/{id} {
+      allow read: if nv();
+      allow write: if adm();
+    }
+    // Thẻ kho: xem khi được xem kho; ghi kèm mỗi lần tồn đổi, không sửa/xóa được
+    match /the_kho/{id} {
+      allow read: if qMot(['hh_kho_ch', 'hh_kho_san']);
+      allow create: if nv();
+      allow update, delete: if false;
+    }
+
+    // ===== BÁN HÀNG =====
+    // Không có quyền "xem đơn của mọi người" thì chỉ đọc được đơn mình bán
+    match /don_ban_le/{id} {
+      allow read: if qMot(['dbl_xemtatca', 'luong_xemtatca'])
+        || (qMot(['donbanle', 'banhang', 'luong']) && resource.data.nguoiBan.uid == toi());
+      allow create: if q('banhang') && request.resource.data.nguoiBan.uid == toi();
+      allow update: if adm()
+        || (q('dbl_duyettra') && chiDoi(['maHoaDonKiotViet', 'daHuy', 'lanTra', 'tongDaTra']));
+      allow delete: if adm();
+    }
+    match /phieu_tra_hang/{id} {
+      allow read: if qMot(['dbl_xemtatca', 'dbl_duyettra'])
+        || (q('donbanle') && resource.data.nguoiTao.uid == toi());
+      allow create: if q('dbl_trahang') && request.resource.data.nguoiTao.uid == toi()
+        && request.resource.data.trangThai == 'cho_duyet';
+      allow update: if q('dbl_duyettra');
+      allow delete: if adm();
+    }
+    match /thanh_toan_ban_le/{id} {
+      allow read: if q('banhang');
+      allow write: if false;
+    }
+    // Lệnh in: ai bán hàng / in tem gửi được; xem và xử lý hàng đợi là việc của Admin
+    match /lenh_in/{id} {
+      allow create: if qMot(['banhang', 'donbanle', 'hh_intem']) && request.resource.data.trangThai == 'cho_in';
+      allow read, update, delete: if adm();
+    }
+
+    // ===== CHUYỂN KHO / XUẤT HỦY =====
+    match /dem_phieu/{id} {
+      allow read, write: if qMot(['nhap', 'xuat']);
+    }
+    match /phieu_chuyenkho/{id} {
+      allow read: if qMot(['nhap_xemds', 'nhap_sua']);
+      allow create: if q('nhap');
+      allow update: if q('nhap_sua') || (q('nhap_xuatfile') && chiDoi(['daXuat', 'xuatAt']));
+      allow delete: if adm();
+    }
+    match /phieu_huy/{id} {
+      allow read: if qMot(['xuat_xemds', 'xuat_sua', 'luong_xemtatca']);
+      allow create: if q('xuat');
+      allow update: if q('xuat_sua') || (q('xuat_xuatfile') && chiDoi(['daXuat', 'xuatAt']));
+      allow delete: if adm();
+    }
+    // Báo cá mới về: đang tạm ẩn — chỉ Admin
+    match /phieu_baoca/{id} {
+      allow read, write: if adm();
+    }
+
+    // ===== CHECKLIST =====
+    match /ca_benh/{id} {
+      allow read, write: if q('checklist');
+    }
+
+    // ===== CA LÀM VIỆC / LỊCH / CHẤM CÔNG =====
+    match /ca_lam_viec/{id} {
+      allow read: if nv();
+      allow write: if adm();
+    }
+    // Lịch công khai: chỉ tên + loại ca, ai cũng xem được lịch tuần
+    match /lich_cong_khai/{id} {
+      allow read: if nv();
+      allow write: if q('lichca_xepca') || (nv() && request.resource.data.uid == toi());
+    }
+    // Chấm công chi tiết (ảnh, GPS, giờ vào/ra): mỗi người chỉ thấy ca của mình
+    // trừ khi có quyền xem chấm công / xếp ca / xem lương mọi người / báo cáo
+    match /lich_ca/{id} {
+      allow get: if qMot(['cc_xemtatca', 'lichca_xepca', 'luong_xemtatca', 'baocao'])
+        || (nv() && id.matches('.*_' + toi()))
+        || (nv() && resource.data.uid == toi());
+      allow list: if qMot(['cc_xemtatca', 'lichca_xepca', 'luong_xemtatca', 'baocao'])
+        || (nv() && resource.data.uid == toi());
+      // Tự chấm công ngoài lịch: tạo ca của chính mình
+      allow create: if q('lichca_xepca') || (nv() && request.resource.data.uid == toi());
+      allow update: if adm() || q('lichca_xepca')
+        // Chấm công vào/ra và checklist trên ca của chính mình
+        || (nv() && resource.data.uid == toi() && chiDoi(['vaoLuc', 'gpsOk', 'gpsDist', 'isMock', 'photo',
+              'thoatLuc', 'thoatGpsOk', 'thoatGpsDist', 'thoatIsMock', 'thoatPhoto', 'khongCheckout', 'checklistData']))
+        || (q('luong_duyet') && chiDoi(['lamThemDuyet']));
+      allow delete: if adm();
+    }
+
+    // ===== LƯƠNG =====
+    match /phu_cap/{id} {
+      // Tài liệu đặt tên {tháng}_{uid}: đọc của mình được cả khi tháng đó chưa có phụ cấp
+      allow get: if q('luong_xemtatca') || (q('luong') && id.matches('.*_' + toi()));
+      allow list: if q('luong_xemtatca') || (q('luong') && resource.data.uid == toi());
+      allow write: if adm();
+    }
+    match /khau_tru/{id} {
+      allow read: if q('luong_xemtatca') || (q('luong') && resource.data.uid == toi());
+      allow create: if q('luong_duyet');
+      allow update, delete: if adm();
+    }
+    match /moc_hang_hong/{id} {
+      allow read: if q('luong_xemtatca');
+      allow write: if adm();
+    }
+    match /nhat_ky_dong_goi/{id} {
+      allow read: if q('luong_xemtatca') || (q('luong') && resource.data.uid == toi());
+      allow write: if adm();
+    }
+
+    // ===== SÀN TMĐT (quyền Sàn chỉ có trong thẻ khi Admin bật Sàn TMĐT) =====
+    match /don_hang_san/{id} {
+      allow read: if qMot(['tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'luong_xemtatca']);
+      allow create, delete: if adm();
+      allow update: if adm()
+        // Đóng gói: chỉ ghi kết quả quét của chính mình, đơn chưa đóng gói
+        || (q('quetdonggoi')
+            && chiDoi(['trangThaiNoiBo', 'thoiGianDongGoi', 'nhanVienDongGoi', 'banDongGoi'])
+            && request.resource.data.trangThaiNoiBo == 'da_dong_goi'
+            && request.resource.data.nhanVienDongGoi == toi()
+            && !('thoiGianDongGoi' in resource.data))
+        // Xử lý đơn: chuẩn bị hàng, in vận đơn, xác nhận đơn
+        || (q('tmdt_donhang')
+            && chiDoi(['daChuanBiHang', 'chuanBiLuc', 'daThuChuanBi', 'thuChuanBiLuc', 'loiHeThongLuc',
+                       'loiHeThongNoiDung', 'nhomChoTruoc', 'daInVanDon', 'inVanDonLuc', 'inVanDonBoi',
+                       'sanTuChoiLuc', 'sanTuChoiLyDo']))
+        // Đơn hủy / hoàn trả: nhận lại kiện, nhập lại kho. Nhập thiếu thì không tự xác nhận được.
+        || (q('tmdt_hoantra')
+            && chiDoi(['daNhanLaiKien', 'nhanLaiLuc', 'nguoiNhanLai',
+                       'daNhapLaiKho', 'nhapLaiKhoLuc', 'nguoiNhapLaiKho',
+                       'nhapLaiChiTiet', 'nhapLaiDayDu', 'nhapLaiThieu',
+                       'nhapLaiGhiChu', 'daXacNhanNhapLai'])
+            && (request.resource.data.get('daNhapLaiKho', false) != true
+                || request.resource.data.get('daXacNhanNhapLai', false) == request.resource.data.get('nhapLaiDayDu', false)));
+    }
+    match /phieu_nhap_san/{id} {
+      allow read, create: if q('tmdt_nhaphang');
+      allow update: if adm() || (q('tmdt_nhaphang') && resource.data.trangThai == 'tam' && request.resource.data.trangThai == 'tam');
+      allow delete: if adm();
+    }
+    match /san_pham_dang/{id} {
+      allow read: if qMot(['tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho']);
+      allow update: if adm() || (q('tmdt_sanpham') && chiDoi(['skuCon']));
+      allow create, delete: if adm();
+    }
+
+    // ===== CHỈ ADMIN =====
+    match /nhat_ky_webhook/{id} {
+      allow read: if adm();
+      allow write: if false;
+    }
+    match /lien_ket_sku/{id} {
+      allow read, write: if adm();
+    }
+    match /phieu_kiem_kho/{id} {
+      allow read, write: if adm();
+    }
+
+    // Mọi thứ còn lại: chặn
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
