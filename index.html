@@ -11769,14 +11769,14 @@ async function openBaocaCamera() {
     const videoFilename = `${tenSafe}_${dd2}-${mm2}_${hh2}-${mi2}.webm`;
 
     // Init upload session trước khi quay
-    fetch(WORKER_URL, {
+    hdrDangNhap().then(h => fetch(WORKER_URL, {
       method: 'POST',
-      headers: { 'x-action': 'init', 'x-filename': videoFilename, 'Content-Type': 'application/json' },
+      headers: { ...h, 'x-action': 'init', 'x-filename': videoFilename, 'Content-Type': 'application/json' },
       body: '{}'
-    }).then(r => r.json()).then(data => {
+    })).then(r => r.json()).then(data => {
       if (data.success) window._uploadUrl = data.uploadUrl;
       else showToast('Lỗi khởi tạo upload: ' + data.error, true);
-    });
+    }).catch(e => showToast('Lỗi khởi tạo upload: ' + e.message, true));
 
     mediaRecorder = new MediaRecorder(recordingStream, { mimeType });
     mediaRecorder.ondataavailable = e => {
@@ -11792,7 +11792,7 @@ async function openBaocaCamera() {
             try {
               await fetch(WORKER_URL, {
                 method: 'POST',
-                headers: {
+                headers: { ...(await hdrDangNhap()),
                   'x-action': 'chunk',
                   'x-upload-url': window._uploadUrl,
                   'x-range-start': String(offset),
@@ -11902,7 +11902,7 @@ async function doUploadAfterStop(chunks) {
       statusEl.textContent = '⏳ Khởi tạo...';
       const initRes = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: { 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
+        headers: { ...(await hdrDangNhap()), 'x-action': 'init', 'x-filename': filename, 'Content-Type': 'application/json' },
         body: '{}'
       });
       const initData = await initRes.json();
@@ -11922,7 +11922,7 @@ async function doUploadAfterStop(chunks) {
 
         const res = await fetch(WORKER_URL, {
           method: 'POST',
-          headers: {
+          headers: { ...(await hdrDangNhap()),
             'x-action': 'chunk',
             'x-upload-url': uploadUrl,
             'x-range-start': String(offset),
@@ -11964,13 +11964,20 @@ async function doUploadAfterStop(chunks) {
 let backgroundUploadPromise = null;
 let backgroundUploadResult = null;
 
+// Worker chỉ nhận file tải lên từ người đã đăng nhập app — gửi kèm token Firebase.
+// getIdToken() tự làm mới token khi gần hết hạn nên quay video dài vẫn không sao.
+async function hdrDangNhap() {
+  if (!currentUser) throw new Error('Phiên đăng nhập đã hết — tải lại app rồi đăng nhập lại');
+  return { 'Authorization': `Bearer ${await currentUser.getIdToken()}` };
+}
+
 // Tải ảnh từ URL bên ngoài (Shopee/KiotViet...) và upload lên Drive qua Worker — Worker tải hộ để tránh lỗi CORS
 async function uploadAnhTuUrl(sourceUrl, tenGoi) {
   const tenSafe = (tenGoi||'anh').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^a-zA-Z0-9]/g,'_').replace(/_+/g,'_').slice(0,30);
   const filename = `sku_${tenSafe}_${Date.now()}.jpg`;
   const res = await fetch(WORKER_URL, {
     method: 'POST',
-    headers: { 'x-action': 'from-url', 'x-source-url': sourceUrl, 'x-filename': filename },
+    headers: { ...(await hdrDangNhap()), 'x-action': 'from-url', 'x-source-url': sourceUrl, 'x-filename': filename },
     body: ''
   });
   const data = await res.json();
@@ -12024,7 +12031,7 @@ async function uploadAnhSanPham(blob, tenGoi) {
 
   const initRes = await fetch(WORKER_URL, {
     method: 'POST',
-    headers: { 'x-action': 'init', 'x-filename': filename, 'x-content-type': 'image/jpeg', 'Content-Type': 'application/json' },
+    headers: { ...(await hdrDangNhap()), 'x-action': 'init', 'x-filename': filename, 'x-content-type': 'image/jpeg', 'Content-Type': 'application/json' },
     body: '{}'
   });
   const initData = await initRes.json();
@@ -12032,7 +12039,7 @@ async function uploadAnhSanPham(blob, tenGoi) {
 
   const res = await fetch(WORKER_URL, {
     method: 'POST',
-    headers: {
+    headers: { ...(await hdrDangNhap()),
       'x-action': 'chunk',
       'x-upload-url': initData.uploadUrl,
       'x-range-start': '0',
@@ -12096,7 +12103,7 @@ async function startChunkedUpload(chunks, mimeType) {
 
       const response = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: {
+        headers: { ...(await hdrDangNhap()),
           'Content-Type': 'video/mp4',
           'x-filename': filename,
         },
@@ -12142,7 +12149,7 @@ function startBackgroundUpload(blob) {
       // Streaming upload — gửi blob trực tiếp, không cần base64
       const response = await fetch(WORKER_URL, {
         method: 'POST',
-        headers: {
+        headers: { ...(await hdrDangNhap()),
           'Content-Type': 'video/mp4',
           'x-filename': filename,
         },
@@ -16856,7 +16863,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v456</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v457</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16910,7 +16917,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v456</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v457</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16952,7 +16959,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v456</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v457</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
