@@ -2544,8 +2544,11 @@ const DON_MOI_TRANG = 25;
 //   xuly    — tiến trình bình thường (mặc định, việc hằng ngày)
 //   hoantra — hàng quay về kho, hai mục con: Giao thất bại · Trả hàng/Hoàn tiền
 let donTabChinh = 'xuly';
-let donTabHoan = 'giao_that_bai';
-let donHoanHienDaXuLy = false;   // mặc định chỉ hiện việc còn phải làm
+// Đã chuyển hoàn đứng trước vì dùng nhiều nhất — hàng đã về mới có việc để làm
+let donTabHoan = 'da_chuyen_hoan';
+let donHoanNhapKho = 'chua';     // trong "Đã chuyển hoàn": 'chua' | 'da' nhập kho
+let donHoanDayDu = 'toan_bo';    // trong "Đã nhập kho": 'toan_bo' | 'mot_phan'
+let donHoanXacNhan = 'chua';     // trong "Nhập kho một phần": 'chua' | 'da' xác nhận
 
 // HAI TRỤC TRẠNG THÁI:
 //   1. Nội bộ (app tự quản): chỉ còn đúng MỘT bước là "đã đóng gói" — do nhân viên quét.
@@ -2638,14 +2641,22 @@ const MUC_HUY = {
 };
 
 // ===== ĐƠN HOÀN TRẢ =====
-// Hai đường hàng quay về kho, khác nhau ở chỗ khách đã cầm hàng hay chưa:
-//   Giao thất bại      — shipper không giao được, hàng chuyển hoàn (mã giao 4, 5)
-//   Trả hàng/Hoàn tiền — khách đã nhận rồi trả lại, KiotViet ghi returnQuantity
-// Cả hai đều lấy từ dữ liệu đã đồng bộ sẵn, không hỏi thêm KiotViet.
-function laGiaoThatBai(d) {
+// KHÔNG phân biệt giao thất bại với khách trả hàng nữa — khách từ chối nhận và
+// khách bấm trả lúc đang giao đều cho ra cùng một thứ: một kiện hàng quay về kho.
+// Việc duy nhất cần biết là shipper đã trả thật chưa, để nhập lại kho.
+//
+// Chia theo trạng thái vận đơn của KiotViet:
+//   mã 5  Đã chuyển hoàn   — hàng đã về tới nơi (dùng nhiều nhất, để trước)
+//   mã 4  Đang chuyển hoàn — còn trên đường
+function loaiHoanTra(d) {
   const ma = Number(d.trangThaiGiaoMa) || 0;
-  return ma === MA_GIAO.DANG_HOAN || ma === MA_GIAO.DA_HOAN;
+  if (ma === MA_GIAO.DA_HOAN)   return 'da_chuyen_hoan';
+  if (ma === MA_GIAO.DANG_HOAN) return 'dang_chuyen_hoan';
+  return null;
 }
+
+// Số món và số tiền khách trả — không dùng để phân loại nữa, chỉ hiện thêm cho
+// biết khi KiotViet có lập phiếu trả hàng.
 function soMonTraCua(d) {
   return (d.chiTiet || []).reduce((s, c) => s + (Number(c.soLuongTra) || 0), 0);
 }
@@ -2657,18 +2668,30 @@ function tienTraCua(d) {
     return s + (sl > 0 ? (Number(c.thanhTien) || 0) / sl * tra : 0);
   }, 0);
 }
-function laTraHangHoanTien(d) {
-  return soMonTraCua(d) > 0 || Number(d.tienHangTra) > 0;
+
+// Mốc hàng chuyển hoàn về. KiotViet không cấp thời điểm đổi trạng thái, nên worker
+// tự đóng dấu lần đầu thấy mã 5. Đơn cũ chưa có mốc thì đành lấy lần đồng bộ gần
+// nhất — nói rõ là ước lượng chứ không giả vờ chính xác.
+function mocHangVe(d) {
+  return ngayCua(d.thoiGianChuyenHoan);
 }
-// Đơn vừa chuyển hoàn vừa có dòng trả thì xếp vào Giao thất bại — việc phải làm
-// trước mắt là nhận kiện hàng về, chuyện hoàn tiền tính sau.
-function loaiHoanTra(d) {
-  if (laGiaoThatBai(d)) return 'giao_that_bai';
-  if (laTraHangHoanTien(d)) return 'tra_hang';
-  return null;
+function soNgayCho(d) {
+  const t = mocHangVe(d);
+  if (!t) return null;
+  return Math.floor((Date.now() - t.getTime()) / 86400000);
 }
-// Hàng hoàn đã nhập lại kho chưa. Dùng chung một cờ cho cả hai mục con.
+
 function daNhapLaiKho(d) { return !!d.daNhapLaiKho; }
+
+// Nhập đủ hay nhập thiếu. Đơn cũ (trước khi có tính năng đếm số lượng) không có
+// trường này — coi như nhập đủ, thà bỏ sót còn hơn bắt xác nhận cả đống đơn cũ.
+function nhapLaiDayDu(d) { return d.nhapLaiDayDu !== false; }
+// Nhập một phần thì phải có Admin xác nhận — chống việc hàng lành mà khai vỡ.
+function canXacNhan(d) { return daNhapLaiKho(d) && !nhapLaiDayDu(d); }
+function daXacNhanNhapLai(d) { return !!d.daXacNhanNhapLai; }
+
+// Kiện về quá số ngày này mà chưa nhập kho thì gắn nhãn đỏ
+const NGAY_CANH_BAO_HOAN = 2;
 
 
 // Mã trạng thái giao hàng của KiotViet (theo tài liệu chính thức):
@@ -2757,6 +2780,11 @@ async function renderDonHangTab() {
   // ở đây vì tuDongBoNeuCu có nhịp chờ 5 phút của nó, mở tab lúc đang trong nhịp
   // đó thì đơn thiếu vẫn phải được vá.
   tuDongBoDonThieuHoaDon();
+  // Admin cần biết nếu việc tự gia hạn kết nối KiotViet gặp chuyện. Nhân viên thì
+  // không — có báo họ cũng không làm gì được, chỉ thêm rối.
+  if (currentUserData?.role === 'admin') {
+    napKetNoiKol().then(() => veDanhSachDon()).catch(() => {});
+  }
   // Đếm đơn hoàn trả cho con số trên thanh tab. Chạy ngầm, xong thì vẽ lại —
   // không bắt nhân viên chờ chỉ để thấy một con số.
   loadDonHoanTra().then(() => veDanhSachDon()).catch(() => {});
@@ -3157,7 +3185,10 @@ function veThanhChon(trang) {
 // Thanh hai tab lớn. Đếm trên TOÀN BỘ đơn tải về, không theo bộ lọc đang chọn —
 // con số này là để biết bên kia còn việc hay không, lọc mà giấu đi thì vô nghĩa.
 function veThanhTabDon() {
-  const conPhaiNhap = donHoanTra.filter(d => loaiHoanTra(d) && !daNhapLaiKho(d)).length;
+  // Chỉ đếm việc THẬT SỰ phải làm: kiện đã về kho mà chưa ai nhập.
+  // Kiện còn trên đường chưa làm gì được, đếm vào chỉ gây sốt ruột vô ích.
+  const conPhaiNhap = donHoanTra.filter(d =>
+    loaiHoanTra(d) === 'da_chuyen_hoan' && !daNhapLaiKho(d)).length;
   const nut = (ma, nhan, so, mau) => {
     const chon = donTabChinh === ma;
     return `<button onclick="doiTabDon('${ma}')"
@@ -3193,8 +3224,20 @@ window.doiTabHoan = function(t) {
   veDanhSachDon();
 };
 
-window.doiHienHoanDaXuLy = function(v) {
-  donHoanHienDaXuLy = !!v;
+window.doiHoanNhapKho = function(v) {
+  donHoanNhapKho = v;
+  donPage = 1;
+  veDanhSachDon();
+};
+
+window.doiHoanDayDu = function(v) {
+  donHoanDayDu = v;
+  donPage = 1;
+  veDanhSachDon();
+};
+
+window.doiHoanXacNhan = function(v) {
+  donHoanXacNhan = v;
   donPage = 1;
   veDanhSachDon();
 };
@@ -3205,7 +3248,17 @@ function locDonHoanTra() {
   const tu = donTimKiem.trim().toLowerCase();
   return donHoanTra.filter(d => {
     if (loaiHoanTra(d) !== donTabHoan) return false;
-    if (!donHoanHienDaXuLy && daNhapLaiKho(d)) return false;
+    // Tách chưa/đã nhập kho chỉ có nghĩa với hàng đã về. Hàng còn trên đường thì
+    // hiện hết, kể cả kiện nào đã đánh dấu sớm.
+    if (donTabHoan === 'da_chuyen_hoan') {
+      if (daNhapLaiKho(d) !== (donHoanNhapKho === 'da')) return false;
+      if (donHoanNhapKho === 'da') {
+        if (nhapLaiDayDu(d) !== (donHoanDayDu === 'toan_bo')) return false;
+        // Chỉ đơn nhập một phần mới có chuyện xác nhận
+        if (donHoanDayDu === 'mot_phan'
+            && daXacNhanNhapLai(d) !== (donHoanXacNhan === 'da')) return false;
+      }
+    }
     if (donFilterSan !== 'all' && d.san !== donFilterSan) return false;
     if (donFilterVanChuyen !== 'all'
       && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
@@ -3219,28 +3272,266 @@ function locDonHoanTra() {
 
 // Đánh dấu hàng hoàn đã nhập lại kho. Không tự cộng tồn — KiotViet mới là nơi
 // giữ tồn thật, app chỉ ghi lại ai đã kiểm và lúc nào, để đối soát khi lệch.
-window.doiNhapLaiKho = async function(idDon, giaTri) {
-  // Đơn hoàn trả có thể chỉ nằm ở danh sách riêng (ngoài cửa sổ 300 đơn mới nhất)
-  const cacBan = [allDonHangSan, donHoanTra].map(ds => ds.find(x => x.id === idDon)).filter(Boolean);
-  const d = cacBan[0];
+// ==========================================================================
+// ===== NHẬP LẠI KHO HÀNG HOÀN =====
+// Không phải cứ hàng về là nhập đủ: kiện có thể vỡ, hàng có thể hỏng. Nên bước
+// này cho sửa số lượng từng dòng, và tự phân ra:
+//   nhập đủ mọi dòng  -> Nhập kho toàn bộ
+//   thiếu dù một món  -> Nhập kho một phần, phải Admin xác nhận
+// Xác nhận là chốt chặn chống khai khống: hàng lành mà báo vỡ thì phần chênh
+// biến mất khỏi kho mà không ai kiểm.
+// ==========================================================================
+let nkDon = null;          // đơn đang nhập kho
+let nkSoLuong = {};        // maHang -> số lượng nhập lại
+let nkGhiChu = '';
+
+window.moKhungNhapKho = function(idDon) {
+  const d = donHoanTra.find(x => x.id === idDon) || allDonHangSan.find(x => x.id === idDon);
   if (!d) return;
+  nkDon = d;
+  nkGhiChu = '';
+  nkSoLuong = {};
+  // Mặc định nhập lại ĐỦ — trường hợp thường gặp nhất, nhân viên chỉ phải sửa
+  // đúng dòng nào hỏng.
+  for (const c of (d.chiTiet || [])) {
+    if (!c.maHang) continue;
+    nkSoLuong[c.maHang] = (nkSoLuong[c.maHang] || 0) + (Number(c.soLuong) || 0);
+  }
+  veKhungNhapKho();
+};
+
+window.dongKhungNhapKho = function() {
+  document.getElementById('nhap-kho-modal')?.remove();
+  nkDon = null;
+};
+
+window.nkDoiSL = function(maHang, delta, toiDa) {
+  const ht = Number(nkSoLuong[maHang]) || 0;
+  nkSoLuong[maHang] = Math.max(0, Math.min(toiDa, ht + delta));
+  veKhungNhapKho();
+};
+window.nkDatSL = function(maHang, v, toiDa) {
+  nkSoLuong[maHang] = Math.max(0, Math.min(toiDa, parseInt(v) || 0));
+  veKhungNhapKho();
+};
+window.nkDatGhiChu = function(v) { nkGhiChu = v; };
+window.nkNhapDu = function() {
+  for (const c of gomHangNhapKho(nkDon)) nkSoLuong[c.maHang] = c.soLuongDon;
+  veKhungNhapKho();
+};
+
+// Một đơn có thể có nhiều dòng cùng mã hàng — gộp lại cho khỏi đếm hai lần
+function gomHangNhapKho(d) {
+  const theoMa = new Map();
+  for (const c of (d?.chiTiet || [])) {
+    if (!c.maHang) continue;
+    const cu = theoMa.get(c.maHang) || { maHang: c.maHang, tenHang: c.tenHang, soLuongDon: 0 };
+    cu.soLuongDon += Number(c.soLuong) || 0;
+    theoMa.set(c.maHang, cu);
+  }
+  return [...theoMa.values()];
+}
+
+function veKhungNhapKho() {
+  let m = document.getElementById('nhap-kho-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'nhap-kho-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1400;'
+      + 'display:flex;align-items:flex-end;justify-content:center';
+    m.onclick = (e) => { if (e.target === m) window.dongKhungNhapKho(); };
+    document.body.appendChild(m);
+  }
+  const d = nkDon;
+  if (!d) return;
+
+  const dsHang = gomHangNhapKho(d);
+  const tongDon = dsHang.reduce((t, c) => t + c.soLuongDon, 0);
+  const tongNhap = dsHang.reduce((t, c) => t + (Number(nkSoLuong[c.maHang]) || 0), 0);
+  const thieu = tongDon - tongNhap;
+  const dayDu = thieu === 0;
+
+  m.innerHTML = `
+    <div style="background:var(--surface);width:100%;max-width:540px;max-height:90vh;
+                border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+      <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;
+                  justify-content:space-between;align-items:flex-start;gap:10px">
+        <div style="min-width:0">
+          <b style="font-size:15px">Nhập lại kho hàng hoàn</b>
+          <div style="font-size:12px;color:var(--text2)">
+            ${escHtml(d.maDonSan || d.maHoaDon)}${d.maVanDon ? ` · VĐ ${escHtml(d.maVanDon)}` : ''}</div>
+        </div>
+        <button class="btn-outline" style="width:auto;padding:6px 12px"
+          onclick="dongKhungNhapKho()">✕</button>
+      </div>
+
+      <div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;
+                  gap:8px;align-items:center">
+        <span style="font-size:12px;color:var(--text2);flex:1">
+          Sửa số lượng nếu có món vỡ hoặc hỏng, không nhập lại được</span>
+        <button class="btn-xs" onclick="nkNhapDu()">Nhập đủ</button>
+      </div>
+
+      <div style="flex:1;overflow-y:auto;padding:12px 14px">
+        ${dsHang.map(c => {
+          const sl = Number(nkSoLuong[c.maHang]) || 0;
+          const hut = c.soLuongDon - sl;
+          return `
+          <div style="border:1px solid ${hut > 0 ? '#D97706' : 'var(--border)'};border-radius:8px;
+                      padding:10px;margin-bottom:8px;background:${hut > 0 ? '#FFFBEB' : '#fff'}">
+            <div style="font-weight:600;font-size:14px">${escHtml(c.tenHang || c.maHang)}</div>
+            <div style="font-size:11px;color:var(--text2)">
+              ${escHtml(c.maHang)} · đã gửi đi ${c.soLuongDon}
+              ${hut > 0 ? ` · <b style="color:#D97706">thiếu ${hut}</b>` : ''}
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+              <span style="font-size:12px;color:var(--text2);flex:1">Nhập lại kho</span>
+              <button class="btn-xs" style="width:34px"
+                onclick="nkDoiSL('${escHtml(c.maHang)}',-1,${c.soLuongDon})">−</button>
+              <input type="number" min="0" max="${c.soLuongDon}" value="${sl}"
+                onchange="nkDatSL('${escHtml(c.maHang)}',this.value,${c.soLuongDon})"
+                style="width:60px;padding:7px;text-align:center;font-size:15px;font-weight:600">
+              <button class="btn-xs" style="width:34px"
+                onclick="nkDoiSL('${escHtml(c.maHang)}',1,${c.soLuongDon})">+</button>
+            </div>
+          </div>`;
+        }).join('')}
+
+        <label style="display:block;font-size:12px;color:var(--text2);margin-top:4px">
+          Ghi chú${!dayDu ? ' <b style="color:#DC2626">(bắt buộc khi nhập thiếu)</b>' : ''}
+          <input type="text" value="${escHtml(nkGhiChu)}" oninput="nkDatGhiChu(this.value)"
+            placeholder="${dayDu ? 'Không bắt buộc' : 'Vì sao không nhập lại đủ?'}"
+            style="width:100%;margin-top:4px;padding:9px;border:1.5px solid var(--border);
+                   border-radius:8px;font-size:13px">
+        </label>
+      </div>
+
+      <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg)">
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:10px">
+          <span>Nhập lại <b>${tongNhap}</b>/${tongDon} món</span>
+          <b style="color:${dayDu ? '#16A34A' : '#D97706'}">
+            ${dayDu ? 'Nhập kho toàn bộ' : `Nhập kho một phần · thiếu ${thieu}`}</b>
+        </div>
+        ${!dayDu ? `<div style="font-size:11px;color:var(--text2);margin-bottom:8px">
+          Đơn nhập thiếu sẽ chờ Admin xác nhận.</div>` : ''}
+        <button class="btn-g" style="width:100%;padding:13px" onclick="xacNhanNhapKho()">
+          ✓ Xác nhận nhập kho</button>
+      </div>
+    </div>`;
+}
+
+window.xacNhanNhapKho = async function() {
+  const d = nkDon;
+  if (!d) return;
+  const dsHang = gomHangNhapKho(d);
+  const chiTiet = dsHang.map(c => ({
+    maHang: c.maHang, tenHang: c.tenHang || '',
+    soLuongDon: c.soLuongDon,
+    soLuongNhap: Math.max(0, Math.min(c.soLuongDon, Number(nkSoLuong[c.maHang]) || 0))
+  }));
+  const tongDon = chiTiet.reduce((t, c) => t + c.soLuongDon, 0);
+  const tongNhap = chiTiet.reduce((t, c) => t + c.soLuongNhap, 0);
+  const dayDu = tongNhap === tongDon;
+
+  if (!tongNhap && !confirm('Không nhập lại món nào cả. Vẫn ghi nhận?')) return;
+  if (!dayDu && !nkGhiChu.trim()) {
+    alert('Nhập thiếu thì phải ghi lý do — để Admin xác nhận được.');
+    return;
+  }
+
+  const nguoi = currentUserData?.ten || currentUser?.email || '';
   try {
-    await updateDoc(doc(db, 'don_hang_san', idDon), {
-      daNhapLaiKho: giaTri,
-      nhapLaiKhoLuc: giaTri ? serverTimestamp() : null,
-      nguoiNhapLaiKho: giaTri ? (currentUserData?.ten || currentUser?.email || '') : ''
+    await updateDoc(doc(db, 'don_hang_san', d.id), {
+      daNhapLaiKho: true,
+      nhapLaiKhoLuc: serverTimestamp(),
+      nguoiNhapLaiKho: nguoi,
+      nhapLaiChiTiet: chiTiet,
+      nhapLaiDayDu: dayDu,
+      nhapLaiThieu: tongDon - tongNhap,
+      nhapLaiGhiChu: nkGhiChu.trim(),
+      // Nhập đủ thì không cần ai duyệt; nhập thiếu thì chờ Admin
+      daXacNhanNhapLai: dayDu
     });
   } catch(e) {
     alert('Không ghi được: ' + e.message
-      + '\n\n(Chỉ quản lý mới đánh dấu được hàng hoàn đã nhập kho)');
+      + '\n\n(Chỉ quản lý mới nhập lại kho hàng hoàn được)');
     return;
   }
-  for (const b of cacBan) {
-    b.daNhapLaiKho = giaTri;
-    b.nhapLaiKhoLuc = giaTri ? new Date() : null;
-    b.nguoiNhapLaiKho = giaTri ? (currentUserData?.ten || currentUser?.email || '') : '';
+
+  // Cộng tồn kho của app và ghi thẻ kho. KiotViet có sổ riêng — phần đối soát với
+  // họ nằm ở bước đẩy tồn, không làm ở đây.
+  await congTonHangHoan(d, chiTiet, nguoi);
+
+  const capNhat = { daNhapLaiKho: true, nhapLaiKhoLuc: new Date(), nguoiNhapLaiKho: nguoi,
+    nhapLaiChiTiet: chiTiet, nhapLaiDayDu: dayDu, nhapLaiThieu: tongDon - tongNhap,
+    nhapLaiGhiChu: nkGhiChu.trim(), daXacNhanNhapLai: dayDu };
+  for (const ds of [allDonHangSan, donHoanTra]) {
+    const b = ds.find(x => x.id === d.id);
+    if (b) Object.assign(b, capNhat);
   }
-  showToast(giaTri ? 'Đã đánh dấu nhập lại kho' : 'Đã bỏ đánh dấu');
+  window.dongKhungNhapKho();
+  showToast(dayDu ? `Đã nhập lại ${tongNhap} món` : `Nhập một phần ${tongNhap}/${tongDon} — chờ Admin xác nhận`);
+  veDanhSachDon();
+};
+
+// Cộng lại tồn kho app cho phần hàng thật sự nhập về, kèm dòng thẻ kho để truy vết.
+async function congTonHangHoan(d, chiTiet, nguoi) {
+  for (const c of chiTiet) {
+    if (!c.soLuongNhap) continue;
+    try {
+      const sku = allSKUs?.find(x => x.sku === c.maHang);
+      if (sku?.id) {
+        await updateDoc(doc(db, 'skus', sku.id), { soLuongTon: increment(c.soLuongNhap) });
+        sku.soLuongTon = (Number(sku.soLuongTon) || 0) + c.soLuongNhap;
+      }
+      await addDoc(collection(db, 'the_kho'), {
+        sku: c.maHang, kho: 'san', loaiGiaoDich: 'Nhập lại hàng hoàn',
+        maChungTu: d.maHoaDon || d.maDonSan || d.id,
+        soLuong: c.soLuongNhap, nguoiTao: nguoi, thoiGian: serverTimestamp()
+      });
+    } catch(e) {
+      console.warn('[nhập kho hoàn] không cộng được tồn', c.maHang, e.message);
+    }
+  }
+}
+
+// Admin xác nhận đơn nhập một phần là hợp lệ
+window.xacNhanNhapMotPhan = async function(idDon) {
+  if (currentUserData?.role !== 'admin') { alert('Chỉ Admin xác nhận được'); return; }
+  const nguoi = currentUserData?.ten || currentUser?.email || '';
+  try {
+    await updateDoc(doc(db, 'don_hang_san', idDon), {
+      daXacNhanNhapLai: true,
+      xacNhanNhapLaiLuc: serverTimestamp(),
+      nguoiXacNhanNhapLai: nguoi
+    });
+  } catch(e) { alert('Không ghi được: ' + e.message); return; }
+  for (const ds of [allDonHangSan, donHoanTra]) {
+    const b = ds.find(x => x.id === idDon);
+    if (b) Object.assign(b, { daXacNhanNhapLai: true, xacNhanNhapLaiLuc: new Date(),
+      nguoiXacNhanNhapLai: nguoi });
+  }
+  showToast('Đã xác nhận');
+  veDanhSachDon();
+};
+
+// Bỏ đánh dấu nhập kho — dùng khi bấm nhầm. KHÔNG trừ lại tồn tự động: thẻ kho
+// đã ghi rồi, muốn sửa tồn thì đi qua kiểm kho để còn dấu vết.
+window.boNhapLaiKho = async function(idDon) {
+  if (!confirm('Bỏ đánh dấu nhập kho?\n\nTồn kho đã cộng sẽ KHÔNG tự trừ lại — '
+    + 'chỉnh lại bằng phiếu kiểm kho nếu cần.')) return;
+  try {
+    await updateDoc(doc(db, 'don_hang_san', idDon), {
+      daNhapLaiKho: false, nhapLaiKhoLuc: null, nguoiNhapLaiKho: '',
+      nhapLaiDayDu: true, nhapLaiThieu: 0, daXacNhanNhapLai: false
+    });
+  } catch(e) { alert('Không ghi được: ' + e.message); return; }
+  for (const ds of [allDonHangSan, donHoanTra]) {
+    const b = ds.find(x => x.id === idDon);
+    if (b) Object.assign(b, { daNhapLaiKho: false, nhapLaiKhoLuc: null,
+      nguoiNhapLaiKho: '', nhapLaiDayDu: true, nhapLaiThieu: 0, daXacNhanNhapLai: false });
+  }
+  showToast('Đã bỏ đánh dấu');
   veDanhSachDon();
 };
 
@@ -3259,15 +3550,10 @@ async function loadDonHoanTra() {
   const theoId = new Map();
   const nhan = (id, dl) => { if (!theoId.has(id)) theoId.set(id, { id, ...dl }); };
   try {
-    const [sGiao, sTra] = await Promise.all([
-      getDocs(query(collection(db, 'don_hang_san'),
-        where('trangThaiGiaoMa', 'in', [4, 5]), limit(300))),
-      getDocs(query(collection(db, 'don_hang_san'),
-        where('tienHangTra', '>', 0), limit(300)))
-    ]);
+    const sGiao = await getDocs(query(collection(db, 'don_hang_san'),
+      where('trangThaiGiaoMa', 'in', [4, 5]), limit(400)));
     sGiao.docs.forEach(d => nhan(d.id, d.data()));
-    sTra.docs.forEach(d => nhan(d.id, d.data()));
-    console.log(`[hoàn trả] Firestore: ${sGiao.size} đơn chuyển hoàn · ${sTra.size} đơn có hàng trả`);
+    console.log(`[hoàn trả] Firestore trả về ${sGiao.size} đơn ở trạng thái chuyển hoàn`);
   } catch(e) {
     console.warn('[hoàn trả] không truy vấn được, tạm dùng danh sách đang tải:', e.message);
   }
@@ -3281,8 +3567,8 @@ async function loadDonHoanTra() {
 // Bộ lọc sàn riêng cho tab hoàn trả. Không dùng lại veLocSan() vì hàm đó đếm
 // theo bộ lọc trạng thái của tab Xử lý đơn — sang đây con số sẽ sai.
 function veLocSanHoan() {
-  const nen = donHoanTra.filter(d =>
-    loaiHoanTra(d) === donTabHoan && (donHoanHienDaXuLy || !daNhapLaiKho(d)));
+  const nen = donHoanTra.filter(d => loaiHoanTra(d) === donTabHoan
+    && (donTabHoan !== 'da_chuyen_hoan' || daNhapLaiKho(d) === (donHoanNhapKho === 'da')));
   const dem = new Map();
   for (const d of nen) if (d.san) dem.set(d.san, (dem.get(d.san) || 0) + 1);
   const moiSan = [...new Set([...dem.keys(),
@@ -3324,28 +3610,76 @@ function veDanhSachHoanTra(el) {
   };
 
   const ds = locDonHoanTra().sort((a, b) => {
-    const ta = ngayCua(a.ngayDat)?.getTime() || 0;
-    const tb = ngayCua(b.ngayDat)?.getTime() || 0;
-    return tb - ta;
+    // Chưa nhập kho: kiện chờ LÂU NHẤT lên đầu — đó là kiện dễ mất nhất.
+    // Đã nhập kho: mới nhập lên đầu, vì đây là sổ tra cứu.
+    const truong = (x) => donTabHoan === 'da_chuyen_hoan' && donHoanNhapKho === 'da'
+      ? (ngayCua(x.nhapLaiKhoLuc)?.getTime() || 0)
+      : (mocHangVe(x)?.getTime() || ngayCua(x.ngayDat)?.getTime() || 0);
+    const xuoi = donTabHoan === 'da_chuyen_hoan' && donHoanNhapKho === 'chua';
+    return xuoi ? truong(a) - truong(b) : truong(b) - truong(a);
   });
   const tongTrang = Math.max(1, Math.ceil(ds.length / DON_MOI_TRANG));
   if (donPage > tongTrang) donPage = tongTrang;
   const trang = ds.slice((donPage - 1) * DON_MOI_TRANG, donPage * DON_MOI_TRANG);
 
-  const moTaMuc = donTabHoan === 'giao_that_bai'
-    ? 'Shipper không giao được, hàng đang hoặc đã chuyển hoàn về kho. Nhận đủ kiện rồi bấm đánh dấu.'
-    : 'Khách đã nhận hàng rồi trả lại một phần hoặc toàn bộ. Kiểm hàng, nhập lại kho rồi bấm đánh dấu.';
+  const moTaMuc = donTabHoan === 'da_chuyen_hoan'
+    ? 'Shipper báo đã trả hàng về. Kiểm đủ kiện rồi bấm Đã nhập kho.'
+    : 'Kiện hàng còn trên đường quay về, chưa tới kho.';
+
+  // Tầng ba, bốn, năm: chỉ có nghĩa với hàng đã về
+  const daVeCa = donHoanTra.filter(d => loaiHoanTra(d) === 'da_chuyen_hoan');
+  const nut3 = (ham, ma, dangChon, nhan, so, mau) => `<button onclick="${ham}('${ma}')"
+      style="border:1.5px solid ${dangChon ? mau : 'var(--border)'};border-radius:6px;
+             padding:6px 11px;font-size:12px;white-space:nowrap;
+             background:${dangChon ? mau : '#fff'};color:${dangChon ? '#fff' : 'var(--text)'};
+             font-weight:${dangChon ? '600' : '400'}">${nhan} (${so})</button>`;
+
+  const demNhapKho = (daNhap) => daVeCa.filter(d => daNhapLaiKho(d) === daNhap).length;
+  const demDayDu = (du) => daVeCa.filter(d => daNhapLaiKho(d) && nhapLaiDayDu(d) === du).length;
+  const demXacNhan = (xn) => daVeCa.filter(d =>
+    daNhapLaiKho(d) && !nhapLaiDayDu(d) && daXacNhanNhapLai(d) === xn).length;
+
+  const nutNhapKho = (ma, nhan, mau) =>
+    nut3('doiHoanNhapKho', ma, donHoanNhapKho === ma, nhan, demNhapKho(ma === 'da'), mau);
 
   el.innerHTML = `
     ${veThanhTabDon()}
     <div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
-      <div style="font-size:10px;color:var(--text2);margin-bottom:5px">LOẠI HOÀN TRẢ</div>
+      <div style="font-size:10px;color:var(--text2);margin-bottom:5px">TRẠNG THÁI CHUYỂN HOÀN</div>
       <div style="display:flex;gap:5px;flex-wrap:wrap">
-        ${nutCon('giao_that_bai', 'Giao thất bại', '#EA580C')}
-        ${nutCon('tra_hang', 'Trả hàng/Hoàn tiền', '#9333EA')}
+        ${nutCon('da_chuyen_hoan', 'Đã chuyển hoàn', '#9333EA')}
+        ${nutCon('dang_chuyen_hoan', 'Đang chuyển hoàn', '#EA580C')}
       </div>
       <div style="font-size:11px;color:var(--text2);margin-top:7px">${moTaMuc}</div>
     </div>
+
+    ${donTabHoan === 'da_chuyen_hoan' ? `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
+      <div style="font-size:10px;color:var(--text2);margin-bottom:5px">NHẬP KHO</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        ${nutNhapKho('chua', 'Chưa nhập kho', '#DC2626')}
+        ${nutNhapKho('da', 'Đã nhập kho', '#16A34A')}
+      </div>
+      ${donHoanNhapKho === 'da' ? `
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;padding-top:8px;
+                  border-top:1px dashed var(--border)">
+        ${nut3('doiHoanDayDu', 'toan_bo', donHoanDayDu === 'toan_bo',
+          'Nhập kho toàn bộ', demDayDu(true), '#16A34A')}
+        ${nut3('doiHoanDayDu', 'mot_phan', donHoanDayDu === 'mot_phan',
+          'Nhập kho một phần', demDayDu(false), '#D97706')}
+      </div>` : ''}
+      ${donHoanNhapKho === 'da' && donHoanDayDu === 'mot_phan' ? `
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;padding-top:8px;
+                  border-top:1px dashed var(--border)">
+        ${nut3('doiHoanXacNhan', 'chua', donHoanXacNhan === 'chua',
+          'Chưa xác nhận', demXacNhan(false), '#DC2626')}
+        ${nut3('doiHoanXacNhan', 'da', donHoanXacNhan === 'da',
+          'Đã xác nhận', demXacNhan(true), '#16A34A')}
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:7px">
+        Nhập thiếu phải được Admin xác nhận — chốt chặn chống khai hàng lành thành hỏng.
+      </div>` : ''}
+    </div>` : ''}
 
     ${(() => { const s = veLocSanHoan(); return s
       ? `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
@@ -3356,11 +3690,6 @@ function veDanhSachHoanTra(el) {
       <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng..."
         value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)"
         style="flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px;
-                    color:var(--text2);white-space:nowrap;cursor:pointer">
-        <input type="checkbox" ${donHoanHienDaXuLy ? 'checked' : ''}
-          onchange="doiHienHoanDaXuLy(this.checked)"> Hiện cả đã xử lý
-      </label>
     </div>
 
     <div id="don-list"></div>
@@ -3371,26 +3700,39 @@ function veDanhSachHoanTra(el) {
   if (!ds.length) {
     listEl.innerHTML = `<p class="info-note">${dangTaiHoanTra
       ? 'Đang tải đơn hoàn trả...'
-      : donHoanHienDaXuLy
-      ? 'Không có đơn hoàn trả nào khớp bộ lọc.'
-      : 'Không còn đơn hoàn trả nào phải xử lý. Tick "Hiện cả đã xử lý" để xem lịch sử.'}</p>`;
+      : donTabHoan === 'dang_chuyen_hoan'
+      ? 'Không có kiện nào đang trên đường về.'
+      : donHoanNhapKho === 'chua'
+      ? 'Không còn kiện nào chờ nhập kho.'
+      : donHoanDayDu === 'mot_phan'
+      ? (donHoanXacNhan === 'chua'
+          ? 'Không có đơn nhập một phần nào đang chờ xác nhận.'
+          : 'Chưa có đơn nhập một phần nào được xác nhận.')
+      : 'Chưa có kiện nào được nhập lại kho đầy đủ.'}</p>`;
     document.getElementById('don-phantrang').innerHTML = '';
     return;
   }
 
   listEl.innerHTML = trang.map(d => {
     const xong = daNhapLaiKho(d);
-    const mau = donTabHoan === 'giao_that_bai' ? '#EA580C' : '#9333EA';
+    const daVe = loaiHoanTra(d) === 'da_chuyen_hoan';
+    const mau = daVe ? '#9333EA' : '#EA580C';
+    const gioPhut = { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' };
     const ngay = ngayCua(d.ngayDat);
-    const gio = ngay ? ngay.toLocaleString('vi-VN',
-      { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' }) : '';
+    const gio = ngay ? ngay.toLocaleString('vi-VN', gioPhut) : '';
+    const veLuc = mocHangVe(d);
+    const ngayCho = soNgayCho(d);
     const lucXong = ngayCua(d.nhapLaiKhoLuc);
     const soTra = soMonTraCua(d);
     const tienTra = Math.round(tienTraCua(d));
+    // Kiện về lâu mà chưa ai nhập kho là dấu hiệu mất hàng
+    const treHan = !xong && daVe && ngayCho != null && ngayCho >= NGAY_CANH_BAO_HOAN;
 
     return `
-    <div style="border:1px solid ${xong ? 'var(--border)' : mau};border-left:3px solid ${mau};
-      border-radius:8px;padding:10px 12px;margin-bottom:8px;background:${xong ? '#fff' : '#FFFBEB'}">
+    <div style="border:1px solid ${xong ? 'var(--border)' : (treHan ? '#DC2626' : mau)};
+      border-left:3px solid ${mau};
+      border-radius:8px;padding:10px 12px;margin-bottom:8px;
+      background:${xong ? '#fff' : (treHan ? '#FEF2F2' : '#FFFBEB')}">
       <div style="display:flex;gap:8px;align-items:flex-start">
         <div style="flex:1;min-width:0">
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
@@ -3399,18 +3741,38 @@ function veDanhSachHoanTra(el) {
             <span style="font-size:10px;color:${mau};font-weight:600">
               ${escHtml(moTaTrangThai(trangThaiHienThi(d)).ten)}</span>
             ${xong ? `<span style="font-size:10px;color:#fff;background:#16A34A;
-              padding:2px 7px;border-radius:4px">✓ Đã nhập lại kho</span>` : ''}
+              padding:2px 7px;border-radius:4px">✓ Đã nhập kho</span>` : ''}
+            ${treHan ? `<span style="font-size:10px;color:#fff;background:#DC2626;
+              padding:2px 7px;border-radius:4px;font-weight:700">Đã hoàn về ${ngayCho} ngày trước</span>` : ''}
+            ${xong && !nhapLaiDayDu(d) ? `<span style="font-size:10px;color:#fff;background:#D97706;
+              padding:2px 7px;border-radius:4px">Nhập một phần · thiếu ${d.nhapLaiThieu || 0}</span>` : ''}
+            ${xong && canXacNhan(d) && !daXacNhanNhapLai(d)
+              ? `<span style="font-size:10px;color:#fff;background:#DC2626;
+                  padding:2px 7px;border-radius:4px">Chờ Admin xác nhận</span>` : ''}
+            ${xong && canXacNhan(d) && daXacNhanNhapLai(d)
+              ? `<span style="font-size:10px;color:#16A34A">✓ Admin đã xác nhận</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
             ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${
               d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
           </div>
+          ${veLuc ? `<div style="font-size:11px;color:${mau};margin-top:2px">
+            ↩ Hàng về lúc <b>${veLuc.toLocaleString('vi-VN', gioPhut)}</b>${
+              ngayCho != null && !xong ? ` · chờ ${ngayCho} ngày` : ''}</div>`
+            : (daVe ? `<div style="font-size:11px;color:var(--text2);margin-top:2px">
+            ↩ Hàng đã về · chưa có mốc thời gian (đơn cũ, trước khi app ghi mốc)</div>` : '')}
           ${soTra ? `<div style="font-size:11px;color:#9333EA;margin-top:2px">
-            ↩ Khách trả <b>${soTra}</b> món · hoàn <b>${fmt(tienTra)}đ</b></div>` : ''}
+            Khách trả <b>${soTra}</b> món · hoàn <b>${fmt(tienTra)}đ</b></div>` : ''}
           ${xong && lucXong ? `<div style="font-size:11px;color:#16A34A;margin-top:2px">
-            Nhập lại lúc ${lucXong.toLocaleString('vi-VN',
-              { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' })}${
+            📥 Nhập kho lúc <b>${lucXong.toLocaleString('vi-VN', gioPhut)}</b>${
               d.nguoiNhapLaiKho ? ` · ${escHtml(d.nguoiNhapLaiKho)}` : ''}</div>` : ''}
+          ${xong && !nhapLaiDayDu(d) ? `<div style="font-size:11px;color:#D97706;margin-top:2px">
+            ${(d.nhapLaiChiTiet || []).filter(c => c.soLuongNhap < c.soLuongDon)
+              .map(c => `${escHtml(c.tenHang || c.maHang)}: nhập ${c.soLuongNhap}/${c.soLuongDon}`)
+              .join(' · ')}${d.nhapLaiGhiChu ? ` — ${escHtml(d.nhapLaiGhiChu)}` : ''}</div>` : ''}
+          ${xong && daXacNhanNhapLai(d) && d.nguoiXacNhanNhapLai
+            ? `<div style="font-size:11px;color:var(--text2);margin-top:2px">
+                Xác nhận bởi ${escHtml(d.nguoiXacNhanNhapLai)}</div>` : ''}
           <div style="font-size:12px;margin-top:4px">
             ${(d.chiTiet || []).slice(0, 4).map(c =>
               `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}${
@@ -3425,10 +3787,13 @@ function veDanhSachHoanTra(el) {
       </div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
                   display:flex;gap:8px;align-items:center;justify-content:flex-end">
-        <button class="btn-xs" style="background:${xong ? '#FEE2E2' : '#16A34A'};
-          color:${xong ? '#DC2626' : '#fff'}"
-          onclick="doiNhapLaiKho('${escHtml(d.id)}', ${!xong})">
-          ${xong ? 'Bỏ đánh dấu' : '✓ Đã nhập lại kho'}</button>
+        ${!xong ? `<button class="btn-xs" style="background:#16A34A;color:#fff"
+          onclick="moKhungNhapKho('${escHtml(d.id)}')">✓ Nhập kho</button>` : `
+          ${canXacNhan(d) && !daXacNhanNhapLai(d) && currentUserData?.role === 'admin'
+            ? `<button class="btn-xs" style="background:#2563EB;color:#fff"
+                onclick="xacNhanNhapMotPhan('${escHtml(d.id)}')">✓ Xác nhận</button>` : ''}
+          <button class="btn-xs" style="background:#FEE2E2;color:#DC2626"
+            onclick="boNhapLaiKho('${escHtml(d.id)}')">Bỏ đánh dấu</button>`}
       </div>
     </div>`;
   }).join('');
@@ -3522,6 +3887,7 @@ function veDanhSachDon() {
 
   el.innerHTML = `
     ${veThanhTabDon()}
+    ${veCanhBaoKetNoiKol()}
     ${dsThieuHoaDon.length ? `
     <div style="background:#FFF1F2;border:1.5px solid #E11D48;border-radius:8px;
                 padding:9px 11px;margin-bottom:8px;cursor:pointer;display:flex;
@@ -3652,6 +4018,122 @@ function veDanhSachDon() {
       <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage>=tongTrang?'disabled':''} onclick="doiTrangDon(${donPage+1})">→</button>
     </div>` : '';
 }
+
+// ==========================================================================
+// ===== KẾT NỐI BÁN ONLINE (token KiotViet tự gia hạn) =====
+// Worker tự đăng nhập KiotViet trước hạn 7 ngày, chạy theo lịch, không cần ai
+// nhớ. App chỉ đọc tình trạng (cau_hinh/ket_noi_kol — không chứa token) để báo
+// Admin khi CHÍNH việc tự gia hạn hỏng: tự động mà hỏng im lặng thì còn tệ hơn
+// làm tay.
+// ==========================================================================
+let ketNoiKol = null;
+
+async function napKetNoiKol() {
+  try {
+    const snap = await getDoc(doc(db, 'cau_hinh', 'ket_noi_kol'));
+    ketNoiKol = snap.exists() ? snap.data() : null;
+  } catch(e) { ketNoiKol = null; }
+  return ketNoiKol;
+}
+
+// Chỉ hiện khi có việc cho Admin làm. Còn bình thường thì im — đúng nghĩa tự động.
+function veCanhBaoKetNoiKol() {
+  if (currentUserData?.role !== 'admin' || !ketNoiKol) return '';
+  const het = ngayCua(ketNoiKol.hetHanLuc);
+  const conNgay = het ? (het.getTime() - Date.now()) / 86400000 : null;
+  const loi = ketNoiKol.trangThai === 'loi';
+  const daHet = conNgay != null && conNgay <= 0;
+  // KiotViet không cấp token mới khi phiên cũ còn sống — lúc đó việc gia hạn dời
+  // sang ngay sau khi phiên hết hạn, tự động. "Còn 2 ngày" khi ấy là chuyện bình
+  // thường, báo đỏ chỉ làm Admin hoảng vô cớ. Chỉ báo khi đã hết hạn thật mà vẫn
+  // chưa có token mới, hoặc khi việc đăng nhập hỏng.
+  const sapHet = conNgay != null && conNgay < 3 && !ketNoiKol.traLaiPhienCu;
+  // Có nhiều tài khoản xoay vòng mà một cái hỏng: hệ thống VẪN CHẠY bằng cái còn
+  // lại, nên chẳng ai để ý — lặng lẽ mất luôn lớp dự phòng. Phải báo, nhưng báo nhẹ.
+  const tkHong = [1, 2, 3].filter(i => ketNoiKol[`loi_${i}`]);
+  const motTkHong = !loi && tkHong.length > 0 && Number(ketNoiKol.soTaiKhoan) > 1;
+  if (motTkHong && !sapHet && !daHet) {
+    return `
+    <div style="background:#FFFBEB;border:1.5px solid #D97706;border-radius:8px;
+                padding:9px 11px;margin-bottom:8px">
+      <b style="font-size:13px;color:#B45309">Tài khoản KiotViet số ${tkHong.join(', ')} đăng nhập không được</b>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">
+        Vẫn đang chạy bằng tài khoản còn lại, nhưng mất lớp dự phòng — xem tinhTrangKetNoiKol()</div>
+    </div>`;
+  }
+  if (!loi && !sapHet && !daHet) return '';
+
+  const tieuDe = daHet ? 'Kết nối Bán Online đã hết hạn'
+    : sapHet ? `Kết nối Bán Online còn ${Math.max(0, Math.floor(conNgay))} ngày`
+    : 'Kết nối Bán Online chưa tự gia hạn được';
+  const moTa = ketNoiKol.canNguoi
+    ? 'KiotViet cần người xác nhận — xem chi tiết trong Console: tinhTrangKetNoiKol()'
+    : 'App đang tự thử lại. Bấm để thử ngay';
+  return `
+    <div style="background:#FEF2F2;border:1.5px solid #DC2626;border-radius:8px;
+                padding:9px 11px;margin-bottom:8px;display:flex;gap:8px;align-items:center">
+      <div style="flex:1">
+        <b style="font-size:13px;color:#DC2626">${tieuDe}</b>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${moTa}</div>
+      </div>
+      <button class="btn-xs" id="nut-gia-han-kol" style="background:#DC2626;color:#fff;white-space:nowrap"
+        onclick="giaHanKetNoiKol()">Thử gia hạn</button>
+    </div>`;
+}
+
+async function goiKetNoiKol(hanhDong) {
+  if (!currentUser) throw new Error('Chưa đăng nhập');
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': hanhDong, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: '{}'
+  });
+  return res.json();
+}
+
+// Gọi trong Console: tinhTrangKetNoiKol()
+window.tinhTrangKetNoiKol = async function() {
+  const kq = await goiKetNoiKol('tinh-trang-token-kol');
+  if (!kq.success) { console.error('LỖI:', kq.error); return kq; }
+  const tt = kq.trangThai || {};
+  console.log([
+    '===== KẾT NỐI BÁN ONLINE (token KiotViet) =====',
+    `Có token         : ${kq.coToken ? 'có' : 'KHÔNG'}  (nguồn: ${kq.nguon || '?'})`,
+    `Hết hạn lúc      : ${kq.hetHanLuc ? new Date(kq.hetHanLuc).toLocaleString('vi-VN') : '?'}  · còn ${kq.conNgay ?? '?'} ngày`,
+    `Tài khoản        : ${kq.taiKhoan || '?'}`,
+    `Tài khoản xoay vòng: ${kq.soTaiKhoan || 0}${!kq.soTaiKhoan ? ' — CHƯA cấu hình, thêm KIOTVIET_WEB_USER / KIOTVIET_WEB_PASS'
+      : kq.soTaiKhoan === 1 ? ' — nên thêm KIOTVIET_WEB_USER_2 / KIOTVIET_WEB_PASS_2 để gia hạn sớm được' : ''}`,
+    `Đang dùng tài khoản số: ${tt.taiKhoanSo || '?'}`,
+    ...[1, 2, 3].filter(i => tt['loi_' + i]).map(i => `  Tài khoản ${i} lỗi: ${tt['loi_' + i]}`),
+    `Tự gia hạn khi còn dưới ${kq.giaHanTruocNgay} ngày`,
+    `Lần tự gia hạn gần nhất: ${tt.tuGiaHanLuc ? new Date(tt.tuGiaHanLuc).toLocaleString('vi-VN') : '(chưa có)'}${tt.lyDoGiaHan ? ' · ' + tt.lyDoGiaHan : ''}`,
+    tt.traLaiPhienCu ? `KiotViet trả lại phiên cũ — sẽ tự đăng nhập lại sau ${tt.thuLaiSau ? new Date(tt.thuLaiSau).toLocaleString('vi-VN') : '?'}` : '',
+    `Trạng thái       : ${tt.trangThai || '?'}`,
+    tt.loiGanNhat ? `Lỗi gần nhất     : ${tt.loiGanNhat}` : '',
+    tt.thatBaiLuc ? `Hỏng lúc         : ${new Date(tt.thatBaiLuc).toLocaleString('vi-VN')}` : '',
+    tt.truongPhanHoi ? `Trường KiotViet trả về: ${tt.truongPhanHoi}` : ''
+  ].filter(Boolean).join('\n'));
+  return kq;
+};
+
+// Gọi trong Console hoặc bấm nút trên ô cảnh báo: giaHanKetNoiKol()
+window.giaHanKetNoiKol = async function() {
+  const nut = document.getElementById('nut-gia-han-kol');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang gia hạn...'; }
+  try {
+    const kq = await goiKetNoiKol('gia-han-token-kol');
+    console.log('[kết nối Bán Online] gia hạn:', kq);
+    const g = kq.ketQuaGiaHan || {};
+    if (kq.success && g.ok) showToast('Đã gia hạn kết nối KiotViet');
+    else showToast(g.loi ? 'Chưa gia hạn được — xem Console' : 'Chưa gia hạn được', true);
+    await napKetNoiKol();
+    veDanhSachDon();
+    return kq;
+  } finally {
+    if (nut) { nut.disabled = false; nut.textContent = 'Thử gia hạn'; }
+  }
+};
 
 // ==========================================================================
 // ===== ĐỒNG BỘ ĐƠN THEO KHOẢNG NGÀY =====
@@ -7186,8 +7668,10 @@ window.soiHoanTra = async function() {
   for (const k of Object.keys(dem).sort()) {
     dong.push(`  mã ${k} ${TEN_MA_GIAO[k] || '?'} : ${dem[k]}`);
   }
-  dong.push(`  có hàng khách trả (soLuongTra > 0): ${allDonHangSan.filter(laTraHangHoanTien).length}`);
-  dong.push(`  => tab Đơn hoàn trả đang thấy: ${allDonHangSan.filter(d => loaiHoanTra(d)).length}`);
+  dong.push(`  có hàng khách trả (soLuongTra > 0): ${allDonHangSan.filter(d => soMonTraCua(d) > 0).length}`);
+  dong.push(`  => trong tập đang tải, thuộc Đơn hoàn trả: ${allDonHangSan.filter(d => loaiHoanTra(d)).length}`);
+  dong.push(`  => danh sách riêng của tab đang giữ: ${donHoanTra.length} đơn`
+    + ` (đã về chưa nhập kho: ${donHoanTra.filter(d => loaiHoanTra(d) === 'da_chuyen_hoan' && !daNhapLaiKho(d)).length})`);
 
   // Hỏi thẳng Firestore, bỏ qua cửa sổ 300 đơn
   dong.push('', '--- Hỏi thẳng Firestore (KHÔNG giới hạn 300 đơn) ---');
@@ -16372,7 +16856,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v451</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v456</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16426,7 +16910,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v451</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v456</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16468,7 +16952,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v451</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v456</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
