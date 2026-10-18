@@ -10186,6 +10186,7 @@ function apDungHienThiModule(quyenModule) {
   // Vẽ lại menu hai cấp theo quyền mới — quyền đổi giữa chừng thì menu đổi ngay
   veMenuHaiCap();
   capNhatTheoDoiTonSan();
+  batDauTheoDoiSKU();
   // Quyền con "Xuất file" riêng cho Chuyển kho / Xuất hủy (Admin luôn có sẵn qua nhánh khác)
   const nhapExport = document.getElementById('nhap-export-card');
   if (nhapExport) nhapExport.style.display = quyenModule.nhap_xuatfile ? 'block' : 'none';
@@ -10258,7 +10259,15 @@ window.dongBoQuyen = dongBoQuyen;
 let quyenCapNhatDaBiet = null;
 async function lamMoiTheNeuQuyenDoi(hoSo) {
   const moc = hoSo?.quyenCapNhat?.toMillis?.() || 0;
-  if (quyenCapNhatDaBiet === null) { quyenCapNhatDaBiet = moc; return; }
+  if (quyenCapNhatDaBiet === null) {
+    // Lần đầu: thẻ đăng nhập cấp trước lần ghi quyền gần nhất thì lấy thẻ mới luôn
+    quyenCapNhatDaBiet = moc;
+    try {
+      const the = await currentUser?.getIdTokenResult();
+      if (moc && the && Date.parse(the.issuedAtTime) < moc) await currentUser.getIdToken(true);
+    } catch(e) {}
+    return;
+  }
   if (moc && moc !== quyenCapNhatDaBiet) {
     quyenCapNhatDaBiet = moc;
     try { await currentUser?.getIdToken(true); } catch(e) {}
@@ -10535,7 +10544,15 @@ function layGiaTriNhomHangDaChon(prefix) {
 }
 
 let skusUnsub = null;
+// Danh mục hàng chỉ tải cho người có việc cần tới (khớp Firestore rules của skus)
+const KHOA_DOC_SKU = ['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao',
+  'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho'];
 function batDauTheoDoiSKU() {
+  const duocDoc = KHOA_DOC_SKU.some(k => coQuyen(k));
+  if (!duocDoc) {
+    if (skusUnsub) { skusUnsub(); skusUnsub = null; allSKUs = []; }
+    return;
+  }
   if (skusUnsub) return; // đã theo dõi rồi, tránh gắn trùng
   skusUnsub = onSnapshot(collection(db, 'skus'), async (snap) => {
     // Giá vốn nằm ở collection riêng nên KHÔNG có trong snapshot này.
@@ -10554,7 +10571,7 @@ function batDauTheoDoiSKU() {
       renderHangHoaNhomFilters();
       renderHangHoaList();
     }
-  }, (err) => console.error('Lỗi theo dõi SKU:', err));
+  }, (err) => { console.warn('[hàng hóa] không đọc được:', err.message); skusUnsub = null; });
 }
 
 function dangThaoTacHangHoa() {
@@ -16221,7 +16238,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v463</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v464</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16275,7 +16292,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v463</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v464</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16317,7 +16334,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v463</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v464</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>

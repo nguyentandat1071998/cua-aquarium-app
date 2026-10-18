@@ -30,6 +30,9 @@ service cloud.firestore {
     function qMot(ds) { return (nv() && the().get('q', []) is list && the().get('q', []).hasAny(ds)) || adm(); }
     function chiDoi(ds) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(ds); }
     function chiCo(ds) { return request.resource.data.keys().hasOnly(ds); }
+    // Chiều thay đổi số tồn: bán chỉ được trừ, nhập/trả chỉ được cộng
+    function giam(f) { return request.resource.data.get(f, 0) <= resource.data.get(f, 0); }
+    function tang(f) { return request.resource.data.get(f, 0) >= resource.data.get(f, 0); }
 
     // ===== NGƯỜI DÙNG =====
     // Đọc hồ sơ người khác chỉ khi có việc cần: xếp ca, xem lương mọi người, báo cáo.
@@ -66,18 +69,30 @@ service cloud.firestore {
     // Thông tin hàng + tồn kho Cửa hàng: nhân viên nào cũng cần (bán hàng, chuyển kho, xuất hủy).
     // Nhân viên chỉ đổi được tồn Cửa hàng (bán, chuyển kho, duyệt trả) và cờ đẩy tồn của Sàn.
     match /skus/{id} {
-      allow read: if nv();
+      // Chỉ người có việc cần tới hàng hóa mới đọc được danh mục (chỉ chấm công thì không)
+      allow read: if qMot(['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao',
+        'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho']);
       allow create, delete: if adm();
       allow update: if adm()
-        || (qMot(['banhang', 'nhap', 'nhap_sua', 'dbl_duyettra']) && chiDoi(['tonCuaHang']))
-        || (q('tmdt_daytonkho') && chiDoi(['dayTonKho', 'demTonKho']));
+        || (chiDoi(['tonCuaHang']) && (
+              (coQ('banhang') && giam('tonCuaHang'))                       // bán tại quầy: trừ
+           || (qMot(['nhap', 'dbl_duyettra']) && tang('tonCuaHang'))       // chuyển về CH, trả hàng: cộng
+           || coQ('nhap_sua')))                                            // sửa/xóa phiếu chuyển: cả hai
+        || (coQ('tmdt_daytonkho') && chiDoi(['dayTonKho', 'demTonKho']));
     }
     // Tồn kho Sàn tách riêng: chỉ người có quyền xem kho Sàn / làm Sàn TMĐT mới đọc được.
     // Chuyển kho trừ kho Sàn, nhập lại hàng hoàn cộng kho Sàn — ghi được, không cần đọc.
     match /ton_san/{id} {
       allow read: if qMot(['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho']);
-      allow create: if adm() || (qMot(['nhap', 'nhap_sua', 'tmdt_hoantra']) && chiCo(['soLuongTon']));
-      allow update: if adm() || (qMot(['nhap', 'nhap_sua', 'tmdt_hoantra']) && chiDoi(['soLuongTon']));
+      // Chuyển sang CH: trừ Sàn. Nhập hàng, nhập lại hàng hoàn: cộng Sàn. Sửa/xóa phiếu chuyển: cả hai.
+      allow create: if adm() || (chiCo(['soLuongTon']) && (
+              coQ('nhap_sua')
+           || (coQ('nhap') && request.resource.data.soLuongTon <= 0)
+           || (qMot(['tmdt_hoantra', 'tmdt_nhaphang']) && request.resource.data.soLuongTon >= 0)));
+      allow update: if adm() || (chiDoi(['soLuongTon']) && (
+              coQ('nhap_sua')
+           || (coQ('nhap') && giam('soLuongTon'))
+           || (qMot(['tmdt_hoantra', 'tmdt_nhaphang']) && tang('soLuongTon'))));
       allow delete: if adm();
     }
     match /gia_von/{id} {
