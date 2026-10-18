@@ -44,7 +44,9 @@ const WORKER_URL = 'https://cua-video-upload.nguyentandat1071998.workers.dev';
 
 // Chi nhánh ghi hóa đơn bán lẻ. Tạm dùng Sàn TMĐT để test, xong đổi về
 // Chi nhánh trung tâm (634586).
-const CHI_NHANH_BAN_LE = 650408;
+const CHI_NHANH_BAN_LE = 650408;   // mặc định; Admin đổi trong Thiết lập › Hệ thống (cau_hinh/chi_nhanh)
+let cauHinhChiNhanh = null;
+function chiNhanhBanLe() { return Number(cauHinhChiNhanh?.banLe) || CHI_NHANH_BAN_LE; }
 
 // ===== CHECKLIST DATA =====
 
@@ -229,10 +231,11 @@ let activeSubTab = 'tao'; // tao | ds | thongke
 // Fallback nếu jsQR chưa load
 if (typeof jsQR === 'undefined') { window.jsQR = () => null; }
 
-const CHECKIN_QR_SECRET = 'CUA-AQUARIUM-451A-VUON-LAI';
-const STORE_LAT = 10.7883316; // 451A Vườn Lài, Q.Tân Phú (đo lại từ Google Maps 31/07/2026)
-const STORE_LNG = 106.6233427;
-const GPS_RADIUS = 150; // mét
+// Mặc định; Admin đổi trong Thiết lập › Hệ thống (cau_hinh/cham_cong)
+let CHECKIN_QR_SECRET = 'CUA-AQUARIUM-451A-VUON-LAI';
+let STORE_LAT = 10.7883316; // 451A Vườn Lài, Q.Tân Phú (đo lại từ Google Maps 31/07/2026)
+let STORE_LNG = 106.6233427;
+let GPS_RADIUS = 150; // mét
 
 let checkinStream = null;
 let qrScanInterval = null;
@@ -1569,7 +1572,7 @@ const ANH_XA_QUYEN_THEO_MOD = {
 window.switchModule = function(mod) {
   // Chặn thật ở tầng hàm — không chỉ ẩn nút, còn chặn cả gọi trực tiếp qua Console
   if (currentUserData.role !== 'admin') {
-    if (mod === 'thietlapluong' || mod === 'calamviec') {
+    if (mod === 'thietlapluong' || mod === 'calamviec' || mod === 'hethong' || mod === 'baocao') {
       showToast('Chỉ Admin mới vào được mục này', true);
       return;
     }
@@ -1630,11 +1633,11 @@ window.switchModule = function(mod) {
     }
     return;
   }
-  if (mod === 'thanhtoan') {
+  if (mod === 'thanhtoan' || mod === 'hethong') {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-thietlap-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
-    renderThietLapThanhToan();
+    if (mod === 'hethong') renderHeThong(); else renderThietLapThanhToan();
     return;
   }
   // Rời màn hình Bán hàng thì dừng tra hóa đơn — nếu không, vòng lặp chạy ngầm
@@ -2461,68 +2464,8 @@ async function renderKetNoiSanTrongTMDT() {
   await renderKetNoiSanList();
 }
 
-// ===== THĂM DÒ KIOTVIET: xem đơn từ sàn TMĐT có lấy được qua API không =====
-// Chỉ để khảo sát, không ghi gì. Gọi từ Console: thamDoKiotVietSan()
-window.thamDoKiotVietSan = async function(soNgay = 7) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'kiotviet-tham-do-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ soNgay })
-  });
-  const data = await res.json();
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
 
-// Xem đầy đủ 1 hóa đơn + 1 đơn đặt hàng từ sàn — để đánh giá lấy được những trường gì.
-// Gọi: thamDoChiTiet()  hoặc  thamDoChiTiet(7, 496041) để chỉ định sàn
-window.thamDoChiTiet = async function(soNgay = 3, kenhId = null) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'kiotviet-tham-do-chi-tiet', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ soNgay, kenhId })
-  });
-  const data = await res.json();
-  if (data.danhSachTruongHoaDon) {
-    console.log('===== CÁC TRƯỜNG CÓ TRONG HÓA ĐƠN SÀN =====');
-    data.danhSachTruongHoaDon.forEach(t => console.log(t));
-  }
-  if (data.danhSachTruongDatHang) {
-    console.log('===== CÁC TRƯỜNG CÓ TRONG ĐƠN ĐẶT HÀNG SÀN =====');
-    data.danhSachTruongDatHang.forEach(t => console.log(t));
-  }
-  console.log('===== TOÀN BỘ =====');
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
 
-// Thống kê: phí sàn (feeJson) xuất hiện ở trạng thái nào — đơn mới đặt đã có chưa?
-// Gọi: thongKePhiSan()  hoặc  thongKePhiSan(60)
-window.thongKePhiSan = async function(soNgay = 30) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'kiotviet-thong-ke-phi', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ soNgay })
-  });
-  const data = await res.json();
-  if (data.thongKeTheoSanVaTrangThai && Object.keys(data.thongKeTheoSanVaTrangThai).length) {
-    console.log('===== SÀN | VỊ TRÍ TRONG DS (ngày đơn thật) → SỐ MẪU CÓ PHÍ / SỐ MẪU =====');
-    Object.values(data.thongKeTheoSanVaTrangThai).forEach(v =>
-      console.log(`${(v.tenSan || '?').padEnd(7)} | vị trí ${String(v.doSau).padStart(5)} (${v.ngayDonDau || '?'})  →  ${v.coPhi}/${v.mauDaKiemTra} có phí`));
-  }
-  if (data.loiGoiAPI?.length) {
-    console.log('===== LỖI / GHI CHÚ KHI GỌI API =====');
-    data.loiGoiAPI.forEach(l => console.log(JSON.stringify(l)));
-  }
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
 
 // ==========================================================================
 // ===== ĐƠN HÀNG SÀN TMĐT =====
@@ -4379,151 +4322,9 @@ tốn nhiều lượt gọi KiotViet. Vẫn chạy?`)) return;
   }
 };
 
-window.keoDonVe = async function() {
-  if (!currentUser) return;
-  const soNgay = Number(document.getElementById('don-songay')?.value) || 3;
-  const san = donFilterSan;
-  const idToken = await currentUser.getIdToken();
 
-  // KiotViet không lọc theo sàn, mỗi lần chạy worker chỉ quét ~1000 hóa đơn.
-  // Với ~560 đơn/ngày thì phải gọi lặp nhiều vòng mới phủ hết khoảng ngày yêu cầu.
-  let viTri = 0, vong = 0, tongGhi = 0, tongMoi = 0, tongQuet = 0, tongTruTon = 0, tongHoanTon = 0;
-  let tongBoQuaChiNhanh = 0, tongBoQuaSkuAo = 0;
-  const gomTheoSan = {};
-  const MAX_VONG = 40; // chặn trên, tránh lặp vô hạn nếu API trả dữ liệu lạ
 
-  try {
-    while (vong < MAX_VONG) {
-      vong++;
-      showToast(`Đang quét... vòng ${vong} · ${tongQuet.toLocaleString('vi-VN')} hóa đơn · tìm được ${tongGhi} đơn ${san === 'all' ? '' : TEN_SAN[san]}`);
-      const res = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'x-action': 'keo-don-hang-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ soNgay, san, viTri })
-      });
-      const data = await res.json();
-      console.log(`[kéo đơn] vòng ${vong}:`, data);
-      if (!data.success) { alert('Lỗi kéo đơn:\n' + data.error); break; }
 
-      tongGhi += data.soDonGhi || 0;
-      tongMoi += data.donMoi || 0;
-      tongQuet += data.tongQuet || 0;
-      tongTruTon += data.soDonTruTon || 0;
-      tongHoanTon += data.soDonHoanTon || 0;
-      tongBoQuaChiNhanh += data.soDonSaiChiNhanh || 0;
-      tongBoQuaSkuAo += data.soDonSkuAo || 0;
-      Object.entries(data.theoSan || {}).forEach(([s, n]) => { gomTheoSan[s] = (gomTheoSan[s] || 0) + n; });
-
-      if (!data.conNua) break;
-      viTri = data.viTriTiepTheo;
-    }
-
-    // Kéo thêm phiếu đặt hàng để có "Đơn mới" — đơn khách vừa đặt, chưa bấm Chuẩn bị hàng
-    let soDonMoi = 0;
-    try {
-      showToast('Đang lấy đơn mới chưa lên hóa đơn...');
-      const rDat = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'x-action': 'keo-phieu-dat-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ soNgay: Math.min(soNgay, 3) })
-      });
-      const dDat = await rDat.json();
-      console.log('[kéo phiếu đặt]', dDat);
-      if (dDat.success) soDonMoi = dDat.soGhi || 0;
-    } catch(e) { console.warn('Không kéo được phiếu đặt:', e); }
-
-    const moTaSan = Object.entries(gomTheoSan).map(([s, n]) => `${TEN_SAN[s] || s}: ${n}`).join(', ');
-    if (!tongGhi) {
-      alert(`Đã quét ${tongQuet.toLocaleString('vi-VN')} hóa đơn trong ${soNgay} ngày nhưng không thấy đơn ${san === 'all' ? 'sàn' : TEN_SAN[san]} nào.`);
-    } else {
-      showToast(`Xong: ${tongGhi} đơn — ${moTaSan}`
-        + (soDonMoi ? ` · ${soDonMoi} đơn mới chưa lên hóa đơn` : '')
-        + (tongTruTon ? ` · trừ tồn ${tongTruTon}` : '')
-        + (tongHoanTon ? ` · hoàn tồn ${tongHoanTon}` : ''));
-      if (tongBoQuaChiNhanh || tongBoQuaSkuAo) {
-        console.log(`[kéo đơn] Đã bỏ qua: ${tongBoQuaChiNhanh} đơn ở chi nhánh khác, ${tongBoQuaSkuAo} đơn toàn SKU ảo TMDT`);
-      }
-    }
-    await renderDonHangTab();
-  } catch(e) { alert('Lỗi: ' + e.message); }
-};
-
-window.capNhatPhiSanDon = async function() {
-  if (!currentUser) return;
-  // Chỉ gửi đơn CHƯA có phí và đã đủ tuổi — TikTok/Lazada phải chờ 5-9 ngày sàn đối soát,
-  // gọi sớm hơn chỉ tốn request mà không có dữ liệu.
-  const canCapNhat = allDonHangSan.filter(d => {
-    if (donFilterSan !== 'all' && d.san !== donFilterSan) return false;
-    if (d.phiSanTong != null) return false;
-    const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : new Date(d.ngayDat);
-    const tuoi = (Date.now() - ngay.getTime()) / 86400000;
-    return d.san === 'shopee' ? true : tuoi >= 5;
-  });
-  if (!canCapNhat.length) { showToast('Không có đơn nào cần cập nhật phí lúc này (TikTok/Lazada phải chờ ~5 ngày sàn đối soát)'); return; }
-  showToast(`Đang lấy phí cho ${Math.min(canCapNhat.length, 30)} đơn...`);
-  const idToken = await currentUser.getIdToken();
-  try {
-    const res = await fetch(WORKER_URL, {
-      method: 'POST',
-      headers: { 'x-action': 'cap-nhat-phi-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ donHang: canCapNhat.slice(0, 30).map(d => ({ ma: d.maHoaDon, kiotvietId: d.kiotvietId })) })
-    });
-    const data = await res.json();
-    console.log('[cập nhật phí]', data);
-    if (!data.success) { alert('Lỗi: ' + data.error); return; }
-    showToast(`Đã cập nhật phí cho ${data.soCapNhat}/${data.daKiemTra} đơn. Còn ${canCapNhat.length - data.daKiemTra} đơn chờ.`);
-    await renderDonHangTab();
-  } catch(e) { alert('Lỗi: ' + e.message); }
-};
-
-// Đăng ký webhook invoice.update với KiotViet — chỉ cần chạy 1 lần.
-// Sau khi đăng ký, KiotViet tự đẩy mọi đơn mới/cập nhật về worker.
-window.dangKyWebhookDonHang = async function() {
-  if (!currentUser) return;
-  if (!confirm('Đăng ký webhook đơn hàng với KiotViet?\n\n'
-    + 'Sẽ đăng ký 2 loại:\n'
-    + '  · order.update  — đơn khách vừa đặt (chưa có hóa đơn)\n'
-    + '  · invoice.update — khi bấm "Chuẩn bị hàng" và các lần đổi trạng thái\n\n'
-    + 'CHỈ BẤM 1 LẦN. Bấm nhiều lần sẽ tạo webhook trùng.\n\n'
-    + 'Kiểm tra đã đăng ký chưa: mở Console gõ xemWebhook()')) return;
-  const idToken = await currentUser.getIdToken();
-  const ketQua = [];
-  // Cần CẢ HAI loại: đơn mới chỉ có phiếu đặt, hóa đơn chỉ sinh khi bấm Chuẩn bị hàng
-  for (const loai of ['order.update', 'invoice.update']) {
-    try {
-      const res = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'x-action': 'register-kiotviet-webhook', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: loai })
-      });
-      const data = await res.json();
-      console.log(`[đăng ký webhook ${loai}]`, data);
-      ketQua.push(`${loai}: ${data.success ? 'OK' : (data.error || JSON.stringify(data.kiotviet || '').slice(0, 120))}`);
-    } catch(e) { ketQua.push(`${loai}: lỗi ${e.message}`); }
-  }
-  alert('Kết quả đăng ký:\n\n' + ketQua.join('\n')
-    + '\n\nThử đặt 1 đơn trên sàn, chờ khoảng 1 phút rồi vào lại xem đơn có tự về không.');
-};
-
-// Chẩn đoán kênh bán: liệt kê mọi saleChannelId có đơn thật, kèm tên sàn.
-// Dùng khi nghi ngờ ID kênh đã đổi (sau khi hủy/nối lại gian hàng).
-// Gọi: chanDoanKenhBan()  hoặc  chanDoanKenhBan(60)
-window.chanDoanKenhBan = async function(soNgay = 30) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'chan-doan-kenh-ban', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ soNgay })
-  });
-  const data = await res.json();
-  if (data.cacKenhCoDonThat) {
-    console.log('===== KÊNH BÁN CÓ ĐƠN THẬT =====');
-    console.table(data.cacKenhCoDonThat);
-  }
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
 
 // Đánh dấu quản lý đã nhận lại kiện hàng của đơn hủy sau đóng gói từ shipper.
 // Dùng khi bàn giao hàng: đối chiếu số kiện shipper trả với danh sách này.
@@ -5255,719 +5056,35 @@ function veLichSuQuet() {
     </div>`).join('');
 }
 
-// Kiểm tra KiotViet có đổ về SKU thật của sàn không — quyết định có cần
-// liên kết sản phẩm (và có cần mua thêm chi nhánh) hay không.
-// Gọi: kiemTraSkuDon()
-window.kiemTraSkuDon = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'kiem-tra-sku-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  console.log('Hóa đơn mẫu:', data.maHoaDonMau, '| Đơn đặt hàng:', data.maDatHangMau);
-  if (data.hangTrongHoaDon?.length) {
-    console.log('===== MẶT HÀNG TRONG HÓA ĐƠN =====');
-    console.table(data.hangTrongHoaDon);
-  }
-  if (data.hangTrongDatHang?.length) {
-    console.log('===== MẶT HÀNG TRONG ĐƠN ĐẶT HÀNG =====');
-    console.table(data.hangTrongDatHang);
-  } else {
-    console.log('Không lấy được chi tiết đơn đặt hàng');
-  }
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
 
-// Xóa đơn cũ dính SKU ảo TMDT.
-// Chạy lần 1 để ĐẾM:      xoaDonSkuAo()
-// Chạy lần 2 để XÓA THẬT: xoaDonSkuAo(true)
-// Đơn đã quét đóng gói luôn được giữ lại (có dữ liệu tính lương).
-window.xoaDonSkuAo = async function(xacNhan = false) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (xacNhan && !confirm('XÓA THẬT các đơn dính SKU ảo?\n\nKhông khôi phục được. Đơn đã quét đóng gói sẽ được giữ lại.')) return;
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'xoa-don-sku-ao', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ xacNhan })
-  });
-  const data = await res.json();
-  console.log(data.CHE_DO || data.error);
-  if (data.soDonSeXoa != null) {
-    console.log(`Tổng đơn trong app: ${data.tongDonDaQuet}`);
-    console.log(`Sẽ xóa: ${data.soDonSeXoa} đơn`);
-    console.log(`Giữ lại (đã đóng gói): ${data.soDonDaDongGoiSeGiuLai} đơn`);
-    console.log('Ví dụ:', data.vaiMaViDu);
-    console.log('→ Chạy xoaDonSkuAo(true) để xóa thật');
-  }
-  if (data.soDonDaXoa != null) console.log(`Đã xóa ${data.soDonDaXoa} đơn`);
-  return data;
-};
 
-// Soi một mã cụ thể để tìm nguyên nhân không lấy được giá vốn.
-// Gọi: soiGiaVon('ADAVER205L')
-window.soiGiaVon = async function(maSku) {
-  if (!maSku) { console.error('Cần mã SKU'); return; }
-  const s = allSKUs.find(x => x.sku === maSku || x.id === maSku);
-  console.log('--- TRONG BỘ NHỚ APP ---');
-  console.log('Tìm thấy SKU:', !!s);
-  if (s) console.log({ id: s.id, sku: s.sku, ten: s.ten, giaVon: s.giaVon, kieuGiaVon: typeof s.giaVon });
 
-  console.log('--- TRONG COLLECTION gia_von ---');
-  try {
-    const d = await getDoc(doc(db, 'gia_von', maSku));
-    console.log('Tài liệu tồn tại:', d.exists());
-    if (d.exists()) {
-      const dl = d.data();
-      console.log('Nội dung:', dl);
-      console.log('giaVon =', dl.giaVon, '| kiểu:', typeof dl.giaVon, '| Number() =', Number(dl.giaVon));
-    }
-  } catch(e) { console.error('Lỗi đọc:', e.message); }
 
-  console.log('--- TRONG COLLECTION skus ---');
-  try {
-    const d = await getDoc(doc(db, 'skus', maSku));
-    console.log('Tài liệu tồn tại:', d.exists());
-    if (d.exists()) console.log('giaVon trong skus:', d.data()?.giaVon);
-  } catch(e) { console.error('Lỗi đọc:', e.message); }
-};
 
-// Dò xem SKU nào không lấy được giá vốn và nguyên nhân.
-// Gọi bằng Admin: doGiaVonThieu()
-window.doGiaVonThieu = async function() {
-  const snap = await getDocs(collection(db, 'gia_von'));
-  const khoaGV = new Set(snap.docs.map(d => String(d.id)));
-  const khoaThuong = new Map(snap.docs.map(d => [String(d.id).toLowerCase(), String(d.id)]));
 
-  const thieu = allSKUs.filter(s => !s.giaVon);
-  console.log(`gia_von có ${khoaGV.size} bản ghi | ${thieu.length}/${allSKUs.length} SKU chưa có giá vốn`);
 
-  const nhom = { khacHoaThuong: [], idKhacSku: [], khongCoTrongGiaVon: [], giaBangKhong: [] };
-  for (const s of thieu) {
-    const ma = String(s.sku || '');
-    if (khoaGV.has(ma)) { nhom.giaBangKhong.push(ma); continue; }
-    if (khoaThuong.has(ma.toLowerCase())) { nhom.khacHoaThuong.push(`${ma} → ${khoaThuong.get(ma.toLowerCase())}`); continue; }
-    if (khoaGV.has(String(s.id))) { nhom.idKhacSku.push(`sku=${ma} nhưng doc id=${s.id}`); continue; }
-    nhom.khongCoTrongGiaVon.push(ma);
-  }
 
-  console.log('--- NGUYÊN NHÂN ---');
-  console.log(`Khác hoa/thường: ${nhom.khacHoaThuong.length}`, nhom.khacHoaThuong.slice(0, 5));
-  console.log(`Mã tài liệu khác trường sku: ${nhom.idKhacSku.length}`, nhom.idKhacSku.slice(0, 5));
-  console.log(`Giá vốn = 0: ${nhom.giaBangKhong.length}`, nhom.giaBangKhong.slice(0, 5));
-  console.log(`Không có trong gia_von: ${nhom.khongCoTrongGiaVon.length}`, nhom.khongCoTrongGiaVon.slice(0, 8));
 
-  if (nhom.khongCoTrongGiaVon.length) {
-    console.log('→ Những mã này chưa được chuyển. Chạy chuyenGiaVon() lại.');
-  }
-  return nhom;
-};
 
-// Xem API có trả lịch sử giao hàng không — để app dựng lại dòng thời gian thật
-// thay vì đoán từ trạng thái cuối (có thể sai do sàn đổ về lỗi).
-// Gọi: thamDoLichSuGiao()  hoặc  thamDoLichSuGiao('HDTTS_585568324776462124')
-window.thamDoLichSuGiao = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'tham-do-lich-su-giao', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon: maHoaDon || '' })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log('Hóa đơn:', data.maHoaDon, '| Tìm bằng:', data.timThayBang,
-    '| Trạng thái giao:', data.trangThaiGiaoHienTai, '| latestStatus:', data.latestStatus);
-  if (data.cacTruong) {
-    console.log('===== TẤT CẢ TRƯỜNG (tìm mảng lịch sử) =====');
-    data.cacTruong.forEach(t => console.log(t));
-  }
-  return data;
-};
 
-// Kiểm tra phiếu đặt hàng có phân kênh bán không — quyết định app có kéo được
-// "Đơn mới" (khách vừa đặt, chưa bấm Chuẩn bị hàng) hay không.
-// Gọi: thamDoDatHang()
-window.thamDoDatHang = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'tham-do-dat-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  console.log('Worker:', data.workerVersion, '| Tổng phiếu đặt:', data.tongDatHang);
-  console.log('Có saleChannelId trong danh sách:', data.coSaleChannelIdTrongList ? '✅ CÓ' : '❌ KHÔNG');
-  if (data.mauTrongList) console.table(data.mauTrongList);
-  if (data.cacTruongChiTiet) {
-    console.log('===== CÁC TRƯỜNG TRONG CHI TIẾT PHIẾU ĐẶT =====');
-    data.cacTruongChiTiet.forEach(t => console.log(t));
-  }
-  return data;
-};
 
-// Tạo mã QR KiotViet gắn với hóa đơn — dùng KIOTVIET_WEB_TOKEN trong Cloudflare Secret.
-// Gọi: taoQRHoaDon('HD012030')
-window.taoQRHoaDon = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn CÒN NỢ'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'tao-qr-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) {
-    console.error(`LỖI ở bước ${data.buocLoi || '?'}:`, data.error);
-    if (data.phanHoi) console.log('Phản hồi:', data.phanHoi);
-    return data;
-  }
-  console.log(`${data.maHoaDon}: ${fmt(data.soTien)}đ`);
-  console.log('Mã KOVQR:', data.kovCode || '(không tìm thấy)');
-  console.log('Có ảnh QR:', data.coAnhQR);
-  console.log('Đăng ký mã:', data.ketQuaDangKy);
-  console.log('Phản hồi generate-qr (đầy đủ):');
-  console.log(JSON.stringify(data.phanHoiGenerateQR, null, 2));
-  // Hiện thử ảnh QR nếu có
-  if (data.anhQRDayDu) {
-    const w = window.open('');
-    w.document.write(`<img src="${data.anhQRDayDu}" style="width:300px">`);
-  }
-  return data;
-};
 
-// Thử gọi API tạo QR của KiotViet (bắt được từ giao diện).
-// Gọi: thuTaoQRKV('HD012030')
-window.thuTaoQRKV = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn CÒN NỢ'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'thu-tao-qr-kv', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`${data.maHoaDon} (id ${data.idHoaDon}) · chi nhánh ${data.branchId} · còn thiếu ${fmt(data.conThieu)}đ`);
-  console.log('Thân đã gửi:', data.thanDaGui);
-  (data.ketQua || []).forEach(k => {
-    console.log(`--- ${k.buoc} [${k.cach}] HTTP ${k.httpStatus} ${k.thanhCong ? '✅' : '❌'} ---`);
-    console.log(k.phanHoi);
-  });
-  console.log(data.ghiChu);
-  return data;
-};
 
-// Dò tạo QR trên hóa đơn CÒN NỢ — giao diện chỉ hiện nút Tạo QR trong trường hợp này.
-// Gọi: doQRHoaDonNo('HD012030')
-window.doQRHoaDonNo = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn CÒN NỢ'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-qr-hoa-don-no', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`${data.maHoaDon} (id ${data.idHoaDon}) còn thiếu ${fmt(data.conThieu)}đ`);
-  console.table(data.cacDuongDanDaDo.map(x => ({ cach: x.cach, duongDan: x.duongDan, httpStatus: x.httpStatus, coDuLieu: x.coDuLieu })));
-  const co = data.cacDuongDanDaDo.filter(x => x.coDuLieu);
-  if (co.length) {
-    console.log(`✅ ${co.length} endpoint trả dữ liệu:`);
-    co.forEach(x => { console.log(`--- ${x.cach} ${x.duongDan} ---`); console.log(x.phanHoi); });
-  } else {
-    console.log('❌ Không endpoint nào trả dữ liệu');
-  }
-  if (data.loiKhac404?.length) {
-    console.log('--- Lỗi khác 404 (có thể tiết lộ cách gọi đúng) ---');
-    data.loiKhac404.forEach(x => console.log(`${x.cach} ${x.duongDan} [${x.httpStatus}]:`, x.phanHoi));
-  }
-  return data;
-};
 
-// Xem KiotViet có thật sự bắn webhook cho hóa đơn bán lẻ không.
-// Gọi: xemNhatKyWebhook()
-window.xemNhatKyWebhook = async function(soLuong = 20) {
-  const snap = await getDocs(query(collection(db, 'nhat_ky_webhook'), orderBy('nhanLuc', 'desc'), limit(soLuong)));
-  if (snap.empty) { console.log('Chưa nhận được webhook nào'); return []; }
-  const ds = snap.docs.map(d => {
-    const x = d.data();
-    return {
-      loaiSuKien: x.loaiSuKien,
-      soBanGhi: x.soBanGhi,
-      cacMa: x.cacMa,
-      nhanLuc: x.nhanLuc?.toDate ? x.nhanLuc.toDate().toLocaleString('vi-VN') : ''
-    };
-  });
-  console.table(ds);
-  return ds;
-};
 
-// Tra hóa đơn KiotViet đã thanh toán đủ chưa.
-// Gọi: traHoaDon('HD012027')
-window.traHoaDon = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'tra-hoa-don-da-tra', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`${data.maHoaDon}: tổng ${fmt(data.tongTien)}đ · đã trả ${fmt(data.daTra)}đ · ${data.daTraDu ? '✅ ĐỦ' : 'còn thiếu ' + fmt(data.conThieu) + 'đ'}`);
-  if (data.cacLanThu?.length) console.table(data.cacLanThu);
-  return data;
-};
 
-// Thử ghi nhận thanh toán vào hóa đơn KiotViet.
-// Xem trước:  thuGhiThanhToan('HD012000')
-// Ghi thật:   thuGhiThanhToan('HD012000', 1000, true)
-window.thuGhiThanhToan = async function(maHoaDon, soTien = 1000, thatSu = false) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn CHƯA thanh toán'); return; }
-  if (thatSu && !confirm(`GHI THẬT ${soTien.toLocaleString('vi-VN')}đ vào hóa đơn ${maHoaDon}?\n\nSẽ tạo phiếu thu thật trong KiotViet.`)) return;
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'thu-ghi-thanh-toan', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon, soTien, thatSu })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(data.CHE_DO);
-  if (data.conThieu != null) {
-    console.log(`Hóa đơn ${data.maHoaDon}: tổng ${data.tongTien?.toLocaleString('vi-VN')}đ · đã trả ${data.daTra?.toLocaleString('vi-VN')}đ · còn thiếu ${data.conThieu?.toLocaleString('vi-VN')}đ`);
-    console.log(data.huongDan);
-  }
-  if (data.cacCauTrucDaThu) {
-    console.log('Cấu trúc đúng:', data.cauTrucDung);
-    data.cacCauTrucDaThu.forEach(k => {
-      console.log(`--- ${k.cauTruc} [${k.httpStatus}] ${k.thanhCong ? '✅' : '❌'} ---`);
-      console.log('gửi:', JSON.stringify(k.than));
-      console.log('nhận:', k.phanHoi);
-    });
-  }
-  return data;
-};
 
-// Dò sâu mọi cách lấy/tạo QR từ KiotViet.
-// Gọi: doSauQR()  hoặc  doSauQR(340677641)  — truyền id hóa đơn để thử thêm
-window.doSauQR = async function(idHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-sau-qr', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idHoaDon: idHoaDon || null })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.table(data.cacDuongDanDaDo.map(x => ({ cach: x.cach, duongDan: x.duongDan, httpStatus: x.httpStatus, coDuLieu: x.coDuLieu })));
-  const co = data.cacDuongDanDaDo.filter(x => x.coDuLieu);
-  if (co.length) {
-    console.log(`✅ ${co.length} endpoint trả dữ liệu:`);
-    co.forEach(x => { console.log(`--- ${x.cach} ${x.duongDan} ---`); console.log(x.noiDung); });
-  } else {
-    console.log('❌ Không endpoint nào trả dữ liệu');
-  }
-  // In cả lỗi để xem KiotViet nói gì — đôi khi lỗi tiết lộ tên trường đúng
-  const loiCoNoiDung = data.cacDuongDanDaDo.filter(x => !x.coDuLieu && x.httpStatus !== 404);
-  if (loiCoNoiDung.length) {
-    console.log('--- Lỗi khác 404 (có thể tiết lộ cách gọi đúng) ---');
-    loiCoNoiDung.forEach(x => console.log(`${x.cach} ${x.duongDan} [${x.httpStatus}]:`, x.noiDung));
-  }
-  return data;
-};
 
-// Xem hóa đơn KiotViet có lộ mã QR qua API không.
-// Gọi: thamDoQRHoaDon('HD011990')
-window.thamDoQRHoaDon = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn. VD: thamDoQRHoaDon("HD011990")'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'tham-do-qr-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log('Hóa đơn:', data.maHoaDon, '| id:', data.idHoaDon);
-  console.log('===== TRƯỜNG CÓ DẤU HIỆU QR =====');
-  console.log(data.truongCoDauHieuQR);
-  console.log('===== THỬ ENDPOINT RIÊNG =====');
-  console.table(data.cacDuongDanThuThem);
-  console.log('===== TẤT CẢ TRƯỜNG =====');
-  (data.tatCaTruong || []).forEach(t => console.log(t));
-  return data;
-};
 
-// Dò xem Public API có tạo được mã QR động của KiotViet không.
-// Gọi: doApiQR()
-window.doApiQR = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-api-qr', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.table(data.cacDuongDanDaDo.map(x => ({ cach: x.cach, duongDan: x.duongDan, httpStatus: x.httpStatus, coDuLieu: x.coDuLieu })));
-  const co = data.cacDuongDanDaDo.filter(x => x.coDuLieu);
-  if (co.length) {
-    console.log('✅ Có endpoint trả dữ liệu:');
-    co.forEach(x => { console.log(`--- ${x.cach} ${x.duongDan} ---`); console.log(x.noiDung); });
-  } else {
-    console.log('❌ Public API không tạo được QR động — phải tìm cách khác');
-  }
-  return data;
-};
 
-// Xem 30 giao dịch sổ quỹ gần nhất — dùng để chẩn đoán khi tiền về mà app không nhận ra.
-// Gọi: xemSoQuy()
-window.xemSoQuy = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'xem-so-quy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`Tổng ${data.tongGiaoDich} giao dịch · ${data.soChuyenKhoan}/30 gần nhất là chuyển khoản`);
-  console.table(data.giaoDichGanNhat);
-  return data;
-};
 
-// Dò xem KiotViet có lộ giao dịch ngân hàng qua Public API không.
-// Nếu có thì app đọc được biến động số dư mà không phải trả phí cho SePay/Casso.
-// Gọi: doGiaoDichNganHang()
-window.doGiaoDichNganHang = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-giao-dich-ngan-hang', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.table(data.cacDuongDanDaDo.map(x => ({ duongDan: x.duongDan, httpStatus: x.httpStatus, coDuLieu: x.coDuLieu })));
-  const co = data.cacDuongDanDaDo.filter(x => x.coDuLieu);
-  if (co.length) {
-    console.log(`✅ Có ${co.length} endpoint trả dữ liệu:`);
-    co.forEach(x => { console.log('--- ' + x.duongDan + ' ---'); console.log(x.noiDung); });
-    console.log(data.goiY);
-  } else {
-    console.log('❌ KiotViet không lộ giao dịch ngân hàng qua Public API');
-  }
-  return data;
-};
 
-// Dò xem Public API có mở endpoint nào cho tab "Bán online" không.
-// Gọi: doApiBanOnline()
-window.doApiBanOnline = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-api-ban-online', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.table(data.cacDuongDanDaDo);
-  if (data.soEndpointCoDuLieu) {
-    console.log(`✅ Có ${data.soEndpointCoDuLieu} endpoint trả dữ liệu:`);
-    data.cacDuongDanDaDo.filter(x => x.coDuLieu).forEach(x => console.log(x.duongDan, '→', x.noiDung));
-  } else {
-    console.log('❌ Public API không mở endpoint nào cho tab Bán online');
-  }
-  return data;
-};
 
-// Dò cạn các API liên quan vận chuyển — xem có endpoint nào trả tên hãng thật không.
-// Gọi: doApiVanChuyen()
-window.doApiVanChuyen = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-api-van-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log('===== CÁC ĐƯỜNG DẪN ĐÃ DÒ =====');
-  console.table(data.cacDuongDanDaDo);
-  const coDuLieu = (data.cacDuongDanDaDo || []).filter(x => x.coDuLieu);
-  if (coDuLieu.length) {
-    console.log('✅ CÓ endpoint trả dữ liệu:');
-    coDuLieu.forEach(x => console.log(x.duongDan, '→', x.noiDung));
-  } else {
-    console.log('❌ Không endpoint nào trả dữ liệu — KiotViet không mở API đối tác vận chuyển');
-  }
-  console.log('===== TRƯỜNG VẬN CHUYỂN TRONG CHI TIẾT ĐƠN =====');
-  (data.mauChiTietTheoSan || []).forEach(m => {
-    console.log(`--- ${m.san} · ${m.maHoaDon} · VĐ ${m.maVanDon} ---`);
-    console.log('  deliveryBy:', m.deliveryBy, '| partnerDeliveryId:', m.partnerDeliveryId);
-    console.log('  partner:', m.partnerCode, '/', m.partnerName);
-    console.log('  serviceType:', m.serviceType, '/', m.serviceTypeText);
-    console.log('  các khóa trong partnerDelivery:', m.cacKhoaPartner.join(', '));
-    console.log('  các khóa trong invoiceDelivery:', m.cacKhoaGiaoHang.join(', '));
-  });
-  return data;
-};
 
-// Xem KiotViet có phân biệt đơn hỏa tốc không.
-// Gọi: thongKeDichVuGiao()  hoặc  thongKeDichVuGiao(30)
-window.thongKeDichVuGiao = async function(soNgay = 7) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'thong-ke-dich-vu-giao', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ soNgay })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`Đã quét ${data.tongQuet} hóa đơn, trong đó ${data.tongDonSan} đơn ở chi nhánh Sàn TMĐT`);
-  if (data.cacLoaiDichVu?.length) console.table(data.cacLoaiDichVu);
-  if (data.doiTacGiaoHang) {
-    console.log('===== ĐỐI TÁC GIAO HÀNG TRONG KIOTVIET =====');
-    if (Array.isArray(data.doiTacGiaoHang)) console.table(data.doiTacGiaoHang);
-    else console.log(data.doiTacGiaoHang);
-  }
-  console.log(data.ghiChu);
-  return data;
-};
 
-// Xem cấu trúc phiếu chuyển hàng thật trong KiotViet — để viết đúng phần tạo phiếu.
-// Gọi: xemPhieuChuyen()
-window.xemPhieuChuyen = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'xem-phieu-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  console.log('Worker:', data.workerVersion, '| HTTP:', data.httpStatus, '| Số phiếu:', data.soPhieuCo);
-  if (data.danhSachRutGon?.length) console.table(data.danhSachRutGon);
-  if (data.cacTruongPhieuChiTiet) {
-    console.log('===== CÁC TRƯỜNG TRONG PHIẾU CHUYỂN =====');
-    data.cacTruongPhieuChiTiet.forEach(t => console.log(t));
-  } else {
-    console.log('Chưa có phiếu chuyển nào để xem cấu trúc.');
-    if (data.noiDungTho) console.log('Phản hồi thô:', data.noiDungTho);
-  }
-  return data;
-};
 
-// Xem trực tiếp collection gia_von — dùng khi nghi ngờ mất dữ liệu.
-// Gọi bằng Admin: xemGiaVon()
-window.xemGiaVon = async function() {
-  try {
-    const snap = await getDocs(collection(db, 'gia_von'));
-    console.log(`Collection gia_von có ${snap.docs.length} bản ghi`);
-    if (snap.docs.length) {
-      console.log('10 bản ghi đầu:');
-      console.table(snap.docs.slice(0, 10).map(d => ({ sku: d.id, giaVon: d.data()?.giaVon })));
-      console.log('✅ DỮ LIỆU CÒN NGUYÊN — chỉ là app chưa nạp lên. Chạy napLaiGiaVon()');
-    } else {
-      console.log('⚠️ Collection rỗng — chưa chạy chuyenGiaVon() hoặc đã mất');
-    }
-    return snap.docs.length;
-  } catch(e) {
-    console.error('Không đọc được:', e.message);
-  }
-};
 
-// Nạp lại giá vốn vào bộ nhớ app mà không phải tải lại toàn bộ danh sách hàng hóa.
-window.napLaiGiaVon = async function() {
-  await napGiaVon();
-  const co = allSKUs.filter(s => s.giaVon).length;
-  console.log(`Đã nạp giá vốn cho ${co}/${allSKUs.length} SKU`);
-  showToast(`Đã nạp lại giá vốn (${co} SKU)`);
-  return co;
-};
 
-// Kiểm tra giá vốn đã ẩn thật ở tầng dữ liệu chưa.
-// Chạy bằng tài khoản KHÔNG phải Admin — phải thấy cả hai đều bị chặn/rỗng.
-// Gọi: kiemTraAnGiaVon()
-window.kiemTraAnGiaVon = async function() {
-  console.log('Tài khoản:', currentUserData?.ten, '| Vai trò:', currentUserData?.role);
-
-  // 1. Dữ liệu đã tải về máy có kèm giá vốn không
-  const coTrongBoNho = allSKUs.filter(s => s.giaVon != null && s.giaVon !== 0);
-  console.log(`1. Trong bộ nhớ máy: ${coTrongBoNho.length}/${allSKUs.length} SKU có giá vốn`,
-    coTrongBoNho.length ? '⚠️ CÒN LỘ' : '✅ sạch');
-  if (coTrongBoNho.length) console.log('   Ví dụ:', coTrongBoNho.slice(0, 3).map(s => `${s.sku}=${s.giaVon}`));
-
-  // 2. Còn sót trong collection skus không
-  try {
-    const snap = await getDocs(query(collection(db, 'skus'), limit(20)));
-    const conSot = snap.docs.filter(d => d.data()?.giaVon != null && d.data()?.giaVon !== 0);
-    console.log(`2. Trong collection skus: ${conSot.length}/${snap.docs.length} bản ghi còn giá vốn`,
-      conSot.length ? '⚠️ CHƯA DỌN — chạy chuyenGiaVon(true)' : '✅ sạch');
-  } catch(e) {
-    console.log('2. Không đọc được skus:', e.message);
-  }
-
-  // 3. Collection gia_von có bị đọc trộm được không
-  try {
-    const snap = await getDocs(query(collection(db, 'gia_von'), limit(5)));
-    const laAdmin = currentUserData?.role === 'admin';
-  const laQuanLy = laAdmin || !!currentUserData?.quyen?.nv_luong_tatca;
-    console.log(`3. Đọc collection gia_von: được ${snap.docs.length} bản ghi`,
-      laAdmin ? '✅ đúng (là Admin)' : '⚠️ LỖI RULES — người không phải Admin đọc được');
-  } catch(e) {
-    console.log('3. Đọc collection gia_von: BỊ TỪ CHỐI ✅ (rules chặn đúng)');
-  }
-};
-
-// Chuyển giá vốn từ skus sang collection riêng gia_von (chạy 1 lần).
-// Bước 1: chuyenGiaVon()        -> sao chép, giữ nguyên bản cũ
-// Bước 2: chuyenGiaVon(true)    -> sau khi kiểm tra ổn thì xóa bản cũ trong skus
-window.chuyenGiaVon = async function(xoaBanCu = false) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (xoaBanCu && !confirm('XÓA giá vốn khỏi collection skus?\n\nChỉ làm sau khi đã kiểm tra app hiển thị giá vốn đúng.')) return;
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'chuyen-gia-von', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ xoaBanCu })
-  });
-  const data = await res.json();
-  console.log('Tổng SKU:', data.tongSku, '| Có giá vốn:', data.soCoGiaVon);
-  console.log('Đã ghi sang gia_von:', data.daGhiSangGiaVon, '| Đã xóa khỏi skus:', data.daXoaKhoiSkus);
-  console.log('→', data.buocTiepTheo || data.ghiChu || data.error);
-  return data;
-};
-
-// Xóa một webhook theo id. Lấy id bằng xemWebhook() trước.
-// Gọi: xoaWebhook(500253329)
-window.xoaWebhook = async function(id) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!id) { console.error('Cần id webhook. Chạy xemWebhook() để lấy.'); return; }
-  if (!confirm(`Xóa webhook id ${id}?\n\nNếu xóa nhầm thì đăng ký lại được, không mất dữ liệu.`)) return;
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'delete-kiotviet-webhook', 'x-webhook-id': String(id), 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data.success ? `✅ Đã xóa webhook ${id}` : `❌ Lỗi: ${data.error || JSON.stringify(data)}`);
-  return data;
-};
-
-// Xem các webhook đã đăng ký với KiotViet — kiểm tra trước khi đăng ký thêm,
-// tránh trùng lặp làm mỗi sự kiện bắn nhiều lần.
-// Gọi: xemWebhook()
-window.xemWebhook = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'list-kiotviet-webhooks', 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log('Worker:', data.workerVersion);
-  // KiotViet trả về lồng 2 lớp: { data: { data: [...] } }
-  const ds = data.kiotviet?.data?.data || data.kiotviet?.data || data.data?.data || data.data || [];
-  const mang = Array.isArray(ds) ? ds : [];
-  if (mang.length) {
-    console.table(mang.map(w => ({ id: w.id, loai: w.type, url: w.url, dangBat: w.isActive })));
-    const coDonHang = mang.filter(w => String(w.type).includes('invoice'));
-    if (coDonHang.length > 1) {
-      console.warn(`⚠️ CÓ ${coDonHang.length} webhook invoice trùng nhau — mỗi đơn sẽ bị xử lý lặp. Nên xóa bớt.`);
-    } else if (coDonHang.length === 1) {
-      console.log('✅ Đã có webhook đơn hàng — KHÔNG bấm nút đăng ký nữa');
-    } else {
-      console.log('Chưa có webhook đơn hàng (invoice.update) — có thể bấm nút đăng ký');
-    }
-  } else {
-    console.log('Chưa có webhook nào đăng ký');
-  }
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
-
-// Liệt kê chi nhánh KiotViet + kiểm tra đơn đã có SKU thật chưa.
-// Gọi: lietKeChiNhanh()
-window.lietKeChiNhanh = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'liet-ke-chi-nhanh', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  console.log('Worker:', data.workerVersion);
-  if (data.chiNhanh) { console.log('===== CHI NHÁNH ====='); console.table(data.chiNhanh); }
-  if (data.mauDonGanDay) {
-    console.log('===== ĐƠN SÀN GẦN ĐÂY =====');
-    data.mauDonGanDay.forEach(d => {
-      console.log(`${d.maHoaDon} · ${d.san} · ${d.tenChiNhanh} (branchId ${d.branchId}) · ${d.conDungSkuAo ? '⚠️ CÒN SKU ẢO' : '✅ SKU THẬT'}`);
-      console.table(d.matHang);
-    });
-  }
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
-
-// Liệt kê SKU thật trong KiotViet kèm tồn từng chi nhánh — để chọn mã đem đi thử.
-// Gọi: lietKeSku()
-window.lietKeSku = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'liet-ke-sku', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: '{}'
-  });
-  const data = await res.json();
-  console.log('Worker đang chạy:', data.workerVersion, '| Tổng sản phẩm:', data.tongSanPham);
-  if (data.danhSach) console.table(data.danhSach);
-  return data;
-};
-
-// Thử xem API KiotViet có sửa được tồn kho không — quyết định cả kiến trúc.
-// An toàn: tăng 1 rồi TỰ TRẢ LẠI số cũ.
-// Gọi: thuSuaTonKho('ARTEMIASAY80G')
-window.thuSuaTonKho = async function(maSku) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maSku) { console.error('Cần mã SKU. Ví dụ: thuSuaTonKho("ARTEMIASAY80G")'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'thu-sua-ton-kho', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maSku })
-  });
-  const data = await res.json();
-  console.log('===== KẾT QUẢ =====');
-  console.log(data.KET_LUAN || data.error);
-  console.log(`Tồn trước: ${data.tonTruocKhiThu} → ghi: ${data.tonDaGhi} → đọc lại: ${data.tonDocLaiDuoc}`);
-  console.log('Đã khôi phục số cũ:', data.daKhoiPhucSoCu);
-  console.log(JSON.stringify(data, null, 2));
-  return data;
-};
 
 // ==========================================================================
 // ===== KIỂM TRA ĐƠN — quét mã, hiện hàng cần lấy kèm ẢNH =====
@@ -6698,45 +5815,6 @@ window.hhchDoiTim = function(v) { hhchTimKiem = v; hhchTrang = 1; veDanhSachHang
 window.hhchDoiTrang = function(d) { hhchTrang += d; veDanhSachHangHoaCH(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
 window.hhchXoaLocNhom = function() { hhchNhom1 = hhchNhom2 = hhchNhom3 = ''; hhchTrang = 1; veManHinhHangHoaCH(); };
 
-// ==========================================================================
-// ===== THẺ KHO — lịch sử biến động tồn của một mã =====
-// Giống Thẻ kho của KiotViet: mỗi dòng là một lần tồn thay đổi, kèm chứng từ
-// và tồn cuối sau giao dịch đó. Không có sổ này thì tồn lệch mà không biết
-// lệch từ đâu, chỉ còn cách đoán.
-// ==========================================================================
-// Tìm bản ghi hàng hóa rác — thiếu cả tên lẫn mã SKU.
-// Chúng gây hai lỗi: hiện thành ô trống trong danh sách, và làm hỏng ô tìm kiếm.
-// Gọi: timHangHoaRac()      -> chỉ liệt kê
-//      timHangHoaRac(true)  -> xóa luôn (chỉ Admin)
-window.timHangHoaRac = async function(xoaLuon = false) {
-  const rac = allSKUs.filter(s => !String(s.ten || '').trim() || !String(s.sku || '').trim());
-  console.log(`Tìm thấy ${rac.length}/${allSKUs.length} bản ghi thiếu tên hoặc mã`);
-  if (!rac.length) return [];
-  console.table(rac.slice(0, 30).map(s => ({
-    idTaiLieu: s.id, ten: s.ten || '(trống)', sku: s.sku || '(trống)',
-    gia: s.gia || 0, tonSan: s.soLuongTon || 0, tonCH: s.tonCuaHang || 0
-  })));
-
-  if (!xoaLuon) { console.log('→ Chạy timHangHoaRac(true) để xóa'); return rac; }
-  if (currentUserData?.role !== 'admin') { console.error('Chỉ Admin mới xóa được'); return rac; }
-  // Giữ lại bản ghi còn tồn kho — có thể là hàng thật chỉ thiếu tên, xóa đi là mất hàng
-  const coTon = rac.filter(s => (Number(s.soLuongTon) || 0) !== 0 || (Number(s.tonCuaHang) || 0) !== 0);
-  const xoaDuoc = rac.filter(s => !coTon.includes(s));
-  if (coTon.length) {
-    console.warn(`⚠️ ${coTon.length} bản ghi CÒN TỒN KHO — không xóa, hãy đặt tên cho chúng:`);
-    console.table(coTon.map(s => ({ id: s.id, tonSan: s.soLuongTon, tonCH: s.tonCuaHang })));
-  }
-  if (!xoaDuoc.length) { console.log('Không có bản ghi nào xóa được'); return rac; }
-  if (!confirm(`Xóa ${xoaDuoc.length} bản ghi rác (tồn kho = 0)?\n\nKhông khôi phục được.`)) return rac;
-
-  const batch = writeBatch(db);
-  xoaDuoc.forEach(s => batch.delete(doc(db, 'skus', s.id)));
-  await batch.commit();
-  console.log(`✅ Đã xóa ${xoaDuoc.length} bản ghi`);
-  showToast(`Đã xóa ${xoaDuoc.length} bản ghi rác`);
-  await loadSKUs();
-  return rac;
-};
 
 window.moTheKho = async function(maSku, maKho = 'cuahang') {
   const sku = allSKUs.find(s => s.sku === maSku);
@@ -8641,52 +7719,7 @@ window.datTuInBill = function(bat) {
   try { localStorage.setItem('tuInBill', bat ? '1' : '0'); } catch(e) {}
 };
 
-// Thử các biến thể payload sửa hóa đơn — giao diện KiotViet sửa được nên API
-// cũng phải được, chỉ là chưa đúng cách gọi.
-// Gọi: thuSuaHoaDon('HD012120')   — cần hóa đơn có dòng số lượng >= 2
-window.thuSuaHoaDon = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn có dòng số lượng >= 2'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'thu-sua-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`${data.maHoaDon}: thử giảm dòng đầu từ ${data.soLuongGoc} xuống ${data.soLuongThu}`);
-  console.log('Cách chạy được:', data.cachDung || '❌ không cách nào');
-  console.table(data.ketQua.map(k => ({
-    bienThe: k.bienThe, httpStatus: k.httpStatus,
-    tongTruoc: k.tongTruoc, tongSau: k.tongSau, doiThat: k.doiThat
-  })));
-  data.ketQua.forEach(k => { if (!k.nhanLenh) console.log(`${k.bienThe}:`, k.phanHoi); });
-  return data;
-};
 
-// Dò cách sửa hóa đơn KiotViet — dùng để làm chức năng trả hàng.
-// Gọi: doSuaHoaDon('HD012080')
-window.doSuaHoaDon = async function(maHoaDon) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (!maHoaDon) { console.error('Cần mã hóa đơn'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'do-sua-hoa-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maHoaDon })
-  });
-  const data = await res.json();
-  if (!data.success) { console.error('LỖI:', data.error); return data; }
-  console.log(`${data.maHoaDon} · ${data.soDongHang} dòng hàng`);
-  console.log('Cách sửa chạy được:', data.cachDung || '(không có)');
-  console.table(data.cachSuaDaThu.map(k => ({ cach: k.cach, httpStatus: k.httpStatus, thanhCong: k.thanhCong })));
-  data.cachSuaDaThu.forEach(k => { if (!k.thanhCong && k.httpStatus !== 404) console.log(`${k.cach}:`, k.phanHoi); });
-  console.log('--- Endpoint trả hàng ---');
-  console.table(data.endpointTraHang);
-  data.endpointTraHang.filter(x => x.coDuLieu).forEach(x => console.log(x.duongDan, x.noiDung));
-  return data;
-};
 
 // Xem lệnh in đã vào Firestore chưa — dùng khi bấm In mà máy in không chạy.
 // Gọi: xemLenhIn()
@@ -8706,85 +7739,6 @@ window.xemLenhIn = async function(soLuong = 10) {
   return ds;
 };
 
-// ===== IN HÓA ĐƠN =====
-// Khổ 80mm cho máy in nhiệt. Mở cửa sổ mới rồi gọi lệnh in của trình duyệt —
-// chạy được với mọi máy in đã cài trên máy, kể cả in qua Bluetooth trên điện thoại.
-window.inHoaDon = function(idDon) {
-  const d = ddbDanhSach.find(x => x.id === idDon);
-  if (!d) return;
-  const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : new Date();
-  const cachTen = d.cachThanhToan === 'tienmat' ? 'Tiền mặt'
-                : d.cachThanhToan === 'ketHop' ? 'Tiền mặt + Chuyển khoản' : 'Chuyển khoản';
-
-  const w = window.open('', '_blank', 'width=380,height=640');
-  if (!w) { showToast('Trình duyệt chặn cửa sổ in — cho phép rồi thử lại', true); return; }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escHtml(d.maDon)}</title>
-<style>
-  /* XP-80T: giấy rộng 80mm nhưng vùng in thực chỉ 72mm — để rộng hơn là tràn mép */
-  @page { size: 80mm auto; margin: 0 }
-  body { width: 72mm; margin: 0 auto; padding: 3mm 0;
-         font-family: 'Segoe UI', Roboto, sans-serif; font-size: 12px; color: #000;
-         -webkit-print-color-adjust: exact }
-  .giua { text-align: center }
-  .ten-shop { font-size: 16px; font-weight: 700; margin-bottom: 2px }
-  .ke { border-top: 1px dashed #000; margin: 6px 0 }
-  table { width: 100%; border-collapse: collapse }
-  td { padding: 2px 0; vertical-align: top }
-  .sl { text-align: center; width: 32px }
-  .tien { text-align: right; white-space: nowrap }
-  .dong-tong { display: flex; justify-content: space-between; padding: 2px 0 }
-  .tong-cuoi { font-size: 15px; font-weight: 700 }
-  .chan { font-size: 11px; margin-top: 8px }
-  @media print { .khong-in { display: none } }
-</style></head><body>
-  <div class="giua">
-    <div class="ten-shop">CUA AQUARIUM</div>
-    <div style="font-size:11px">451A-451B Vườn Lài, TP.HCM</div>
-    <div style="font-size:11px">thuysinhcua.com</div>
-  </div>
-  <div class="ke"></div>
-  <div style="font-size:11px">
-    <div>Mã đơn: <b>${escHtml(d.maDon)}</b></div>
-    ${d.maHoaDonKiotViet ? `<div>Hóa đơn: ${escHtml(d.maHoaDonKiotViet)}</div>` : ''}
-    <div>Thời gian: ${t.toLocaleString('vi-VN')}</div>
-    <div>Nhân viên: ${escHtml(d.nguoiBan?.ten || '')}</div>
-  </div>
-  <div class="ke"></div>
-  <table>
-    ${(d.dongHang || []).map(h => `
-      <tr>
-        <td colspan="3"><b>${escHtml(h.ten)}</b></td>
-      </tr>
-      <tr>
-        <td class="sl">${h.soLuong}</td>
-        <td>× ${fmt(h.gia)}</td>
-        <td class="tien">${fmt(h.gia * h.soLuong - (h.giamGia || 0))}</td>
-      </tr>
-      ${h.giamGia ? `<tr><td></td><td colspan="2" style="font-size:11px">giảm ${fmt(h.giamGia)}đ</td></tr>` : ''}
-    `).join('')}
-  </table>
-  <div class="ke"></div>
-  <div class="dong-tong"><span>Tổng tiền hàng</span><span>${fmt(d.tongHang)}đ</span></div>
-  ${d.tongGiam ? `<div class="dong-tong"><span>Giảm giá</span><span>−${fmt(d.tongGiam)}đ</span></div>` : ''}
-  <div class="dong-tong tong-cuoi"><span>KHÁCH TRẢ</span><span>${fmt(d.phaiTra)}đ</span></div>
-  <div class="ke"></div>
-  <div style="font-size:11px">
-    <div>Thanh toán: ${cachTen}</div>
-    ${d.tienMat ? `<div>Tiền mặt: ${fmt(d.tienMat)}đ</div>` : ''}
-    ${d.tienChuyenKhoan ? `<div>Chuyển khoản: ${fmt(d.tienChuyenKhoan)}đ</div>` : ''}
-    ${d.khachDua && d.khachDua > d.phaiTra ? `<div>Khách đưa: ${fmt(d.khachDua)}đ · Trả lại: ${fmt(d.khachDua - d.phaiTra)}đ</div>` : ''}
-  </div>
-  <div class="ke"></div>
-  <div class="giua chan">
-    Cảm ơn quý khách!<br>Hẹn gặp lại
-  </div>
-  <div class="giua khong-in" style="margin-top:14px">
-    <button onclick="window.print()" style="padding:10px 20px;font-size:14px">🖨 In</button>
-  </div>
-  <script>setTimeout(() => window.print(), 400);<\/script>
-</body></html>`);
-  w.document.close();
-};
 
 // ==========================================================================
 // ===== BÁN HÀNG TẠI QUẦY =====
@@ -9087,7 +8041,7 @@ window.bhMoKhungQR = async function() {
       body: JSON.stringify({
         items: p.gio.map(d => ({ sku: d.sku, soLuong: d.soLuong, gia: d.gia, giamGia: d.giamGia })),
         tienMat, canChuyenKhoan: canCK,
-        branchId: CHI_NHANH_BAN_LE,
+        branchId: chiNhanhBanLe(),
         ghiChu: p.ghiChu || '',
         nguoiBan: currentUserData?.ten || ''
       })
@@ -9375,16 +8329,6 @@ window.datTaiKhoanQR = async function(nganHang, stk, tenChu) {
   }
 };
 
-// Xem tài khoản đang dùng và ai đổi lần cuối. Gọi: xemTaiKhoanQR()
-window.xemTaiKhoanQR = async function() {
-  await napCauHinhThanhToan();
-  if (!cauHinhThanhToan) { console.log('Chưa cấu hình tài khoản nhận tiền'); return null; }
-  const c = cauHinhThanhToan;
-  console.log(`Tài khoản: ${c.nganHang} ${c.stk} — ${c.tenChu || '(chưa có tên)'}`);
-  if (c.doiBoi) console.log(`Đổi lần cuối bởi: ${c.doiBoi.ten}`,
-    c.doiLuc?.toDate ? c.doiLuc.toDate().toLocaleString('vi-VN') : '');
-  return c;
-};
 
 // ===== THAO TÁC =====
 window.bhThemPhieu = function() { bhTaoPhieu(); bhLuu(); veManHinhBanHang(); };
@@ -9585,7 +8529,7 @@ window.bhHoanThanh = async function(daTraQuaQR) {
         body: JSON.stringify({
           items: p.gio.map(d => ({ sku: d.sku, soLuong: d.soLuong, gia: d.gia, giamGia: d.giamGia })),
           tienMat: phaiTra, canChuyenKhoan: 0,
-          branchId: CHI_NHANH_BAN_LE,
+          branchId: chiNhanhBanLe(),
           ghiChu: p.ghiChu || '',
           nguoiBan: currentUserData?.ten || ''
         })
@@ -9661,6 +8605,368 @@ const NGAN_HANG_VN = [
   { ma: 'SGICB',ten: 'Saigonbank' }
 ];
 
+
+// ==========================================================================
+// ===== THIẾT LẬP › HỆ THỐNG (chỉ Admin) =====
+// Gom mọi thứ trước đây phải vào Cloudflare / Console / sửa code về một màn hình.
+// ==========================================================================
+async function goiWorkerAdmin(action, body) {
+  const idToken = await currentUser.getIdToken();
+  const r = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  const j = await r.json().catch(() => ({ success: false, error: `HTTP ${r.status}` }));
+  if (j.success === false) console.warn(`[hệ thống] ${action}:`, j);
+  return j;
+}
+
+function htThe(tieuDe, noiDung) {
+  return `<div class="card"><div class="card-title">${tieuDe}</div>${noiDung}</div>`;
+}
+
+function htGio(t) {
+  const d = t?.toDate ? t.toDate() : (t ? new Date(t) : null);
+  return d && !isNaN(d) ? d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+}
+
+async function renderHeThong() {
+  const el = document.getElementById('thietlap-content');
+  if (!el) return;
+  if (currentUserData?.role !== 'admin') { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const docCH = async (ten) => {
+    try { const sn = await getDoc(doc(db, 'cau_hinh', ten)); return sn.exists() ? sn.data() : {}; } catch(e) { return {}; }
+  };
+  const [tn, ch, cc, cn] = await Promise.all([docCH('tinh_nang'), docCH('cua_hang'), docCH('cham_cong'), docCH('chi_nhanh')]);
+  const v = (x, md = '') => escHtml(x === undefined || x === null ? md : String(x));
+
+  el.innerHTML = [
+    htThe('Tính năng', `
+      <label style="display:flex;gap:10px;align-items:flex-start;font-size:14px;cursor:pointer">
+        <input type="checkbox" id="ht-tmdt" ${tn.batTMDT ? 'checked' : ''} onchange="htLuuTinhNang()" style="width:20px;height:20px;margin-top:2px">
+        <span><b>Bật nhóm Sàn TMĐT cho nhân viên</b><br>
+        <span style="font-size:12px;color:var(--text2)">Tắt: nhân viên không thấy Đơn hàng sàn, Đóng gói, Nhập hàng, Sản phẩm trên sàn, Đẩy tồn kho.
+        Admin luôn thấy (có dấu 🔒 khi đang tắt).</span></span>
+      </label>`),
+
+    htThe('Thông tin in trên bill', `
+      <div class="field"><label>Tên cửa hàng</label><input id="ht-ten" value="${v(ch.ten, 'CUA AQUARIUM')}"></div>
+      <div class="field"><label>Địa chỉ</label><input id="ht-diachi" value="${v(ch.diaChi, '451A-451B Vườn Lài, TP.HCM')}"></div>
+      <div class="field"><label>Số điện thoại</label><input id="ht-sdt" inputmode="tel" value="${v(ch.soDienThoai)}"></div>
+      <div class="field"><label>Website / Fanpage</label><input id="ht-web" value="${v(ch.website, 'thuysinhcua.com')}"></div>
+      <div class="field"><label>Lời cảm ơn cuối bill (mỗi dòng một câu)</label>
+        <textarea id="ht-loicam" rows="2" style="width:100%">${v(ch.loiCam, 'Cảm ơn quý khách!\nHẹn gặp lại')}</textarea></div>
+      <p class="info-note">Ô nào để trống thì bill bỏ dòng đó.</p>
+      <div style="display:flex;gap:8px">
+        <button class="btn-g" style="flex:1" onclick="htLuuCuaHang()">Lưu</button>
+        <button class="btn-outline" onclick="htInThuBill()">🖨 In thử bill</button>
+      </div>`),
+
+    htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
+
+    htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
+
+    htThe('Chi nhánh bán tại quầy', `
+      <p style="font-size:13px;margin-bottom:8px">Hóa đơn bán tại quầy đang tạo vào chi nhánh
+        <b>${v(cn.tenBanLe || '')} ${v(chiNhanhBanLe())}</b>${cn.banLe ? '' : ' (mặc định trong code)'}.</p>
+      <p class="info-note">Đổi sang chi nhánh Cửa hàng khi nhân viên đã chuyển hẳn sang bán bằng app — từ lúc đó hóa đơn bán lẻ trừ kho chi nhánh mới.</p>
+      <div id="ht-chinhanh"><button class="btn-outline" style="width:100%" onclick="htTaiChiNhanh()">Tải danh sách chi nhánh từ KiotViet</button></div>`),
+
+    htThe('Webhook KiotViet', `
+      <p style="font-size:13px;margin-bottom:8px">KiotViet báo về app khi đổi giá / hóa đơn. Mất webhook thì app không tự cập nhật.</p>
+      <div id="ht-webhook"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-outline" onclick="htXemWebhook()">Kiểm tra</button>
+        <button class="btn-outline" onclick="htDangKyWebhook('product.update')">Đăng ký webhook giá</button>
+        <button class="btn-outline" onclick="htDangKyWebhook('invoice.update')">Đăng ký webhook hóa đơn</button>
+      </div>`),
+
+    htThe('Chấm công', `
+      <div style="display:flex;gap:8px">
+        <div class="field" style="flex:1"><label>Vĩ độ cửa hàng</label><input id="ht-lat" inputmode="decimal" value="${v(cc.viDo ?? STORE_LAT)}"></div>
+        <div class="field" style="flex:1"><label>Kinh độ</label><input id="ht-lng" inputmode="decimal" value="${v(cc.kinhDo ?? STORE_LNG)}"></div>
+      </div>
+      <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="htLayViTri()">📍 Lấy vị trí hiện tại (đứng tại cửa hàng rồi bấm)</button>
+      <div class="field"><label>Bán kính cho phép chấm công (mét)</label><input id="ht-bankinh" type="number" value="${v(cc.banKinh ?? GPS_RADIUS)}"></div>
+      <div class="field"><label>Nội dung mã QR chấm công</label><input id="ht-qr" value="${v(cc.maQR ?? CHECKIN_QR_SECRET)}"></div>
+      <p class="info-note">Đổi nội dung QR thì phải in lại mã QR dán ở quầy (Quản trị hệ thống › mã QR chấm công).</p>
+      <button class="btn-g" style="width:100%" onclick="htLuuChamCong()">Lưu</button>`),
+
+    htThe('Chỉnh tồn kho một mã', `
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="ht-sku" placeholder="Mã SKU" style="flex:1">
+        <button class="btn-outline" onclick="htXemTon()">Xem</button>
+      </div>
+      <div id="ht-ton" style="font-size:13px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <select id="ht-ton-kho"><option value="cuahang">Kho Cửa hàng</option><option value="san">Kho Sàn</option></select>
+        <input id="ht-ton-moi" type="number" placeholder="Tồn đúng thực tế" style="flex:1;min-width:80px">
+        <button class="btn-g" onclick="htDatTon()">Đặt tồn</button>
+      </div>
+      <p class="info-note" style="margin-top:8px">Chỉ dùng khi đếm thực tế thấy lệch. Ghi đè tồn trong app, không đổi bên KiotViet.</p>`)
+  ].join('');
+
+  htVeTramIn();
+  htVeKetNoiKol();
+}
+
+window.htLuuTinhNang = async function() {
+  const bat = document.getElementById('ht-tmdt').checked;
+  await setDoc(doc(db, 'cau_hinh', 'tinh_nang'), { batTMDT: bat, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
+  showToast(bat ? 'Đã bật Sàn TMĐT cho nhân viên' : 'Đã ẩn Sàn TMĐT với nhân viên');
+};
+
+window.htLuuCuaHang = async function() {
+  const g = (id) => document.getElementById(id).value.trim();
+  await setDoc(doc(db, 'cau_hinh', 'cua_hang'), {
+    ten: g('ht-ten'), diaChi: g('ht-diachi'), soDienThoai: g('ht-sdt'), website: g('ht-web'),
+    loiCam: document.getElementById('ht-loicam').value.trim(),
+    doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || ''
+  }, { merge: true });
+  showToast('Đã lưu thông tin bill');
+};
+
+window.htInThuBill = async function() {
+  await htLuuCuaHang();
+  await addDoc(collection(db, 'lenh_in'), {
+    loai: 'hoa_don_ban_le', maDon: 'IN-THU',
+    duLieu: { maDon: 'IN-THU', thoiGian: new Date().toISOString(), nguoiBan: currentUserData?.ten || '',
+      dongHang: [{ ten: 'Hàng in thử', soLuong: 1, gia: 10000, giamGia: 0 }],
+      tongHang: 10000, tongGiam: 0, phaiTra: 10000, cachThanhToan: 'tienmat', tienMat: 10000, tienChuyenKhoan: 0, khachDua: 10000 },
+    trangThai: 'cho_in', nguoiYeuCau: currentUserData?.ten || '', taoLuc: serverTimestamp()
+  });
+  showToast('Đã gửi bill in thử tới trạm in');
+  setTimeout(htVeTramIn, 1500);
+};
+
+// ---------- Trạm in ----------
+async function htVeTramIn() {
+  const el = document.getElementById('ht-tramin');
+  if (!el) return;
+  let tt = {};
+  try { const sn = await getDoc(doc(db, 'cau_hinh', 'tram_in')); tt = sn.exists() ? sn.data() : {}; } catch(e) {}
+  const luc = tt.lanCuoi?.toDate ? tt.lanCuoi.toDate() : null;
+  const phut = luc ? (Date.now() - luc.getTime()) / 60000 : null;
+  const song = phut != null && phut < 3;
+  let ds = [];
+  try {
+    const snap = await getDocs(query(collection(db, 'lenh_in'), where('trangThai', 'in', ['cho_in', 'loi_in']), limit(30)));
+    ds = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.taoLuc?.toMillis?.() || 0) - (a.taoLuc?.toMillis?.() || 0));
+  } catch(e) { console.warn('[trạm in] hàng đợi:', e.message); }
+  const tenLoai = (l) => l.loai === 'tem_gia' ? `Tem giá (${l.soTem || '?'} tem)`
+    : l.loai === 'phieu_soan_san' ? `Phiếu soạn ${escHtml(l.maDon || '')}` : `Bill ${escHtml(l.maDon || '')}`;
+  el.innerHTML = `
+    <p style="font-size:14px;margin-bottom:10px;color:${song ? '#15803D' : '#B91C1C'};font-weight:600">
+      ${song ? '● Trạm in đang hoạt động' : '○ Không thấy trạm in'}
+      <span style="font-weight:400;color:var(--text2);font-size:12px"> · lần cuối ${luc ? htGio(luc) : 'chưa có'}</span></p>
+    ${!song ? '<p class="info-note">Kiểm tra máy POS còn bật, có Wi-Fi, app Trạm in CUA đang chạy (dòng trạng thái màu xanh).</p>' : ''}
+    <div style="font-size:13px;font-weight:600;margin:6px 0">Lệnh chưa in (${ds.length})</div>
+    ${ds.length ? ds.map(l => `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <div style="flex:1;min-width:0">${tenLoai(l)}
+          <div style="font-size:11px;color:var(--text2)">${htGio(l.taoLuc)} · ${escHtml(l.nguoiYeuCau || '')}
+          ${l.trangThai === 'loi_in' ? ` · <span style="color:#B91C1C">lỗi${l.loi ? ': ' + escHtml(l.loi) : ''}</span>` : ''}</div></div>
+        ${l.trangThai === 'loi_in' ? `<button class="btn-xs" onclick="htDoiLenhIn('${l.id}','cho_in')">In lại</button>` : ''}
+        <button class="btn-xs danger" onclick="htDoiLenhIn('${l.id}','huy')">Hủy</button>
+      </div>`).join('') : '<p style="font-size:12px;color:var(--text2)">Không có lệnh nào đang chờ.</p>'}
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn-outline" onclick="htVeTramIn()">↻ Tải lại</button>
+      <button class="btn-outline" onclick="htTaoKhoaTramIn()">🔑 Tạo mã khóa trạm in mới</button>
+    </div>
+    <div id="ht-khoa"></div>`;
+}
+
+window.htVeTramIn = htVeTramIn;
+
+window.htDoiLenhIn = async function(id, trangThai) {
+  if (trangThai === 'huy' && !confirm('Hủy lệnh in này?')) return;
+  await updateDoc(doc(db, 'lenh_in', id), { trangThai, loi: '' });
+  htVeTramIn();
+};
+
+window.htTaoKhoaTramIn = async function() {
+  if (!confirm('Tạo mã khóa mới cho app Trạm in?\n\nMã khóa tạo trong app trước đó sẽ hết dùng được. Mã cũ đặt trong Cloudflare (nếu có) vẫn dùng được.')) return;
+  const el = document.getElementById('ht-khoa');
+  el.innerHTML = '<div class="loading">Đang tạo...</div>';
+  const kq = await goiWorkerAdmin('tao-khoa-tram-in');
+  if (!kq.success) { el.innerHTML = `<p class="info-note">Không tạo được: ${escHtml(kq.error || '')}</p>`; return; }
+  el.innerHTML = `
+    <div style="margin-top:10px;padding:10px;border:2px dashed #16A34A;border-radius:8px;background:#F0FDF4">
+      <div style="font-size:12px;color:var(--text2)">Mã khóa mới — nhập vào ô <b>Mã khóa</b> trong app Trạm in CUA rồi bấm Lưu.
+        Mã chỉ hiện một lần ở đây.</div>
+      <div style="font-family:monospace;font-size:18px;font-weight:700;margin:6px 0;word-break:break-all" id="ht-khoa-ma">${escHtml(kq.khoa)}</div>
+      <button class="btn-xs" onclick="htChepKhoa()">Chép</button>
+    </div>`;
+};
+
+window.htChepKhoa = function() {
+  const ma = document.getElementById('ht-khoa-ma')?.textContent || '';
+  if (navigator.clipboard) navigator.clipboard.writeText(ma).then(() => showToast('Đã chép mã khóa'), () => showToast('Không chép được — chép tay giúp', true));
+};
+
+// ---------- Kết nối KiotViet ----------
+async function htVeKetNoiKol() {
+  const el = document.getElementById('ht-kol');
+  if (!el) return;
+  const kq = await goiWorkerAdmin('tinh-trang-token-kol');
+  if (!kq.success) { el.innerHTML = `<p class="info-note">Không tải được: ${escHtml(kq.error || '')}</p>`; return; }
+  const tt = kq.trangThai || {};
+  const conNgay = kq.conNgay;
+  const ok = kq.coToken && conNgay > 0 && tt.trangThai !== 'loi';
+  const tk = kq.taiKhoanDangNhap || [];
+  el.innerHTML = `
+    <p style="font-size:14px;font-weight:600;color:${ok ? '#15803D' : '#B91C1C'};margin-bottom:4px">
+      ${ok ? '● Đang kết nối' : '○ Có vấn đề'} · ${kq.taiKhoan ? 'tài khoản ' + escHtml(kq.taiKhoan) : 'chưa có token'}</p>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:8px">
+      Token hết hạn ${kq.hetHanLuc ? htGio(kq.hetHanLuc) : '—'}${conNgay != null ? ` (còn ${conNgay} ngày)` : ''} ·
+      tự gia hạn khi còn dưới ${kq.giaHanTruocNgay || 7} ngày${tt.loi ? `<br><span style="color:#B91C1C">Lỗi gần nhất: ${escHtml(tt.loi)}</span>` : ''}</p>
+    <div style="font-size:13px;font-weight:600;margin:8px 0 4px">Tài khoản tự đăng nhập (xoay vòng)</div>
+    <p class="info-note">Nên dùng tài khoản KiotViet riêng cho app, không ai đăng nhập tay. Mật khẩu lưu kín, không hiện lại được.</p>
+    ${[1, 2, 3].map(so => {
+      const t = tk.find(x => x.so === so);
+      const loi = tt[`loi_${so}`];
+      return `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:8px">
+        <div style="font-size:13px;margin-bottom:6px"><b>Tài khoản ${so}</b>:
+          ${t ? `${escHtml(t.user)} <span style="font-size:11px;color:var(--text2)">(${t.nguon === 'app' ? 'nhập trong app' : 'từ Cloudflare'})</span>` : '<i style="color:var(--text2)">chưa có</i>'}
+          ${loi ? `<div style="font-size:11px;color:#B91C1C">${escHtml(loi)}</div>` : ''}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <input id="ht-kol-u${so}" placeholder="Tên đăng nhập" autocomplete="off" style="flex:1;min-width:110px">
+          <input id="ht-kol-p${so}" type="password" placeholder="Mật khẩu" autocomplete="new-password" style="flex:1;min-width:110px">
+          <button class="btn-xs" onclick="htLuuTaiKhoanKol(${so})">Lưu</button>
+          ${t?.nguon === 'app' ? `<button class="btn-xs danger" onclick="htLuuTaiKhoanKol(${so}, true)">Xóa</button>` : ''}
+        </div>
+      </div>`; }).join('')}
+    <div style="display:flex;gap:8px">
+      <button class="btn-g" style="flex:1" onclick="htGiaHanKol()">Gia hạn ngay</button>
+      <button class="btn-outline" onclick="htVeKetNoiKol()">↻</button>
+    </div>`;
+}
+
+window.htVeKetNoiKol = htVeKetNoiKol;
+
+window.htLuuTaiKhoanKol = async function(so, xoa = false) {
+  const u = document.getElementById(`ht-kol-u${so}`), p = document.getElementById(`ht-kol-p${so}`);
+  if (xoa && !confirm(`Xóa tài khoản ${so} đã nhập trong app?`)) return;
+  if (!xoa && (!u.value.trim() || !p.value)) { showToast('Nhập đủ tên đăng nhập và mật khẩu', true); return; }
+  const kq = await goiWorkerAdmin('luu-tai-khoan-kol', xoa ? { so, xoa: true } : { so, user: u.value.trim(), pass: p.value });
+  p.value = '';
+  if (!kq.success) { showToast('Không lưu được: ' + (kq.error || ''), true); return; }
+  showToast(xoa ? `Đã xóa tài khoản ${so}` : `Đã lưu tài khoản ${so} — bấm "Gia hạn ngay" để thử đăng nhập`);
+  htVeKetNoiKol();
+};
+
+window.htGiaHanKol = async function() {
+  const el = document.getElementById('ht-kol');
+  if (el) el.insertAdjacentHTML('afterbegin', '<div class="loading">Đang đăng nhập KiotViet...</div>');
+  const kq = await goiWorkerAdmin('gia-han-token-kol');
+  const g = kq.ketQuaGiaHan;
+  if (g?.ok) showToast(g.traLaiPhienCu ? 'KiotViet trả lại phiên cũ — token vẫn dùng tới hạn, sẽ tự đổi sau' : 'Đã lấy token mới');
+  else showToast('Gia hạn không được: ' + (g?.loi || kq.error || ''), true);
+  htVeKetNoiKol();
+};
+
+// ---------- Chi nhánh ----------
+window.htTaiChiNhanh = async function() {
+  const el = document.getElementById('ht-chinhanh');
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  const kq = await goiWorkerAdmin('list-kiotviet-branches');
+  const ds = kq?.data?.data || [];
+  if (!kq.success || !ds.length) {
+    el.innerHTML = `<p class="info-note">Không tải được danh sách chi nhánh. ${escHtml(kq.error || '')}</p>`;
+    return;
+  }
+  const dang = chiNhanhBanLe();
+  el.innerHTML = `
+    <select id="ht-cn-chon" style="width:100%;margin-bottom:8px">
+      ${ds.map(b => `<option value="${Number(b.id)}" data-ten="${escHtml(b.branchName || '')}" ${Number(b.id) === dang ? 'selected' : ''}>${escHtml(b.branchName || '')} — ${Number(b.id)}</option>`).join('')}
+    </select>
+    <button class="btn-g" style="width:100%" onclick="htLuuChiNhanh()">Lưu chi nhánh bán tại quầy</button>`;
+};
+
+window.htLuuChiNhanh = async function() {
+  const sel = document.getElementById('ht-cn-chon');
+  const id = Number(sel.value), ten = sel.selectedOptions[0]?.dataset.ten || '';
+  if (id === chiNhanhBanLe()) { showToast('Chi nhánh không đổi'); return; }
+  if (!confirm(`Từ giờ hóa đơn bán tại quầy tạo vào chi nhánh "${ten}" (${id}) và trừ kho chi nhánh đó.\n\nĐổi?`)) return;
+  await setDoc(doc(db, 'cau_hinh', 'chi_nhanh'), { banLe: id, tenBanLe: ten, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
+  cauHinhChiNhanh = { ...(cauHinhChiNhanh || {}), banLe: id, tenBanLe: ten };
+  showToast(`Đã đổi chi nhánh bán tại quầy: ${ten}`);
+  renderHeThong();
+};
+
+// ---------- Webhook ----------
+window.htXemWebhook = async function() {
+  const el = document.getElementById('ht-webhook');
+  el.innerHTML = '<div class="loading">Đang kiểm tra...</div>';
+  const kq = await goiWorkerAdmin('list-kiotviet-webhooks');
+  const ds = kq?.data?.data || [];
+  el.innerHTML = !kq.success ? `<p class="info-note">Không kiểm tra được. ${escHtml(kq.error || '')}</p>`
+    : !ds.length ? '<p class="info-note">Chưa đăng ký webhook nào.</p>'
+    : ds.map(w => `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">
+        ${w.isActive ? '🟢' : '⚪'} <b>${escHtml(w.type || '')}</b> · ${escHtml(w.url || '')}</div>`).join('') + '<div style="height:8px"></div>';
+};
+
+window.htDangKyWebhook = async function(loai) {
+  if (!confirm(`Đăng ký webhook ${loai} với KiotViet?\n(Đã có rồi thì KiotViet có thể báo trùng — không sao)`)) return;
+  const kq = await goiWorkerAdmin('register-kiotviet-webhook', { type: loai });
+  showToast(kq.success ? `Đã đăng ký ${loai}` : `KiotViet báo: ${JSON.stringify(kq.kiotviet || kq.error || '').slice(0, 120)}`, !kq.success);
+  htXemWebhook();
+};
+
+// ---------- Chấm công ----------
+window.htLayViTri = function() {
+  if (!navigator.geolocation) { showToast('Máy này không lấy được vị trí', true); return; }
+  showToast('Đang lấy vị trí...');
+  navigator.geolocation.getCurrentPosition((pos) => {
+    document.getElementById('ht-lat').value = pos.coords.latitude.toFixed(7);
+    document.getElementById('ht-lng').value = pos.coords.longitude.toFixed(7);
+    showToast(`Đã lấy vị trí (sai số ~${Math.round(pos.coords.accuracy)}m) — bấm Lưu`);
+  }, (e) => showToast('Không lấy được vị trí: ' + e.message, true), { enableHighAccuracy: true, timeout: 15000 });
+};
+
+window.htLuuChamCong = async function() {
+  const lat = parseFloat(document.getElementById('ht-lat').value.replace(',', '.'));
+  const lng = parseFloat(document.getElementById('ht-lng').value.replace(',', '.'));
+  const r = parseInt(document.getElementById('ht-bankinh').value, 10);
+  const qr = document.getElementById('ht-qr').value.trim();
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) { showToast('Vĩ độ / kinh độ không hợp lệ', true); return; }
+  if (!(r >= 20 && r <= 2000)) { showToast('Bán kính nên từ 20 đến 2000 mét', true); return; }
+  if (qr.length < 6) { showToast('Nội dung QR quá ngắn', true); return; }
+  if (qr !== CHECKIN_QR_SECRET && !confirm('Đổi nội dung QR: mã QR đang dán ở quầy sẽ không quét được nữa, phải in mã mới. Tiếp tục?')) return;
+  await setDoc(doc(db, 'cau_hinh', 'cham_cong'), { viDo: lat, kinhDo: lng, banKinh: r, maQR: qr, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
+  showToast('Đã lưu cài đặt chấm công');
+};
+
+// ---------- Tồn kho ----------
+window.htXemTon = async function() {
+  const ma = document.getElementById('ht-sku').value.trim();
+  const out = document.getElementById('ht-ton');
+  const sku = allSKUs.find(x => x.sku === ma || x.id === ma);
+  if (!sku) { out.innerHTML = '<span style="color:#B91C1C">Không tìm thấy mã này</span>'; return; }
+  const d = await getDoc(doc(db, 'skus', sku.id));
+  const x = { ...sku, ...(d.exists() ? d.data() : {}) };
+  out.innerHTML = `<b>${escHtml(sku.ten || '')}</b> · tồn cửa hàng <b>${layTon(x, 'cuahang')}</b> · tồn sàn <b>${layTon(x, 'san')}</b>`;
+};
+
+window.htDatTon = async function() {
+  const ma = document.getElementById('ht-sku').value.trim();
+  const sl = document.getElementById('ht-ton-moi').value;
+  const kho = document.getElementById('ht-ton-kho').value;
+  if (!ma || sl === '') { showToast('Nhập mã SKU và số tồn', true); return; }
+  const sku = allSKUs.find(x => x.sku === ma || x.id === ma);
+  if (!sku) { showToast('Không tìm thấy mã này', true); return; }
+  if (sku.laCombo) { showToast('Combo tự tính tồn từ hàng thành phần — chỉnh từng thành phần', true); return; }
+  const tenKho = kho === 'cuahang' ? 'Cửa hàng' : 'Sàn';
+  if (!confirm(`Đặt tồn ${tenKho} của ${sku.sku} = ${sl}?`)) return;
+  await updateDoc(doc(db, 'skus', sku.id), { [kho === 'cuahang' ? 'tonCuaHang' : 'soLuongTon']: Number(sl) || 0 });
+  showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0}`);
+  htXemTon();
+};
+
 async function renderThietLapThanhToan() {
   const el = document.getElementById('thietlap-content');
   if (!el) return;
@@ -9710,37 +9016,7 @@ async function renderThietLapThanhToan() {
       </p>` : ''}
     </div>
 
-    <div class="card">
-      <div class="card-title">Máy in hóa đơn</div>
-      <p class="info-note" style="margin-bottom:12px">
-        Máy in nhiệt mỗi hãng dùng bảng mã tiếng Việt khác nhau. Nếu hóa đơn in ra
-        mất dấu hoặc ra ký tự lạ, đổi số ở đây rồi in thử lại — không cần đụng tới máy POS.
-      </p>
-
-      <div class="field">
-        <label>Bảng mã tiếng Việt</label>
-        <select id="mi-ma-trang" ${laAdmin ? '' : 'disabled'}>
-          ${[0, 16, 30, 45, 52, 94].map(n =>
-            `<option value="${n}">${n}${n === 30 ? ' (hay dùng nhất)' : ''}</option>`).join('')}
-        </select>
-      </div>
-
-      <label style="display:flex;align-items:start;gap:8px;margin-bottom:12px;font-size:14px;cursor:pointer">
-        <input type="checkbox" id="mi-bo-dau" ${laAdmin ? '' : 'disabled'} style="margin-top:3px">
-        <span>
-          <b>In không dấu</b>
-          <div style="font-size:12px;color:var(--text2)">
-            Bật khi máy in không hỗ trợ tiếng Việt. Hóa đơn thành
-            "Artemia say kho - Hu 80g" — vẫn đọc được bình thường.
-          </div>
-        </span>
-      </label>
-
-      ${laAdmin ? `<button class="btn-g" style="width:100%" onclick="luuCauHinhMayIn()">Lưu cấu hình máy in</button>` : ''}
-    </div>`;
-
-  // Nạp cấu hình máy in đã lưu
-  napCauHinhMayIn();
+    <p class="info-note">Máy in bill và tem: xem ở Thiết lập › Hệ thống › Trạm in. App Trạm in tự vẽ chữ nên không cần chọn bảng mã tiếng Việt nữa.</p>`;
 
   veXemTruocQR();
 }
@@ -9768,31 +9044,7 @@ window.veXemTruocQR = function() {
     </div>`;
 };
 
-async function napCauHinhMayIn() {
-  try {
-    const d = await getDoc(doc(db, 'cau_hinh', 'may_in'));
-    const c = d.exists() ? d.data() : {};
-    const oMa = document.getElementById('mi-ma-trang');
-    const oBoDau = document.getElementById('mi-bo-dau');
-    if (oMa) oMa.value = String(c.maTrang ?? 30);
-    if (oBoDau) oBoDau.checked = c.boDau === true;
-  } catch(e) { console.warn('Không nạp được cấu hình máy in:', e.message); }
-}
 
-window.luuCauHinhMayIn = async function() {
-  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
-  try {
-    await setDoc(doc(db, 'cau_hinh', 'may_in'), {
-      maTrang: Number(document.getElementById('mi-ma-trang')?.value) || 30,
-      boDau: document.getElementById('mi-bo-dau')?.checked === true,
-      doiBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
-      doiLuc: serverTimestamp()
-    });
-    showToast('Đã lưu — máy in nhận cấu hình mới trong vài giây');
-  } catch(e) {
-    alert('Không lưu được: ' + e.message);
-  }
-};
 
 window.luuCauHinhThanhToan = async function() {
   const nh = document.getElementById('tt-ngan-hang')?.value || '';
@@ -9916,8 +9168,8 @@ function renderHangHoaList() {
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ - ` : ''}Bán: ${fmt(s.gia||0)}đ</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
-            <span>Sàn: <b>${tonSan}</b>${dat > 0
-              ? ` <span style="color:#D97706">(đặt ${dat}, còn ${khaDung})</span>` : ''}</span>
+            ${(batTMDT || currentUserData.role === 'admin') ? `<span>Sàn: <b>${tonSan}</b>${dat > 0
+              ? ` <span style="color:#D97706">(đặt ${dat}, còn ${khaDung})</span>` : ''}</span>` : ''}
             <span>Cửa hàng: <b style="color:${tonCH <= 0 ? 'var(--red)' : 'var(--text)'}">${tonCH}</b></span>
             ${canhBaoTon}
           </div>
@@ -10469,66 +9721,7 @@ window.luuSuaHangHoa = async function(id) {
   renderHangHoaList();
 };
 
-// Chạy 1 lần: đổi tên toàn bộ tài liệu SKU hiện có cho khớp đúng mã SKU (dùng làm tên tài liệu chuẩn)
-window.xemChiTietSKUTrung = async function() {
-  const snap = await getDocs(collection(db, 'skus'));
-  const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => !d.deleted);
-  const nhomTheoMa = {};
-  docs.forEach(d => {
-    const ma = (d.sku||'').trim();
-    if (!ma) return;
-    (nhomTheoMa[ma] = nhomTheoMa[ma]||[]).push(d);
-  });
-  const trung = Object.entries(nhomTheoMa).filter(([,list]) => list.length > 1);
-  trung.forEach(([ma, list]) => {
-    console.log(`\n=== Mã "${ma}" có ${list.length} bản ghi ===`);
-    list.forEach(d => console.log({
-      idTaiLieu: d.id, ten: d.ten, gia: d.gia, soLuongTon: d.soLuongTon,
-      coAnh: !!d.anhFileId, nhom: d.nhomFull, ngayTao: d.createdAt
-    }));
-  });
-  if (!trung.length) console.log('Không còn mã nào bị trùng.');
-  return trung.map(([ma]) => ma);
-};
 
-window.doiTenTaiLieuSKUTheoMa = async function() {
-  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới đổi được', true); return; }
-  if (!confirm('Đổi tên toàn bộ tài liệu SKU cho khớp mã SKU? Có thể mất vài phút với nhiều SKU, không đóng trang giữa chừng.')) return;
-  const btn = document.getElementById('btn-doiten-sku');
-  if (btn) { btn.disabled = true; btn.textContent = 'Đang xử lý...'; }
-  try {
-    const snap = await getDocs(collection(db, 'skus'));
-    const docs = snap.docs.map(d => ({ id: d.id, data: d.data() })).filter(d => !d.data.deleted);
-
-    // Kiểm tra trùng mã trước — tránh mất dữ liệu nếu 2 tài liệu cùng chung 1 mã SKU
-    const maCount = {};
-    docs.forEach(d => { const ma = (d.data.sku||'').trim(); if (ma) maCount[ma] = (maCount[ma]||0)+1; });
-    const trung = Object.entries(maCount).filter(([,c]) => c > 1).map(([ma]) => ma);
-    if (trung.length) {
-      showToast(`Phát hiện ${trung.length} mã SKU bị trùng, cần sửa trước: ${trung.slice(0,5).join(', ')}${trung.length>5?'...':''}`, true);
-      return;
-    }
-
-    let thanhCong = 0, boQua = 0;
-    const loi = [];
-    for (const d of docs) {
-      const ma = (d.data.sku||'').trim();
-      if (!ma) { loi.push(`${d.id}: thiếu mã SKU`); continue; }
-      if (d.id === ma) { boQua++; continue; }
-      try {
-        await setDoc(doc(db, 'skus', ma), d.data);
-        await deleteDoc(doc(db, 'skus', d.id));
-        thanhCong++;
-      } catch(e) { loi.push(`${ma}: ${e.message}`); }
-    }
-    showToast(`Xong: ${thanhCong} đã đổi tên, ${boQua} đã đúng sẵn` + (loi.length ? `, ${loi.length} lỗi (xem Console)` : ''));
-    if (loi.length) console.error('Lỗi đổi tên SKU:', loi);
-    await loadSKUs();
-    renderHangHoaList();
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔄 Đổi tên tài liệu SKU theo mã (chỉ cần bấm 1 lần)'; }
-  }
-};
 
 window.xoaHangHoa = async function(id) {
   if (!confirm('Xóa hàng hóa này?')) return;
@@ -10608,12 +9801,13 @@ const DANH_SACH_MODULE = [
   { key: 'lichca', ten: 'Lịch làm việc', con: [
     { key: 'lichca_xepca', ten: 'Xếp ca, chỉnh sửa ca' }
   ]},
-  { key: 'baocao', ten: 'Báo cáo' },
+  { key: 'baocao', ten: 'Báo cáo', chiAdmin: true },
   { key: 'nhanvien', ten: 'Nhân viên', con: [
-    { key: 'nv_taotk', ten: 'Tạo tài khoản' },
-    { key: 'nv_capmk', ten: 'Cấp lại mật khẩu' },
-    { key: 'nv_xoatk', ten: 'Xóa tài khoản' },
-    { key: 'nv_ganvaitro', ten: 'Gán vai trò' },
+    // 4 quyền tài khoản: worker và Firestore rules chỉ cho Admin làm -> không giao được
+    { key: 'nv_taotk', ten: 'Tạo tài khoản', chiAdmin: true },
+    { key: 'nv_capmk', ten: 'Cấp lại mật khẩu', chiAdmin: true },
+    { key: 'nv_xoatk', ten: 'Xóa tài khoản', chiAdmin: true },
+    { key: 'nv_ganvaitro', ten: 'Gán vai trò', chiAdmin: true },
     { key: 'nv_chamcong', ten: 'Chấm công' },
     { key: 'nv_luong_minh', ten: 'Bảng lương — chỉ xem của mình' },
     { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
@@ -10688,13 +9882,15 @@ const NHOM_MENU = [
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
-    { key: 'hanghoach', ten: 'Hàng hóa CH',    quyen: 'hanghoa_ch', moGi: () => switchModule('hanghoach') }
+    // Một mục Hàng hóa duy nhất: ai có quyền danh sách gốc thì mở danh sách gốc (có in tem giá),
+    // chỉ có quyền "Hàng hóa cửa hàng" thì mở màn tồn cửa hàng như cũ
+    { key: 'hanghoa',   ten: 'Hàng hóa',       quyen: ['hanghoa', 'hanghoa_ch'],
+      moGi: () => switchModule(coQuyenMuc('hanghoa') ? 'hanghoa' : 'hanghoach') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('donhang', true); } },
     { key: 'donggoi',   ten: 'Đóng gói',       quyen: 'quetdonggoi', moGi: () => switchModule('quetdonggoi') },
-    { key: 'hanghoa',   ten: 'Hàng hóa',       quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
     { key: 'nhaphang',  ten: 'Nhập hàng',      quyen: 'tmdt_nhaphang',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('nhaphang', true); } },
     { key: 'spsan',     ten: 'Sản phẩm trên sàn', quyen: 'tmdt_sanpham',
@@ -10715,9 +9911,10 @@ const NHOM_MENU = [
     { key: 'calamviec', ten: 'Ca làm việc', chiAdmin: true, moGi: () => moNVTab('calamviec') },
     { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') }
   ]},
-  { key: 'baocao', ten: 'Báo cáo', moTrucTiep: true, quyen: 'baocao',
+  { key: 'baocao', ten: 'Báo cáo', moTrucTiep: true, chiAdmin: true, quyen: 'baocao',
     muc: [], moGi: () => switchModule('baocao') },
   { key: 'thietlap', ten: 'Thiết lập', chiAdmin: true, muc: [
+    { key: 'hethong',    ten: 'Hệ thống',          quyen: 'tmdt_ketnoi', moGi: () => switchModule('hethong') },
     { key: 'thanhtoan',  ten: 'Thanh toán',        quyen: 'tmdt_ketnoi', moGi: () => switchModule('thanhtoan') },
     { key: 'adminpanel', ten: 'Quản trị hệ thống', quyen: 'tmdt_ketnoi', moGi: () => switchAdmin() },
     { key: 'ketnoisan',  ten: 'Kết nối sàn',       quyen: 'tmdt_ketnoi',
@@ -10812,7 +10009,7 @@ function veMenuHaiCap() {
       const dangChon = n.key === nhomMenuDangChon;
       return `
       <button class="nhom-btn ${dangChon ? 'active' : ''}" onclick="chonNhomMenu('${n.key}')"
-        >${escHtml(n.ten)}${dangChon ? '<span class="mui-ten-xuong">▼</span>' : ''}</button>`;
+        >${escHtml(n.ten)}${n.key === 'santmdt' && !batTMDT ? ' 🔒' : ''}${dangChon ? '<span class="mui-ten-xuong">▼</span>' : ''}</button>`;
     }).join('');
   }
 
@@ -10910,8 +10107,47 @@ let unsubscribeVaiTroDoc = null;
 // Áp dụng quyền NGAY LẬP TỨC — gọi mỗi khi hồ sơ user thay đổi (role/vaiTroId).
 // Theo dõi thời gian thực đúng Vai trò đang được gán -> Admin sửa quyền của vai trò là nhân viên
 // thấy thay đổi ngay lập tức trên phiên đang đăng nhập, không cần đợi đăng nhập lại.
+// ===== CÔNG TẮC TÍNH NĂNG (cau_hinh/tinh_nang, Admin bật/tắt ở Thiết lập › Hệ thống) =====
+// Sàn TMĐT tắt -> nhân viên không thấy cả nhóm Sàn (kể cả Đóng gói); Admin vẫn thấy để làm tiếp.
+let batTMDT = false;
+let dangTheoDoiTinhNang = false;
+const KHOA_TMDT = ['tmdt', 'tmdt_donhang', 'tmdt_sanpham', 'tmdt_daytonkho', 'tmdt_nhaphang', 'tmdt_ketnoi', 'quetdonggoi'];
+
+function theoDoiTinhNang() {
+  if (dangTheoDoiTinhNang) return;
+  dangTheoDoiTinhNang = true;
+  onSnapshot(doc(db, 'cau_hinh', 'tinh_nang'), (snap) => {
+    const moi = !!(snap.exists() && snap.data().batTMDT);
+    if (moi === batTMDT) return;
+    batTMDT = moi;
+    if (currentUserData) apDungQuyenNgayLapTuc();
+  }, (e) => console.warn('[tính năng] không đọc được:', e.message));
+  onSnapshot(doc(db, 'cau_hinh', 'chi_nhanh'), (snap) => {
+    cauHinhChiNhanh = snap.exists() ? snap.data() : null;
+  }, () => {});
+  onSnapshot(doc(db, 'cau_hinh', 'cham_cong'), (snap) => {
+    const c = snap.exists() ? snap.data() : {};
+    if (c.maQR) CHECKIN_QR_SECRET = String(c.maQR);
+    if (c.viDo != null && c.viDo !== '' && Number.isFinite(Number(c.viDo))) STORE_LAT = Number(c.viDo);
+    if (c.kinhDo != null && c.kinhDo !== '' && Number.isFinite(Number(c.kinhDo))) STORE_LNG = Number(c.kinhDo);
+    if (Number(c.banKinh) > 0) GPS_RADIUS = Number(c.banKinh);
+  }, () => {});
+}
+
+// Quyền thật của nhân viên = quyền vai trò, trừ các khóa chỉ Admin và tính năng đang tắt
+function locQuyen(q) {
+  const r = { ...(q || {}) };
+  DANH_SACH_MODULE.forEach(m => {
+    if (m.chiAdmin) r[m.key] = false;
+    (m.con || []).forEach(c => { if (c.chiAdmin) r[c.key] = false; });
+  });
+  if (!batTMDT) KHOA_TMDT.forEach(k => { r[k] = false; });
+  return r;
+}
+
 async function apDungQuyenNgayLapTuc() {
   if (unsubscribeVaiTroDoc) { unsubscribeVaiTroDoc(); unsubscribeVaiTroDoc = null; }
+  theoDoiTinhNang();
 
   if (currentUserData.role === 'admin') {
     quyenModuleHienTai = layQuyenFullAdmin();
@@ -10920,14 +10156,14 @@ async function apDungQuyenNgayLapTuc() {
   }
 
   if (!currentUserData.vaiTroId) {
-    quyenModuleHienTai = layQuyenFallbackChuaMigrate();
+    quyenModuleHienTai = locQuyen(layQuyenFallbackChuaMigrate());
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
     return;
   }
 
   unsubscribeVaiTroDoc = onSnapshot(doc(db, 'vai_tro', currentUserData.vaiTroId), (snap) => {
-    quyenModuleHienTai = snap.exists() ? (snap.data().quyenModule || {}) : { checklist:true, nhap:true, xuat:true, lichca:true };
+    quyenModuleHienTai = locQuyen(snap.exists() ? (snap.data().quyenModule || {}) : { checklist:true, nhap:true, xuat:true, lichca:true });
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
   }, () => {
@@ -11054,22 +10290,6 @@ async function taoNhomMoiNeuChua(ten, chaId, cap) {
   return ref.id;
 }
 
-// Chạy 1 lần: dựng danh sách Nhóm hàng từ dữ liệu nhom1/nhom2/nhom3 đang có sẵn trên các SKU
-window.khoiTaoNhomHangTuSKU = async function() {
-  if (currentUserData.role !== 'admin') { showToast('Chỉ Admin mới làm được', true); return; }
-  if (!confirm('Tạo danh sách Nhóm hàng từ dữ liệu SKU hiện có? Chỉ cần chạy 1 lần.')) return;
-  await loadNhomHang();
-  const truocDo = allNhomHang.length;
-  for (const s of allSKUs) {
-    if (!s.nhom1) continue;
-    const id1 = await taoNhomMoiNeuChua(s.nhom1, null, 1);
-    if (s.nhom2) {
-      const id2 = await taoNhomMoiNeuChua(s.nhom2, id1, 2);
-      if (s.nhom3) await taoNhomMoiNeuChua(s.nhom3, id2, 3);
-    }
-  }
-  showToast(`Đã khởi tạo ${allNhomHang.length - truocDo} nhóm hàng mới từ dữ liệu SKU`);
-};
 
 // ===== BỘ CHỌN NHÓM HÀNG KIỂU MEGA-MENU (cha trái, con phải, tô màu khi chọn) =====
 let nhomHangModalState = { prefix: '', nhom1: '', nhom2: '', nhom3: '' };
@@ -12748,27 +11968,7 @@ window.soiGioDon = async function(maDonSan) {
   return dl;
 };
 
-// Xem tồn kho THẬT trong Firestore của một mã (không phải bản trong bộ nhớ).
-// Gọi: xemTon('ABC123')
-window.xemTon = async function(maSku) {
-  if (!maSku) { console.error('Cần mã SKU'); return; }
-  const sku = allSKUs.find(s => s.sku === maSku || s.id === maSku);
-  const d = await getDoc(doc(db, 'skus', sku?.id || maSku));
-  console.log('Trong bộ nhớ app:', sku?.soLuongTon);
-  console.log('Trong Firestore  :', d.exists() ? d.data()?.soLuongTon : '(không có tài liệu)');
-  return d.exists() ? d.data()?.soLuongTon : null;
-};
 
-// Đặt lại tồn kho một mã về đúng số thực tế. Dùng khi phát hiện lệch.
-// Gọi: datTon('ABC123', 10)
-window.datTon = async function(maSku, soLuong) {
-  if (currentUserData?.role !== 'admin') { console.error('Chỉ Admin'); return; }
-  const sku = allSKUs.find(s => s.sku === maSku || s.id === maSku);
-  if (!sku) { console.error('Không tìm thấy mã', maSku); return; }
-  await updateDoc(doc(db, 'skus', sku.id), { soLuongTon: Number(soLuong) || 0 });
-  console.log(`Đã đặt tồn ${maSku} = ${soLuong}`);
-  showToast(`Đã đặt tồn ${maSku} = ${soLuong}`);
-};
 
 window.submitNhap = async function() {
   if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
@@ -15802,19 +15002,20 @@ function renderFormVaiTro(prefix, v) {
       </select>
       <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Module hiển thị & quyền chi tiết</label>
       <div style="display:flex;flex-direction:column;gap:2px;margin-bottom:10px">
-        ${DANH_SACH_MODULE.map(m => `
+        ${DANH_SACH_MODULE.filter(m => !m.chiAdmin).map(m => `
           <div style="margin-bottom:4px">
             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;font-weight:600">
               <input type="checkbox" id="${prefix}-m-${m.key}" ${quyen[m.key]?'checked':''}> ${m.ten}
             </label>
             ${m.con ? `<div style="padding-left:26px;margin-top:4px;display:flex;flex-direction:column;gap:4px">
-              ${m.con.map(c => `
+              ${m.con.filter(c => !c.chiAdmin).map(c => `
                 <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text2);cursor:pointer">
                   <input type="checkbox" id="${prefix}-m-${c.key}" ${quyen[c.key]?'checked':''}> ${c.ten}
                 </label>`).join('')}
             </div>` : ''}
           </div>`).join('')}
       </div>
+      <p class="info-note" style="margin-bottom:10px">Báo cáo, tạo/xóa tài khoản, cấp lại mật khẩu và gán vai trò luôn chỉ Admin làm.</p>
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuVaiTro('${prefix}','${v?.id||''}')">Lưu</button>
         <button class="btn-outline" onclick="dongFormVaiTro('${prefix}')">Hủy</button>
@@ -15988,110 +15189,13 @@ document.addEventListener('click', e => {
   }
 });
 
-// Hàm hỗ trợ gõ trực tiếp trong Console (F12) — dùng 1 lần để đăng ký webhook KiotViet
-window.dangKyKiotVietWebhook = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'register-kiotviet-webhook', 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-window.xoaWebhookKiotViet = async function(webhookId) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'delete-kiotviet-webhook', 'x-webhook-id': String(webhookId), 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-window.checkLazadaSecrets = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'check-lazada-secrets', 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-window.xemChiTietPhieuNhapKiotViet = async function(poId) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'get-purchase-order-detail', 'x-po-id': String(poId), 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-// (TẠM) Test riêng: gọi thẳng API Sửa phiếu với 1 ID KiotViet bất kỳ + 1 mã SKU bất kỳ,
-// không cần phiếu đó tồn tại trong app nội bộ — để cô lập đúng biến "trạng thái phiếu".
-window.testSuaPhieuKiotViet = async function(kiotvietId, maSku, soLuong) {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'update-purchase-order', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      kiotvietId: String(kiotvietId),
-      items: [{ sku: maSku, ten: maSku, sl: soLuong || 1 }],
-      tenNguoiDung: currentUserData?.ten || '',
-      maPhieu: '(test riêng)'
-    })
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-window.xemDanhSachChiNhanhKiotViet = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'list-kiotviet-branches', 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-window.xemDanhSachWebhookKiotViet = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'list-kiotviet-webhooks', 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
-window.testDongBoKiotViet = async function() {
-  if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  const idToken = await currentUser.getIdToken();
-  const res = await fetch(WORKER_URL, {
-    method: 'POST',
-    headers: { 'x-action': 'test-sync-kiotviet', 'Authorization': `Bearer ${idToken}` }
-  });
-  const data = await res.json();
-  console.log(data);
-  return data;
-};
 
 window.moDoiMatKhau = function() {
   document.getElementById('doimk-cu').value = '';
@@ -17040,7 +16144,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v459</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v460</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17094,7 +16198,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v459</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v460</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17136,7 +16240,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v459</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v460</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
