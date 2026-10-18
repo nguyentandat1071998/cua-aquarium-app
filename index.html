@@ -1568,7 +1568,7 @@ function roleLabel(r) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'baocao', hanghoa: 'hanghoa', banhang: 'banhang',
-  donbanle: 'donbanle', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
+  donbanle: 'donbanle', khachhang: 'khachhang', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
   chamcong: 'chamcong', luongnv: 'luong'
 };
 
@@ -1641,6 +1641,13 @@ window.switchModule = function(mod) {
     document.getElementById('panel-donbanle-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderDonDaBan();
+    return;
+  }
+  if (mod === 'khachhang') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-khachhang-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderKhachHang();
     return;
   }
   if (mod === 'banhang') {
@@ -6036,6 +6043,8 @@ function veManHinhDonDaBan() {
         ${!xemHet ? '<br><span style="font-size:11px">(chỉ tìm trong đơn bạn bán)</span>' : ''}
       </div>
       ${ddbKetQuaTim.length ? ddbKetQuaTim.map(ddbTheDon).join('') : '<p class="info-note">Không có hóa đơn nào khớp.</p>'}
+      ${coQuyen('khachhang') && !/[a-z]/i.test(ddbTimKiem) ? `<button class="btn-outline" style="width:100%;margin-top:4px"
+        onclick="khMoVoiTuKhoa('${escHtml(chuanSdt(ddbTimKiem))}')">🔎 Tra khách này trên KiotViet (gồm cả hóa đơn cũ)</button>` : ''}
     ` : `
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <input type="date" value="${ddbNgay}" onchange="ddbDoiNgay(this.value)" style="flex:1">
@@ -6190,6 +6199,171 @@ async function ddbLamMoiSauTra() {
 
 window.ddbDoiNgay = async function(ngay) { ddbNgay = ngay; await napDonDaBan(); veManHinhDonDaBan(); };
 window.ddbLocNV = function(ten) { ddbLocNguoiBan = ten; veManHinhDonDaBan(); };
+
+// ==========================================================================
+// ===== KHÁCH HÀNG — đọc/ghi thẳng danh bạ khách của KiotViet qua worker =====
+// App không lưu bản sao khách hàng: KiotViet là nơi duy nhất giữ dữ liệu, nên
+// sửa ở đâu (app hay KiotViet) cũng thấy giống nhau.
+// ==========================================================================
+let khTuKhoa = '';
+let khKetQua = { ds: [], tong: 0, trang: 0 };
+let khDangXem = null;
+
+async function goiKhachKV(action, body) {
+  const idToken = await currentUser.getIdToken();
+  const r = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!j.success) throw new Error(j.error || `Lỗi ${r.status}`);
+  return j;
+}
+
+async function renderKhachHang(tuKhoaMoi) {
+  const el = document.getElementById('khachhang-content');
+  if (!el) return;
+  if (tuKhoaMoi !== undefined) khTuKhoa = tuKhoaMoi;
+  veManHinhKhachHang(true);
+  await khTai(0);
+}
+
+async function khTai(trang) {
+  try {
+    khKetQua = await goiKhachKV('kh-tim', { tuKhoa: khTuKhoa, trang });
+  } catch(e) {
+    khKetQua = { ds: [], tong: 0, trang: 0, loi: e.message };
+  }
+  veManHinhKhachHang(false);
+}
+
+function veManHinhKhachHang(dangTai) {
+  const el = document.getElementById('khachhang-content');
+  if (!el) return;
+  const { ds, tong, trang, loi } = khKetQua;
+  const soTrang = Math.max(1, Math.ceil((tong || 0) / 20));
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <input id="kh-tim" type="search" placeholder="🔍 SĐT, tên hoặc mã khách (KH...)" value="${escHtml(khTuKhoa)}"
+        onkeydown="if(event.key==='Enter')khTimKhach(this.value)" style="flex:1;min-width:0">
+      <button class="btn-xs" style="padding:0 14px" onclick="khTimKhach(document.getElementById('kh-tim').value)">Tìm</button>
+      ${khTuKhoa ? `<button class="btn-xs" style="padding:0 12px" onclick="khTimKhach('')">✕</button>` : ''}
+    </div>
+    ${coQuyen('kh_sua') ? `<button class="btn-g" style="width:100%;margin-bottom:10px" onclick="khMoForm()">+ Thêm khách hàng</button>` : ''}
+    <div style="font-size:12px;color:var(--text2);margin-bottom:6px">
+      ${dangTai ? 'Đang tải từ KiotViet...' : loi ? '' : khTuKhoa ? `${tong} khách khớp "${escHtml(khTuKhoa)}"` : `Khách mới nhất · ${tong} khách trên KiotViet`}
+    </div>
+    ${loi ? `<p class="info-note" style="color:#DC2626">Không tải được khách hàng: ${escHtml(loi)}</p>` : ''}
+    ${dangTai ? '<div class="loading">Đang tải...</div>' : !ds.length && !loi ? '<p class="info-note">Không có khách nào.</p>' : ds.map(k => `
+      <div onclick="khXemChiTiet(${k.id})" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;gap:8px">
+        <div style="min-width:0">
+          <div style="font-weight:600;font-size:14px">${escHtml(k.ten)}</div>
+          <div style="font-size:12px;color:var(--text2)">${k.sdt ? '📞 ' + escHtml(k.sdt) + ' · ' : ''}${escHtml(k.ma)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;font-size:12px">
+          <div style="font-weight:600">${fmt(k.tongMua)}đ</div>
+          ${k.no ? `<div style="color:#DC2626">nợ ${fmt(k.no)}đ</div>` : ''}
+        </div>
+      </div>`).join('')}
+    ${!dangTai && soTrang > 1 ? `
+      <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:6px">
+        <button class="btn-xs" ${trang <= 0 ? 'disabled' : ''} onclick="khTai(${trang - 1})">‹ Trước</button>
+        <span style="font-size:12px">Trang ${trang + 1}/${soTrang}</span>
+        <button class="btn-xs" ${trang + 1 >= soTrang ? 'disabled' : ''} onclick="khTai(${trang + 1})">Sau ›</button>
+      </div>` : ''}`;
+}
+window.khTai = khTai;
+window.khTimKhach = function(v) { renderKhachHang(String(v || '').trim()); };
+window.khMoVoiTuKhoa = function(v) { khTuKhoa = String(v || '').trim(); switchModule('khachhang'); };
+
+window.khXemChiTiet = async function(id) {
+  ddbMoKhung('kh-chi-tiet-modal', 'Khách hàng', '', '<div class="loading">Đang tải từ KiotViet...</div>');
+  let kq;
+  try { kq = await goiKhachKV('kh-chi-tiet', { id }); }
+  catch(e) { ddbMoKhung('kh-chi-tiet-modal', 'Khách hàng', '', `<p class="info-note" style="color:#DC2626">${escHtml(e.message)}</p>`); return; }
+  const k = kq.khach;
+  khDangXem = k;
+  const dong = (nhan, gt) => gt ? `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:3px 0"><span style="color:var(--text2)">${nhan}</span><span style="text-align:right">${gt}</span></div>` : '';
+  const xemDon = coQuyen('donbanle');
+  const lichSu = (kq.hoaDon || []).map(hd => {
+    const t = hd.luc ? new Date(hd.luc) : null;
+    return `
+    <div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:6px">
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px">
+        <b>${escHtml(hd.ma)}</b><b>${fmt(hd.tong)}đ</b>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">
+        ${t ? t.toLocaleString('vi-VN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',year:'numeric'}) : ''}
+        ${hd.chiNhanh ? ' · ' + escHtml(hd.chiNhanh) : ''}${hd.trangThai ? ' · ' + escHtml(hd.trangThai) : ''}
+        ${hd.daTra < hd.tong ? ` · <span style="color:#DC2626">còn nợ ${fmt(hd.tong - hd.daTra)}đ</span>` : ''}
+      </div>
+      <div style="font-size:12px;margin-top:3px">${hd.hang.map(x => `${escHtml(x.ten)} ×${x.sl}`).join(', ')}</div>
+      ${xemDon ? `<button class="btn-xs" style="margin-top:6px" onclick="khMoHoaDonApp('${escHtml(hd.ma)}')">Mở trong Đơn đã bán</button>` : ''}
+    </div>`;
+  }).join('');
+  const noiDung = `
+    <div style="font-size:18px;font-weight:700">${escHtml(k.ten)}</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${escHtml(k.ma)}</div>
+    ${k.sdt ? `<a href="tel:${escHtml(k.sdt)}" style="display:inline-block;font-size:15px;color:var(--green);text-decoration:none;margin-bottom:8px">📞 ${escHtml(k.sdt)}</a>` : ''}
+    <div style="background:var(--bg);border-radius:10px;padding:8px 12px;margin-bottom:10px">
+      ${dong('Tổng mua', fmt(k.tongMua) + 'đ')}
+      ${dong('Công nợ', k.no ? `<span style="color:#DC2626">${fmt(k.no)}đ</span>` : '0đ')}
+      ${k.diem ? dong('Điểm', String(k.diem)) : ''}
+      ${dong('Địa chỉ', escHtml([k.diaChi, k.phuong, k.khuVuc].filter(Boolean).join(', ')))}
+      ${dong('Email', escHtml(k.email))}
+      ${dong('Ghi chú', escHtml(k.ghiChu))}
+      ${dong('Ngày tạo', k.taoLuc ? new Date(k.taoLuc).toLocaleDateString('vi-VN') : '')}
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--text2)">LỊCH SỬ MUA TRÊN KIOTVIET (${(kq.hoaDon || []).length} hóa đơn gần nhất)</div>
+    ${kq.loiHoaDon ? `<p class="info-note">Không tải được hóa đơn: ${escHtml(kq.loiHoaDon)}</p>` : lichSu || '<p class="info-note">Chưa có hóa đơn.</p>'}`;
+  ddbMoKhung('kh-chi-tiet-modal', escHtml(k.ten), escHtml(k.ma), noiDung,
+    coQuyen('kh_sua') ? `<button class="btn-outline" style="flex:1" onclick="khMoForm(true)">✏️ Sửa thông tin</button>` : '');
+};
+
+// Mở hóa đơn KiotViet tương ứng trong màn Đơn đã bán (tìm theo mã)
+window.khMoHoaDonApp = async function(ma) {
+  const m = document.getElementById('kh-chi-tiet-modal');
+  if (m) m.style.display = 'none';
+  switchModule('donbanle');
+  await new Promise(r => setTimeout(r, 300));
+  await ddbTim(ma);
+  if (ddbKetQuaTim.length === 1) ddbXemChiTiet(ddbKetQuaTim[0].id);
+  else if (!ddbKetQuaTim.length) showToast(`Hóa đơn ${ma} không bán qua app — chỉ có trên KiotViet`, true);
+};
+
+window.khMoForm = function(sua) {
+  if (!coQuyen('kh_sua')) { showToast('Bạn không có quyền thêm/sửa khách hàng', true); return; }
+  const k = sua ? (khDangXem || {}) : {};
+  const o = (id, nhan, gt, kieu = 'text', them = '') => `
+    <div class="field" style="margin-bottom:8px"><label style="font-size:12px;color:var(--text2)">${nhan}</label>
+      <input id="${id}" type="${kieu}" value="${escHtml(gt || '')}" ${them} style="width:100%"></div>`;
+  ddbMoKhung('kh-form-modal', sua ? 'Sửa khách hàng' : 'Thêm khách hàng', sua ? escHtml(k.ma || '') : 'Lưu thẳng vào danh bạ khách KiotViet', `
+    ${o('khf-ten', 'Tên khách *', k.ten)}
+    ${o('khf-sdt', 'Số điện thoại', k.sdt, 'tel', 'inputmode="tel"')}
+    ${o('khf-diachi', 'Địa chỉ', k.diaChi)}
+    ${o('khf-email', 'Email', k.email, 'email')}
+    ${o('khf-ghichu', 'Ghi chú', k.ghiChu)}`,
+    `<button class="btn-g" style="flex:1" id="khf-luu" onclick="khLuuForm(${sua && k.id ? k.id : 'null'})">Lưu</button>`);
+};
+
+window.khLuuForm = async function(id) {
+  const g = (x) => document.getElementById(x)?.value.trim() || '';
+  if (!g('khf-ten')) { showToast('Cần nhập tên khách', true); return; }
+  const nut = document.getElementById('khf-luu');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
+  try {
+    const kq = await goiKhachKV('kh-luu', { id, ten: g('khf-ten'), sdt: g('khf-sdt'), diaChi: g('khf-diachi'),
+      email: g('khf-email'), ghiChu: g('khf-ghichu'), branchId: chiNhanhBanLe() });
+    document.getElementById('kh-form-modal').style.display = 'none';
+    showToast(id ? 'Đã cập nhật khách hàng' : `Đã thêm khách ${kq.khach?.ma || ''}`);
+    if (document.getElementById('khachhang-content')?.offsetParent) await khTai(khKetQua.trang || 0);
+    if (kq.khach?.id) khXemChiTiet(kq.khach.id);
+  } catch(e) {
+    if (nut) { nut.disabled = false; nut.textContent = 'Lưu'; }
+    alert('Không lưu được: ' + e.message);
+  }
+};
 
 // ==========================================================================
 // ===== TRẢ HÀNG =====
@@ -7961,15 +8135,49 @@ async function renderBanHang() {
 // Gồm mã hàng, số lượng, giá, giảm giá và phần tiền mặt (đơn kết hợp đổi tiền mặt
 // thì số cần chuyển khoản cũng đổi, QR cũ sai).
 // Khách hàng (không bắt buộc) — lưu vào đơn để tra bảo hành theo SĐT
-window.bhDatKhach = function(truong, v) {
+window.bhDatKhach = async function(truong, v) {
   const p = bhPhieuHienTai();
   if (!p) return;
-  p.khach = { ...(p.khach || {}), [truong]: truong === 'sdt' ? chuanSdt(v) : String(v || '').trim().slice(0, 80) };
-  bhLuu();
+  if (truong === 'ten') { p.khach = { ...(p.khach || {}), ten: String(v || '').trim().slice(0, 80) }; bhLuu(); return; }
+  const sdt = chuanSdt(v);
+  if (sdt === (p.khach?.sdt || '')) return;
+  // Đổi SĐT -> bỏ khách KiotViet cũ đã gắn, tra lại
+  p.khach = { ...(p.khach || {}), sdt, id: null, ma: '' };
+  p.khachTT = sdt.length >= 9 ? 'dang' : '';
+  bhLuu(); veDayDuoi();
+  if (sdt.length < 9) return;
+  try {
+    const kq = await goiKhachKV('kh-tim', { tuKhoa: sdt });
+    if (bhPhieuHienTai() !== p || p.khach?.sdt !== sdt) return;   // đã đổi phiếu/số trong lúc chờ
+    const k = (kq.ds || []).find(x => chuanSdt(x.sdt) === sdt);
+    if (k) {
+      p.khach = { ...p.khach, id: k.id, ma: k.ma, ten: k.ten };
+      p.khachTT = `cu|${k.ma}|${k.tongMua}`;
+    } else {
+      p.khachTT = 'moi';
+    }
+  } catch(e) {
+    p.khachTT = 'loi';
+  }
+  bhLuu(); veDayDuoi();
 };
 function bhKhachCuaPhieu(p) {
   const k = p?.khach || {};
-  return (k.sdt || k.ten) ? { sdt: k.sdt || '', ten: k.ten || '' } : null;
+  return (k.sdt || k.ten) ? { sdt: k.sdt || '', ten: k.ten || '', id: k.id || null, ma: k.ma || '' } : null;
+}
+function bhDongTrangThaiKhach(p) {
+  const tt = p.khachTT || '';
+  if (!tt) return '';
+  if (tt === 'dang') return '<div style="font-size:11px;color:var(--text2);margin:-4px 0 6px">Đang tra khách trên KiotViet...</div>';
+  if (tt === 'moi') return '<div style="font-size:11px;color:#2563EB;margin:-4px 0 6px">Khách mới — nhập tên, thanh toán xong sẽ tự tạo khách trên KiotViet</div>';
+  if (tt === 'loi') return '<div style="font-size:11px;color:#D97706;margin:-4px 0 6px">Chưa tra được khách — vẫn bán bình thường, khách sẽ được gắn khi tạo hóa đơn</div>';
+  const [, ma, tongMua] = tt.split('|');
+  return `<div style="font-size:11px;color:var(--green);margin:-4px 0 6px">✓ Khách cũ ${escHtml(ma)} · đã mua ${fmt(Number(tongMua) || 0)}đ</div>`;
+}
+// Worker trả khách đã gắn vào hóa đơn -> nhớ mã để lưu vào đơn
+function bhGhiNhanKhachTuHoaDon(p, kq) {
+  if (kq?.khach?.id) p.khach = { ...(p.khach || {}), id: kq.khach.id, ma: kq.khach.ma || '', ten: p.khach?.ten || kq.khach.ten || '' };
+  if (kq?.loiKhach) showToast('Hóa đơn chưa gắn được khách: ' + kq.loiKhach, true);
 }
 function bhGhiChuHoaDon(p) {
   const k = bhKhachCuaPhieu(p);
@@ -8135,6 +8343,7 @@ function veDayDuoi() {
       <input placeholder="Tên khách" value="${escHtml(p.khach?.ten || '')}"
         onchange="bhDatKhach('ten', this.value)" style="flex:1;min-width:0;padding:8px">
     </div>
+    ${bhDongTrangThaiKhach(p)}
     <div class="bh-hang-gat">
       ${nutGat('tienmat', '💵 Tiền mặt')}
       ${nutGat('chuyenkhoan', '🏦 Chuyển khoản')}
@@ -8224,6 +8433,7 @@ window.bhMoKhungQR = async function() {
         tienMat, canChuyenKhoan: canCK,
         branchId: chiNhanhBanLe(),
         ghiChu: bhGhiChuHoaDon(p),
+        khachHang: bhKhachCuaPhieu(p),
         nguoiBan: currentUserData?.ten || ''
       })
     });
@@ -8233,6 +8443,7 @@ window.bhMoKhungQR = async function() {
       ? 'Token KiotViet hết hạn — báo quản lý cập nhật' : data.qr.loi);
 
     p.maHoaDonKV = data.maHoaDon;
+    bhGhiNhanKhachTuHoaDon(p, data);
     p.tienMatDaChot = tienMat;
     p.vanTayLucTaoQR = vanTay;
     p.anhQRDaTao = data.qr?.anhQR || null;
@@ -8717,12 +8928,14 @@ window.bhHoanThanh = async function(daTraQuaQR) {
           tienMat: phaiTra, canChuyenKhoan: 0,
           branchId: chiNhanhBanLe(),
           ghiChu: bhGhiChuHoaDon(p),
+          khachHang: bhKhachCuaPhieu(p),
           nguoiBan: currentUserData?.ten || ''
         })
       });
       const dHD = await rHD.json();
       if (!dHD.success) throw new Error('Không tạo được hóa đơn KiotViet: ' + (dHD.error || ''));
       p.maHoaDonKV = dHD.maHoaDon;
+      bhGhiNhanKhachTuHoaDon(p, dHD);
       p.vanTayLucTaoQR = vanTayHienTai;
     }
 
@@ -10128,6 +10341,9 @@ const DANH_SACH_MODULE = [
     { key: 'dbl_trahang', ten: 'Tạo phiếu trả hàng' },
     { key: 'dbl_duyettra', ten: 'Duyệt / từ chối phiếu trả hàng' }
   ]},
+  { key: 'khachhang', ten: 'Khách hàng', con: [
+    { key: 'kh_sua', ten: 'Thêm / sửa khách hàng' }
+  ]},
   { key: 'checklist', ten: 'Checklist', con: [] },
   { key: 'nhap', ten: 'Chuyển kho', con: [
     { key: 'nhap_xemds', ten: 'Xem danh sách & thống kê phiếu' },
@@ -10240,6 +10456,7 @@ const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
     { key: 'banhang',   ten: 'Bán hàng',       quyen: 'banhang',   moGi: () => switchModule('banhang') },
     { key: 'donbanle',  ten: 'Đơn đã bán',     quyen: 'donbanle',  moGi: () => switchModule('donbanle') },
+    { key: 'khachhang', ten: 'Khách hàng',     quyen: 'khachhang', moGi: () => switchModule('khachhang') },
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
@@ -10590,7 +10807,7 @@ async function tinhQuyenModuleHienTai() {
 async function moModuleMacDinhTheoQuyen() {
   const quyen = await tinhQuyenModuleHienTai();
   const thuTuUuTien = [
-    ['banhang','banhang'], ['donbanle','donbanle'], ['checklist','checklist'], ['nhap','nhap'],
+    ['banhang','banhang'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
     ['xuat','xuat'], ['hanghoa','hanghoa'], ['lichca','lichca'], ['chamcong','chamcong'],
     ['luong','luongnv'], ['baocao','baocao']
   ];
@@ -16490,7 +16707,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v467</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v468</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16544,7 +16761,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v467</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v468</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16586,7 +16803,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v467</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v468</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -16973,6 +17190,10 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <div class="panel" id="panel-donbanle-main">
         <div id="donbanle-content"></div>
+      </div>
+
+      <div class="panel" id="panel-khachhang-main">
+        <div id="khachhang-content"></div>
       </div>
 
       <div class="panel" id="panel-banhang-main">
