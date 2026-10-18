@@ -6944,8 +6944,7 @@ function veManHinhDonDaBan() {
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:4px">
-            <button class="btn-xs" onclick="guiLenhIn('${d.id}')">🖨 In ở quầy</button>
-            <button class="btn-xs" onclick="inHoaDon('${d.id}')" title="In bằng máy in của thiết bị này">📄 In máy này</button>
+            <button class="btn-xs" onclick="guiLenhIn('${d.id}')">🖨 In bill</button>
             ${d.maHoaDonKiotViet && !d.daHuy ? `<button class="btn-xs" style="background:#FEF3C7;color:#92400E" onclick="moTraHang('${d.id}')">↩ Trả hàng</button>` : ''}
           </div>
           ${d.lanTra?.length ? `<div style="font-size:11px;color:#D97706;margin-top:4px">
@@ -8594,12 +8593,11 @@ window.layVanDon = async function(maDon, nenTang) {
 
 // ===== IN QUA MÁY TRUNG GIAN =====
 // Trình duyệt không mở được kết nối tới máy in nhiệt trong mạng LAN (rào bảo mật),
-// mà XP-80T không hỗ trợ AirPrint. Nên app ghi lệnh in vào Firestore, chương trình
-// nhỏ chạy trên máy POS đọc rồi gửi ESC/POS tới máy in.
-window.guiLenhIn = async function(idDon) {
-  const d = ddbDanhSach.find(x => x.id === idDon);
-  if (!d) return;
-  try {
+// mà XP-80T không hỗ trợ AirPrint. Nên app ghi lệnh in vào Firestore, app Android
+// "Trạm in CUA" trên máy POS (kho cua-tram-in) lấy lệnh qua worker rồi in ra máy.
+//
+// Tạo lệnh in bill từ dữ liệu đơn — dùng cho nút In bill và tự in khi thanh toán xong
+async function taoLenhInHoaDon(d) {
     await addDoc(collection(db, 'lenh_in'), {
       loai: 'hoa_don_ban_le',
       maDon: d.maDon,
@@ -8623,10 +8621,24 @@ window.guiLenhIn = async function(idDon) {
       nguoiYeuCau: currentUserData?.ten || '',
       taoLuc: serverTimestamp()
     });
-    showToast('Đã gửi lệnh in — kiểm tra máy in ở quầy');
+}
+
+window.guiLenhIn = async function(idDon) {
+  const d = ddbDanhSach.find(x => x.id === idDon);
+  if (!d) return;
+  try {
+    await taoLenhInHoaDon(d);
+    showToast('Đã gửi lệnh in — bill sẽ ra ở máy in quầy');
   } catch(e) {
     alert('Không gửi được lệnh in: ' + e.message);
   }
+};
+
+// Tự in bill khi thanh toán xong — mỗi máy tự nhớ lựa chọn, mặc định BẬT
+let tuInBill = (() => { try { return localStorage.getItem('tuInBill') !== '0'; } catch(e) { return true; } })();
+window.datTuInBill = function(bat) {
+  tuInBill = !!bat;
+  try { localStorage.setItem('tuInBill', bat ? '1' : '0'); } catch(e) {}
 };
 
 // Thử các biến thể payload sửa hóa đơn — giao diện KiotViet sửa được nên API
@@ -9002,7 +9014,11 @@ function veDayDuoi() {
       style="width:100%;padding:14px;font-size:16px"
       onclick="${chiTienMat ? 'bhHoanThanh()' : 'bhMoKhungQR()'}">
       ${chiTienMat ? '✓ Thanh toán' : '💳 Thanh toán · ' + fmt(canCK) + 'đ'}
-    </button>`;
+    </button>
+    <label style="display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;font-size:14px;color:var(--text2)">
+      <input type="checkbox" ${tuInBill ? 'checked' : ''} onchange="datTuInBill(this.checked)" style="width:18px;height:18px">
+      🖨 In bill ngay khi thanh toán xong
+    </label>`;
 }
 
 // ===== KHUNG THANH TOÁN CHUYỂN KHOẢN =====
@@ -9581,7 +9597,7 @@ window.bhHoanThanh = async function(daTraQuaQR) {
     }
 
     const maDon = `BL${Date.now().toString().slice(-9)}`;
-    await setDoc(doc(db, 'don_ban_le', maDon), {
+    const donMoi = {
       maDon,
       maPhieuTam: p.id,           // trùng với nội dung chuyển khoản, dùng để đối soát
       dongHang: p.gio,
@@ -9594,7 +9610,14 @@ window.bhHoanThanh = async function(daTraQuaQR) {
       ghiChu: p.ghiChu || '',
       nguoiBan: { uid: currentUser.uid, ten: currentUserData?.ten || currentUser?.email || '' },
       taoLuc: serverTimestamp()
-    });
+    };
+    await setDoc(doc(db, 'don_ban_le', maDon), donMoi);
+
+    // In bill tự động — lỗi in không được làm hỏng việc bán, chỉ báo để bấm in lại
+    if (tuInBill) {
+      taoLenhInHoaDon({ ...donMoi, taoLuc: new Date() })
+        .catch(e => { console.error('[tự in bill]', e); showToast(`Chưa gửi được lệnh in ${maDon} — vào Đơn bán lẻ bấm In bill`, true); });
+    }
 
     await dieuChinhTonKhoApp(
       p.gio.map(d => ({ sku: d.sku, sl: d.soLuong })), -1, 'cuahang',
@@ -17017,7 +17040,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v458</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v459</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17071,7 +17094,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v458</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v459</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17113,7 +17136,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v458</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v459</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
