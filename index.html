@@ -9416,7 +9416,10 @@ window.moFormThemHangDon = async function() {
       ${truongCoNhan('Mã SKU', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
       ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hh-giavon" placeholder="Ô nhập liệu">`) : ''}
       ${truongCoNhan('Giá bán', `<input type="number" id="hh-gia" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Tồn kho Sàn', `<input type="number" id="hh-soluong" placeholder="0" value="0">`)}
+      <div style="display:flex;gap:8px">
+        <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="hh-toncuahang" placeholder="0" value="0">`)}</div>
+        <div style="flex:1">${truongCoNhan('Tồn kho Sàn', `<input type="number" id="hh-soluong" placeholder="0" value="0">`)}</div>
+      </div>
       ${renderNhomHangSelector('hh')}
       <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
       <div style="display:flex;gap:6px;margin-bottom:8px">
@@ -9628,6 +9631,7 @@ window.luuHangHoa = async function(laComboParam) {
       cao: parseFloat(document.getElementById('hh-cao')?.value) || 0
     },
     canNang: parseFloat(document.getElementById('hh-cannang')?.value) || 0,
+    tonCuaHang: laCombo ? 0 : (parseInt(document.getElementById('hh-toncuahang')?.value) || 0),
     laCombo,
     thanhPhanCombo: laCombo ? comboThanhPhan : [],
     createdAt: serverTimestamp(),
@@ -9668,7 +9672,10 @@ window.moFormSuaHangHoa = async function(id) {
       ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hhs-giavon-${id}" placeholder="Ô nhập liệu" value="${s.giaVon||0}">`) : ''}
       ${truongCoNhan('Giá bán', `<input type="number" id="hhs-gia-${id}" placeholder="Ô nhập liệu" value="${s.gia||0}">`)}
       <input type="hidden" id="hhs-la-combo-${id}" value="${s.laCombo ? '1':'0'}">
-      ${!s.laCombo ? `${truongCoNhan('Tồn kho Sàn', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${layTon(s, 'san')}">`)}` : `
+      ${!s.laCombo ? `<div style="display:flex;gap:8px">
+        <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="hhs-toncuahang-${id}" placeholder="0" value="${layTon(s, 'cuahang')}" data-cu="${layTon(s, 'cuahang')}">`)}</div>
+        <div style="flex:1">${truongCoNhan('Tồn kho Sàn', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${layTon(s, 'san')}" data-cu="${layTon(s, 'san')}">`)}</div>
+      </div>` : `
       <div style="margin-bottom:8px">
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
         <div class="field sku-wrap">
@@ -9742,7 +9749,12 @@ window.luuSuaHangHoa = async function(id) {
   const s = allSKUs.find(x => x.id === id);
   const laCombo = document.getElementById(`hhs-la-combo-${id}`)?.value === '1';
   if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
-  updateData.soLuongTon = laCombo ? 0 : (parseInt(document.getElementById(`hhs-soluong-${id}`)?.value) || 0);
+  // Tồn kho: so với số lúc mở form, chỉ ghi phần chênh lệch (cộng/trừ) và ghi thẻ kho —
+  // trong lúc sửa có ai bán thì số đó không bị đè mất
+  const oTonCH = document.getElementById(`hhs-toncuahang-${id}`);
+  const oTonSan = document.getElementById(`hhs-soluong-${id}`);
+  const lechCH = (!laCombo && oTonCH) ? (parseInt(oTonCH.value) || 0) - (parseInt(oTonCH.dataset.cu) || 0) : 0;
+  const lechSan = (!laCombo && oTonSan) ? (parseInt(oTonSan.value) || 0) - (parseInt(oTonSan.dataset.cu) || 0) : 0;
   updateData.laCombo = laCombo;
   updateData.thanhPhanCombo = laCombo ? comboThanhPhan : [];
   // Giá vốn ghi vào collection riêng, không nhét vào updateData của skus
@@ -9767,19 +9779,26 @@ window.luuSuaHangHoa = async function(id) {
     // Mã SKU đã đổi -> tên tài liệu phải đổi theo. Kiểm tra không trùng mã khác trước khi đổi.
     const daTonTai = await getDoc(doc(db, 'skus', sku));
     if (daTonTai.exists()) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể đổi trùng`, true); return; }
-    await tachTonSanKhiGhi(sku, updateData);
     const { soLuongTon: _bo, soLuongDatHang: _bo2, ...sCu } = (s || {});
     await setDoc(doc(db, 'skus', sku), { ...sCu, ...updateData });
     await deleteDoc(doc(db, 'skus', id));
+    // Tồn Sàn đi theo mã mới
+    const tonSanCu = tonSanMap.get(id);
+    if (tonSanCu) {
+      await setDoc(doc(db, 'ton_san', sku), tonSanCu, { merge: true });
+      try { await deleteDoc(doc(db, 'ton_san', id)); } catch(e) {}
+    }
     // Giá vốn dùng mã SKU làm tên tài liệu nên cũng phải dọn bản cũ,
     // nếu không sẽ để lại rác và mã mới mất giá vốn.
     if (currentUserData.role === 'admin') {
       try { await deleteDoc(doc(db, 'gia_von', id)); } catch(e) {}
     }
   } else {
-    await tachTonSanKhiGhi(id, updateData);
     await updateDoc(doc(db,'skus', id), updateData);
   }
+  const ctSuaTon = { loai: 'Điều chỉnh khi sửa hàng hóa', ma: sku };
+  if (lechCH) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechCH) }], Math.sign(lechCH), 'cuahang', ctSuaTon);
+  if (lechSan) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechSan) }], Math.sign(lechSan), 'san', ctSuaTon);
   if (giaVonMoi !== null) await luuGiaVon(sku, giaVonMoi);
   showToast('Đã cập nhật hàng hóa');
   hangHoaSuaAnhBlob = null;
@@ -16240,7 +16259,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v465</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v466</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16294,7 +16313,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v465</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v466</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16336,7 +16355,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v465</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v466</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
