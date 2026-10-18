@@ -1561,7 +1561,7 @@ function roleLabel(r) {
 
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
-  baocao: 'baocao', hanghoa: 'hanghoa', hanghoach: 'hanghoa_ch', banhang: 'banhang',
+  baocao: 'baocao', hanghoa: 'hanghoa', banhang: 'banhang',
   thanhtoan: 'tmdt_ketnoi', donbanle: 'banhang', tmdt: 'tmdt',
   quetdonggoi: 'quetdonggoi',
   danhsachnv: 'nhanvien', chamcong: 'nv_chamcong'
@@ -1570,6 +1570,7 @@ const ANH_XA_QUYEN_THEO_MOD = {
 };
 
 window.switchModule = function(mod) {
+  if (mod === 'hanghoach') mod = 'hanghoa';   // màn "Hàng hóa CH" cũ đã gộp vào Hàng hóa
   // Chặn thật ở tầng hàm — không chỉ ẩn nút, còn chặn cả gọi trực tiếp qua Console
   if (currentUserData.role !== 'admin') {
     if (mod === 'thietlapluong' || mod === 'calamviec' || mod === 'hethong' || mod === 'baocao') {
@@ -1655,15 +1656,6 @@ window.switchModule = function(mod) {
     document.getElementById('panel-banhang-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderBanHang();
-    return;
-  }
-  if (mod === 'hanghoach') {
-    // Hàng hóa cửa hàng — chỉ tồn kho quầy, cho nhân viên kiểm kho.
-    // Không hiện tồn kho sàn và giá vốn để đỡ rối và đỡ lộ thông tin.
-    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
-    document.getElementById('panel-hanghoach-main').style.display = 'block';
-    document.getElementById('sub-tab-bar').style.display = 'none';
-    renderHangHoaCuaHang();
     return;
   }
   if (mod === 'hanghoa') {
@@ -1772,6 +1764,48 @@ let hangHoaSearchQuery = '';
 let hangHoaAnhBlob = null;
 let comboThanhPhan = []; // [{skuId, sku, ten, tyLe}] — thành phần đang xây dựng khi tạo/sửa SKU Combo
 
+// ===== CHỌN KHO TRÊN MÀN HÀNG HÓA =====
+// 'ch' = Cửa hàng, 'san' = Sàn, 'ca' = cả hai (chỉ khi được xem cả 2 kho). Mỗi máy nhớ lựa chọn.
+let khoHangHoa = (() => { try { return localStorage.getItem('khoHangHoa') || ''; } catch(e) { return ''; } })();
+
+function cacKhoHangHoaDuocXem() {
+  const laAdmin = currentUserData?.role === 'admin';
+  const q = laAdmin ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
+  const ds = [];
+  if (q.hh_kho_ch) ds.push('ch');
+  if (q.hh_kho_san) ds.push('san');   // nhân viên: locQuyen đã tắt quyền này khi Sàn TMĐT tắt
+  if (ds.length === 2) ds.push('ca');
+  return ds;
+}
+
+function khoHangHoaDangXem() {
+  const ds = cacKhoHangHoaDuocXem();
+  if (ds.includes(khoHangHoa)) return khoHangHoa;
+  return ds.includes('ca') ? 'ca' : (ds[0] || '');
+}
+
+function veChonKhoHangHoa() {
+  const el = document.getElementById('hh-chon-kho');
+  if (!el) return;
+  const ds = cacKhoHangHoaDuocXem();
+  const dang = khoHangHoaDangXem();
+  const ten = { ch: '🏪 Cửa hàng', san: '🛒 Sàn', ca: 'Cả hai kho' };
+  el.innerHTML = ds.length > 1 ? ds.map(k => `
+    <button class="${k === dang ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:8px 6px;font-size:13px"
+      onclick="chonKhoHangHoa('${k}')">${ten[k]}</button>`).join('') : '';
+  el.style.display = ds.length > 1 ? 'flex' : 'none';
+  const nutTem = document.getElementById('nut-gio-tem');
+  if (nutTem) nutTem.style.display = (dang === 'ch' || dang === 'ca') ? '' : 'none';
+}
+
+window.chonKhoHangHoa = function(k) {
+  khoHangHoa = k;
+  try { localStorage.setItem('khoHangHoa', k); } catch(e) {}
+  veChonKhoHangHoa();
+  hangHoaPage = 1;
+  renderHangHoaList();
+};
+
 async function renderHangHoaTab() {
   const el = document.getElementById('hanghoa-content');
   // Reset bộ lọc mỗi khi vào lại tab — tránh lệch giữa ô tìm kiếm (mới, trống) và dữ liệu lọc (cũ, còn giữ)
@@ -1788,7 +1822,12 @@ async function renderHangHoaTab() {
     await napGiaVon();
   }
   const qHH = currentUserData.role === 'admin' ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
+  if (!cacKhoHangHoaDuocXem().length) {
+    el.innerHTML = '<p class="info-note">Vai trò của bạn chưa được xem kho nào. Nhờ Admin tick "Xem kho Cửa hàng" hoặc "Xem kho Sàn" trong vai trò.</p>';
+    return;
+  }
   el.innerHTML = `
+    <div id="hh-chon-kho" style="display:flex;gap:6px;margin-bottom:10px"></div>
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <input type="text" id="hanghoa-search" placeholder="Tìm tên / mã SKU..." oninput="filterHangHoaList(this.value)" style="flex:1">
       <button class="btn-outline" id="nut-gio-tem" onclick="moGioTem()" style="white-space:nowrap">🏷 In tem giá${tongSoTem() ? ` (${tongSoTem()})` : ''}</button>
@@ -1813,6 +1852,7 @@ async function renderHangHoaTab() {
       </select>
     </div>
     <div id="hanghoa-list"></div>`;
+  veChonKhoHangHoa();
   document.querySelector('#hanghoa-content select').value = String(hangHoaPageSize);
   renderHangHoaNhomFilters();
   renderHangHoaList();
@@ -5717,105 +5757,6 @@ window.nhLuuPhieu = async function(luuThat) {
 // số đó. Giá vốn vẫn hiện cho Admin như bên Hàng hóa.
 // Kiểm kho tách sang tab riêng để màn hình này gọn, chỉ dùng để tra cứu.
 // ==========================================================================
-let hhchTimKiem = '';
-let hhchNhom1 = '', hhchNhom2 = '', hhchNhom3 = '';
-let hhchTrang = 1;
-const HHCH_MOI_TRANG = 30;
-
-async function renderHangHoaCuaHang() {
-  const el = document.getElementById('hanghoach-content');
-  if (!el) return;
-  if (!allSKUs.length) {
-    el.innerHTML = '<div class="loading">Đang tải...</div>';
-    await loadSKUs();
-  }
-  hhchTrang = 1;
-  veManHinhHangHoaCH();
-}
-
-function veManHinhHangHoaCH() {
-  const el = document.getElementById('hanghoach-content');
-  if (!el) return;
-  const parts = [hhchNhom1, hhchNhom2, hhchNhom3].filter(Boolean);
-  el.innerHTML = `
-    <input type="text" id="hhch-tim" placeholder="Tìm tên / mã SKU..." value="${escHtml(hhchTimKiem)}"
-      oninput="hhchDoiTim(this.value)" style="width:100%;margin-bottom:8px">
-    <div style="display:flex;gap:6px;margin-bottom:10px">
-      <button type="button" onclick="moModalChonNhomHang('hhch-filter')"
-        style="flex:1;text-align:left;background:#fff;border:1.5px solid var(--border);padding:10px 12px;border-radius:8px;font-size:13px;font-weight:500;color:var(--text);cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px">
-        <span>${parts.length ? escHtml(parts.join(' > ')) : 'Lọc theo nhóm hàng'}</span><span style="color:var(--text2)">▾</span>
-      </button>
-      ${parts.length ? `<button type="button" class="btn-outline" style="width:auto;padding:0 12px" onclick="hhchXoaLocNhom()">✕</button>` : ''}
-    </div>
-    <input type="hidden" id="hhch-filter-nhom1-val" value="${escHtml(hhchNhom1)}">
-    <input type="hidden" id="hhch-filter-nhom2-val" value="${escHtml(hhchNhom2)}">
-    <input type="hidden" id="hhch-filter-nhom3-val" value="${escHtml(hhchNhom3)}">
-    <div id="hhch-list"></div>
-    <div id="hhch-phantrang"></div>`;
-  veDanhSachHangHoaCH();
-}
-
-function hhchLocDanhSach() {
-  const tim = hhchTimKiem.trim().toLowerCase();
-  return allSKUs.filter(s => {
-    // Bỏ bản ghi rác không có cả tên lẫn mã — trước đây chúng hiện thành ô trống
-    if (!String(s.ten || '').trim() && !String(s.sku || '').trim()) return false;
-    if (hhchNhom1 && s.nhom1 !== hhchNhom1) return false;
-    if (hhchNhom2 && s.nhom2 !== hhchNhom2) return false;
-    if (hhchNhom3 && s.nhom3 !== hhchNhom3) return false;
-    if (!tim) return true;
-    return String(s.ten || '').toLowerCase().includes(tim)
-        || String(s.sku || '').toLowerCase().includes(tim);
-  }).sort((a, b) => String(a.ten || '').localeCompare(String(b.ten || ''), 'vi'));
-}
-
-function veDanhSachHangHoaCH() {
-  const el = document.getElementById('hhch-list');
-  if (!el) return;
-  const laAdmin = currentUserData.role === 'admin';
-  const ds = hhchLocDanhSach();
-  if (!ds.length) { el.innerHTML = '<p class="info-note">Không tìm thấy hàng hóa nào.</p>'; return; }
-
-  const tongTrang = Math.max(1, Math.ceil(ds.length / HHCH_MOI_TRANG));
-  if (hhchTrang > tongTrang) hhchTrang = tongTrang;
-  const trang = ds.slice((hhchTrang - 1) * HHCH_MOI_TRANG, hhchTrang * HHCH_MOI_TRANG);
-
-  el.innerHTML = `<div style="font-size:11px;color:var(--text2);margin-bottom:6px">${ds.length} mã hàng</div>`
-    + trang.map(s => {
-    const ton = layTon(s, 'cuahang');
-    return `
-    <div onclick="moTheKho('${escHtml(s.sku)}','cuahang')" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer">
-      <div style="display:flex;gap:10px;align-items:center">
-        ${s.anhFileId
-          ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0">`
-          : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:600;font-size:14px">${escHtml(s.ten || '(chưa đặt tên)')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:10px;padding:1px 5px;border-radius:4px">COMBO</span>' : ''}</div>
-          <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku || '—')}</div>
-          <div style="font-size:12px;color:var(--text2)">${laAdmin ? `Vốn: ${fmt(s.giaVon || 0)}đ · ` : ''}Bán: ${fmt(s.gia || 0)}đ</div>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:10px;color:var(--text2)">Tồn kho</div>
-          <div style="font-size:20px;font-weight:700;color:${ton <= 0 ? 'var(--red)' : 'var(--text)'}">${ton}</div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  const pt = document.getElementById('hhch-phantrang');
-  if (pt) pt.innerHTML = tongTrang > 1 ? `
-    <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin-top:10px">
-      <button class="btn-outline" style="width:auto;padding:8px 14px" ${hhchTrang <= 1 ? 'disabled' : ''} onclick="hhchDoiTrang(-1)">‹</button>
-      <span style="font-size:13px;color:var(--text2)">Trang ${hhchTrang}/${tongTrang}</span>
-      <button class="btn-outline" style="width:auto;padding:8px 14px" ${hhchTrang >= tongTrang ? 'disabled' : ''} onclick="hhchDoiTrang(1)">›</button>
-    </div>` : '';
-}
-
-window.hhchDoiTim = function(v) { hhchTimKiem = v; hhchTrang = 1; veDanhSachHangHoaCH(); };
-window.hhchDoiTrang = function(d) { hhchTrang += d; veDanhSachHangHoaCH(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-window.hhchXoaLocNhom = function() { hhchNhom1 = hhchNhom2 = hhchNhom3 = ''; hhchTrang = 1; veManHinhHangHoaCH(); };
-
-
 window.moTheKho = async function(maSku, maKho = 'cuahang') {
   const sku = allSKUs.find(s => s.sku === maSku);
   if (!sku) return;
@@ -9156,7 +9097,10 @@ function renderHangHoaList() {
     const tonCH = layTon(s, 'cuahang');
     const dat = Number(s.soLuongDatHang) || 0;
     const khaDung = tonSan - dat;
-    const canhBaoTon = (tonSan + tonCH) <= 0 ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
+    const kho = khoHangHoaDangXem();
+    const hienCH = kho === 'ch' || kho === 'ca', hienSan = kho === 'san' || kho === 'ca';
+    const het = kho === 'ch' ? tonCH <= 0 : kho === 'san' ? tonSan <= 0 : (tonSan + tonCH) <= 0;
+    const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
     return `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
@@ -9166,19 +9110,20 @@ function renderHangHoaList() {
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:15px;margin-bottom:2px">${escHtml(s.ten||'')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
-          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ - ` : ''}Bán: ${fmt(s.gia||0)}đ</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ` : '', hienCH ? `Bán: ${fmt(s.gia||0)}đ` : ''].filter(Boolean).join(' - ')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
-            ${(batTMDT || currentUserData.role === 'admin') ? `<span>Sàn: <b>${tonSan}</b>${dat > 0
+            ${hienSan ? `<span>Sàn: <b>${tonSan}</b>${dat > 0
               ? ` <span style="color:#D97706">(đặt ${dat}, còn ${khaDung})</span>` : ''}</span>` : ''}
-            <span>Cửa hàng: <b style="color:${tonCH <= 0 ? 'var(--red)' : 'var(--text)'}">${tonCH}</b></span>
+            ${hienCH ? `<span>Cửa hàng: <b style="color:${tonCH <= 0 ? 'var(--red)' : 'var(--text)'}">${tonCH}</b></span>` : ''}
             ${canhBaoTon}
           </div>
           ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
-          <button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho</button>
-          <button class="btn-xs" id="nut-tem-${s.id}" onclick="themVaoGioTem('${s.id}')">🏷 Tem${gioTem.get(s.id) ? ` (${gioTem.get(s.id).soLuong})` : ''}</button>
+          ${hienCH ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','cuahang')">Thẻ kho${kho === 'ca' ? ' CH' : ''}</button>` : ''}
+          ${hienSan ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho${kho === 'ca' ? ' Sàn' : ''}</button>` : ''}
+          ${hienCH ? `<button class="btn-xs" id="nut-tem-${s.id}" onclick="themVaoGioTem('${s.id}')">🏷 Tem${gioTem.get(s.id) ? ` (${gioTem.get(s.id).soLuong})` : ''}</button>` : ''}
           ${qHH2.hh_sua ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>` : ''}
           ${qHH2.hh_xoa ? `<button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
         </div>
@@ -9813,12 +9758,15 @@ const DANH_SACH_MODULE = [
     { key: 'nv_luong_tatca', ten: 'Bảng lương — xem tất cả' }
   ]},
   { key: 'banhang', ten: 'Bán hàng tại quầy', con: [] },
-  { key: 'hanghoa_ch', ten: 'Hàng hóa cửa hàng', con: [] },
-  { key: 'hanghoa', ten: 'Danh sách hàng hóa', con: [
-    { key: 'hh_them', ten: 'Thêm' },
-    { key: 'hh_sua', ten: 'Sửa' },
-    { key: 'hh_xoa', ten: 'Xóa' },
-    { key: 'hh_xuatfile', ten: 'Xuất file' }
+  // Hàng hóa: MỘT màn hình, xem kho nào do 2 quyền con quyết định.
+  // Thông tin hàng (tên, giá bán, ảnh, nhóm) là chung cho cả 2 kho.
+  { key: 'hanghoa', ten: 'Hàng hóa', con: [
+    { key: 'hh_kho_ch', ten: 'Xem kho Cửa hàng (tồn, giá bán, in tem giá)' },
+    { key: 'hh_kho_san', ten: 'Xem kho Sàn (tồn, đang đặt) — chỉ hiện khi bật Sàn TMĐT' },
+    { key: 'hh_them', ten: 'Thêm hàng' },
+    { key: 'hh_sua', ten: 'Sửa thông tin hàng (tên, giá bán, ảnh, nhóm)' },
+    { key: 'hh_xoa', ten: 'Xóa hàng' },
+    { key: 'hh_xuatfile', ten: 'Xuất / nhập file Excel' }
   ]},
   // Màn hình nhân viên đóng gói dùng hằng ngày — quét 1 lần, xem hàng, bấm hoàn thành.
   // Để riêng ngoài sidebar vì họ chỉ dùng đúng cái này.
@@ -9856,7 +9804,7 @@ function layQuyenFallbackChuaMigrate() {
     lichca:true, lichca_xepca:laQuanLy, baocao:false,
     nhanvien:laQuanLy, nv_taotk:false, nv_capmk:false, nv_xoatk:false, nv_ganvaitro:false,
     nv_chamcong:laQuanLy, nv_luong_minh:laQuanLy, nv_luong_tatca:laQuanLy,
-    hanghoa:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
+    hanghoa:false, hh_kho_ch:false, hh_kho_san:false, hh_them:false, hh_sua:false, hh_xoa:false, hh_xuatfile:false,
     tmdt:false, tmdt_donhang:false, tmdt_sanpham:false, tmdt_daytonkho:false, tmdt_nhaphang:false, tmdt_ketnoi:false,
     quetdonggoi:false
   };
@@ -9882,10 +9830,8 @@ const NHOM_MENU = [
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
-    // Một mục Hàng hóa duy nhất: ai có quyền danh sách gốc thì mở danh sách gốc (có in tem giá),
-    // chỉ có quyền "Hàng hóa cửa hàng" thì mở màn tồn cửa hàng như cũ
-    { key: 'hanghoa',   ten: 'Hàng hóa',       quyen: ['hanghoa', 'hanghoa_ch'],
-      moGi: () => switchModule(coQuyenMuc('hanghoa') ? 'hanghoa' : 'hanghoach') }
+    // Một màn Hàng hóa, trên cùng chọn kho (Cửa hàng / Sàn / Cả hai) theo quyền
+    { key: 'hanghoa',   ten: 'Hàng hóa',       quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
@@ -10111,7 +10057,7 @@ let unsubscribeVaiTroDoc = null;
 // Sàn TMĐT tắt -> nhân viên không thấy cả nhóm Sàn (kể cả Đóng gói); Admin vẫn thấy để làm tiếp.
 let batTMDT = false;
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt', 'tmdt_donhang', 'tmdt_sanpham', 'tmdt_daytonkho', 'tmdt_nhaphang', 'tmdt_ketnoi', 'quetdonggoi'];
+const KHOA_TMDT = ['tmdt', 'tmdt_donhang', 'tmdt_sanpham', 'tmdt_daytonkho', 'tmdt_nhaphang', 'tmdt_ketnoi', 'quetdonggoi', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -10137,6 +10083,12 @@ function theoDoiTinhNang() {
 // Quyền thật của nhân viên = quyền vai trò, trừ các khóa chỉ Admin và tính năng đang tắt
 function locQuyen(q) {
   const r = { ...(q || {}) };
+  // Vai trò lưu từ trước khi có quyền theo kho (Admin lưu lại vai trò là hết cần đoạn này):
+  //   "Hàng hóa cửa hàng" cũ  -> Hàng hóa, chỉ xem kho Cửa hàng
+  //   "Danh sách hàng hóa" cũ -> Hàng hóa, xem cả 2 kho (đúng như màn cũ)
+  if (r.hanghoa_ch && !r.hanghoa) { r.hanghoa = true; if (r.hh_kho_ch === undefined) r.hh_kho_ch = true; }
+  if (r.hanghoa && r.hh_kho_ch === undefined && r.hh_kho_san === undefined) { r.hh_kho_ch = true; r.hh_kho_san = true; }
+  delete r.hanghoa_ch;
   DANH_SACH_MODULE.forEach(m => {
     if (m.chiAdmin) r[m.key] = false;
     (m.con || []).forEach(c => { if (c.chiAdmin) r[c.key] = false; });
@@ -10234,7 +10186,7 @@ window.khoiTaoVaiTroMacDinh = async function() {
         lichca: true, lichca_xepca: true, baocao: false,
         nhanvien: true, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
         nv_chamcong: true, nv_luong_minh: true, nv_luong_tatca: true,
-        hanghoa: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
+        hanghoa: false, hh_kho_ch: false, hh_kho_san: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
       },
       createdAt: serverTimestamp()
     });
@@ -10248,7 +10200,7 @@ window.khoiTaoVaiTroMacDinh = async function() {
         lichca: true, lichca_xepca: false, baocao: false,
         nhanvien: false, nv_taotk: false, nv_capmk: false, nv_xoatk: false, nv_ganvaitro: false,
         nv_chamcong: false, nv_luong_minh: false, nv_luong_tatca: false,
-        hanghoa: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
+        hanghoa: false, hh_kho_ch: false, hh_kho_san: false, hh_them: false, hh_sua: false, hh_xoa: false, hh_xuatfile: false
       },
       createdAt: serverTimestamp()
     });
@@ -10361,7 +10313,7 @@ function layIdNhomChonSauCung() {
 function capNhatTrangThaiXacNhan() {
   const btn = document.getElementById('nhomhang-modal-xacnhan-btn');
   if (!btn) return;
-  if (nhomHangModalState.prefix === 'hanghoa-filter' || nhomHangModalState.prefix === 'hhch-filter') {
+  if (nhomHangModalState.prefix === 'hanghoa-filter') {
     btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; return;
   }
   const idSauCung = layIdNhomChonSauCung();
@@ -10431,7 +10383,7 @@ window.luuNhomMoiTrongCot = async function(cap) {
 window.xacNhanChonNhomHang = function() {
   const { prefix, nhom1, nhom2, nhom3 } = nhomHangModalState;
 
-  const laBoLoc = prefix === 'hanghoa-filter' || prefix === 'hhch-filter';
+  const laBoLoc = prefix === 'hanghoa-filter';
   if (!laBoLoc) {
     // Bắt buộc chọn tới đúng nhóm cuối cùng (không còn nhóm con) — nếu không, phân cấp sẽ vô nghĩa
     const idSauCung = layIdNhomChonSauCung();
@@ -10443,13 +10395,6 @@ window.xacNhanChonNhomHang = function() {
     hangHoaPage = 1;
     renderHangHoaNhomFilters();
     renderHangHoaList();
-    dongModalNhomHang();
-    return;
-  }
-  if (prefix === 'hhch-filter') {
-    hhchNhom1 = nhom1; hhchNhom2 = nhom2; hhchNhom3 = nhom3;
-    hhchTrang = 1;
-    veManHinhHangHoaCH();
     dongModalNhomHang();
     return;
   }
@@ -16144,7 +16089,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v460</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v461</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16198,7 +16143,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v460</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v461</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16240,7 +16185,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v460</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v461</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -16633,9 +16578,6 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <div id="banhang-content"></div>
       </div>
 
-      <div class="panel" id="panel-hanghoach-main">
-        <div id="hanghoach-content"></div>
-      </div>
 
       <div class="panel" id="panel-hanghoa-main">
         <div id="hanghoa-content"><div class="loading">Đang tải...</div></div>
