@@ -1,6 +1,93 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
+<style>
+.ht-nen{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:5000;display:flex;align-items:center;justify-content:center;
+  padding:20px;opacity:0;transition:opacity .15s ease}
+.ht-nen.hien{opacity:1}
+.ht-hop{background:#fff;width:100%;max-width:320px;border-radius:16px;box-shadow:0 18px 40px rgba(0,0,0,.22);
+  padding:20px 18px 14px;transform:scale(.94);transition:transform .15s ease;font-family:inherit}
+.ht-nen.hien .ht-hop{transform:scale(1)}
+.ht-tieude{font-size:17px;font-weight:700;text-align:center;color:#111827;line-height:1.35}
+.ht-noidung{font-size:14px;color:#4B5563;text-align:center;margin-top:8px;white-space:pre-line;line-height:1.45;max-height:46vh;overflow-y:auto}
+.ht-o{width:100%;margin-top:12px;padding:10px 12px;font-size:15px;border:1.5px solid #D1D5DB;border-radius:10px;box-sizing:border-box}
+.ht-nut{display:flex;gap:10px;margin-top:18px}
+.ht-nut button{flex:1;border:none;border-radius:10px;padding:11px 8px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
+.ht-huy{background:#F3F4F6;color:#374151}
+.ht-dongy{background:#16A34A;color:#fff}
+.ht-dongy.nguy{background:#DC2626}
+.ht-nut button:active{filter:brightness(.92)}
+</style>
+<script>
+// Hộp thoại kiểu app điện thoại thay cho confirm/alert/prompt mặc định của trình duyệt.
+// hoiXacNhan(noiDung, tuyChon) -> Promise<boolean>; hoiNhap(noiDung, macDinh) -> Promise<string|null>
+(function() {
+  function tachNoiDung(noiDung, macDinhTieuDe) {
+    const chu = String(noiDung == null ? '' : noiDung).trim();
+    const doan = chu.split(/\n\s*\n/);
+    if (doan.length > 1) return { tieuDe: doan[0].trim(), than: doan.slice(1).join('\n\n').trim() };
+    if (chu.length <= 70 && !chu.includes('\n')) return { tieuDe: chu, than: '' };
+    return { tieuDe: macDinhTieuDe, than: chu };
+  }
+  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  let hang = Promise.resolve();
+  function mo({ tieuDe, than, nutDongY, nutHuy, nguy, coO, macDinh }) {
+    return new Promise(xong => {
+      const nen = document.createElement('div');
+      nen.className = 'ht-nen';
+      nen.innerHTML = `<div class="ht-hop" role="dialog" aria-modal="true">
+        <div class="ht-tieude">${esc(tieuDe)}</div>
+        ${than ? `<div class="ht-noidung">${esc(than)}</div>` : ''}
+        ${coO ? `<input class="ht-o" value="${esc(macDinh || '')}">` : ''}
+        <div class="ht-nut">
+          ${nutHuy ? `<button class="ht-huy">${esc(nutHuy)}</button>` : ''}
+          <button class="ht-dongy${nguy ? ' nguy' : ''}">${esc(nutDongY)}</button>
+        </div></div>`;
+      document.body.appendChild(nen);
+      requestAnimationFrame(() => nen.classList.add('hien'));
+      const o = nen.querySelector('.ht-o');
+      const dong = (kq) => {
+        document.removeEventListener('keydown', phim, true);
+        nen.classList.remove('hien');
+        setTimeout(() => nen.remove(), 150);
+        xong(kq);
+      };
+      const dongY = () => dong(coO ? o.value : true);
+      const huy = () => dong(coO ? null : false);
+      const phim = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); nutHuy ? huy() : dongY(); }
+        else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); dongY(); }
+      };
+      document.addEventListener('keydown', phim, true);
+      nen.querySelector('.ht-dongy').onclick = dongY;
+      const nh = nen.querySelector('.ht-huy');
+      if (nh) nh.onclick = huy;
+      nen.addEventListener('click', (e) => { if (e.target === nen && nutHuy) huy(); });
+      setTimeout(() => (o || nen.querySelector('.ht-dongy')).focus(), 60);
+    });
+  }
+  // Xếp hàng: hộp sau chỉ hiện khi hộp trước đã đóng
+  function xepHang(tuyChon) { const p = hang.then(() => mo(tuyChon)); hang = p.catch(() => {}); return p; }
+
+  window.hoiXacNhan = function(noiDung, tc = {}) {
+    const { tieuDe, than } = tachNoiDung(noiDung, 'Xác nhận');
+    const nguy = tc.nguy ?? /^(xóa|hủy|bỏ|xoá)/i.test(tieuDe);
+    return xepHang({ tieuDe: tc.tieuDe || tieuDe, than: tc.tieuDe ? String(noiDung) : than,
+      nutDongY: tc.nutDongY || 'Đồng ý', nutHuy: tc.nutHuy || (nguy ? 'Quay lại' : 'Hủy'), nguy });
+  };
+  window.hoiNhap = function(noiDung, macDinh = '') {
+    const { tieuDe, than } = tachNoiDung(noiDung, 'Nhập thông tin');
+    return xepHang({ tieuDe, than, nutDongY: 'Xong', nutHuy: 'Hủy', coO: true, macDinh });
+  };
+  window.thongBaoHop = function(noiDung) {
+    const { tieuDe, than } = tachNoiDung(noiDung, 'Thông báo');
+    return xepHang({ tieuDe, than, nutDongY: 'Đã hiểu' });
+  };
+  // alert() mặc định -> hộp thông báo cùng kiểu (không chặn luồng chạy)
+  window.alert = function(noiDung) { window.thongBaoHop(noiDung); };
+})();
+</script>
+
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="mobile-web-app-capable" content="yes">
@@ -307,7 +394,7 @@ async function ghiLichCongKhai(shiftId, { ngay, uid, ten, caId, tenCa, loaiCa })
   } catch (e) { console.error('Lỗi ghi lịch công khai:', e); }
 }
 window.xoaLichCa = async function(shiftId) {
-  if (!confirm('Xóa ca này khỏi lịch?')) return;
+  if (!await hoiXacNhan('Xóa ca này khỏi lịch?')) return;
   try {
     // Đánh dấu xóa thay vì xóa hẳn — giữ dấu vết để đối chiếu khi cần
     await updateDoc(doc(db, 'lich_ca', shiftId), {
@@ -1199,7 +1286,7 @@ window.luuXepCaTuan = async function() {
   renderLichCaTab();
 };
 
-window.thoatCa = function() {
+window.thoatCa = async function() {
   const today = getTodayISO();
   if (currentShiftNgay && currentShiftNgay !== today) {
     // Đã qua 12h đêm — không cho checkout ca hôm qua nữa
@@ -1213,8 +1300,8 @@ window.thoatCa = function() {
     })();
     return;
   }
-  if (!confirm('Thoát ca? Cần quét QR tại cửa hàng để xác nhận check-out.')) return;
-  if (!confirm('Đã tắt hết máy lạnh, quạt, đèn?')) return;
+  if (!await hoiXacNhan('Thoát ca? Cần quét QR tại cửa hàng để xác nhận check-out.')) return;
+  if (!await hoiXacNhan('Đã tắt hết máy lạnh, quạt, đèn?')) return;
   batDauCheckout();
 };
 
@@ -2168,7 +2255,7 @@ window.tuDongKhopToanBo = async function() {
   }
 
   if (!canGhi.length) { alert('Không tìm thấy SKU nào khớp tự động được.\n\nCó thể mã SKU trên sàn đặt khác mã nội bộ — những trường hợp đó phải liên kết thủ công.'); return; }
-  if (!confirm(`Tìm thấy ${soSkuKhop} SKU con khớp mã chính xác, thuộc ${canGhi.length} sản phẩm.\n\nLiên kết đã gán tay trước đó sẽ được giữ nguyên, không bị đè.\n\nXác nhận lưu?`)) return;
+  if (!await hoiXacNhan(`Tìm thấy ${soSkuKhop} SKU con khớp mã chính xác, thuộc ${canGhi.length} sản phẩm.\n\nLiên kết đã gán tay trước đó sẽ được giữ nguyên, không bị đè.\n\nXác nhận lưu?`)) return;
 
   showToast('Đang lưu liên kết...');
   for (let i = 0; i < canGhi.length; i += 400) {
@@ -2304,7 +2391,7 @@ window.themSkuVaoDayTon = async function() {
 window.boSkuKhoiDayTon = async function(ma) {
   const s = allSKUs.find(x => x.sku === ma);
   if (!s) return;
-  if (!confirm(`Bỏ "${ma}" khỏi danh sách đẩy tồn kho?\n\nTồn kho hiện tại trên sàn sẽ giữ nguyên, không bị thay đổi — chỉ là từ nay không đẩy nữa.`)) return;
+  if (!await hoiXacNhan(`Bỏ "${ma}" khỏi danh sách đẩy tồn kho?\n\nTồn kho hiện tại trên sàn sẽ giữ nguyên, không bị thay đổi — chỉ là từ nay không đẩy nữa.`)) return;
   await updateDoc(doc(db, 'skus', s.id), { dayTonKho: false });
   s.dayTonKho = false;
   showToast(`Đã bỏ ${ma} khỏi danh sách`);
@@ -2326,7 +2413,7 @@ window.dayTonKhoNgay = async function(maSku) {
   const ds = maSku ? allSKUs.filter(s => s.sku === maSku && s.dayTonKho) : allSKUs.filter(s => s.dayTonKho);
   if (!ds.length) { showToast('Không có SKU nào để đẩy', true); return; }
 
-  if (!maSku && !confirm(`Đẩy tồn kho ${ds.length} SKU lên Lazada?\n\nTồn kho trên sàn của các SKU này sẽ bị ghi đè bằng số trong app.`)) return;
+  if (!maSku && !await hoiXacNhan(`Đẩy tồn kho ${ds.length} SKU lên Lazada?\n\nTồn kho trên sàn của các SKU này sẽ bị ghi đè bằng số trong app.`)) return;
 
   showToast('Đang đẩy tồn kho lên Lazada...');
   const idToken = await currentUser.getIdToken();
@@ -3427,7 +3514,7 @@ window.xacNhanNhapKho = async function() {
   const tongNhap = chiTiet.reduce((t, c) => t + c.soLuongNhap, 0);
   const dayDu = tongNhap === tongDon;
 
-  if (!tongNhap && !confirm('Không nhập lại món nào cả. Vẫn ghi nhận?')) return;
+  if (!tongNhap && !await hoiXacNhan('Không nhập lại món nào cả. Vẫn ghi nhận?')) return;
   if (!dayDu && !nkGhiChu.trim()) {
     alert('Nhập thiếu thì phải ghi lý do — để Admin xác nhận được.');
     return;
@@ -3511,7 +3598,7 @@ window.xacNhanNhapMotPhan = async function(idDon) {
 // Bỏ đánh dấu nhập kho — dùng khi bấm nhầm. KHÔNG trừ lại tồn tự động: thẻ kho
 // đã ghi rồi, muốn sửa tồn thì đi qua kiểm kho để còn dấu vết.
 window.boNhapLaiKho = async function(idDon) {
-  if (!confirm('Bỏ đánh dấu nhập kho?\n\nTồn kho đã cộng sẽ KHÔNG tự trừ lại — '
+  if (!await hoiXacNhan('Bỏ đánh dấu nhập kho?\n\nTồn kho đã cộng sẽ KHÔNG tự trừ lại — '
     + 'chỉnh lại bằng phiếu kiểm kho nếu cần.')) return;
   try {
     await updateDoc(doc(db, 'don_hang_san', idDon), {
@@ -4299,7 +4386,7 @@ window.chayDongBoDon = async function() {
   const keoPhieuDat = document.getElementById('dbd-phieu-dat')?.checked !== false;
 
   const soNgay = Math.round((new Date(denNgay) - new Date(tuNgay)) / 86400000) + 1;
-  if (soNgay > 60 && !confirm(`Khoảng ${soNgay} ngày là khá dài, có thể mất vài phút và
+  if (soNgay > 60 && !await hoiXacNhan(`Khoảng ${soNgay} ngày là khá dài, có thể mất vài phút và
 tốn nhiều lượt gọi máy chủ. Vẫn chạy?`)) return;
 
   dbdDangChay = true;
@@ -5347,7 +5434,7 @@ window.ktHoanThanhDongGoi = async function() {
   if (ktDon.thoiGianDongGoi) { showToast('Đơn này đã đóng gói rồi', true); return; }
   const hang = ktDon.chiTiet || [];
   if (ktDaTich.size < hang.length) {
-    if (!confirm(`Mới tích ${ktDaTich.size}/${hang.length} món.\n\nVẫn xác nhận đã đóng gói xong?`)) return;
+    if (!await hoiXacNhan(`Mới tích ${ktDaTich.size}/${hang.length} món.\n\nVẫn xác nhận đã đóng gói xong?`)) return;
   }
   try {
     await updateDoc(doc(db, 'don_hang_san', ktDon.id), {
@@ -5500,8 +5587,8 @@ window.nhThoatSoanPhieu = function() {
   veDanhSachPhieuNhap();
 };
 
-window.nhBoNhap = function() {
-  if (!confirm('Bỏ phiếu đang soạn dở?\n\nCác dòng đã nhập sẽ mất.')) return;
+window.nhBoNhap = async function() {
+  if (!await hoiXacNhan('Bỏ phiếu đang soạn dở?\n\nCác dòng đã nhập sẽ mất.')) return;
   nhXoaNhap();
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
@@ -5518,10 +5605,10 @@ window.nhMoLaiNhap = function() {
   veManHinhSoanPhieu();
 };
 
-window.nhTaoPhieuMoi = function() {
+window.nhTaoPhieuMoi = async function() {
   const nhap = nhDocNhap();
   if (nhap?.dongHang?.length &&
-      !confirm(`Đang có phiếu soạn dở ${nhap.dongHang.length} mã.\n\nTạo phiếu mới sẽ bỏ phiếu đó. Tiếp tục?`)) return;
+      !await hoiXacNhan(`Đang có phiếu soạn dở ${nhap.dongHang.length} mã.\n\nTạo phiếu mới sẽ bỏ phiếu đó. Tiếp tục?`)) return;
   nhXoaNhap();
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
@@ -5688,7 +5775,7 @@ window.nhLuuPhieu = async function(luuThat) {
       alert(`Còn ${thieu.length} mã chưa có đơn giá:\n\n${thieu.map(d => '· ' + d.ten).join('\n')}\n\nĐiền giá rồi lưu lại, hoặc dùng "Lưu phiếu tạm".`);
       return;
     }
-    if (!confirm('Lưu phiếu nhập?\n\nTồn kho Sàn sẽ tăng theo phiếu này. Không sửa lại được.')) return;
+    if (!await hoiXacNhan('Lưu phiếu nhập?\n\nTồn kho Sàn sẽ tăng theo phiếu này. Không sửa lại được.')) return;
   }
 
   const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
@@ -5775,19 +5862,20 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
     modal = document.createElement('div');
     modal.id = 'the-kho-modal';
     modal.className = 'modal-overlay';
-    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:flex-end;justify-content:center';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:12px';
     modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
     document.body.appendChild(modal);
   }
   modal.innerHTML = `
-    <div style="background:var(--surface);width:100%;max-width:600px;max-height:85vh;border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+    <div style="background:var(--surface);width:100%;max-width:600px;max-height:86vh;border-radius:14px;display:flex;flex-direction:column">
       <div style="padding:14px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center">
         ${sku.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px">` : ''}
         <div style="flex:1;min-width:0">
           <b style="font-size:15px">${escHtml(sku.ten || '')}</b>
           <div style="font-size:12px;color:var(--text2)">${escHtml(sku.sku || '')}</div>
         </div>
-        <button class="btn-outline" style="width:auto;padding:6px 12px" onclick="document.getElementById('the-kho-modal').style.display='none'">✕</button>
+        <button onclick="document.getElementById('the-kho-modal').style.display='none'" aria-label="Đóng"
+          style="flex:0 0 32px;width:32px;height:32px;padding:0;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);font-size:15px;line-height:1;cursor:pointer;color:var(--text2)">✕</button>
       </div>
       <div style="padding:10px 14px;background:var(--bg);font-size:13px">
         ${escHtml(tenKho)}: <b style="font-size:16px">${layTon(sku, maKho)}</b>
@@ -6620,7 +6708,7 @@ window.xacNhanTraHang = async function() {
   if (!hang.length) return;
   const tongHoan = hang.reduce((s, x) => s + x.tienHoan, 0);
 
-  if (!confirm(`Trả ${hang.length} mã · hoàn ${fmt(tongHoan)}đ tiền mặt cho khách?\n\n`
+  if (!await hoiXacNhan(`Trả ${hang.length} mã · hoàn ${fmt(tongHoan)}đ tiền mặt cho khách?\n\n`
     + hang.map(x => `· ${x.ten} ×${x.soLuong}`).join('\n'))) return;
 
   // Nhân viên chỉ tạo phiếu tạm — quản lý duyệt mới thực sự sửa hóa đơn và
@@ -6655,7 +6743,7 @@ window.duyetPhieuTra = async function(idPhieu) {
   const p = snap.data();
   if (p.trangThai !== 'cho_duyet') { showToast('Phiếu này đã xử lý rồi', true); return; }
 
-  if (!confirm(`Duyệt trả ${p.hang.length} mã · hoàn ${fmt(p.tienHoan)}đ?\n\n`
+  if (!await hoiXacNhan(`Duyệt trả ${p.hang.length} mã · hoàn ${fmt(p.tienHoan)}đ?\n\n`
     + p.hang.map(x => `· ${x.ten} ×${x.soLuong}`).join('\n')
     + `\n\nHóa đơn sẽ được sửa và kho cộng lại.`)) return;
 
@@ -6712,7 +6800,7 @@ window.duyetPhieuTra = async function(idPhieu) {
 
 window.tuChoiPhieuTra = async function(idPhieu) {
   if (!coQuyen('dbl_duyettra')) { showToast('Bạn không có quyền duyệt phiếu trả hàng', true); return; }
-  const lyDo = prompt('Lý do từ chối:');
+  const lyDo = await hoiNhap('Lý do từ chối:');
   if (lyDo === null) return;
   await updateDoc(doc(db, 'phieu_tra_hang', idPhieu), {
     trangThai: 'tu_choi',
@@ -7252,7 +7340,7 @@ window.soiHoanTra = async function() {
 //      gopDonTachDoi(true)    -> ghi thật
 window.gopDonTachDoi = async function(chayThat = false) {
   if (!currentUser) { console.error('Chưa đăng nhập'); return; }
-  if (chayThat && !confirm('Gộp thật và XÓA các tài liệu thừa?\n\n'
+  if (chayThat && !await hoiXacNhan('Gộp thật và XÓA các tài liệu thừa?\n\n'
     + 'Chạy gopDonTachDoi() trước để xem danh sách.')) return;
   const idToken = await currentUser.getIdToken();
   const res = await fetch(WORKER_URL, {
@@ -8168,7 +8256,7 @@ window.guiLenhIn = async function(idDon) {
   if (!d) return;
   try {
     await taoLenhInHoaDon(d);
-    showToast('Đã gửi lệnh in — bill sẽ ra ở máy in quầy');
+    showToast('Đã gửi lệnh in');
   } catch(e) {
     alert('Không gửi được lệnh in: ' + e.message);
   }
@@ -8506,10 +8594,35 @@ function veDayDuoi() {
 
     <button class="btn-g" id="bh-nut-xong" ${coHang ? '' : 'disabled'}
       style="width:100%;padding:12px;font-size:16px;${coHang ? '' : 'background:#D1D5DB;color:#6B7280;cursor:not-allowed'}"
-      onclick="${chiTienMat ? 'bhHoanThanh()' : 'bhMoKhungQR()'}">
-      ${chiTienMat ? 'Thanh toán' : 'Thanh toán · ' + fmt(canCK) + 'đ'}
+      onclick="bhXacNhanThanhToan()">
+      ${chiTienMat ? 'Thanh toán' : 'Mã QR thanh toán · ' + fmt(canCK) + 'đ'}
     </button>`;
 }
+
+// Bấm Thanh toán / Mã QR: hỏi lại ngắn gọn rồi mới làm
+let bhDangHoiTT = false;
+window.bhXacNhanThanhToan = async function() {
+  const p = bhPhieuHienTai();
+  if (!p || !p.gio.length || bhDangHoiTT || bhDangThanhToan) return;
+  const { phaiTra } = bhTinhTien(p);
+  const tienMat = p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : (p.cachTra === 'tienmat' ? phaiTra : 0);
+  const canCK = Math.max(0, phaiTra - tienMat);
+  let hoi;
+  if (canCK <= 0) {
+    const khachDua = Number(p.khachDua ?? phaiTra) || 0;
+    hoi = [`Thanh toán ${fmt(phaiTra)}đ`, `Tiền mặt${khachDua > phaiTra ? ` · trả lại khách ${fmt(khachDua - phaiTra)}đ` : ''}`, 'Thanh toán'];
+  } else if (tienMat > 0) {
+    hoi = [`Tạo mã QR ${fmt(canCK)}đ`, `Tiền mặt ${fmt(tienMat)}đ + Chuyển khoản ${fmt(canCK)}đ`, 'Tạo mã QR'];
+  } else {
+    hoi = [`Tạo mã QR ${fmt(canCK)}đ`, 'Chuyển khoản', 'Tạo mã QR'];
+  }
+  bhDangHoiTT = true;
+  let ok = false;
+  try { ok = await hoiXacNhan(`${hoi[0]}\n\n${hoi[1]}`, { nutDongY: hoi[2], nguy: false }); }
+  finally { bhDangHoiTT = false; }
+  if (!ok) return;
+  if (canCK <= 0) bhHoanThanh(); else bhMoKhungQR();
+};
 
 // ----- Khách hàng của phiếu: cửa sổ nhập SĐT + tên, SĐT đã lưu thì tự điền tên -----
 let bhKhTam = {};
@@ -8668,7 +8781,7 @@ async function bhMoKhungQRThat() {
     alert(`Kho Cửa hàng không đủ hàng:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nBạn không có quyền bán khi thiếu hàng — báo quản lý kiểm tra tồn kho.`);
     return;
   }
-  if (vuot.length && !confirm(
+  if (vuot.length && !await hoiXacNhan(
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán?`)) return;
 
   // Giỏ không đổi từ lần tạo QR trước -> dùng lại mã cũ, khỏi tạo hóa đơn mới.
@@ -8680,7 +8793,7 @@ async function bhMoKhungQRThat() {
     return;
   }
   if (p.maHoaDonKV && p.vanTayLucTaoQR !== vanTay) {
-    if (!confirm(`Đơn đã thay đổi từ lần tạo mã trước.\n\nTạo mã mới?\n(Hóa đơn ${p.maHoaDonKV} sẽ được hủy)`)) return;
+    if (!await hoiXacNhan(`Đơn đã thay đổi từ lần tạo mã trước.\n\nTạo mã mới?\n(Hóa đơn ${p.maHoaDonKV} sẽ được hủy)`)) return;
     await bhHuyHoaDonCu(p.maHoaDonKV);
     p.maHoaDonKV = null;
     p.anhQRDaTao = null;
@@ -8922,13 +9035,13 @@ window.bhTraNgay = async function() {
   }
 };
 
-window.bhDongKhungQR = function(huyDon) {
+window.bhDongKhungQR = async function(huyDon) {
   bhThoiNghe();
   const m = document.getElementById('bh-khung-qr');
   if (m) m.style.display = 'none';
   if (huyDon) {
     const p = bhPhieuHienTai();
-    if (p && !confirm('Hủy thanh toán đơn này?\n\nHàng vẫn giữ trong phiếu, hóa đơn tạm sẽ được hủy.')) {
+    if (p && !await hoiXacNhan('Hủy thanh toán đơn này?\n\nHàng vẫn giữ trong phiếu, hóa đơn tạm sẽ được hủy.')) {
       if (m) m.style.display = 'flex';
       bhNgheThanhToan(p.maHoaDonKV, 0);
       return;
@@ -8975,7 +9088,7 @@ window.datTaiKhoanQR = async function(nganHang, stk, tenChu) {
   }
   const cu = layCauHinhQR();
   if (cu.stk && cu.stk !== String(stk) &&
-      !confirm(`ĐỔI TÀI KHOẢN NHẬN TIỀN\n\nCũ:  ${cu.nganHang} ${cu.stk}\nMới: ${nganHang} ${stk}\n\nMọi mã QR từ giờ sẽ chuyển tiền vào tài khoản mới. Xác nhận?`)) return;
+      !await hoiXacNhan(`ĐỔI TÀI KHOẢN NHẬN TIỀN\n\nCũ:  ${cu.nganHang} ${cu.stk}\nMới: ${nganHang} ${stk}\n\nMọi mã QR từ giờ sẽ chuyển tiền vào tài khoản mới. Xác nhận?`)) return;
   try {
     await setDoc(doc(db, 'cau_hinh', 'thanh_toan'), {
       nganHang: String(nganHang).toUpperCase(),
@@ -9004,10 +9117,10 @@ window.bhMoPhieu = function(id) {
   if (p?.daBaoTraDu) setTimeout(() => bhHoanThanh(true), 200);
 };
 
-window.bhXoaPhieu = function(id) {
+window.bhXoaPhieu = async function(id) {
   const p = bhPhieu.find(x => x.id === id);
   if (!p) return;
-  if (p.gio.length && !confirm(`Xóa phiếu "${p.ten}"?\n\n${p.gio.length} mã hàng trong phiếu sẽ mất.`)) return;
+  if (p.gio.length && !await hoiXacNhan(`Xóa phiếu "${p.ten}"?\n\n${p.gio.length} mã hàng trong phiếu sẽ mất.`)) return;
   bhPhieu = bhPhieu.filter(x => x.id !== id);
   if (!bhPhieu.length) bhTaoPhieu();
   else if (bhPhieuDangMo === id) bhPhieuDangMo = bhPhieu[0].id;
@@ -9130,7 +9243,7 @@ window.bhXacNhanTienVe = async function() {
   if (thay) return;
 
   veDayDuoi();
-  if (!confirm(`Chưa thấy ${fmt(soTien)}đ về trong sổ quỹ.\n\n`
+  if (!await hoiXacNhan(`Chưa thấy ${fmt(soTien)}đ về trong sổ quỹ.\n\n`
     + `Bạn đã kiểm tra app ngân hàng và THẤY tiền về chưa?\n`
     + `(Sổ quỹ có thể chậm vài chục giây)`)) return;
   p.soTienDaNhan = soTien;
@@ -9198,7 +9311,7 @@ async function bhHoanThanhThat(daTraQuaQR) {
     alert(`Kho Cửa hàng không đủ hàng:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nBạn không có quyền bán khi thiếu hàng — báo quản lý kiểm tra tồn kho.`);
     return;
   }
-  if (vuot.length && !confirm(
+  if (vuot.length && !await hoiXacNhan(
     `${vuot.length} mã bán quá tồn kho:\n\n${vuot.map(d => `· ${d.ten}`).join('\n')}\n\nVẫn bán? Tồn kho sẽ về âm.`)) return;
 
   try {
@@ -9433,7 +9546,7 @@ window.htLuuTinhNang = async function() {
 function htBaoMat(html) { const el = document.getElementById('ht-baomat'); if (el) el.innerHTML = html; }
 
 window.htDongBoQuyen = async function() {
-  if (!confirm('Ghi quyền theo vai trò cho TẤT CẢ tài khoản?\n\nVai trò còn lưu theo cây quyền cũ sẽ được quy đổi sang cây mới (giữ bản cũ để đối chiếu).')) return;
+  if (!await hoiXacNhan('Ghi quyền theo vai trò cho TẤT CẢ tài khoản?\n\nVai trò còn lưu theo cây quyền cũ sẽ được quy đổi sang cây mới (giữ bản cũ để đối chiếu).')) return;
   htBaoMat('<div class="loading">Đang ghi quyền...</div>');
   const kq = await dongBoQuyen({ tatCa: true });
   htBaoMat(kq.success
@@ -9444,7 +9557,7 @@ window.htDongBoQuyen = async function() {
 };
 
 window.htChuyenTonSan = async function() {
-  if (!confirm('Chuyển tồn kho Sàn (và số đang đặt) từ danh sách hàng sang chỗ riêng có khóa quyền?\n\nChỉ cần làm một lần; bấm lại cũng không sao.')) return;
+  if (!await hoiXacNhan('Chuyển tồn kho Sàn (và số đang đặt) từ danh sách hàng sang chỗ riêng có khóa quyền?\n\nChỉ cần làm một lần; bấm lại cũng không sao.')) return;
   htBaoMat('<div class="loading">Đang chuyển...</div>');
   const kq = await goiWorkerAdmin('chuyen-ton-san');
   htBaoMat(kq.success ? `✅ Đã chuyển tồn Sàn của <b>${kq.soMa}</b> mã hàng.` : `<span style="color:#B91C1C">Không chuyển được: ${escHtml(kq.error || '')}</span>`);
@@ -9480,7 +9593,7 @@ window.htKiemThuRules = async function() {
 
 window.htApDungRules = async function() {
   if (!htRulesDaKiemThu) { showToast('Kiểm thử đạt trước đã', true); return; }
-  if (!confirm('Áp dụng quy tắc bảo mật mới cho toàn hệ thống?\n\nNhớ làm bước ① trước. Có lỗi thì bấm "Quay lại quy tắc trước".')) return;
+  if (!await hoiXacNhan('Áp dụng quy tắc bảo mật mới cho toàn hệ thống?\n\nNhớ làm bước ① trước. Có lỗi thì bấm "Quay lại quy tắc trước".')) return;
   htBaoMat('<div class="loading">Đang áp dụng...</div>');
   const kq = await goiWorkerAdmin('ap-dung-rules', { source: htRulesDaKiemThu });
   htBaoMat(kq.success ? '✅ Đã áp dụng quy tắc bảo mật mới. Mất khoảng 1 phút để có hiệu lực ở mọi máy.'
@@ -9488,7 +9601,7 @@ window.htApDungRules = async function() {
 };
 
 window.htQuayLaiRules = async function() {
-  if (!confirm('Quay lại bộ quy tắc bảo mật trước đó?')) return;
+  if (!await hoiXacNhan('Quay lại bộ quy tắc bảo mật trước đó?')) return;
   const kq = await goiWorkerAdmin('quay-lai-rules');
   htBaoMat(kq.success ? '↩ Đã quay lại quy tắc trước.' : `<span style="color:#B91C1C">Không quay lại được: ${escHtml(kq.error || '')}</span>`);
 };
@@ -9557,13 +9670,13 @@ async function htVeTramIn() {
 window.htVeTramIn = htVeTramIn;
 
 window.htDoiLenhIn = async function(id, trangThai) {
-  if (trangThai === 'huy' && !confirm('Hủy lệnh in này?')) return;
+  if (trangThai === 'huy' && !await hoiXacNhan('Hủy lệnh in này?')) return;
   await updateDoc(doc(db, 'lenh_in', id), { trangThai, loi: '' });
   htVeTramIn();
 };
 
 window.htTaoKhoaTramIn = async function() {
-  if (!confirm('Tạo mã khóa mới cho app Trạm in?\n\nMã khóa tạo trong app trước đó sẽ hết dùng được. Mã cũ đặt trong Cloudflare (nếu có) vẫn dùng được.')) return;
+  if (!await hoiXacNhan('Tạo mã khóa mới cho app Trạm in?\n\nMã khóa tạo trong app trước đó sẽ hết dùng được. Mã cũ đặt trong Cloudflare (nếu có) vẫn dùng được.')) return;
   const el = document.getElementById('ht-khoa');
   el.innerHTML = '<div class="loading">Đang tạo...</div>';
   const kq = await goiWorkerAdmin('tao-khoa-tram-in');
@@ -9625,7 +9738,7 @@ window.htVeKetNoiKol = htVeKetNoiKol;
 
 window.htLuuTaiKhoanKol = async function(so, xoa = false) {
   const u = document.getElementById(`ht-kol-u${so}`), p = document.getElementById(`ht-kol-p${so}`);
-  if (xoa && !confirm(`Xóa tài khoản ${so} đã nhập trong app?`)) return;
+  if (xoa && !await hoiXacNhan(`Xóa tài khoản ${so} đã nhập trong app?`)) return;
   if (!xoa && (!u.value.trim() || !p.value)) { showToast('Nhập đủ tên đăng nhập và mật khẩu', true); return; }
   const kq = await goiWorkerAdmin('luu-tai-khoan-kol', xoa ? { so, xoa: true } : { so, user: u.value.trim(), pass: p.value });
   p.value = '';
@@ -9666,7 +9779,7 @@ window.htLuuChiNhanh = async function() {
   const sel = document.getElementById('ht-cn-chon');
   const id = Number(sel.value), ten = sel.selectedOptions[0]?.dataset.ten || '';
   if (id === chiNhanhBanLe()) { showToast('Chi nhánh không đổi'); return; }
-  if (!confirm(`Từ giờ hóa đơn bán tại quầy tạo vào chi nhánh "${ten}" (${id}) và trừ kho chi nhánh đó.\n\nĐổi?`)) return;
+  if (!await hoiXacNhan(`Từ giờ hóa đơn bán tại quầy tạo vào chi nhánh "${ten}" (${id}) và trừ kho chi nhánh đó.\n\nĐổi?`)) return;
   await setDoc(doc(db, 'cau_hinh', 'chi_nhanh'), { banLe: id, tenBanLe: ten, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
   cauHinhChiNhanh = { ...(cauHinhChiNhanh || {}), banLe: id, tenBanLe: ten };
   showToast(`Đã đổi chi nhánh bán tại quầy: ${ten}`);
@@ -9686,7 +9799,7 @@ window.htXemWebhook = async function() {
 };
 
 window.htDangKyWebhook = async function(loai) {
-  if (!confirm(`Đăng ký webhook ${loai} với KiotViet?\n(Đã có rồi thì KiotViet có thể báo trùng — không sao)`)) return;
+  if (!await hoiXacNhan(`Đăng ký webhook ${loai} với KiotViet?\n(Đã có rồi thì KiotViet có thể báo trùng — không sao)`)) return;
   const kq = await goiWorkerAdmin('register-kiotviet-webhook', { type: loai });
   showToast(kq.success ? `Đã đăng ký ${loai}` : `KiotViet báo: ${JSON.stringify(kq.kiotviet || kq.error || '').slice(0, 120)}`, !kq.success);
   htXemWebhook();
@@ -9711,7 +9824,7 @@ window.htLuuChamCong = async function() {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) { showToast('Vĩ độ / kinh độ không hợp lệ', true); return; }
   if (!(r >= 20 && r <= 2000)) { showToast('Bán kính nên từ 20 đến 2000 mét', true); return; }
   if (qr.length < 6) { showToast('Nội dung QR quá ngắn', true); return; }
-  if (qr !== CHECKIN_QR_SECRET && !confirm('Đổi nội dung QR: mã QR đang dán ở quầy sẽ không quét được nữa, phải in mã mới. Tiếp tục?')) return;
+  if (qr !== CHECKIN_QR_SECRET && !await hoiXacNhan('Đổi nội dung QR: mã QR đang dán ở quầy sẽ không quét được nữa, phải in mã mới. Tiếp tục?')) return;
   await setDoc(doc(db, 'cau_hinh', 'cham_cong'), { viDo: lat, kinhDo: lng, banKinh: r, maQR: qr, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
   showToast('Đã lưu cài đặt chấm công');
 };
@@ -9736,7 +9849,7 @@ window.htDatTon = async function() {
   if (!sku) { showToast('Không tìm thấy mã này', true); return; }
   if (sku.laCombo) { showToast('Combo tự tính tồn từ hàng thành phần — chỉnh từng thành phần', true); return; }
   const tenKho = kho === 'cuahang' ? 'Cửa hàng' : 'Sàn';
-  if (!confirm(`Đặt tồn ${tenKho} của ${sku.sku} = ${sl}?`)) return;
+  if (!await hoiXacNhan(`Đặt tồn ${tenKho} của ${sku.sku} = ${sl}?`)) return;
   if (kho === 'cuahang') await updateDoc(doc(db, 'skus', sku.id), { tonCuaHang: Number(sl) || 0 });
   else await setDoc(doc(db, 'ton_san', sku.id), { soLuongTon: Number(sl) || 0 }, { merge: true });
   showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0}`);
@@ -9963,7 +10076,6 @@ function renderHangHoaList() {
           <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
         </div>
       </div>
-      <div id="hh-sua-${s.id}"></div>
     </div>`;
   }).join('') + renderPagination(hangHoaPage, list.length, hangHoaPageSize, 'doiTrangHangHoa') || `<p class="info-note">Không có hàng hóa nào.</p>`;
 }
@@ -10390,14 +10502,13 @@ window.luuHangHoa = async function(laComboParam) {
 let hangHoaSuaAnhBlob = null;
 
 window.moFormSuaHangHoa = async function(id) {
-  // Đóng các form sửa khác đang mở (chỉ mở 1 cái tại 1 thời điểm)
-  document.querySelectorAll('[id^="hh-sua-"]').forEach(e => { if (e.id !== `hh-sua-${id}`) e.innerHTML = ''; });
-  const el = document.getElementById(`hh-sua-${id}`);
-  if (!el) return;
-  if (el.innerHTML) { el.innerHTML = ''; hangHoaSuaAnhBlob = null; return; }
-
   const s = allSKUs.find(x => x.id === id);
   if (!s) return;
+  // Mở form sửa trong cửa sổ giữa màn hình
+  ddbMoKhung('hh-sua-modal', 'Sửa hàng hóa', escHtml(s.sku || ''), `<div id="hh-sua-${id}"></div>`);
+  ddbCanhGiua('hh-sua-modal');
+  const el = document.getElementById(`hh-sua-${id}`);
+  if (!el) return;
   hangHoaSuaAnhBlob = null;
   const laAdmin = currentUserData.role === 'admin';
   const kt = s.kichThuoc || {};
@@ -10447,7 +10558,7 @@ window.moFormSuaHangHoa = async function(id) {
       <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhSuaHangHoa(this,'${id}')" style="margin-bottom:8px">
       <div style="display:flex;gap:8px">
         <button class="btn-g" style="flex:1" onclick="luuSuaHangHoa('${id}')">Lưu thay đổi</button>
-        <button class="btn-outline" onclick="document.getElementById('hh-sua-${id}').innerHTML='';comboThanhPhan=[]">Hủy</button>
+        <button class="btn-outline" onclick="dongSuaHangHoa()">Hủy</button>
       </div>
     </div>`;
   if (s.laCombo) makeSKUSearch(`hhs-${id}-combo-item-ten`, `hhs-${id}-combo-sku-drop`, null);
@@ -10543,8 +10654,7 @@ window.luuSuaHangHoa = async function(id) {
   showToast('Đã cập nhật hàng hóa');
   hangHoaSuaAnhBlob = null;
   comboThanhPhan = [];
-  const el = document.getElementById(`hh-sua-${id}`);
-  if (el) el.innerHTML = '';
+  dongSuaHangHoa();
   await loadSKUs();
   // Tồn kho vừa đổi -> đẩy ngay lên sàn, nhưng CHỈ khi SKU nằm trong danh sách "Đẩy tồn kho"
   tuDongDayTonKhoSauKhiSua(sku);
@@ -10554,8 +10664,15 @@ window.luuSuaHangHoa = async function(id) {
 
 
 
+window.dongSuaHangHoa = function() {
+  const m = document.getElementById('hh-sua-modal');
+  if (m) { m.style.display = 'none'; m.innerHTML = ''; }
+  comboThanhPhan = [];
+  hangHoaSuaAnhBlob = null;
+};
+
 window.xoaHangHoa = async function(id) {
-  if (!confirm('Xóa hàng hóa này?')) return;
+  if (!await hoiXacNhan('Xóa hàng hóa này?')) return;
   await updateDoc(doc(db,'skus', id), {
     deleted: true, deletedAt: serverTimestamp(),
     deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
@@ -10878,8 +10995,8 @@ function veMenuHaiCap() {
     hangTren.innerHTML = nhomHienDuoc.map(n => {
       const dangChon = n.key === nhomMenuDangChon;
       return `
-      <button class="nhom-btn ${dangChon ? 'active' : ''}" onclick="chonNhomMenu('${n.key}')"
-        >${escHtml(n.ten)}${n.key === 'santmdt' && !batTMDT ? ' 🔒' : ''}${dangChon ? '<span class="mui-ten-xuong">▼</span>' : ''}</button>`;
+      <a href="#${n.key}" class="nhom-btn ${dangChon ? 'active' : ''}" onclick="return moLienKetMenu(event, () => chonNhomMenu('${n.key}'))"
+        >${escHtml(n.ten)}${n.key === 'santmdt' && !batTMDT ? ' 🔒' : ''}${dangChon ? '<span class="mui-ten-xuong">▼</span>' : ''}</a>`;
     }).join('');
   }
 
@@ -10890,7 +11007,7 @@ function veMenuHaiCap() {
     ...mucMoCoi
   ];
   hangDuoi.innerHTML = mucHienDuoc.map(m => `
-    <button class="muc-btn" id="muc-${m.key}" onclick="chonMucMenu('${nhom.key}','${m.key}')">${escHtml(m.ten)}</button>`).join('');
+    <a href="#${nhom.key}/${m.key}" class="muc-btn" id="muc-${m.key}" onclick="return moLienKetMenu(event, () => chonMucMenu('${nhom.key}','${m.key}'))">${escHtml(m.ten)}</a>`).join('');
   hangDuoi.style.display = mucHienDuoc.length ? 'flex' : 'none';
 
   // Kiểm tra sau khi trình duyệt vẽ xong mới đo được chiều rộng thật.
@@ -10900,6 +11017,28 @@ function veMenuHaiCap() {
     const nutDangChon = document.querySelector('.nhom-btn.active');
     if (nutDangChon) nutDangChon.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' });
   }, 50);
+}
+
+// Bấm thường: mở ngay trong trang. Ctrl/⌘/chuột giữa hoặc chuột phải "Mở trong tab mới": để trình duyệt tự mở
+window.moLienKetMenu = function(e, lam) {
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return true;
+  e.preventDefault();
+  lam();
+  return false;
+};
+// Mở đúng mục theo địa chỉ (#nhom/muc) — dùng khi mở tab mới từ menu
+function moMucTheoDiaChi() {
+  const [nk, mk] = decodeURIComponent((location.hash || '').slice(1)).split('/');
+  if (!nk) return false;
+  const nhom = NHOM_MENU.find(n => n.key === nk);
+  if (!nhom || (nhom.chiAdmin && currentUserData?.role !== 'admin')) return false;
+  if (nhom.moTrucTiep) { if (!coQuyenMuc(nhom.quyen)) return false; nhomMenuDangChon = nk; veMenuHaiCap(); nhom.moGi(); return true; }
+  const muc = (nhom.muc || []).find(m => m.key === mk) || (nhom.muc || []).find(m => coQuyenMuc(m.quyen) && (!m.chiAdmin || currentUserData?.role === 'admin'));
+  if (!muc || !coQuyenMuc(muc.quyen) || (muc.chiAdmin && currentUserData?.role !== 'admin')) return false;
+  nhomMenuDangChon = nk;
+  veMenuHaiCap();
+  chonMucMenu(nk, muc.key);
+  return true;
 }
 
 window.chonNhomMenu = function(key) {
@@ -10923,6 +11062,7 @@ window.chonMucMenu = function(nhomKey, mucKey) {
   document.querySelectorAll('.muc-btn').forEach(b => b.classList.remove('active'));
   const nut = document.getElementById(`muc-${mucKey}`);
   if (nut) nut.classList.add('active');
+  try { history.replaceState(null, '', `#${nhomKey}/${mucKey}`); } catch(e) {}
   muc.moGi();
 };
 
@@ -11108,6 +11248,8 @@ async function moModuleMacDinhTheoQuyen() {
     ['xuat','xuat'], ['hanghoa','hanghoa'], ['lichca','lichca'], ['chamcong','chamcong'],
     ['luong','luongnv'], ['baocao','baocao']
   ];
+  // Mở từ liên kết (tab mới) -> vào đúng mục đó
+  if (location.hash && moMucTheoDiaChi()) return;
   const found = thuTuUuTien.find(([key]) => quyen[key]);
   if (found) switchModule(found[1]);
   // Nếu không có module nào được phép -> không mở gì cả, an toàn tuyệt đối (màn hình để trống)
@@ -11340,7 +11482,7 @@ function batDauTheoDoiSKU() {
 
 function dangThaoTacHangHoa() {
   if (document.getElementById('hanghoa-form')?.innerHTML.trim()) return true; // form thêm mới đang mở
-  if (Array.from(document.querySelectorAll('[id^="hh-sua-"]')).some(el => el.innerHTML.trim())) return true; // form sửa đang mở
+  if (document.getElementById('hh-sua-modal')?.style.display === 'flex') return true; // cửa sổ sửa đang mở
   if (document.activeElement?.id === 'hanghoa-search') return true; // đang gõ tìm kiếm
   return false;
 }
@@ -11777,7 +11919,7 @@ window.clHoanThanhQuanSat = async function(id) {
       return;
     }
     const soHetBenh = benhDanhSach.filter(b => benhChon[b.id] === 'het_benh').length;
-    if (soHetBenh > 0 && !confirm(`Xác nhận ${soHetBenh} con đã hết bệnh?`)) return;
+    if (soHetBenh > 0 && !await hoiXacNhan(`Xác nhận ${soHetBenh} con đã hết bệnh?`)) return;
   }
 
   // Nếu có nhập cá bệnh mới thì lưu lại
@@ -12638,7 +12780,7 @@ window.doiTrangBaoCa = function(p) { baocaDsPage = p; loadBaoCaList(); };
 window.applyBaocaFilter = function() { baocaDsPage = 1; loadBaoCaList(); };
 
 window.deleteBaoCa = async function(id) {
-  if (!confirm('Xóa phiếu này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
+  if (!await hoiXacNhan('Xóa phiếu này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
   await updateDoc(doc(db,'phieu_baoca',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   showToast('Đã xóa'); loadBaoCaList();
 };
@@ -13174,7 +13316,7 @@ window.loadNhapList = async function(filter={}) {
 window.doiTrangNhap = function(p) { nhapDsPage = p; loadNhapList(); };
 
 window.deleteNhap = async function(id) {
-  if (!confirm('Xóa phiếu chuyển kho này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
+  if (!await hoiXacNhan('Xóa phiếu chuyển kho này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
 
   const snap = await getDoc(doc(db,'phieu_chuyenkho',id));
   const data = snap.data();
@@ -13272,7 +13414,7 @@ window.loadXuatList = async function(filter={}) {
 window.doiTrangXuat = function(p) { xuatDsPage = p; loadXuatList(); };
 
 window.softDeleteXuat = async function(id) {
-  if (!confirm('Xóa phiếu này? Vẫn lưu trong mục Đã xóa.')) return;
+  if (!await hoiXacNhan('Xóa phiếu này? Vẫn lưu trong mục Đã xóa.')) return;
   await updateDoc(doc(db,'phieu_huy',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   showToast('Đã xóa phiếu'); loadXuatList();
 };
@@ -13970,7 +14112,7 @@ function veDanhSachCa() {
 
 window.donCaHong = async function() {
   if (!caLamViecHong.length) return;
-  if (!confirm(`Xóa ${caLamViecHong.length} bản ghi ca thiếu dữ liệu?`)) return;
+  if (!await hoiXacNhan(`Xóa ${caLamViecHong.length} bản ghi ca thiếu dữ liệu?`)) return;
   try {
     const batch = writeBatch(db);
     caLamViecHong.forEach(c => batch.delete(doc(db, 'ca_lam_viec', c.id)));
@@ -13983,7 +14125,7 @@ window.donCaHong = async function() {
 };
 
 window.taoCaMacDinh = async function() {
-  if (!confirm('Tạo 3 ca mẫu: sáng, chiều, full?\n\nSửa lại giờ sau khi tạo.')) return;
+  if (!await hoiXacNhan('Tạo 3 ca mẫu: sáng, chiều, full?\n\nSửa lại giờ sau khi tạo.')) return;
   try {
     const batch = writeBatch(db);
     for (const c of CA_MAC_DINH) {
@@ -14146,7 +14288,7 @@ window.xoaCa = async function(caId) {
   if (!c) return;
   // Đánh dấu xóa thay vì xóa hẳn — lịch ca cũ còn trỏ tới id này, xóa hẳn thì
   // bảng lương tháng trước không tra được giờ ca nữa.
-  if (!confirm(`Xóa ca "${c.ten}"?\n\nLịch đã xếp và bảng lương cũ vẫn giữ nguyên.`)) return;
+  if (!await hoiXacNhan(`Xóa ca "${c.ten}"?\n\nLịch đã xếp và bảng lương cũ vẫn giữ nguyên.`)) return;
   try {
     await updateDoc(doc(db, 'ca_lam_viec', caId), {
       deleted: true,
@@ -15024,9 +15166,9 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
   const viec = thieuGioRa
     ? `Bổ sung giờ ra ngày ${ngay} là ${nhan(gioCa.ketThuc)}`
     : `Điều chỉnh giờ vào ngày ${ngay} về ${nhan(gioCa.batDau)}`;
-  if (!confirm(`${viec}?\n\nGiờ chấm công gốc vẫn được lưu lại để đối chiếu.`)) return;
+  if (!await hoiXacNhan(`${viec}?\n\nGiờ chấm công gốc vẫn được lưu lại để đối chiếu.`)) return;
 
-  const lyDo = prompt('Lý do (bắt buộc):');
+  const lyDo = await hoiNhap('Lý do (bắt buộc):');
   if (!lyDo || !lyDo.trim()) { showToast('Cần ghi lý do', true); return; }
 
   try {
@@ -15071,7 +15213,7 @@ window.duyetLamThem = async function(ngay, soPhut) {
   if (!coQuyen('luong_duyet')) { showToast('Bạn không có quyền duyệt làm thêm', true); return; }
   const uid = blNhanVienDangXem || currentUser.uid;
 
-  if (!confirm(`Duyệt ${soPhut} phút làm thêm ngày ${ngay}?\n\n`
+  if (!await hoiXacNhan(`Duyệt ${soPhut} phút làm thêm ngày ${ngay}?\n\n`
     + `Hưởng ${HE_SO_LAM_THEM * 100}% đơn giá theo công.`)) return;
 
   try {
@@ -15693,7 +15835,7 @@ window.luuCongThucThuong = async function(vaiTroId) {
 
 
 window.themCapBac = async function(roleKey) {
-  const ten = prompt('Tên cấp bậc mới (vd: Cấp 1, Cấp 2, Thử việc...)');
+  const ten = await hoiNhap('Tên cấp bậc mới (vd: Cấp 1, Cấp 2, Thử việc...)');
   if (!ten || !ten.trim()) return;
   const cfg = await getLuongConfig();
   if (!cfg[roleKey]) cfg[roleKey] = { tiers: [], rates: {} };
@@ -15706,7 +15848,7 @@ window.themCapBac = async function(roleKey) {
 };
 
 window.xoaCapBac = async function(roleKey, ten) {
-  if (!confirm(`Xóa cấp bậc "${ten}"? Nhân viên đang gán cấp này sẽ về mặc định.`)) return;
+  if (!await hoiXacNhan(`Xóa cấp bậc "${ten}"? Nhân viên đang gán cấp này sẽ về mặc định.`)) return;
   const cfg = await getLuongConfig();
   if (cfg[roleKey]?.tiers) {
     cfg[roleKey].tiers = cfg[roleKey].tiers.filter(t => t !== ten);
@@ -15924,8 +16066,8 @@ window.luuVaiTro = async function(prefix, id) {
 window.xoaVaiTro = async function(id) {
   const v = allVaiTro.find(x => x.id === id);
   const dangDung = allUsersCache?.some(u => u.vaiTroId === id);
-  if (dangDung && !confirm(`Vai trò "${v?.ten}" đang được gán cho ít nhất 1 người dùng. Xóa vẫn được, nhưng người đó sẽ không thấy module nào cho tới khi bạn gán vai trò khác. Vẫn xóa?`)) return;
-  if (!dangDung && !confirm(`Xóa vai trò "${v?.ten}"?`)) return;
+  if (dangDung && !await hoiXacNhan(`Vai trò "${v?.ten}" đang được gán cho ít nhất 1 người dùng. Xóa vẫn được, nhưng người đó sẽ không thấy module nào cho tới khi bạn gán vai trò khác. Vẫn xóa?`)) return;
+  if (!dangDung && !await hoiXacNhan(`Xóa vai trò "${v?.ten}"?`)) return;
   await deleteDoc(doc(db, 'vai_tro', id));
   // Người đang giữ vai trò này phải mất quyền ngay trên máy chủ, không đợi lần ghi quyền sau
   const kq = dangDung ? await dongBoQuyen({ vaiTroId: id }) : { success: true };
@@ -15976,7 +16118,7 @@ window.luuCapLaiMatKhau = async function() {
 };
 
 window.xoaTaiKhoan = async function(uid, ten) {
-  if (!confirm(`Xóa vĩnh viễn tài khoản "${ten}"? Không thể khôi phục lại được.`)) return;
+  if (!await hoiXacNhan(`Xóa vĩnh viễn tài khoản "${ten}"? Không thể khôi phục lại được.`)) return;
   showToast('Đang xóa...');
   try {
     const idToken = await currentUser.getIdToken();
@@ -16724,6 +16866,8 @@ html.khoa-cuon .app-body{padding-top:6px}
   white-space:nowrap;color:var(--text2);display:flex;align-items:center;gap:5px;
   position:relative;top:1px}
 .nhom-btn:hover{color:var(--text)}
+a.nhom-btn,a.muc-btn{text-decoration:none;-webkit-tap-highlight-color:transparent}
+a.muc-btn{display:inline-flex;align-items:center}
 .nhom-btn.active{background:var(--bg);border-color:var(--border);color:var(--text);font-weight:700}
 .nhom-btn .mui-ten-xuong{font-size:8px;line-height:1;opacity:.6}
 
@@ -17020,7 +17164,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v475</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v476</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17074,7 +17218,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v475</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v476</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17116,7 +17260,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v475</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v476</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
