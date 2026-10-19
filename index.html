@@ -9488,6 +9488,11 @@ async function renderHeThong() {
       <p class="info-note">Đổi nội dung QR thì phải in lại mã QR dán ở quầy (Quản trị hệ thống › mã QR chấm công).</p>
       <button class="btn-g" style="width:100%" onclick="htLuuChamCong()">Lưu</button>`),
 
+    htThe('Hàng cùng loại', `
+      <p style="font-size:13px;margin-bottom:8px">Lấy nhóm hàng cùng loại (cùng mã cha, khác thuộc tính) để Hàng hóa gom vào một khung. Hàng sửa giá sau này tự cập nhật nhóm.</p>
+      <button class="btn-outline" style="width:100%" id="ht-nut-cl" onclick="htDongBoCungLoai()">Đồng bộ hàng cùng loại</button>
+      <div id="ht-cl-kq" style="font-size:13px;margin-top:8px"></div>`),
+
     htThe('Chỉnh tồn kho một mã', `
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <input id="ht-sku" placeholder="Mã SKU" style="flex:1">
@@ -9813,6 +9818,31 @@ window.htXemTon = async function() {
   out.innerHTML = `<b>${escHtml(sku.ten || '')}</b> · tồn cửa hàng <b>${layTon(x, 'cuahang')}</b> · tồn sàn <b>${layTon(x, 'san')}</b>`;
 };
 
+window.htDongBoCungLoai = async function() {
+  const nut = document.getElementById('ht-nut-cl'), kqEl = document.getElementById('ht-cl-kq');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang đồng bộ...'; }
+  let tu = 0, tongGhi = 0, tongDoc = 0, soNhom = 0;
+  try {
+    for (let lan = 0; lan < 20; lan++) {
+      const idToken = await currentUser.getIdToken();
+      const r = await fetch(WORKER_URL, { method: 'POST',
+        headers: { 'x-action': 'dong-bo-cung-loai', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tu }) });
+      const kq = await r.json();
+      if (!kq.success) throw new Error(kq.error || 'Lỗi đồng bộ');
+      tongGhi += kq.soGhi; tongDoc += kq.soDoc; soNhom += kq.soNhom;
+      if (kqEl) kqEl.textContent = `Đã đọc ${tongDoc}/${kq.tong} mã...`;
+      if (kq.conTiep == null) break;
+      tu = kq.conTiep;
+    }
+    if (kqEl) kqEl.textContent = `Xong: đọc ${tongDoc} mã, cập nhật ${tongGhi} mã vào nhóm cùng loại.`;
+    showToast('Đã đồng bộ hàng cùng loại');
+  } catch(e) {
+    if (kqEl) kqEl.textContent = 'Lỗi: ' + e.message;
+  }
+  if (nut) { nut.disabled = false; nut.textContent = 'Đồng bộ hàng cùng loại'; }
+};
+
 window.htDatTon = async function() {
   const ma = document.getElementById('ht-sku').value.trim();
   const sl = document.getElementById('ht-ton-moi').value;
@@ -9999,21 +10029,11 @@ let hangHoaNhom3Filter = '';
 let hangHoaPage = 1;
 let hangHoaPageSize = 30;
 
-function renderHangHoaList() {
-  const el = document.getElementById('hanghoa-list');
-  if (!el) return;
-  const qHH2 = currentUserData.role === 'admin' ? layQuyenFullAdmin() : (quyenModuleHienTai || {});
-  const q = hangHoaSearchQuery.trim().toLowerCase();
-  const list = allSKUs.filter(s =>
-    (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q)) &&
-    (!hangHoaNhom1Filter || s.nhom1 === hangHoaNhom1Filter) &&
-    (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
-    (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter)
-  );
-  const totalPages = Math.max(1, Math.ceil(list.length / hangHoaPageSize));
-  if (hangHoaPage > totalPages) hangHoaPage = totalPages;
-  const pageList = list.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
-  el.innerHTML = pageList.map(s => {
+// Gom hàng cùng loại (chung mã cha bên KiotViet) vào một khung có tên chính
+const hhNhomDong = new Set();   // nhóm đang thu gọn
+window.hhDoiNhom = function(k) { hhNhomDong.has(k) ? hhNhomDong.delete(k) : hhNhomDong.add(k); renderHangHoaList(); };
+
+function hhTheSku(s) {
     const tonSan = layTon(s, 'san');
     const tonCH = layTon(s, 'cuahang');
     const dat = layDatHangSan(s);
@@ -10050,7 +10070,51 @@ function renderHangHoaList() {
         </div>
       </div>
     </div>`;
-  }).join('') + renderPagination(hangHoaPage, list.length, hangHoaPageSize, 'doiTrangHangHoa') || `<p class="info-note">Không có hàng hóa nào.</p>`;
+}
+
+function renderHangHoaList() {
+  const el = document.getElementById('hanghoa-list');
+  if (!el) return;
+  const q = hangHoaSearchQuery.trim().toLowerCase();
+  const list = allSKUs.filter(s =>
+    (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q) || (s.tenChinh||'').toLowerCase().includes(q)) &&
+    (!hangHoaNhom1Filter || s.nhom1 === hangHoaNhom1Filter) &&
+    (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
+    (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter)
+  );
+  // Mỗi mục là 1 hàng lẻ hoặc 1 nhóm cùng loại (từ 2 mã trở lên); phân trang theo mục
+  const demNhom = new Map();
+  list.forEach(s => { if (s.nhomCL) demNhom.set(s.nhomCL, (demNhom.get(s.nhomCL) || 0) + 1); });
+  const muc = [], daGom = new Map();
+  list.forEach(s => {
+    if (s.nhomCL && demNhom.get(s.nhomCL) > 1) {
+      if (!daGom.has(s.nhomCL)) { const m = { nhom: s.nhomCL, ten: s.tenChinh || s.ten, ds: [] }; daGom.set(s.nhomCL, m); muc.push(m); }
+      daGom.get(s.nhomCL).ds.push(s);
+    } else muc.push({ s });
+  });
+  const totalPages = Math.max(1, Math.ceil(muc.length / hangHoaPageSize));
+  if (hangHoaPage > totalPages) hangHoaPage = totalPages;
+  const trang = muc.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
+  const kho = khoHangHoaDangXem();
+  el.innerHTML = trang.map(m => {
+    if (m.s) return hhTheSku(m.s);
+    const dong = hhNhomDong.has(m.nhom);
+    const tongCH = m.ds.reduce((t, s) => t + layTon(s, 'cuahang'), 0);
+    const tongSan = m.ds.reduce((t, s) => t + layTon(s, 'san'), 0);
+    const anh = m.ds.find(s => s.anhFileId);
+    return `
+    <div style="border:1.5px solid #CBD5E1;border-radius:10px;background:#F8FAFC;margin-bottom:10px">
+      <div onclick="hhDoiNhom('${escHtml(m.nhom)}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer">
+        ${anh ? `<img loading="lazy" src="${anhThumbUrl(anh.anhFileId,120)}" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:15px">${escHtml(m.ten)}</div>
+          <div style="font-size:12px;color:var(--text2)">${m.ds.length} loại${kho !== 'san' ? ` · Cửa hàng: ${tongCH}` : ''}${kho !== 'ch' ? ` · Sàn: ${tongSan}` : ''}</div>
+        </div>
+        <span style="color:var(--text2);font-size:13px;flex-shrink:0">${dong ? '▸' : '▾'}</span>
+      </div>
+      ${dong ? '' : `<div style="padding:0 8px">${m.ds.map(hhTheSku).join('')}</div>`}
+    </div>`;
+  }).join('') + renderPagination(hangHoaPage, muc.length, hangHoaPageSize, 'doiTrangHangHoa') || `<p class="info-note">Không có hàng hóa nào.</p>`;
 }
 
 window.doiTrangHangHoa = function(p) { hangHoaPage = p; renderHangHoaList(); };
@@ -17137,7 +17201,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v477</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v478</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17191,7 +17255,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v477</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v478</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17233,7 +17297,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v477</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v478</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
