@@ -1513,6 +1513,7 @@ function showLogin(msg = '') {
   const elLogin = document.getElementById('screen-login');
   const elApp = document.getElementById('screen-app');
   if (!elLogin || !elApp) { setTimeout(() => showLogin(msg), 100); return; }
+  document.documentElement.classList.remove('khoa-cuon');
   elLogin.style.display = 'flex';
   elApp.style.display = 'none';
   if (msg) document.getElementById('login-err').textContent = msg;
@@ -1581,6 +1582,8 @@ window.switchModule = function(mod) {
     if (!coQuyen(key)) { showToast('Bạn không có quyền truy cập mục này', true); return; }
   }
   activeModule = mod;
+  // Bán hàng: khóa cuộn cả trang, chỉ danh sách hàng cuộn
+  document.documentElement.classList.toggle('khoa-cuon', mod === 'banhang');
   if (mod === 'checklist') {
     document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('mod-checklist').classList.add('active');
@@ -1751,6 +1754,7 @@ window.switchSub = function(sub) {
 };
 
 window.switchAdmin = function() {
+  document.documentElement.classList.remove('khoa-cuon');
   if (currentUserData.role !== 'admin') {
     showToast('Chỉ Admin mới vào được mục này', true);
     return;
@@ -6000,7 +6004,7 @@ function ddbTheDon(d) {
               : d.lanTra?.length ? `<span style="font-size:11px;color:#D97706;font-weight:600">Đã trả ${d.lanTra.length} lần</span>` : ''}
           </div>
           <div style="font-size:12px;color:var(--text2);margin-top:3px">Nhân viên: ${escHtml(d.nguoiBan?.ten || '')}</div>
-          ${kh ? `<div style="font-size:12px;margin-top:2px">Khách: ${escHtml(kh.ten || 'Khách lẻ')}${kh.sdt ? ` · ${escHtml(cheSdt(kh.sdt))}` : ''}</div>` : ''}
+          ${kh ? `<div style="font-size:12px;margin-top:2px">Khách: ${escHtml(kh.ten || 'Khách lẻ')}${kh.sdt ? ` · ${escHtml(coQuyen('khachhang') ? kh.sdt : cheSdt(kh.sdt))}` : ''}</div>` : ''}
           <div style="font-size:13px;margin-top:3px">${ddbDongThanhToan(d)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
@@ -6174,9 +6178,7 @@ window.ddbXemChiTiet = function(id) {
     <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px">
       <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">KHÁCH HÀNG</div>
       ${kh ? `<div style="font-size:15px;font-weight:600">${escHtml(kh.ten || 'Khách lẻ')}</div>
-        ${kh.sdt ? (coQuyen('khachhang')
-          ? `<a href="tel:${escHtml(kh.sdt)}" style="font-size:14px;color:var(--green);text-decoration:none">${escHtml(kh.sdt)}</a>`
-          : `<div style="font-size:14px">${escHtml(cheSdt(kh.sdt))}</div>`) : ''}`
+        ${kh.sdt ? `<div style="font-size:14px">${escHtml(coQuyen('khachhang') ? kh.sdt : cheSdt(kh.sdt))}</div>` : ''}`
         : '<div style="font-size:13px;color:var(--text2)">Khách lẻ — không ghi thông tin</div>'}
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--text2)">HÀNG HÓA (${(d.dongHang || []).length} mã)</div>
@@ -6316,7 +6318,7 @@ window.khXemChiTiet = async function(id) {
   const noiDung = `
     <div style="font-size:18px;font-weight:700">${escHtml(k.ten)}</div>
     <div style="font-size:12px;color:var(--text2);margin-bottom:8px">${escHtml(k.ma)}</div>
-    ${k.sdt ? `<a href="tel:${escHtml(k.sdt)}" style="display:inline-block;font-size:15px;color:var(--green);text-decoration:none;margin-bottom:8px">📞 ${escHtml(k.sdt)}</a>` : ''}
+    ${k.sdt ? `<div style="font-size:15px;margin-bottom:8px">${escHtml(k.sdt)}</div>` : ''}
     <div style="background:var(--bg);border-radius:10px;padding:8px 12px;margin-bottom:10px">
       ${dong('Tổng mua', fmt(k.tongMua) + 'đ')}
       ${dong('Công nợ', k.no ? `<span style="color:#DC2626">${fmt(k.no)}đ</span>` : '0đ')}
@@ -8233,8 +8235,8 @@ function veManHinhBanHang() {
     <div class="bh-khung">
       <div class="bh-tab-phieu" id="bh-tab-phieu"></div>
 
-      <div class="field sku-wrap" style="margin:6px 0 8px">
-        <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px">
+      <div class="field sku-wrap" style="margin:4px 0 6px">
+        <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px;border-color:#93C5FD">
         <div class="sku-drop" id="bh-drop"></div>
       </div>
 
@@ -8255,9 +8257,9 @@ function bhVuaManHinh() {
   const k = document.querySelector('.bh-khung');
   if (!k || !k.offsetParent) return;
   const vh = window.visualViewport?.height || window.innerHeight;
-  const tren = k.getBoundingClientRect().top + (window.scrollY || 0);
-  k.style.height = Math.max(360, Math.floor(vh - tren - 14)) + 'px';
   if (window.scrollY) window.scrollTo(0, 0);
+  const tren = k.getBoundingClientRect().top;
+  k.style.height = Math.max(300, Math.floor(vh - tren - 12)) + 'px';
 }
 window.addEventListener('resize', () => { if (activeModule === 'banhang') bhVuaManHinh(); });
 
@@ -8375,7 +8377,7 @@ function veDayDuoi() {
       <button class="bh-o-khach" onclick="bhMoKhungKhach()">
         ${kh ? `<b>${escHtml(kh.ten || 'Khách hàng')}</b><span>${escHtml(kh.sdt || '')}</span>` : '<span style="color:var(--text2)">+ Thêm khách hàng</span>'}
       </button>
-      <select onchange="bhDoiCachTra(this.value)" style="flex:1;min-width:0;padding:6px 8px;font-size:14px">
+      <select class="bh-chon-tt" onchange="bhDoiCachTra(this.value)">
         <option value="tienmat" ${p.cachTra === 'tienmat' ? 'selected' : ''}>Tiền mặt</option>
         <option value="chuyenkhoan" ${p.cachTra === 'chuyenkhoan' ? 'selected' : ''}>Chuyển khoản</option>
         <option value="ketHop" ${p.cachTra === 'ketHop' ? 'selected' : ''}>Tiền mặt + Chuyển khoản</option>
@@ -8405,6 +8407,13 @@ window.bhMoKhungKhach = function() {
       <input id="bhk-ten" value="${escHtml(k.ten || '')}" style="width:100%" onkeydown="if(event.key==='Enter')bhLuuKhach()"></div>`,
     `${coKhach ? '<button class="btn-outline" style="flex:1" onclick="bhBoKhach()">Bỏ khách</button>' : ''}
      <button class="btn-g" style="flex:1" onclick="bhLuuKhach()">Xong</button>`);
+  const m = document.getElementById('bh-khach-modal');
+  if (m) {
+    m.style.alignItems = 'flex-start';
+    m.style.padding = '6vh 12px 0';
+    const hop = m.firstElementChild;
+    if (hop) { hop.style.borderRadius = '14px'; hop.style.maxHeight = '70vh'; }
+  }
   setTimeout(() => document.getElementById('bhk-sdt')?.focus(), 50);
 };
 window.bhKhGoSdt = function(v) {
@@ -16497,7 +16506,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* Khung chiếm hết chiều cao còn lại, ô hàng hóa co giãn và cuộn được,
    khối thanh toán luôn dính đáy — nhân viên không phải cuộn để bấm hoàn thành. */
 .bh-khung{display:flex;flex-direction:column;height:calc(100vh - 190px);min-height:320px}
-.bh-tab-phieu{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;flex-shrink:0;-webkit-overflow-scrolling:touch}
+html.khoa-cuon,html.khoa-cuon body{overflow:hidden;height:100%;overscroll-behavior:none}
+html.khoa-cuon #screen-app{min-height:0;height:100%}
+.bh-tab-phieu{display:flex;gap:6px;overflow-x:auto;padding:0;flex-shrink:0;-webkit-overflow-scrolling:touch}
 .bh-tab-phieu::-webkit-scrollbar{display:none}
 .bh-the{flex-shrink:0;display:flex;align-items:center;gap:4px;padding:2px 5px 2px 9px;
   border:1.5px solid var(--border);border-radius:7px;background:var(--surface);
@@ -16510,9 +16521,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bh-the-xoa:hover{color:var(--red)}
 .bh-the-them{flex-shrink:0;border:1.5px dashed var(--border);background:transparent;
   border-radius:7px;padding:2px 9px;font-size:12.5px;color:var(--text2);cursor:pointer;white-space:nowrap}
-.bh-o-khach{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;
+.bh-o-khach{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;align-items:center;
   border:1.5px solid var(--border);border-radius:8px;background:var(--surface);padding:4px 10px;min-height:40px;
-  cursor:pointer;text-align:left;font-size:13px;line-height:1.25;overflow:hidden}
+  cursor:pointer;text-align:center;font-size:13px;line-height:1.25;overflow:hidden}
+.bh-chon-tt{flex:1;min-width:0;min-height:40px;padding:4px 28px 4px 10px;font-size:14px;border:1.5px solid #93C5FD;
+  border-radius:8px;background-color:#EFF6FF;color:#1E3A8A;text-align:center;text-align-last:center;cursor:pointer;
+  -webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%231E3A8A' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 10px center}
 .bh-o-khach b{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .bh-o-khach span{font-size:12px;color:var(--text2)}
 
@@ -16881,7 +16897,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v471</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v472</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -16935,7 +16951,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v471</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v472</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -16977,7 +16993,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v471</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v472</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
