@@ -1732,6 +1732,7 @@ window.switchModule = function(mod) {
   // Rời màn hình Bán hàng thì dừng tra hóa đơn — nếu không, vòng lặp chạy ngầm
   // suốt 6 phút dù nhân viên đã sang việc khác.
   if (mod !== 'banhang' && typeof bhThoiNghe === 'function') bhThoiNghe();
+  if (mod !== 'banhang' && typeof bhDongQuet === 'function' && bhQuet.bat) bhDongQuet();
   if (mod === 'donbanle') {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-donbanle-main').style.display = 'block';
@@ -8416,9 +8417,15 @@ function veManHinhBanHang() {
     <div class="bh-khung">
       <div class="bh-tab-phieu" id="bh-tab-phieu"></div>
 
-      <div class="field sku-wrap" style="margin:6px 0 6px">
-        <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px;border-color:#93C5FD">
-        <div class="sku-drop" id="bh-drop"></div>
+      <div style="display:flex;gap:6px;margin:6px 0 6px;align-items:stretch">
+        <div class="field sku-wrap" style="flex:1;min-width:0;margin:0">
+          <input type="text" id="bh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px;border-color:#93C5FD">
+          <div class="sku-drop" id="bh-drop"></div>
+        </div>
+        <button onclick="bhMoQuet()" title="Quét mã vạch" aria-label="Quét mã vạch"
+          style="flex:0 0 44px;border:1.5px solid #93C5FD;border-radius:8px;background:#EFF6FF;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>
+        </button>
       </div>
 
       <div class="bh-o-hang-trong" id="bh-gio"></div>
@@ -8431,6 +8438,125 @@ function veManHinhBanHang() {
   veGioHang();
   veDayDuoi();
   requestAnimationFrame(bhVuaManHinh);
+}
+
+// ===== BÁN HÀNG: QUÉT MÃ VẠCH TRÊN TEM BẰNG CAMERA =====
+// Quét liên tục: mỗi mã đọc được thêm 1 món vào phiếu đang mở. Cùng một mã phải
+// rời khỏi khung ~1,5 giây mới tính lần tiếp theo (tránh 1 lần đưa vào thêm 5 món).
+let bhQuet = { bat: false, luong: null, boDoc: null, kieu: null, zx: null, canvas: null, lanCuoi: new Map(), daThem: [] };
+
+window.bhMoQuet = async function() {
+  if (bhQuet.bat) return;
+  let m = document.getElementById('bh-quet-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'bh-quet-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:1600;display:flex;align-items:center;justify-content:center;padding:12px';
+    document.body.appendChild(m);
+  }
+  bhQuet.daThem = [];
+  m.innerHTML = `
+    <div style="width:100%;max-width:420px;background:var(--surface);border-radius:14px;overflow:hidden">
+      <div style="position:relative;background:#000">
+        <video id="bh-quet-video" playsinline muted style="width:100%;display:block;max-height:55vh;object-fit:cover"></video>
+        <div style="position:absolute;left:8%;right:8%;top:35%;bottom:35%;border:3px solid #22d3ee;border-radius:8px;pointer-events:none"></div>
+        <div id="bh-quet-bao" style="position:absolute;left:0;right:0;bottom:0;padding:8px;background:rgba(0,0,0,.7);color:#fff;font-size:13px;text-align:center">Đang bật camera...</div>
+      </div>
+      <div id="bh-quet-ds" style="max-height:22vh;overflow-y:auto;padding:8px 12px;font-size:13px"></div>
+      <div style="padding:10px 12px 12px">
+        <button class="btn-g" style="width:100%;padding:12px;font-size:16px" onclick="bhDongQuet()">Xong</button>
+      </div>
+    </div>`;
+  m.style.display = 'flex';
+  const bao = document.getElementById('bh-quet-bao');
+  const video = document.getElementById('bh-quet-video');
+  try {
+    bhQuet.luong = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = bhQuet.luong;
+    await video.play();
+    if ('BarcodeDetector' in window) {
+      bhQuet.boDoc = new BarcodeDetector({ formats: ['code_128', 'ean_13', 'ean_8', 'code_39', 'upc_a', 'qr_code'] });
+      bhQuet.kieu = 'native';
+    } else {
+      bao.textContent = 'Đang tải bộ đọc mã...';
+      if (!(await napZXing()) || !window.ZXing) { bao.textContent = 'Không tải được bộ đọc mã — kiểm tra mạng'; return; }
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.CODE_128, ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.CODE_39]);
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      bhQuet.zx = new ZXing.MultiFormatReader();
+      bhQuet.zx.setHints(hints);
+      bhQuet.kieu = 'zxing';
+    }
+    bhQuet.bat = true;
+    bao.textContent = 'Đưa mã vạch trên tem vào khung';
+    bhVongQuet();
+  } catch(e) {
+    bao.textContent = 'Không bật được camera: ' + e.message;
+  }
+};
+
+window.bhDongQuet = function() {
+  bhQuet.bat = false;
+  if (bhQuet.luong) { bhQuet.luong.getTracks().forEach(t => t.stop()); bhQuet.luong = null; }
+  const m = document.getElementById('bh-quet-modal');
+  if (m) { m.style.display = 'none'; m.innerHTML = ''; }
+};
+
+async function bhVongQuet() {
+  const video = document.getElementById('bh-quet-video');
+  if (!bhQuet.bat || !video) return;
+  try {
+    let cacMa = [];
+    if (bhQuet.kieu === 'native') {
+      cacMa = (await bhQuet.boDoc.detect(video)).map(x => String(x.rawValue || '').trim());
+    } else if (bhQuet.kieu === 'zxing' && video.videoWidth) {
+      if (!bhQuet.canvas) bhQuet.canvas = document.createElement('canvas');
+      const tyLe = Math.min(1, 900 / video.videoWidth);
+      const w = Math.round(video.videoWidth * tyLe), h = Math.round(video.videoHeight * tyLe);
+      bhQuet.canvas.width = w; bhQuet.canvas.height = h;
+      const ctx = bhQuet.canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(video, 0, 0, w, h);
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+      const xam = new Uint8ClampedArray(w * h);
+      for (let i = 0, j = 0; j < xam.length; i += 4, j++) xam[j] = (rgba[i] * 299 + rgba[i + 1] * 587 + rgba[i + 2] * 114) / 1000;
+      try {
+        const kq = bhQuet.zx.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.RGBLuminanceSource(xam, w, h))));
+        if (kq) cacMa = [String(kq.getText() || '').trim()];
+      } catch(e) { /* khung này không có mã */ }
+      finally { try { bhQuet.zx.reset(); } catch(e) {} }
+    }
+    const bayGio = Date.now();
+    for (const ma of cacMa) {
+      if (!ma) continue;
+      const truoc = bhQuet.lanCuoi.get(ma) || 0;
+      bhQuet.lanCuoi.set(ma, bayGio);
+      if (bayGio - truoc < 1500) continue;   // mã vẫn nằm trong khung từ lần trước
+      bhXuLyMaQuet(ma);
+    }
+  } catch(e) { /* khung hình lỗi, bỏ qua */ }
+  if (bhQuet.bat) setTimeout(bhVongQuet, bhQuet.kieu === 'zxing' ? 300 : 180);
+}
+
+function bhXuLyMaQuet(ma) {
+  const bao = document.getElementById('bh-quet-bao');
+  const hoa = ma.toUpperCase();
+  const sp = allSKUs.find(s => String(s.sku || '').toUpperCase() === hoa) || allSKUs.find(s => String(s.id || '').toUpperCase() === hoa);
+  if (!sp) {
+    bip(500, 250);
+    if (bao) bao.textContent = `Không có hàng mã ${ma}`;
+    return;
+  }
+  bhThemHang(sp.sku, sp.ten);
+  bip(1800, 110);
+  if (navigator.vibrate) navigator.vibrate(60);
+  const p = bhPhieuHienTai();
+  const sl = p?.gio.find(d => d.sku === sp.sku)?.soLuong || 1;
+  if (bao) bao.textContent = `Đã thêm: ${sp.ten} (SL ${sl})`;
+  bhQuet.daThem.unshift(`${sp.ten} · SL ${sl}`);
+  const ds = document.getElementById('bh-quet-ds');
+  if (ds) ds.innerHTML = bhQuet.daThem.slice(0, 8).map(t => `<div style="padding:3px 0;border-bottom:1px solid var(--border)">✓ ${escHtml(t)}</div>`).join('');
 }
 
 // Khung Bán hàng vừa khít màn hình: trang không cuộn, chỉ danh sách hàng cuộn
@@ -17199,7 +17325,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v479</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v480</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17253,7 +17379,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v479</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v480</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17295,7 +17421,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v479</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v480</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
