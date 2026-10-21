@@ -1661,7 +1661,8 @@ function roleLabel(r) {
 // Tab -> quyền lớn. Tab không có trong bảng và không phải Admin thì không vào được.
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
-  baocao: 'baocao', hanghoa: 'hanghoa', banhang: 'banhang',
+  baocao: 'bc_ngay', tknhap: 'bc_tk_nhap', tkxuat: 'bc_tk_xuat', nhaphang: 'nhaphang',
+  hanghoa: 'hanghoa', banhang: 'banhang',
   donbanle: 'donbanle', khachhang: 'khachhang', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
   chamcong: 'chamcong', luongnv: 'luong'
 };
@@ -1791,6 +1792,21 @@ window.switchModule = function(mod) {
     moManHinhTMDT(manHinhTMDTHienTai);
     return;
   }
+  if (mod === 'nhaphang') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-nhaphang-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderNhapHangTab();
+    return;
+  }
+  // Thống kê chuyển kho / xuất hủy: thuộc Báo cáo, tách hẳn khỏi màn tạo phiếu
+  if (mod === 'tknhap' || mod === 'tkxuat') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById(mod === 'tknhap' ? 'panel-nhap-thongke' : 'panel-xuat-thongke').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    if (mod === 'tknhap') loadNhapStats(); else loadXuatStats();
+    return;
+  }
   if (mod === 'baocao') {
     document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
     const bcMobile = document.getElementById('mod-baocao');
@@ -1813,15 +1829,20 @@ window.switchModule = function(mod) {
     b.style.setProperty('--accent', color);
   });
   document.getElementById('sub-tab-bar').dataset.mod = mod;
-  // Danh sách & Thống kê phiếu: chỉ hiện khi có quyền xem danh sách của đúng tab
+  // Danh sách phiếu: chỉ hiện khi có quyền xem danh sách của đúng tab.
+  // Thống kê đã chuyển sang Báo cáo (chỉ còn ở màn báo cá cũ).
   const xemDS = mod === 'baoca' || coQuyen(mod + '_xemds');
-  ['ds', 'thongke'].forEach(t => { const b = document.getElementById('stab-' + t); if (b) b.style.display = xemDS ? '' : 'none'; });
-  // Switch to tao subtab
-  switchSub('tao');
+  const bDs = document.getElementById('stab-ds'); if (bDs) bDs.style.display = xemDS ? '' : 'none';
+  const bTk = document.getElementById('stab-thongke'); if (bTk) bTk.style.display = mod === 'baoca' ? '' : 'none';
+  if (mod === 'nhap' || mod === 'xuat') veChonKhoPhieu(mod);
+  // Không được tạo phiếu chiều/kho nào mà được xem danh sách -> mở thẳng danh sách
+  const taoDuoc = mod === 'nhap' ? dsChieuChuyenDuocPhep().length : mod === 'xuat' ? dsKhoHuyDuocPhep().length : 1;
+  switchSub(!taoDuoc && xemDS ? 'ds' : 'tao');
 };
 
 window.switchSub = function(sub) {
-  if ((sub === 'ds' || sub === 'thongke') && activeModule !== 'baoca' && !coQuyen(activeModule + '_xemds')) {
+  if (sub === 'thongke' && activeModule !== 'baoca') sub = 'tao';
+  if (sub === 'ds' && activeModule !== 'baoca' && !coQuyen(activeModule + '_xemds')) {
     showToast('Bạn không có quyền xem danh sách phiếu', true);
     sub = 'tao';
   }
@@ -2508,9 +2529,6 @@ const MAN_HINH_TMDT = [
   { key: 'loinhuan',  ten: 'Lợi nhuận đơn',   icon: '💰', nhom: 'Phân tích',
     moTa: 'Lợi nhuận tạm tính từng đơn theo giá vốn nội bộ',
     quyen: 'tmdt_donhang',   render: null },
-  { key: 'nhaphang',  ten: 'Nhập hàng',       icon: '📥', nhom: 'Hàng hóa',
-    moTa: 'Tạo phiếu nhập vào kho Sàn TMĐT',
-    quyen: 'tmdt_nhaphang',  render: () => renderNhapHangTab() },
   { key: 'sanpham',   ten: 'Sản phẩm trên sàn', icon: '🔗', nhom: 'Hàng hóa',
     moTa: 'Đồng bộ sản phẩm từ sàn về, liên kết SKU nội bộ',
     quyen: 'tmdt_sanpham',   render: () => renderSanPhamTMDTList() },
@@ -5476,10 +5494,11 @@ window.ktHoanThanhDongGoi = async function() {
 };
 
 // ==========================================================================
-// ===== NHẬP HÀNG (chi nhánh Sàn TMĐT) =====
+// ===== NHẬP HÀNG (nhóm Hàng hóa — chọn kho Cửa hàng hoặc Sàn) =====
 //
-// Hai bước cho quản lý: "Lưu phiếu tạm" chỉ ghi mã + số lượng (chưa có giá),
-// sau đó mở lại điền đơn giá rồi "Lưu phiếu". Admin lưu thẳng được luôn.
+// Hai bước: "Lưu phiếu tạm" chỉ ghi mã + số lượng (chưa có giá), người có quyền
+// duyệt mở lại điền đơn giá rồi "Lưu phiếu". Người có quyền duyệt lưu thẳng được luôn.
+// Kho nhập theo quyền: nh_kho_ch (Cửa hàng), nh_kho_san (Sàn).
 // Chỉ khi "Lưu phiếu" mới gọi API tạo phiếu nhập bên KiotViet — phiếu tạm
 // không đụng tới tồn kho, tránh nhập nhầm khi chưa có giá.
 // ==========================================================================
@@ -5488,6 +5507,17 @@ let nhPhieuHienTai = null;   // phiếu đang mở (null = tạo mới)
 let nhDongHang = [];         // [{sku, ten, soLuong, donGia}]
 let nhDsPhieu = [];
 let nhDaKhoiPhucNhap = false;
+let nhKho = null;            // 'ch' | 'san' — kho nhập của phiếu đang soạn
+
+const TEN_KHO = { ch: 'Cửa hàng', san: 'Sàn' };
+function dsKhoNhapDuocPhep() { return ['ch', 'san'].filter(k => coQuyen('nh_kho_' + k)); }
+function nhCoDuyet() { return coQuyen('nh_duyet'); }
+function nhKhoMacDinh() { const ds = dsKhoNhapDuocPhep(); return ds.includes(nhKho) ? nhKho : (ds[0] || null); }
+window.nhChonKho = function(k) {
+  if (!dsKhoNhapDuocPhep().includes(k)) return;
+  nhKho = k;
+  veManHinhSoanPhieu();
+};
 
 // ===== TỰ LƯU NHÁP VÀO MÁY =====
 // Lưu ngay trong trình duyệt sau mỗi thay đổi, không cần bấm gì.
@@ -5502,6 +5532,7 @@ function nhLuuNhap() {
     if (!nhDongHang.length) { localStorage.removeItem(nhKhoaNhap()); return; }
     localStorage.setItem(nhKhoaNhap(), JSON.stringify({
       dongHang: nhDongHang,
+      kho: nhKho,
       idPhieuDangSua: nhPhieuHienTai?.id || null,
       luc: Date.now()
     }));
@@ -5524,7 +5555,7 @@ function nhXoaNhap() {
 }
 
 async function renderNhapHangTab() {
-  const el = document.getElementById('tmdt-than');
+  const el = document.getElementById('nhaphang-than');
   if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   if (!allSKUs.length) await loadSKUs();
@@ -5538,6 +5569,7 @@ async function renderNhapHangTab() {
   if (nhap?.dongHang?.length) {
     nhDongHang = nhap.dongHang;
     nhPhieuHienTai = nhap.idPhieuDangSua ? nhDsPhieu.find(p => p.id === nhap.idPhieuDangSua) || null : null;
+    nhKho = nhap.kho || nhPhieuHienTai?.kho || nhKhoMacDinh();
     nhDaKhoiPhucNhap = true;
     veManHinhSoanPhieu();
     return;
@@ -5546,7 +5578,7 @@ async function renderNhapHangTab() {
 }
 
 function veDanhSachPhieuNhap() {
-  const el = document.getElementById('tmdt-than');
+  const el = document.getElementById('nhaphang-than');
   const tam = nhDsPhieu.filter(p => p.trangThai === 'tam');
   const xong = nhDsPhieu.filter(p => p.trangThai === 'da_luu');
   const nhap = nhDocNhap();
@@ -5556,7 +5588,9 @@ function veDanhSachPhieuNhap() {
         <b style="font-size:13px;color:#1D4ED8">📝 Có phiếu đang soạn dở (${nhap.dongHang.length} mã)</b>
         <div style="font-size:11px;color:var(--text2);margin-top:2px">Chạm để mở lại · lưu trên máy này, chưa gửi lên hệ thống</div>
       </div>` : ''}
-    <button class="btn-g" style="width:100%;padding:13px;font-size:15px;margin-bottom:12px" onclick="nhTaoPhieuMoi()">+ Tạo phiếu nhập</button>
+    ${dsKhoNhapDuocPhep().length
+      ? '<button class="btn-g" style="width:100%;padding:13px;font-size:15px;margin-bottom:12px" onclick="nhTaoPhieuMoi()">+ Tạo phiếu nhập</button>'
+      : '<p class="info-note">Bạn chưa được cấp quyền nhập vào kho nào — chỉ xem được phiếu.</p>'}
     ${tam.length ? `
       <div style="font-size:11px;color:#D97706;font-weight:700;margin-bottom:6px">PHIẾU TẠM — CHỜ ĐIỀN GIÁ (${tam.length})</div>
       ${tam.map(p => veThePhieu(p)).join('')}` : ''}
@@ -5575,12 +5609,13 @@ function veThePhieu(p) {
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <b style="font-size:13px">${escHtml(p.maPhieu || p.id)}</b>
       <span style="font-size:10px;color:#fff;background:${tam ? '#D97706' : '#16A34A'};padding:2px 7px;border-radius:4px">${tam ? 'Phiếu tạm' : 'Đã lưu'}</span>
-      ${p.kiotvietCode ? `<span style="font-size:10px;color:var(--text2)">KV: ${escHtml(p.kiotvietCode)}</span>` : ''}
+      <span style="font-size:10px;color:#0369A1;background:#E0F2FE;padding:2px 7px;border-radius:4px">Kho ${TEN_KHO[p.kho || 'san']}</span>
+      ${p.kiotvietCode ? `<span style="font-size:10px;color:var(--text2)">Mã: ${escHtml(p.kiotvietCode)}</span>` : ''}
     </div>
     <div style="font-size:11px;color:var(--text2);margin-top:3px">
       ${luc ? luc.toLocaleString('vi-VN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : ''}
       · ${(p.dongHang || []).length} mã · ${tongSl} sản phẩm
-      ${(p.tongTien && currentUserData.role === 'admin') ? ` · <b>${Number(p.tongTien).toLocaleString('vi-VN')}đ</b>` : ''}
+      ${(p.tongTien && nhCoDuyet()) ? ` · <b>${Number(p.tongTien).toLocaleString('vi-VN')}đ</b>` : ''}
       ${p.nguoiTao ? ` · ${escHtml(p.nguoiTao)}` : ''}
     </div>
   </div>`;
@@ -5609,6 +5644,7 @@ window.nhMoLaiNhap = function() {
   if (!nhap?.dongHang?.length) return;
   nhDongHang = nhap.dongHang;
   nhPhieuHienTai = nhap.idPhieuDangSua ? nhDsPhieu.find(p => p.id === nhap.idPhieuDangSua) || null : null;
+  nhKho = nhap.kho || nhPhieuHienTai?.kho || nhKhoMacDinh();
   nhDaKhoiPhucNhap = true;
   veManHinhSoanPhieu();
 };
@@ -5621,6 +5657,7 @@ window.nhTaoPhieuMoi = async function() {
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
   nhDongHang = [];
+  nhKho = nhKhoMacDinh();
   veManHinhSoanPhieu();
 };
 
@@ -5628,10 +5665,11 @@ window.nhMoPhieu = function(id) {
   const p = nhDsPhieu.find(x => x.id === id);
   if (!p) return;
   nhPhieuHienTai = p;
+  nhKho = p.kho || 'san';     // phiếu cũ (trước khi chọn kho) đều nhập kho Sàn
   nhDongHang = JSON.parse(JSON.stringify(p.dongHang || []));
-  // Phiếu tạm do quản lý tạo thường chưa có giá. Admin mở ra thì gợi sẵn giá vốn
+  // Phiếu tạm thường chưa có giá. Người duyệt mở ra thì gợi sẵn giá vốn
   // hiện tại để chỉ phải sửa những mã thật sự đổi giá.
-  if (p.trangThai === 'tam' && currentUserData.role === 'admin') {
+  if (p.trangThai === 'tam' && nhCoDuyet()) {
     nhDongHang.forEach(d => {
       if (!Number(d.donGia)) {
         const sku = allSKUs.find(s => s.sku === d.sku);
@@ -5644,9 +5682,12 @@ window.nhMoPhieu = function(id) {
 };
 
 function veManHinhSoanPhieu() {
-  const el = document.getElementById('tmdt-than');
-  const laAdmin = currentUserData.role === 'admin';
+  const el = document.getElementById('nhaphang-than');
+  const laAdmin = nhCoDuyet();   // tên cũ: người được điền giá + duyệt phiếu
   const daLuu = nhPhieuHienTai?.trangThai === 'da_luu';
+  const dsKho = dsKhoNhapDuocPhep();
+  // Phiếu thuộc kho mình không được nhập -> chỉ xem
+  const chiXem = daLuu || !nhKho || !dsKho.includes(nhKho);
   const tongSl = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
   const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
   const thieuGia = nhDongHang.some(d => !Number(d.donGia));
@@ -5666,7 +5707,13 @@ function veManHinhSoanPhieu() {
       ${nhPhieuHienTai.kiotvietCode ? `<div style="font-size:11px;color:var(--text2);margin-top:3px">Mã phiếu: ${escHtml(nhPhieuHienTai.kiotvietCode)}</div>` : ''}
     </div>` : ''}
 
-    ${daLuu ? '<p class="info-note">Phiếu đã lưu — không sửa được nữa.</p>' : `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="font-size:13px;color:var(--text2);white-space:nowrap">Nhập vào kho</span>
+      ${(daLuu || dsKho.length < 2 || chiXem)
+        ? `<b style="font-size:14px;color:#0369A1">${nhKho ? TEN_KHO[nhKho] : '—'}</b>`
+        : `<div style="display:flex;gap:6px;flex:1">${dsKho.map(k => `<button class="${nhKho === k ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:8px 6px;font-size:13px;margin:0" onclick="nhChonKho('${k}')">${TEN_KHO[k]}</button>`).join('')}</div>`}
+    </div>
+    ${daLuu ? '<p class="info-note">Phiếu đã lưu — không sửa được nữa.</p>' : chiXem ? '<p class="info-note">Bạn không có quyền nhập vào kho này — chỉ xem được phiếu.</p>' : `
     <div class="field sku-wrap" style="margin-bottom:10px">
       <input type="text" id="nh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:12px">
       <div class="sku-drop" id="nh-drop"></div>
@@ -5686,25 +5733,25 @@ function veManHinhSoanPhieu() {
       </div>` : ''}
     </div>
 
-    ${daLuu ? '' : `
+    ${chiXem ? '' : `
     <div style="display:flex;gap:8px">
       <button class="btn-outline" style="flex:1" onclick="nhLuuPhieu(false)">Lưu phiếu tạm</button>
       ${laAdmin ? `<button class="btn-g" style="flex:1" onclick="nhLuuPhieu(true)">Lưu phiếu</button>` : ''}
     </div>
     ${laAdmin && thieuGia ? '<p class="info-note" style="margin-top:8px">Còn mã chưa có đơn giá — "Lưu phiếu" sẽ báo lỗi. Dùng "Lưu phiếu tạm" nếu chưa biết giá.</p>' : ''}
-    ${!laAdmin ? '<p class="info-note" style="margin-top:8px">Nhập mã và số lượng rồi lưu phiếu tạm. Quản trị sẽ điền giá và duyệt phiếu.</p>' : ''}`}`;
+    ${!laAdmin ? '<p class="info-note" style="margin-top:8px">Nhập mã và số lượng rồi lưu phiếu tạm. Người duyệt sẽ điền giá và lưu phiếu.</p>' : ''}`}`;
 
-  if (!daLuu) makeSKUSearch('nh-tim', 'nh-drop', null);
+  if (!chiXem) makeSKUSearch('nh-tim', 'nh-drop', null);
   veBangHangNhap();
 }
 
 function veBangHangNhap() {
   const el = document.getElementById('nh-bang');
   if (!el) return;
-  const daLuu = nhPhieuHienTai?.trangThai === 'da_luu';
-  // Giá vốn là thông tin nhạy cảm — chỉ Admin thấy và sửa được.
-  // Quản lý chỉ nhập mã + số lượng, Admin mở phiếu tạm ra điền giá sau.
-  const xemDuocGia = currentUserData.role === 'admin';
+  const daLuu = nhPhieuHienTai?.trangThai === 'da_luu' || !nhKho || !dsKhoNhapDuocPhep().includes(nhKho);
+  // Giá nhập là thông tin nhạy cảm — chỉ người có quyền duyệt phiếu thấy và sửa được.
+  // Người khác chỉ nhập mã + số lượng, người duyệt mở phiếu tạm ra điền giá sau.
+  const xemDuocGia = nhCoDuyet();
   if (!nhDongHang.length) { el.innerHTML = '<p class="info-note">Chưa có mã hàng nào. Dùng ô tìm kiếm phía trên để thêm.</p>'; return; }
   el.innerHTML = nhDongHang.map((d, i) => {
     const sku = allSKUs.find(s => s.sku === d.sku);
@@ -5762,7 +5809,7 @@ window.nhThemHang = function(maSku, ten) {
     // Điền sẵn giá vốn đang lưu trong app — hàng giá không đổi thì khỏi gõ lại,
     // hàng đổi giá thì sửa đè lên. Giá vốn chỉ Admin mới thấy nên nhân viên vẫn để trống.
     const sku = allSKUs.find(s => s.sku === maSku);
-    const giaCu = (currentUserData.role === 'admin') ? (Number(sku?.giaVon) || 0) : 0;
+    const giaCu = nhCoDuyet() ? (Number(sku?.giaVon) || 0) : 0;
     nhDongHang.push({ sku: maSku, ten, soLuong: 1, donGia: giaCu, giaVonCu: giaCu });
   }
   veManHinhSoanPhieu();
@@ -5771,11 +5818,13 @@ window.nhThemHang = function(maSku, ten) {
 window.nhLuuPhieu = async function(luuThat) {
   if (!nhDongHang.length) { showToast('Chưa có mã hàng nào', true); return; }
   if (nhDongHang.some(d => !Number(d.soLuong))) { showToast('Còn mã chưa nhập số lượng', true); return; }
-  // Chặn ở tầng hàm, không chỉ ẩn nút — tránh gọi thẳng qua Console
-  if (luuThat && currentUserData.role !== 'admin') {
-    showToast('Chỉ Quản trị mới duyệt được phiếu nhập', true);
+  // Chặn ở tầng hàm, không chỉ ẩn nút — tránh gọi thẳng qua Console (máy chủ cũng chặn)
+  if (!nhKho || !dsKhoNhapDuocPhep().includes(nhKho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
+  if (luuThat && !nhCoDuyet()) {
+    showToast('Bạn không có quyền duyệt phiếu nhập', true);
     return;
   }
+  const tenKho = TEN_KHO[nhKho];
 
   if (luuThat) {
     const thieu = nhDongHang.filter(d => !Number(d.donGia));
@@ -5783,13 +5832,14 @@ window.nhLuuPhieu = async function(luuThat) {
       alert(`Còn ${thieu.length} mã chưa có đơn giá:\n\n${thieu.map(d => '· ' + d.ten).join('\n')}\n\nĐiền giá rồi lưu lại, hoặc dùng "Lưu phiếu tạm".`);
       return;
     }
-    if (!await hoiXacNhan('Lưu phiếu nhập?\n\nTồn kho Sàn sẽ tăng theo phiếu này. Không sửa lại được.')) return;
+    if (!await hoiXacNhan(`Lưu phiếu nhập vào kho ${tenKho}?\n\nTồn kho ${tenKho} sẽ tăng theo phiếu này. Không sửa lại được.`)) return;
   }
 
   const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
   const maPhieu = nhPhieuHienTai?.maPhieu || `PN${Date.now().toString().slice(-8)}`;
   const duLieu = {
     maPhieu,
+    kho: nhKho,
     dongHang: nhDongHang,
     tongTien,
     tongSoLuong: nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0),
@@ -5810,6 +5860,7 @@ window.nhLuuPhieu = async function(luuThat) {
         body: JSON.stringify({
           items: nhDongHang.map(d => ({ sku: d.sku, ten: d.ten, soLuong: d.soLuong, donGia: d.donGia })),
           maPhieu,
+          kho: nhKho,
           tenNguoiTao: currentUserData?.ten || currentUser?.email || ''
         })
       });
@@ -5828,24 +5879,23 @@ window.nhLuuPhieu = async function(luuThat) {
       await addDoc(collection(db, 'phieu_nhap_san'), duLieu);
     }
 
-    // CỘNG TỒN KHO SÀN — chỉ khi lưu thật (phiếu tạm chưa nhập hàng thực sự).
-    // Trước đây chỉ tạo phiếu bên KiotViet mà quên cộng sổ app nên hai bên lệch nhau.
+    // CỘNG TỒN KHO ĐÃ CHỌN — chỉ khi lưu thật (phiếu tạm chưa nhập hàng thực sự).
     let soDongTon = 0;
     if (luuThat) {
       try {
         const kq = await dieuChinhTonKhoApp(
-          nhDongHang.map(d => ({ sku: d.sku, sl: d.soLuong })), +1, 'san',
+          nhDongHang.map(d => ({ sku: d.sku, sl: d.soLuong })), +1, nhKho === 'ch' ? 'cuahang' : 'san',
           { loai: 'Nhập hàng', ma: duLieu.kiotvietCode || maPhieu });
         soDongTon = kq.soDong;
       } catch(e) {
         console.error('Lỗi cộng tồn kho:', e);
         alert('Phiếu đã lưu nhưng CHƯA CỘNG được tồn kho trong app:\n' + e.message
-          + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+          + '\n\nVào Tồn kho chỉnh tay cho khớp.');
       }
     }
 
     showToast(luuThat
-      ? `Đã lưu phiếu + cộng tồn ${soDongTon} mã${duLieu.kiotvietCode ? ' · KV ' + duLieu.kiotvietCode : ''}`
+      ? `Đã lưu phiếu + cộng tồn kho ${tenKho} ${soDongTon} mã${duLieu.kiotvietCode ? ' · ' + duLieu.kiotvietCode : ''}`
       : 'Đã lưu phiếu tạm');
     nhXoaNhap();              // đã lưu lên hệ thống, không cần giữ nháp trên máy nữa
     nhDaKhoiPhucNhap = false;
@@ -10578,7 +10628,7 @@ function layDatHangSan(sku) { return Number(tonSanMap.get(sku?.id)?.soLuongDatHa
 // nhưng không đọc được.
 let tonSanMap = new Map();
 let tonSanUnsub = null;
-const KHOA_DOC_TON_SAN = ['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho'];
+const KHOA_DOC_TON_SAN = ['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho'];
 function capNhatTheoDoiTonSan() {
   const duocDoc = KHOA_DOC_TON_SAN.some(k => coQuyen(k));
   if (duocDoc && !tonSanUnsub) {
@@ -10938,21 +10988,31 @@ const DANH_SACH_MODULE = [
     { key: 'kh_sua', ten: 'Thêm / sửa khách hàng' }
   ]},
   { key: 'checklist', ten: 'Checklist', con: [] },
-  { key: 'nhap', ten: 'Chuyển kho', con: [
-    { key: 'nhap_xemds', ten: 'Xem danh sách & thống kê phiếu' },
-    { key: 'nhap_sua', ten: 'Sửa / xóa phiếu' },
-    { key: 'nhap_xuatfile', ten: 'Xuất file' }
-  ]},
-  { key: 'xuat', ten: 'Xuất hủy', con: [
-    { key: 'xuat_xemds', ten: 'Xem danh sách & thống kê phiếu' },
-    { key: 'xuat_sua', ten: 'Sửa / xóa phiếu' },
-    { key: 'xuat_xuatfile', ten: 'Xuất file' }
-  ]},
-  { key: 'hanghoa', ten: 'Hàng hóa', con: [
+  { key: 'hanghoa', ten: 'Tồn kho', con: [
     { key: 'hh_kho_ch', ten: 'Xem kho Cửa hàng (tồn, giá bán)' },
     { key: 'hh_kho_san', ten: 'Xem kho Sàn (tồn, đang đặt) — chỉ khi bật Sàn TMĐT' },
     { key: 'hh_intem', ten: 'In tem giá' },
     { key: 'hh_xuatfile', ten: 'Xuất file Excel' }
+  ]},
+  // Chuyển kho: tick chiều nào thì chỉ chuyển được chiều đó (tick cả hai = chuyển cả hai chiều)
+  { key: 'nhap', ten: 'Chuyển kho', con: [
+    { key: 'ck_san_ch', ten: 'Chuyển Sàn → Cửa hàng' },
+    { key: 'ck_ch_san', ten: 'Chuyển Cửa hàng → Sàn' },
+    { key: 'nhap_xemds', ten: 'Xem danh sách phiếu' },
+    { key: 'nhap_sua', ten: 'Sửa / xóa phiếu' },
+    { key: 'nhap_xuatfile', ten: 'Xuất file' }
+  ]},
+  { key: 'xuat', ten: 'Xuất hủy', con: [
+    { key: 'xh_kho_ch', ten: 'Xuất hủy kho Cửa hàng' },
+    { key: 'xh_kho_san', ten: 'Xuất hủy kho Sàn' },
+    { key: 'xuat_xemds', ten: 'Xem danh sách phiếu' },
+    { key: 'xuat_sua', ten: 'Sửa / xóa phiếu' },
+    { key: 'xuat_xuatfile', ten: 'Xuất file' }
+  ]},
+  { key: 'nhaphang', ten: 'Nhập hàng', con: [
+    { key: 'nh_kho_ch', ten: 'Nhập vào kho Cửa hàng' },
+    { key: 'nh_kho_san', ten: 'Nhập vào kho Sàn' },
+    { key: 'nh_duyet', ten: 'Duyệt phiếu (điền giá nhập, lưu vào kho)' }
   ]},
   { key: 'lichca', ten: 'Lịch làm việc', con: [
     { key: 'lichca_xepca', ten: 'Xếp ca, sửa ca' }
@@ -10964,17 +11024,45 @@ const DANH_SACH_MODULE = [
     { key: 'luong_xemtatca', ten: 'Xem lương mọi người (không tick: chỉ của mình)' },
     { key: 'luong_duyet', ten: 'Duyệt làm thêm giờ, thêm thưởng / phạt' }
   ]},
-  { key: 'baocao', ten: 'Báo cáo ngày', con: [] },
+  { key: 'baocao', ten: 'Báo cáo', con: [
+    { key: 'bc_ngay', ten: 'Báo cáo ngày (chấm công, checklist)' },
+    { key: 'bc_tk_nhap', ten: 'Thống kê chuyển kho' },
+    { key: 'bc_tk_xuat', ten: 'Thống kê xuất hủy' }
+  ]},
   { key: 'tmdt', nhom: true, ten: 'Sàn TMĐT — chỉ có hiệu lực khi Admin bật Sàn TMĐT', con: [
     { key: 'tmdt_donhang', ten: 'Đơn hàng sàn' },
     { key: 'tmdt_hoantra', ten: 'Đơn hoàn trả & nhập lại kho' },
     { key: 'quetdonggoi', ten: 'Đóng gói' },
-    { key: 'tmdt_nhaphang', ten: 'Nhập hàng' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
   ]}
 ];
-const PHIEN_BAN_QUYEN = 2;
+const PHIEN_BAN_QUYEN = 3;
+
+// Quy đổi vai trò cây quyền 2 -> 3: Nhập hàng ra khỏi Sàn TMĐT, Chuyển kho / Xuất hủy
+// / Nhập hàng chọn kho, Thống kê sang Báo cáo. Giữ nguyên việc người đó đang làm được.
+// Worker dùng đúng bảng này.
+function quyDoiQuyenV2(cu) {
+  const q = { ...cu };
+  const co = (k) => cu[k] === true;
+  const them = (...ds) => ds.forEach(k => { q[k] = true; });
+  if (co('nhap')) them('ck_san_ch');                                // trước đây chỉ chuyển Sàn → CH
+  if (co('xuat')) them('xh_kho_ch');                                // trước đây xuất hủy ở Cửa hàng
+  if (co('tmdt_nhaphang')) them('nhaphang', 'nh_kho_san');           // trước đây chỉ nhập kho Sàn
+  delete q.tmdt_nhaphang;
+  if (co('nhap_xemds')) them('baocao', 'bc_tk_nhap');
+  if (co('xuat_xemds')) them('baocao', 'bc_tk_xuat');
+  if (co('baocao')) them('bc_ngay');
+  return q;
+}
+// Vai trò lưu theo phiên bản cây cũ -> cây hiện tại
+function quyDoiTheoPhienBan(goc, phienBan) {
+  let q = goc || {};
+  const pb = Number(phienBan) || 0;
+  if (pb < 2) q = quyDoiQuyenCu(q);
+  if (pb < 3) q = quyDoiQuyenV2(q);
+  return q;
+}
 
 // Quy đổi vai trò lưu theo cây quyền cũ (trước phiên bản 2). Worker dùng đúng bảng này
 // khi ghi quyền vào thẻ đăng nhập, rồi ghi lại vai trò theo khóa mới.
@@ -11049,19 +11137,21 @@ const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
     { key: 'banhang',   ten: 'Bán hàng',       quyen: 'banhang',   moGi: () => switchModule('banhang') },
     { key: 'donbanle',  ten: 'Đơn đã bán',     quyen: 'donbanle',  moGi: () => switchModule('donbanle') },
-    { key: 'khachhang', ten: 'Khách hàng',     quyen: 'khachhang', moGi: () => switchModule('khachhang') },
-    { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') },
+    { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') }
+  ]},
+  { key: 'khachhang', ten: 'Khách hàng', moTrucTiep: true, quyen: 'khachhang',
+    muc: [], moGi: () => switchModule('khachhang') },
+  // Hàng hóa: tồn kho và mọi phiếu làm thay đổi tồn (chuyển, hủy, nhập) — chọn kho ngay trong từng màn
+  { key: 'hanghoa', ten: 'Hàng hóa', muc: [
+    { key: 'tonkho',    ten: 'Tồn kho',        quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
-    // Một màn Hàng hóa, trên cùng chọn kho (Cửa hàng / Sàn / Cả hai) theo quyền
-    { key: 'hanghoa',   ten: 'Hàng hóa',       quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') }
+    { key: 'nhaphang',  ten: 'Nhập hàng',      quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('donhang', true); } },
     { key: 'donggoi',   ten: 'Đóng gói',       quyen: 'quetdonggoi', moGi: () => switchModule('quetdonggoi') },
-    { key: 'nhaphang',  ten: 'Nhập hàng',      quyen: 'tmdt_nhaphang',
-      moGi: () => { switchModule('tmdt'); moManHinhTMDT('nhaphang', true); } },
     { key: 'spsan',     ten: 'Sản phẩm trên sàn', quyen: 'tmdt_sanpham',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('sanpham', true); } },
     { key: 'daytonkho', ten: 'Đẩy tồn kho',    quyen: 'tmdt_daytonkho',
@@ -11078,8 +11168,11 @@ const NHOM_MENU = [
     { key: 'calamviec', ten: 'Ca làm việc', chiAdmin: true, moGi: () => moNVTab('calamviec') },
     { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') }
   ]},
-  { key: 'baocao', ten: 'Báo cáo', moTrucTiep: true, quyen: 'baocao',
-    muc: [], moGi: () => switchModule('baocao') },
+  { key: 'baocao', ten: 'Báo cáo', muc: [
+    { key: 'bcngay',    ten: 'Báo cáo ngày',       quyen: 'bc_ngay',    moGi: () => switchModule('baocao') },
+    { key: 'tknhap',    ten: 'Thống kê chuyển kho', quyen: 'bc_tk_nhap', moGi: () => switchModule('tknhap') },
+    { key: 'tkxuat',    ten: 'Thống kê xuất hủy',  quyen: 'bc_tk_xuat', moGi: () => switchModule('tkxuat') }
+  ]},
   { key: 'thietlap', ten: 'Thiết lập', chiAdmin: true, muc: [
     { key: 'hethong',    ten: 'Hệ thống',          chiAdmin: true, moGi: () => switchModule('hethong') },
     { key: 'thanhtoan',  ten: 'Thanh toán',        chiAdmin: true, moGi: () => switchModule('thanhtoan') },
@@ -11226,6 +11319,8 @@ function datTieuDeMan(ten) {
 }
 // Tên màn theo module (khi mở bằng đường khác ngoài menu)
 function tieuDeTheoModule(mod) {
+  const doiTen = { hanghoa: 'Tồn kho', baocao: 'Báo cáo ngày' };
+  if (doiTen[mod]) return doiTen[mod];
   for (const n of NHOM_MENU) {
     if (n.moTrucTiep && n.key === mod) return n.ten;
     const m = (n.muc || []).find(x => x.key === mod);
@@ -11234,14 +11329,6 @@ function tieuDeTheoModule(mod) {
   return '';
 }
 
-function ghiMucGanDay(nk, mk) {
-  try {
-    const k = `${nk}/${mk}`;
-    const ds = JSON.parse(localStorage.getItem('menuGanDay') || '[]').filter(x => x !== k);
-    ds.unshift(k);
-    localStorage.setItem('menuGanDay', JSON.stringify(ds.slice(0, 4)));
-  } catch(e) {}
-}
 
 window.moMenuGon = function() {
   const ds = dsMenuDuocPhep();
@@ -11251,22 +11338,10 @@ window.moMenuGon = function() {
     return `<a href="#${nk}${mk && mk !== nk ? '/' + mk : ''}" class="o-menu ${dang ? 'dang' : ''}"
       onclick="return moLienKetMenu(event, () => chonTuMenuGon('${nk}','${mk}'))">${escHtml(ten)}</a>`;
   };
-  let ganDay = [];
-  try { ganDay = JSON.parse(localStorage.getItem('menuGanDay') || '[]'); } catch(e) {}
-  const tim = (k) => {
-    const [nk, mk] = k.split('/');
-    const g = ds.find(x => x.nhom.key === nk);
-    if (!g) return null;
-    if (g.nhom.moTrucTiep) return o(nk, nk, g.nhom.ten);
-    const m = g.muc.find(x => x.key === mk);
-    return m ? o(nk, mk, m.ten) : null;
-  };
-  const oGanDay = ganDay.map(tim).filter(Boolean).slice(0, 3);
   const nhomHtml = (tieuDe, cacO) => cacO ? `
     <div style="font-size:12px;font-weight:700;color:var(--text2);margin:12px 0 6px;letter-spacing:.3px">${escHtml(tieuDe)}</div>
     <div class="luoi-menu">${cacO}</div>` : '';
-  const noiDung = (oGanDay.length ? nhomHtml('GẦN ĐÂY', oGanDay.join('')) : '')
-    + ds.map(g => g.nhom.moTrucTiep
+  const noiDung = ds.map(g => g.nhom.moTrucTiep
       ? nhomHtml(g.nhom.ten.toUpperCase(), o(g.nhom.key, g.nhom.key, g.nhom.ten))
       : nhomHtml(g.nhom.ten.toUpperCase(), g.muc.map(m => o(m._nhomThat || g.nhom.key, m.key, m.ten)).join(''))).join('');
   ddbMoKhung('menu-gon-modal', 'Chọn mục', '', noiDung || '<p class="info-note">Tài khoản chưa được cấp quyền mục nào.</p>');
@@ -11333,7 +11408,6 @@ window.chonMucMenu = function(nhomKey, mucKey) {
   const nut = document.getElementById(`muc-${mucKey}`);
   if (nut) nut.classList.add('active');
   try { history.replaceState(null, '', `#${nhomKey}/${mucKey}`); } catch(e) {}
-  ghiMucGanDay(nhomKey, mucKey);
   muc.moGi();
   datTieuDeMan(muc.ten);
 };
@@ -11382,7 +11456,7 @@ let unsubscribeVaiTroDoc = null;
 // Sàn TMĐT tắt -> nhân viên không thấy cả nhóm Sàn (kể cả Đóng gói); Admin vẫn thấy để làm tiếp.
 let batTMDT = false;
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_sanpham', 'tmdt_daytonkho', 'tmdt_nhaphang', 'quetdonggoi', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -11408,7 +11482,7 @@ function theoDoiTinhNang() {
 // Quyền thật của nhân viên = quyền vai trò (quy đổi nếu vai trò còn theo cây cũ),
 // chỉ giữ khóa có trong cây quyền, Sàn TMĐT tắt thì bỏ các khóa Sàn.
 function locQuyen(goc, phienBan) {
-  const q = (phienBan || 0) >= PHIEN_BAN_QUYEN ? (goc || {}) : quyDoiQuyenCu(goc || {});
+  const q = quyDoiTheoPhienBan(goc, phienBan);
   const r = {};
   tatCaKhoaQuyen().forEach(k => { r[k] = !!q[k]; });
   if (!batTMDT) KHOA_TMDT.forEach(k => { r[k] = false; });
@@ -11517,8 +11591,8 @@ async function moModuleMacDinhTheoQuyen() {
   const quyen = await tinhQuyenModuleHienTai();
   const thuTuUuTien = [
     ['banhang','banhang'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
-    ['xuat','xuat'], ['hanghoa','hanghoa'], ['lichca','lichca'], ['chamcong','chamcong'],
-    ['luong','luongnv'], ['baocao','baocao']
+    ['xuat','xuat'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['lichca','lichca'], ['chamcong','chamcong'],
+    ['luong','luongnv'], ['bc_ngay','baocao'], ['bc_tk_nhap','tknhap'], ['bc_tk_xuat','tkxuat']
   ];
   // Mở từ liên kết (tab mới) -> vào đúng mục đó
   if (location.hash && moMucTheoDiaChi()) return;
@@ -11724,7 +11798,7 @@ function layGiaTriNhomHangDaChon(prefix) {
 let skusUnsub = null;
 // Danh mục hàng chỉ tải cho người có việc cần tới (khớp Firestore rules của skus)
 const KHOA_DOC_SKU = ['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao',
-  'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_nhaphang', 'tmdt_sanpham', 'tmdt_daytonkho'];
+  'nhaphang', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho'];
 function batDauTheoDoiSKU() {
   const duocDoc = KHOA_DOC_SKU.some(k => coQuyen(k));
   if (!duocDoc) {
@@ -13234,9 +13308,56 @@ window.soiGioDon = async function(maDonSan) {
 
 
 
+// ===== CHỌN KHO CHO CHUYỂN KHO / XUẤT HỦY =====
+// Chuyển kho: ck_san_ch (Sàn → Cửa hàng), ck_ch_san (Cửa hàng → Sàn) — tick chiều nào làm chiều đó.
+// Xuất hủy:   xh_kho_ch, xh_kho_san — hủy hàng ở kho nào thì trừ tồn kho đó.
+// Phiếu cũ (trước khi có chọn kho): chuyển kho = Sàn → CH, xuất hủy = kho Cửa hàng, không trừ tồn.
+const CHIEU_CHUYEN = {
+  san_ch: { ten: 'Sàn → Cửa hàng', tu: 'san', den: 'cuahang' },
+  ch_san: { ten: 'Cửa hàng → Sàn', tu: 'cuahang', den: 'san' }
+};
+const KHO_HUY = { ch: { ten: 'Kho Cửa hàng', ma: 'cuahang' }, san: { ten: 'Kho Sàn', ma: 'san' } };
+let ckChieu = null, xhKho = null;
+function dsChieuChuyenDuocPhep() { return ['san_ch', 'ch_san'].filter(c => coQuyen('ck_' + c)); }
+function dsKhoHuyDuocPhep() { return ['ch', 'san'].filter(k => coQuyen('xh_kho_' + k)); }
+function chieuCuaPhieu(p) { return p?.chieu === 'ch_san' ? 'ch_san' : 'san_ch'; }
+function khoHuyCuaPhieu(p) { return p?.kho === 'san' ? 'san' : 'ch'; }
+function veChonKhoPhieu(mod) {
+  const laChuyen = mod === 'nhap';
+  const el = document.getElementById(laChuyen ? 'nhap-chieu-wrap' : 'xuat-kho-wrap');
+  if (!el) return;
+  const ds = laChuyen ? dsChieuChuyenDuocPhep() : dsKhoHuyDuocPhep();
+  let dang = laChuyen ? ckChieu : xhKho;
+  if (!ds.includes(dang)) dang = ds[0] || null;
+  if (laChuyen) ckChieu = dang; else xhKho = dang;
+  const ten = (k) => laChuyen ? CHIEU_CHUYEN[k].ten : KHO_HUY[k].ten;
+  const nut = document.getElementById(laChuyen ? 'btn-nhap-submit' : 'btn-xuat-submit');
+  if (nut) nut.disabled = !dang;
+  if (!ds.length) {
+    el.innerHTML = `<p class="info-note" style="margin:0">Bạn chưa được cấp quyền ${laChuyen ? 'chuyển kho chiều nào' : 'xuất hủy ở kho nào'}.</p>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="card-title">${laChuyen ? 'Chiều chuyển' : 'Xuất hủy ở kho'}</div>
+    ${ds.length > 1
+      ? `<div style="display:flex;gap:6px">${ds.map(k => `<button class="${k === dang ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:9px 6px;font-size:13.5px;margin:0${!laChuyen && k === dang ? ';background:var(--red);border-color:var(--red)' : ''}"
+          onclick="chonKhoPhieu('${mod}','${k}')">${ten(k)}</button>`).join('')}</div>`
+      : `<b style="font-size:15px;color:${laChuyen ? 'var(--green)' : 'var(--red)'}">${ten(dang)}</b>`}`;
+}
+window.chonKhoPhieu = function(mod, k) {
+  if (mod === 'nhap') { if (dsChieuChuyenDuocPhep().includes(k)) ckChieu = k; }
+  else if (dsKhoHuyDuocPhep().includes(k)) xhKho = k;
+  veChonKhoPhieu(mod);
+};
+
 window.submitNhap = async function() {
   if (!currentNhap.items.length) { showToast('Chưa có hàng nào', true); return; }
+  const chieu = ckChieu;
+  if (!chieu || !dsChieuChuyenDuocPhep().includes(chieu)) { showToast('Bạn không có quyền chuyển kho chiều này', true); return; }
+  const cc = CHIEU_CHUYEN[chieu];
+  const branch = (m) => m === 'san' ? KHO.SAN.branchId : KHO.CUA_HANG.branchId;
   if (!currentNhap.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
+  if (!await hoiXacNhan(`Lưu phiếu chuyển ${cc.ten}?`, { nutDongY: 'Lưu phiếu' })) return;
   const btn = document.getElementById('btn-nhap-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
@@ -13247,7 +13368,8 @@ window.submitNhap = async function() {
       // Chuyển hàng giữa 2 chi nhánh KiotViet: trừ kho Sàn TMĐT, cộng kho Cửa hàng.
       // Trước đây tạo phiếu Nhập hàng vì chỉ có 1 chi nhánh — giờ dùng đúng nghiệp vụ.
       headers: { 'x-action': 'tao-phieu-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: currentNhap.items, tenNguoiDung: currentUserData.ten || currentUserData.email || '' })
+      body: JSON.stringify({ items: currentNhap.items, tenNguoiDung: currentUserData.ten || currentUserData.email || '',
+        tuChiNhanh: branch(cc.tu), denChiNhanh: branch(cc.den) })
     });
     const kvData = await kvRes.json();
     if (!kvData.success) {
@@ -13263,6 +13385,7 @@ window.submitNhap = async function() {
     const maPhieu = await layMaPhieuMoi('PCK', 'pck');
     await setDoc(doc(db, 'phieu_chuyenkho', maPhieu), {
       maPhieu,
+      chieu,
       items: currentNhap.items,
       photos: currentNhap.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
       tongGia: total,
@@ -13278,15 +13401,14 @@ window.submitNhap = async function() {
     // Làm SAU khi đã lưu phiếu để nếu lưu hỏng thì tồn không bị trừ oan.
     let ketQuaTon = { soDong: 0, boQuaCombo: [] };
     try {
-      // Chuyển kho = trừ kho sàn, cộng kho cửa hàng. Trước đây chỉ trừ mà quên cộng
-      // nên hàng chuyển xuống cửa hàng bị "bốc hơi" khỏi sổ app.
-      const ct = { loai: 'Chuyển kho', ma: maPhieu };
-      ketQuaTon = await dieuChinhTonKhoApp(currentNhap.items, -1, 'san', ct);
-      await dieuChinhTonKhoApp(currentNhap.items, +1, 'cuahang', ct);
+      // Chuyển kho = trừ kho đi, cộng kho đến
+      const ct = { loai: 'Chuyển kho ' + cc.ten, ma: maPhieu };
+      ketQuaTon = await dieuChinhTonKhoApp(currentNhap.items, -1, cc.tu, ct);
+      await dieuChinhTonKhoApp(currentNhap.items, +1, cc.den, ct);
     } catch(e) {
       console.error('Lỗi trừ tồn kho app:', e);
       alert('Phiếu đã lưu nhưng CHƯA TRỪ ĐƯỢC tồn kho trong app:\n' + e.message
-        + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+        + '\n\nVào Tồn kho chỉnh tay cho khớp.');
     }
 
     currentNhap = { items: [], photos: [] };
@@ -13385,6 +13507,10 @@ function renderXuatItems() {
 window.submitXuat = async function() {
   if (!currentPhieu.items.length) { showToast('Chưa có hàng nào', true); return; }
   if (!currentPhieu.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
+  const kho = xhKho;
+  if (!kho || !dsKhoHuyDuocPhep().includes(kho)) { showToast('Bạn không có quyền xuất hủy ở kho này', true); return; }
+  const kh = KHO_HUY[kho];
+  if (!await hoiXacNhan(`Lưu phiếu xuất hủy ở ${kh.ten}?\n\nTồn ${kh.ten} sẽ trừ theo phiếu.`, { nutDongY: 'Lưu phiếu', nguy: true })) return;
   const btn = document.getElementById('btn-xuat-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
@@ -13392,6 +13518,8 @@ window.submitXuat = async function() {
     const maPhieu = await layMaPhieuMoi('PXH', 'pxh');
     await setDoc(doc(db, 'phieu_huy', maPhieu), {
       maPhieu,
+      kho,
+      truTon: true,           // phiếu từ nay trừ tồn kho app (phiếu cũ không có cờ này)
       items: currentPhieu.items,
       photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
       tongGia: total,
@@ -13401,10 +13529,17 @@ window.submitXuat = async function() {
       deleted: false,
       versions: []
     });
+    const itemsDaLuu = currentPhieu.items;
     currentPhieu = { items: [], photos: [] };
     renderXuatItems();
     renderXuatPhotos();
-    showToast('Đã lưu phiếu xuất hủy');
+    try {
+      const kq = await dieuChinhTonKhoApp(itemsDaLuu, -1, kh.ma, { loai: 'Xuất hủy', ma: maPhieu });
+      showToast(`Đã lưu phiếu xuất hủy + trừ tồn ${kq.soDong} mã`);
+    } catch(e) {
+      console.error('Lỗi trừ tồn xuất hủy:', e);
+      alert('Phiếu đã lưu nhưng CHƯA TRỪ được tồn kho:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
+    }
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
 };
@@ -13550,6 +13685,8 @@ window.loadNhapList = async function(filter={}) {
   const nv = document.getElementById('nhap-filter-nv')?.value;
   const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
   const filterTT = document.getElementById('nhap-filter-trangthai')?.value || 'all';
+  const filterChieu = document.getElementById('nhap-filter-chieu')?.value || 'all';
+  if (filterChieu !== 'all') docs = docs.filter(d => chieuCuaPhieu(d) === filterChieu);
   if (from||to||nv||filterX!=='all'||filterTT!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
@@ -13575,7 +13712,7 @@ window.loadNhapList = async function(filter={}) {
         <div><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
         <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditNhap('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
       </div>
-      <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · <b style="color:var(--green)">${CHIEU_CHUYEN[chieuCuaPhieu(p)].ten}</b></div>
       ${p.kiotvietCode ? `<div style="font-size:11px;color:var(--text2)">Mã phiếu: ${escHtml(p.kiotvietCode)}</div>` : ''}
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
@@ -13613,12 +13750,13 @@ window.deleteNhap = async function(id) {
   // Hàng chưa chuyển đi nữa -> trả lại tồn kho app cho khớp với KiotViet
   try {
     const ctXoa = { loai: 'Xóa phiếu chuyển kho', ma: data.maPhieu || id };
-    const kq = await dieuChinhTonKhoApp(data.items || [], +1, 'san', ctXoa);
-    await dieuChinhTonKhoApp(data.items || [], -1, 'cuahang', ctXoa);
+    const ccX = CHIEU_CHUYEN[chieuCuaPhieu(data)];
+    const kq = await dieuChinhTonKhoApp(data.items || [], +1, ccX.tu, ctXoa);
+    await dieuChinhTonKhoApp(data.items || [], -1, ccX.den, ctXoa);
     showToast(`Đã xóa phiếu + hoàn lại tồn ${kq.soDong} mã`);
   } catch(e) {
     console.error('Lỗi hoàn tồn kho:', e);
-    alert('Đã xóa phiếu nhưng CHƯA HOÀN được tồn kho trong app:\n' + e.message + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+    alert('Đã xóa phiếu nhưng CHƯA HOÀN được tồn kho trong app:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
   }
   loadNhapList();
 };
@@ -13629,6 +13767,7 @@ window.clearNhapFilter = function() {
   document.getElementById('nhap-filter-nv').value='';
   document.getElementById('nhap-filter-xuat').value='all';
   document.getElementById('nhap-filter-trangthai').value='all';
+  const fc = document.getElementById('nhap-filter-chieu'); if (fc) fc.value = 'all';
   nhapDsPage = 1;
   loadNhapList();
 };
@@ -13649,6 +13788,8 @@ window.loadXuatList = async function(filter={}) {
   const nv = document.getElementById('xuat-filter-nv')?.value;
   const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
   const filterTT = document.getElementById('xuat-filter-trangthai')?.value || 'all';
+  const filterKho = document.getElementById('xuat-filter-kho')?.value || 'all';
+  if (filterKho !== 'all') docs = docs.filter(d => khoHuyCuaPhieu(d) === filterKho);
   if (from||to||nv||filterX!=='all'||filterTT!=='all') docs = docs.filter(d => {
     const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
     if (from && ds < from) return false;
@@ -13674,7 +13815,7 @@ window.loadXuatList = async function(filter={}) {
         <div><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
         <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
       </div>
-      <div class="phieu-nv">${p.nguoiTao?.ten||'—'}</div>
+      <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · <b style="color:var(--red)">${KHO_HUY[khoHuyCuaPhieu(p)].ten}</b></div>
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
@@ -13687,8 +13828,19 @@ window.doiTrangXuat = function(p) { xuatDsPage = p; loadXuatList(); };
 
 window.softDeleteXuat = async function(id) {
   if (!await hoiXacNhan('Xóa phiếu này? Vẫn lưu trong mục Đã xóa.')) return;
+  const snap = await getDoc(doc(db,'phieu_huy',id));
+  const data = snap.data() || {};
   await updateDoc(doc(db,'phieu_huy',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
-  showToast('Đã xóa phiếu'); loadXuatList();
+  // Phiếu có trừ tồn -> xóa phiếu thì hoàn lại tồn
+  if (data.truTon && !data.deleted) {
+    try {
+      await dieuChinhTonKhoApp(data.items || [], +1, KHO_HUY[khoHuyCuaPhieu(data)].ma, { loai: 'Xóa phiếu xuất hủy', ma: data.maPhieu || id });
+      showToast('Đã xóa phiếu + hoàn lại tồn');
+    } catch(e) {
+      alert('Đã xóa phiếu nhưng CHƯA HOÀN được tồn kho:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
+    }
+  } else showToast('Đã xóa phiếu');
+  loadXuatList();
 };
 
 window.applyXuatFilter = function() { xuatDsPage = 1; loadXuatList(); };
@@ -13697,6 +13849,7 @@ window.clearXuatFilter = function() {
   document.getElementById('xuat-filter-nv').value='';
   document.getElementById('xuat-filter-xuat').value='all';
   document.getElementById('xuat-filter-trangthai').value='all';
+  const fk = document.getElementById('xuat-filter-kho'); if (fk) fk.value = 'all';
   xuatDsPage = 1;
   loadXuatList();
 };
@@ -13890,7 +14043,9 @@ window.saveEdit = async function() {
         method: 'POST',
         headers: { 'x-action': 'sua-phieu-chuyen', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ items: newItems, kiotvietId: old.kiotvietId, kiotvietCode: old.kiotvietCode,
-          maPhieu: old.maPhieu, tenNguoiDung: currentUserData.ten || currentUserData.email || '' })
+          maPhieu: old.maPhieu, tenNguoiDung: currentUserData.ten || currentUserData.email || '',
+          tuChiNhanh: CHIEU_CHUYEN[chieuCuaPhieu(old)].tu === 'san' ? KHO.SAN.branchId : KHO.CUA_HANG.branchId,
+          denChiNhanh: CHIEU_CHUYEN[chieuCuaPhieu(old)].den === 'san' ? KHO.SAN.branchId : KHO.CUA_HANG.branchId })
       });
       const kvData = await kvRes.json();
       if (!kvData.success) {
@@ -13937,19 +14092,39 @@ window.saveEdit = async function() {
           // Tách hai nhóm vì mỗi nhóm cộng/trừ theo chiều khác nhau
           const nhomTru = cheneLech.filter(x => x.dau === -1);
           const nhomCong = cheneLech.filter(x => x.dau === +1);
-          // Chuyển kho tác động NGƯỢC CHIỀU lên hai kho
+          // Chuyển kho tác động NGƯỢC CHIỀU lên hai kho (kho đi / kho đến theo chiều của phiếu)
           const ctSua = { loai: 'Sửa phiếu chuyển kho', ma: old.maPhieu || editingPhieuId };
+          const ccS = CHIEU_CHUYEN[chieuCuaPhieu(old)];
           if (nhomTru.length) {
-            await dieuChinhTonKhoApp(nhomTru, -1, 'san', ctSua);
-            await dieuChinhTonKhoApp(nhomTru, +1, 'cuahang', ctSua);
+            await dieuChinhTonKhoApp(nhomTru, -1, ccS.tu, ctSua);
+            await dieuChinhTonKhoApp(nhomTru, +1, ccS.den, ctSua);
           }
           if (nhomCong.length) {
-            await dieuChinhTonKhoApp(nhomCong, +1, 'san', ctSua);
-            await dieuChinhTonKhoApp(nhomCong, -1, 'cuahang', ctSua);
+            await dieuChinhTonKhoApp(nhomCong, +1, ccS.tu, ctSua);
+            await dieuChinhTonKhoApp(nhomCong, -1, ccS.den, ctSua);
           }
         } catch(e) {
           console.error('Lỗi chỉnh tồn kho khi sửa phiếu:', e);
-          alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Hàng hóa chỉnh tay cho khớp.');
+          alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
+        }
+      }
+      // Sửa phiếu xuất hủy (loại có trừ tồn): hủy thêm thì trừ thêm, bớt thì hoàn lại
+      if (collectionName === 'phieu_huy' && old.truTon) {
+        try {
+          const bangCu = new Map((old.items || []).map(i => [String(i.sku), Number(i.sl) || 0]));
+          const bangMoi = new Map(newItems.map(i => [String(i.sku), Number(i.sl) || 0]));
+          const tru = [], cong = [];
+          new Set([...bangCu.keys(), ...bangMoi.keys()]).forEach(ma => {
+            const d = (bangMoi.get(ma) || 0) - (bangCu.get(ma) || 0);
+            if (d > 0) tru.push({ sku: ma, sl: d }); else if (d < 0) cong.push({ sku: ma, sl: -d });
+          });
+          const maKho = KHO_HUY[khoHuyCuaPhieu(old)].ma;
+          const ctSua = { loai: 'Sửa phiếu xuất hủy', ma: old.maPhieu || editingPhieuId };
+          if (tru.length) await dieuChinhTonKhoApp(tru, -1, maKho, ctSua);
+          if (cong.length) await dieuChinhTonKhoApp(cong, +1, maKho, ctSua);
+        } catch(e) {
+          console.error('Lỗi chỉnh tồn kho khi sửa phiếu hủy:', e);
+          alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
         }
       }
     }
@@ -13962,19 +14137,31 @@ window.saveEdit = async function() {
 };
 
 // ===== THỐNG KÊ =====
+// Thống kê (thuộc Báo cáo): lọc theo chiều chuyển / kho hủy
+let tkLocNhap = 'all', tkLocXuat = 'all';
+function veLocThongKe(idLoc, dsLua, dang, ham) {
+  const el = document.getElementById(idLoc);
+  if (!el) return;
+  el.innerHTML = dsLua.map(([k, ten]) => `<button class="${k === dang ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:8px 4px;font-size:12.5px;margin:0" onclick="${ham}('${k}')">${ten}</button>`).join('');
+}
+window.locTkNhap = function(k) { tkLocNhap = k; loadNhapStats(); };
+window.locTkXuat = function(k) { tkLocXuat = k; loadXuatStats(); };
+
 async function loadNhapStats() {
   const el = document.getElementById('nhap-stats-content');
+  veLocThongKe('nhap-stats-loc', [['all','Tất cả'], ['san_ch','Sàn → Cửa hàng'], ['ch_san','Cửa hàng → Sàn']], tkLocNhap, 'locTkNhap');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const snap = await getDocs(query(collection(db,'phieu_chuyenkho'), orderBy('createdAt','desc')));
-  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted && (tkLocNhap === 'all' || chieuCuaPhieu(d) === tkLocNhap));
   el.innerHTML = buildStatsHTML(all, 'green', false);
 }
 
 async function loadXuatStats() {
   const el = document.getElementById('xuat-stats-content');
+  veLocThongKe('xuat-stats-loc', [['all','Tất cả'], ['ch','Kho Cửa hàng'], ['san','Kho Sàn']], tkLocXuat, 'locTkXuat');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
-  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted);
+  const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted && (tkLocXuat === 'all' || khoHuyCuaPhieu(d) === tkLocXuat));
   el.innerHTML = buildStatsHTML(all, 'red');
 }
 
@@ -16261,7 +16448,7 @@ async function renderVaiTroList() {
 // Quyền của một vai trò theo cây hiện tại (quy đổi nếu vai trò còn lưu theo cây cũ)
 function locQuyenXem(v) {
   if (!v) return {};
-  return (v.phienBanQuyen || 0) >= PHIEN_BAN_QUYEN ? (v.quyenModule || {}) : quyDoiQuyenCu(v.quyenModule || {});
+  return quyDoiTheoPhienBan(v.quyenModule, v.phienBanQuyen);
 }
 
 function renderFormVaiTro(prefix, v) {
@@ -16744,7 +16931,16 @@ window.loadDeletedList = async function() {
 };
 
 window.restoreXuat = async function(id) {
+  const snap = await getDoc(doc(db,'phieu_huy',id));
+  const data = snap.data() || {};
   await updateDoc(doc(db,'phieu_huy',id),{deleted:false});
+  if (data.truTon && data.deleted) {
+    try {
+      await dieuChinhTonKhoApp(data.items || [], -1, KHO_HUY[khoHuyCuaPhieu(data)].ma, { loai: 'Khôi phục phiếu xuất hủy', ma: data.maPhieu || id });
+    } catch(e) {
+      alert('Đã khôi phục phiếu nhưng CHƯA TRỪ lại được tồn kho:\n' + e.message);
+    }
+  }
   showToast('Đã khôi phục'); loadDeletedList();
 };
 
@@ -16760,8 +16956,8 @@ function getThuKeyChoNgay(ngayISO) {
 async function renderBaoCaoTab() {
   const el = document.getElementById('baocao-content');
   if (!el) return;
-  if (!coQuyen('baocao')) {
-    el.innerHTML = `<p class="info-note">Bạn không có quyền xem Báo cáo.</p>`;
+  if (!coQuyen('bc_ngay')) {
+    el.innerHTML = `<p class="info-note">Bạn không có quyền xem Báo cáo ngày.</p>`;
     return;
   }
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -17450,7 +17646,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v484</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v485</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17504,7 +17700,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v484</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v485</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17550,7 +17746,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v484</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v485</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -17614,6 +17810,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <!-- NHẬP / TẠO -->
       <div class="panel" id="panel-nhap-tao">
+        <div class="card" id="nhap-chieu-wrap"></div>
         <div class="card">
           <div class="card-title">Tìm hàng hóa</div>
           <div class="field sku-wrap">
@@ -17665,6 +17862,13 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
             <div class="field"><label>Đến ngày</label><input type="date" id="nhap-filter-to"></div>
           </div>
           <div class="field"><label>Người nhập</label><select id="nhap-filter-nv"><option value="">Tất cả</option></select></div>
+          <div class="field"><label>Chiều chuyển</label>
+            <select id="nhap-filter-chieu">
+              <option value="all">Tất cả</option>
+              <option value="san_ch">Sàn → Cửa hàng</option>
+              <option value="ch_san">Cửa hàng → Sàn</option>
+            </select>
+          </div>
           <div class="field"><label>Trạng thái xuất</label>
             <select id="nhap-filter-xuat">
               <option value="all">Tất cả</option>
@@ -17697,11 +17901,13 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <!-- NHẬP / THỐNG KÊ -->
       <div class="panel" id="panel-nhap-thongke">
+        <div id="nhap-stats-loc" style="display:flex;gap:6px;margin-bottom:12px"></div>
         <div id="nhap-stats-content"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- XUẤT / TẠO -->
       <div class="panel" id="panel-xuat-tao">
+        <div class="card" id="xuat-kho-wrap"></div>
         <div class="card">
           <div class="card-title">Tìm hàng hóa</div>
           <div class="field sku-wrap">
@@ -17756,6 +17962,13 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
             <div class="field"><label>Đến ngày</label><input type="date" id="xuat-filter-to"></div>
           </div>
           <div class="field"><label>Người xuất</label><select id="xuat-filter-nv"><option value="">Tất cả</option></select></div>
+          <div class="field"><label>Kho</label>
+            <select id="xuat-filter-kho">
+              <option value="all">Tất cả</option>
+              <option value="ch">Kho Cửa hàng</option>
+              <option value="san">Kho Sàn</option>
+            </select>
+          </div>
           <div class="field"><label>Trạng thái xuất</label>
             <select id="xuat-filter-xuat">
               <option value="all">Tất cả</option>
@@ -17789,6 +18002,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <!-- XUẤT / THỐNG KÊ -->
       <div class="panel" id="panel-xuat-thongke">
+        <div id="xuat-stats-loc" style="display:flex;gap:6px;margin-bottom:12px"></div>
         <div id="xuat-stats-content"><div class="loading">Đang tải...</div></div>
       </div>
 
@@ -17955,6 +18169,11 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <!-- SÀN TMĐT — module riêng, các màn hình con đăng ký trong MAN_HINH_TMDT -->
       <div class="panel" id="panel-tmdt-main">
         <div id="tmdt-content"><div class="loading">Đang tải...</div></div>
+      </div>
+
+      <!-- NHẬP HÀNG (nhóm Hàng hóa) -->
+      <div class="panel" id="panel-nhaphang-main">
+        <div id="nhaphang-than"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- BÁO CÁO CHẤM CÔNG + CHECKLIST (Admin/Quản lý) -->
