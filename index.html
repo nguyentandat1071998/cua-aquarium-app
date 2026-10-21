@@ -11040,7 +11040,8 @@ const DANH_SACH_MODULE = [
 const PHIEN_BAN_QUYEN = 3;
 
 // Quy đổi vai trò cây quyền 2 -> 3: Nhập hàng ra khỏi Sàn TMĐT, Chuyển kho / Xuất hủy
-// / Nhập hàng chọn kho, Thống kê sang Báo cáo. Giữ nguyên việc người đó đang làm được.
+// / Nhập hàng chọn kho, Thống kê sang Báo cáo (chỉ người có quyền Báo cáo mới xem — xem danh
+// sách phiếu không kèm thống kê). Giữ nguyên việc người đó đang làm được.
 // Worker dùng đúng bảng này.
 function quyDoiQuyenV2(cu) {
   const q = { ...cu };
@@ -11050,8 +11051,6 @@ function quyDoiQuyenV2(cu) {
   if (co('xuat')) them('xh_kho_ch');                                // trước đây xuất hủy ở Cửa hàng
   if (co('tmdt_nhaphang')) them('nhaphang', 'nh_kho_san');           // trước đây chỉ nhập kho Sàn
   delete q.tmdt_nhaphang;
-  if (co('nhap_xemds')) them('baocao', 'bc_tk_nhap');
-  if (co('xuat_xemds')) them('baocao', 'bc_tk_xuat');
   if (co('baocao')) them('bc_ngay');
   return q;
 }
@@ -11486,6 +11485,8 @@ function locQuyen(goc, phienBan) {
   const r = {};
   tatCaKhoaQuyen().forEach(k => { r[k] = !!q[k]; });
   if (!batTMDT) KHOA_TMDT.forEach(k => { r[k] = false; });
+  // Báo cáo (báo cáo ngày, thống kê) chỉ có hiệu lực khi được vào Báo cáo
+  if (!r.baocao) ['bc_ngay', 'bc_tk_nhap', 'bc_tk_xuat'].forEach(k => { r[k] = false; });
   r.tmdt = KHOA_TMDT.some(k => k !== 'hh_kho_san' && r[k]);
   return r;
 }
