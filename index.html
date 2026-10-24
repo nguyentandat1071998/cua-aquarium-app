@@ -1851,6 +1851,7 @@ window.switchSub = function(sub) {
   const khungVua = (activeModule === 'nhap' || activeModule === 'xuat') && sub === 'tao';
   document.documentElement.classList.toggle('khoa-cuon', khungVua);
   if (khungVua) requestAnimationFrame(bhVuaManHinh);
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
   document.getElementById('stab-' + sub).classList.add('active');
   // Hide all content panels
   document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
@@ -13433,7 +13434,9 @@ window.submitNhap = async function() {
 
     btn.textContent = 'Đang lưu...';
     const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
-    const maPhieu = await layMaPhieuMoi('PCK', 'pck');
+    // Mã phiếu = mã phiếu chuyển hàng bên KiotViet (TRF...); không có thì cấp số nội bộ
+    const maKV = String(kvData.kiotvietCode || '');
+    const maPhieu = /^[A-Za-z0-9_-]{1,40}$/.test(maKV) ? maKV : await layMaPhieuMoi('PCK', 'pck');
     await setDoc(doc(db, 'phieu_chuyenkho', maPhieu), {
       maPhieu,
       chieu,
@@ -13650,12 +13653,12 @@ window.submitXuat = async function() {
   try {
     // Máy chủ kiểm quyền (kho + danh mục), tạo phiếu xuất hủy bên KiotViet (trừ kho bên đó),
     // rồi ghi phiếu + trừ tồn trong app. Lỗi ở bước nào thì không bước nào được ghi.
-    const maPhieu = await layMaPhieuMoi('PXH', 'pxh');
+    // Mã phiếu = mã phiếu xuất hủy bên KiotViet (máy chủ gán sau khi tạo phiếu bên đó)
     const idToken = await currentUser.getIdToken();
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': 'tao-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kho, maPhieu,
+      body: JSON.stringify({ kho,
         items: currentPhieu.items.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })),
         photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, thumb: p.thumb, ts: p.ts, skuId: p.skuId, tuFile: !!p.tuFile })) })
     });
@@ -14031,7 +14034,6 @@ window.plXem = function(mod, id) {
       <div>Thời gian: <b>${ddbThoiGian(t) || '—'}</b></div>
       <div>Nhân viên: <b>${escHtml(p.nguoiTao?.ten || '')}</b></div>
       <div>${mod === 'xuat' ? 'Kho' : 'Chiều chuyển'}: <b style="color:${C.mau}">${C.tenLoai(p)}</b></div>
-      ${p.kiotvietCode ? `<div>Mã đối chiếu: <b>${escHtml(p.kiotvietCode)}</b></div>` : ''}
       ${p.deleted ? `<div style="color:#DC2626;font-weight:600">Đã xóa${p.deletedBy?.ten ? ' bởi ' + escHtml(p.deletedBy.ten) : ''}</div>` : ''}
       ${p.daXuat ? '<div style="color:var(--text2)">Đã xuất file</div>' : ''}
     </div>
@@ -14353,6 +14355,8 @@ window.saveEdit = async function() {
       if (old.kiotvietId && (collectionName === 'phieu_chuyenkho' || collectionName === 'phieu_huy')) {
         updatePayload.kiotvietId = old.kiotvietId;
         updatePayload.kiotvietCode = old.kiotvietCode;
+        // Sửa = phiếu mới bên KiotViet -> mã phiếu theo mã mới (phiếu cũ dùng mã nội bộ thì giữ nguyên)
+        if (old.kiotvietCode && old.maPhieu && /^TRF/.test(old.maPhieu)) updatePayload.maPhieu = old.kiotvietCode;
       }
       await updateDoc(doc(db, collectionName, editingPhieuId), updatePayload);
       // Sửa phiếu chuyển kho -> tồn app phải chỉnh theo CHÊNH LỆCH giữa số cũ và số mới.
@@ -17839,7 +17843,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v492</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v493</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17893,7 +17897,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v492</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v493</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17939,7 +17943,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v492</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v493</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
