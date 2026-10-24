@@ -5510,6 +5510,40 @@ let nhPhieuHienTai = null;   // phiếu tạm đang mở để sửa/duyệt (nu
 let nhDongHang = [];         // [{sku, ten, soLuong, donGia, giaVonCu}]
 let nhDaKhoiPhucNhap = false;
 let nhKho = null;            // 'ch' | 'san' — kho nhập của phiếu đang soạn
+let nhLoai = null;           // 'phukien' (bắt buộc ảnh, như Chuyển kho) | 'song' (Cá/Tép/Cây — chưa cần ảnh, sau gắn AI đếm)
+let nhAnh = [];              // ảnh phiếu Phụ kiện [{dataUrl, thumb, ts, tuFile?}]
+const NH_TOI_DA_ANH = 4;     // ảnh nằm trong phiếu (giới hạn 1MB/tài liệu)
+const NH_LOAI = { phukien: 'Phụ kiện', song: 'Cá/Tép/Cây' };
+const NH_NHOM_SONG = ['Cá cảnh', 'Cây thủy sinh', 'Tép, Tôm cảnh', 'Ốc'];
+// Hàng sống = thuộc nhóm Cá / Cây / Tép / Ốc; còn lại (kể cả chưa xếp nhóm) là Phụ kiện -> phải chụp ảnh
+const nhLaHangSong = (sp) => [sp?.nhom1, sp?.nhom2, sp?.nhom3].some(n => n && NH_NHOM_SONG.includes(String(n)));
+const nhSkuHopLoai = (sp, loai = nhLoai) => !!sp && !sp.laCombo && (loai === 'song' ? nhLaHangSong(sp) : loai === 'phukien' ? !nhLaHangSong(sp) : false);
+function nhDoanLoai(dongHang) {
+  const ds = (dongHang || []).map(d => allSKUs.find(s => s.sku === d.sku)).filter(Boolean);
+  return ds.length && ds.every(nhLaHangSong) ? 'song' : 'phukien';
+}
+window.nhChonLoai = function(l) {
+  if (!NH_LOAI[l] || l === nhLoai) return;
+  const sai = nhDongHang.filter(d => !nhSkuHopLoai(allSKUs.find(s => s.sku === d.sku), l));
+  if (sai.length) { showToast(`Phiếu đang có hàng không thuộc ${NH_LOAI[l]}: ${sai.slice(0, 3).map(d => d.ten).join(', ')}${sai.length > 3 ? '…' : ''}`, true); return; }
+  nhLoai = l;
+  nhVeTao();
+};
+window.nhChupAnh = function() {
+  if (nhAnh.length >= NH_TOI_DA_ANH) { showToast(`Tối đa ${NH_TOI_DA_ANH} ảnh mỗi phiếu`, true); return; }
+  openCamera('nhaphang');
+};
+function nhNhanAnh(anh) { if (nhAnh.length < NH_TOI_DA_ANH) nhAnh.push(anh); nhVeTao(); }
+window.nhXoaAnh = function(i) { nhAnh.splice(i, 1); nhVeTao(); };
+// Danh sách chỉ có ảnh nhỏ; bấm mới tải ảnh đầy đủ từ phiếu
+const nhBoNhoAnh = {};
+window.nhXemAnh = async function(id, i) {
+  try {
+    if (!nhBoNhoAnh[id]) { showToast('Đang mở ảnh...'); nhBoNhoAnh[id] = (await getDoc(doc(db, 'phieu_nhap_san', id))).data()?.photos || []; }
+    const a = nhBoNhoAnh[id][i];
+    if (a?.dataUrl) viewPhoto(a.dataUrl); else showToast('Không tìm thấy ảnh', true);
+  } catch(e) { showToast('Không mở được ảnh: ' + e.message, true); }
+};
 
 const TEN_KHO = { ch: 'Cửa hàng', san: 'Online' };
 const KHO_NHAP = { ch: { ten: 'Kho Cửa hàng', ma: 'cuahang' }, san: { ten: 'Kho Online', ma: 'san' } };
@@ -5531,11 +5565,12 @@ function nhKhoaNhap() {
 }
 function nhLuuNhap() {
   try {
-    if (!nhDongHang.length && !nhPhieuHienTai) { localStorage.removeItem(nhKhoaNhap()); return; }
-    localStorage.setItem(nhKhoaNhap(), JSON.stringify({
-      dongHang: nhDongHang, kho: nhKho, phieu: nhPhieuHienTai, luc: Date.now()
+    if (!nhDongHang.length && !nhPhieuHienTai && !nhAnh.length) { localStorage.removeItem(nhKhoaNhap()); return; }
+    const goi = (anh) => localStorage.setItem(nhKhoaNhap(), JSON.stringify({
+      dongHang: nhDongHang, kho: nhKho, loai: nhLoai, anh, phieu: nhPhieuHienTai, luc: Date.now()
     }));
-  } catch(e) { /* trình duyệt chặn hoặc hết dung lượng — bỏ qua, không chặn thao tác */ }
+    try { goi(nhAnh); } catch(e) { goi([]); }   // hết dung lượng thì giữ nháp không kèm ảnh
+  } catch(e) { /* trình duyệt chặn — bỏ qua, không chặn thao tác */ }
 }
 function nhDocNhap() {
   try {
@@ -5556,10 +5591,12 @@ async function nhVaoTao() {
   if (!allSKUs.length) await loadSKUs();
   if (!nhDongHang.length && !nhPhieuHienTai) {
     const nhap = nhDocNhap();
-    if (nhap && (nhap.dongHang?.length || nhap.phieu)) {
+    if (nhap && (nhap.dongHang?.length || nhap.phieu || nhap.anh?.length)) {
       nhDongHang = nhap.dongHang || [];
       nhPhieuHienTai = nhap.phieu || null;
       nhKho = nhap.kho || nhPhieuHienTai?.kho || null;
+      nhLoai = NH_LOAI[nhap.loai] ? nhap.loai : (nhDongHang.length ? nhDoanLoai(nhDongHang) : null);
+      nhAnh = Array.isArray(nhap.anh) ? nhap.anh : [];
       nhDaKhoiPhucNhap = true;
     }
   }
@@ -5592,17 +5629,20 @@ function nhVeTao() {
   else if (!sua) dau += dsKho.length > 1
     ? `<div style="display:flex;gap:6px">${dsKho.map(k => `<button class="${k === nhKho ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0" onclick="nhChonKho('${k}')">${KHO_NHAP[k].ten}</button>`).join('')}</div>`
     : `<div style="text-align:center;font-size:14px;font-weight:700;color:var(--green);padding:4px 0">Nhập hàng vào ${kn ? kn.ten : ''}</div>`;
+  // Loại hàng: Phụ kiện (phải chụp ảnh) / Cá/Tép/Cây — mỗi phiếu một loại, ô tìm chỉ hiện hàng đúng loại
+  if (duocNhap) dau += `<div style="display:flex;gap:6px;margin-top:6px">${Object.entries(NH_LOAI).map(([k, t]) =>
+    `<button class="${k === nhLoai ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0${k === nhLoai ? '' : ';border-style:dashed'}" onclick="nhChonLoai('${k}')">${k === 'phukien' ? '📦' : '🐟'} ${t}</button>`).join('')}</div>`;
   wrap.innerHTML = dau;
 
   const oTim = document.getElementById('nh-tim-hang');
-  if (oTim) oTim.style.display = duocNhap ? 'flex' : 'none';
+  if (oTim) oTim.style.display = duocNhap && nhLoai ? 'flex' : 'none';
   const inp = document.getElementById('nh-tim');
-  if (inp && !inp.dataset.daGan) { inp.dataset.daGan = '1'; makeSKUSearch('nh-tim', 'nh-drop', null); }
+  if (inp && !inp.dataset.daGan) { inp.dataset.daGan = '1'; makeSKUSearch('nh-tim', 'nh-drop', null, false, (sp) => nhSkuHopLoai(sp)); }
 
   // Thẻ từng mã hàng — giống Chuyển kho; người duyệt có thêm ô đơn giá
   const xemTon = kn && (kn.ma === 'cuahang' || tonSanUnsub);
   than.innerHTML = !nhDongHang.length
-    ? `<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">Chưa có hàng nào.<br>${duocNhap ? 'Gõ tên hoặc quét mã ở ô trên để thêm.' : ''}</div>`
+    ? `<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">${!duocNhap ? 'Chưa có hàng nào.' : !nhLoai ? 'Chọn loại hàng nhập: <b>Phụ kiện</b> hoặc <b>Cá/Tép/Cây</b>.' : `Chưa có hàng nào.<br>Gõ tên hoặc quét mã ở ô trên để thêm.${nhLoai === 'phukien' ? '<br>Phụ kiện phải chụp ảnh hàng trước khi lưu.' : ''}`}</div>`
     : nhDongHang.map((d, i) => {
       const sku = allSKUs.find(s => s.sku === d.sku);
       const ton = xemTon && sku ? layTon(sku, kn.ma) : null;
@@ -5644,14 +5684,33 @@ function nhVeTao() {
   const dongTien = document.getElementById('nh-dong-tien'); if (dongTien) dongTien.style.display = duyet ? '' : 'none';
   const ghiChu = document.getElementById('nh-ghi-chu');
   if (ghiChu) ghiChu.textContent = !nhDongHang.length ? ''
+    : (nhLoai === 'phukien' && !nhAnh.length) ? 'Chụp ảnh hàng hóa trước khi lưu.'
     : !duyet ? 'Lưu phiếu tạm — người duyệt sẽ điền giá và lưu phiếu.'
     : thieuGia ? 'Còn mã chưa có đơn giá — chưa "Lưu phiếu" được, dùng "Lưu phiếu tạm" nếu chưa biết giá.' : '';
+  // Ảnh: chỉ phiếu Phụ kiện (giống Chuyển kho)
+  const oAnh = document.getElementById('nh-anh-wrap');
+  const canAnh = nhLoai === 'phukien';
+  if (oAnh) {
+    oAnh.style.display = canAnh && duocNhap ? 'flex' : 'none';
+    const laAdmin = currentUserData?.role === 'admin';
+    oAnh.innerHTML = !canAnh ? '' : `
+      <div style="flex:1;min-width:0;display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;overflow-y:hidden;align-items:center;padding-top:6px">
+        ${nhAnh.length ? nhAnh.map((a, i) => `
+          <div class="thumb-wrap" style="width:44px;height:44px;flex:0 0 44px">
+            <img src="${a.thumb || a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')">
+            <button onclick="nhXoaAnh(${i})">✕</button>
+          </div>`).join('') : `<span style="font-size:12px;color:${nhDongHang.length ? 'var(--red)' : 'var(--text2)'}">Chưa có ảnh hàng hóa</span>`}
+      </div>
+      ${nhAnh.length < NH_TOI_DA_ANH ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:7px 12px;white-space:nowrap" onclick="nhChupAnh()">📷 Chụp ảnh</button>
+      ${laAdmin ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:7px 10px" onclick="chonAnhTuMay('nhaphang')" title="Chọn ảnh từ máy (Admin)">🖼</button>` : ''}` : ''}`;
+  }
+  const thieuAnh = canAnh && !nhAnh.length;
   const nutTam = document.getElementById('btn-nh-tam');
   const nutLuu = document.getElementById('btn-nh-luu');
-  if (nutTam && !nutTam.textContent.includes('Đang')) nutTam.disabled = !nhDongHang.length || !duocNhap;
+  if (nutTam && !nutTam.textContent.includes('Đang')) nutTam.disabled = !nhDongHang.length || !duocNhap || thieuAnh;
   if (nutLuu) {
     nutLuu.style.display = duyet ? '' : 'none';
-    if (!nutLuu.textContent.includes('Đang')) nutLuu.disabled = !nhDongHang.length || !duocNhap || thieuGia;
+    if (!nutLuu.textContent.includes('Đang')) nutLuu.disabled = !nhDongHang.length || !duocNhap || thieuGia || thieuAnh;
   }
   nhLuuNhap();
 }
@@ -5674,6 +5733,10 @@ window.nhXoaDong = function(i) {
 // Chọn từ ô tìm kiếm (selectSKU) hoặc quét mã. Đã có thì +1.
 window.nhThemHang = function(maSku, ten) {
   if (!nhKho || !dsKhoNhapDuocPhep().includes(nhKho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
+  if (!nhLoai) { showToast('Chọn loại hàng nhập trước: Phụ kiện hoặc Cá/Tép/Cây', true); return; }
+  const spChon = allSKUs.find(s => s.sku === maSku);
+  if (spChon?.laCombo) { showToast('Combo không nhập trực tiếp — nhập từng món', true); return; }
+  if (!nhSkuHopLoai(spChon)) { showToast(`${spChon?.ten || maSku} không thuộc ${NH_LOAI[nhLoai]} — tạo phiếu ${NH_LOAI[nhLoai === 'song' ? 'phukien' : 'song']} riêng`, true); return; }
   let idx = nhDongHang.findIndex(d => d.sku === maSku);
   if (idx >= 0) {
     nhDongHang[idx].soLuong = (Number(nhDongHang[idx].soLuong) || 0) + 1;
@@ -5695,6 +5758,7 @@ window.nhBoNhap = async function() {
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
   nhDongHang = [];
+  nhAnh = []; nhLoai = null;
   nhKho = nhKhoMacDinh();
   nhVeTao();
 };
@@ -5704,15 +5768,17 @@ window.nhDongPhieu = async function() {
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
   nhDongHang = [];
+  nhAnh = []; nhLoai = null;
   nhKho = nhKhoMacDinh();
   nhVeTao();
 };
 
 // Mở phiếu tạm từ Danh sách để sửa / điền giá
 window.nhMoPhieu = async function(id) {
-  const p = plTimPhieu('nhaphang', id);
-  const r = p?._goc;
-  if (!r) { showToast('Không tìm thấy phiếu', true); return; }
+  let r = null;
+  try { const s2 = await getDoc(doc(db, 'phieu_nhap_san', id)); r = s2.exists() ? { id, ...s2.data() } : null; }
+  catch(e) { showToast('Không mở được phiếu: ' + e.message, true); return; }
+  if (!r || r.deleted) { showToast('Không tìm thấy phiếu', true); return; }
   if (r.trangThai !== 'tam') { showToast('Phiếu đã lưu — không sửa được nữa', true); return; }
   const kho = r.kho === 'ch' ? 'ch' : 'san';
   if (!dsKhoNhapDuocPhep().includes(kho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
@@ -5721,6 +5787,8 @@ window.nhMoPhieu = async function(id) {
   nhPhieuHienTai = { id: r.id, maPhieu: r.maPhieu || '', trangThai: 'tam', kho, nguoiTao: r.nguoiTao || '', nguoiTaoUid: r.nguoiTaoUid || '' };
   nhKho = kho;
   nhDongHang = JSON.parse(JSON.stringify(r.dongHang || []));
+  nhLoai = NH_LOAI[r.loai] ? r.loai : nhDoanLoai(nhDongHang);
+  nhAnh = Array.isArray(r.photos) ? r.photos.filter(a => a?.dataUrl) : [];
   // Phiếu tạm thường chưa có giá. Người duyệt mở ra thì gợi sẵn giá vốn
   // hiện tại để chỉ phải sửa những mã thật sự đổi giá.
   if (nhCoDuyet()) {
@@ -5743,6 +5811,11 @@ window.nhLuuPhieu = async function(luuThat) {
   // Chặn ở tầng hàm, không chỉ ẩn nút — tránh gọi thẳng qua Console (máy chủ + rules cũng chặn)
   if (!nhKho || !dsKhoNhapDuocPhep().includes(nhKho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
   if (luuThat && !nhCoDuyet()) { showToast('Bạn không có quyền duyệt phiếu nhập', true); return; }
+  if (!NH_LOAI[nhLoai]) { showToast('Chọn loại hàng nhập: Phụ kiện hoặc Cá/Tép/Cây', true); return; }
+  const saiLoai = nhDongHang.filter(d => !nhSkuHopLoai(allSKUs.find(s => s.sku === d.sku)));
+  if (saiLoai.length) { showToast(`Không thuộc ${NH_LOAI[nhLoai]}: ${saiLoai.map(d => d.ten).join(', ')}`, true); return; }
+  if (nhLoai === 'phukien' && !nhAnh.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
+  if (nhAnh.reduce((s, a) => s + (a.dataUrl?.length || 0) + (a.thumb?.length || 0), 0) > 880000) { showToast('Ảnh quá nặng — bớt 1 ảnh rồi lưu lại', true); return; }
   const tenKho = KHO_NHAP[nhKho].ten;
 
   if (luuThat) {
@@ -5760,6 +5833,8 @@ window.nhLuuPhieu = async function(luuThat) {
   const duLieu = {
     maPhieu,
     kho: nhKho,
+    loai: nhLoai,
+    photos: nhAnh.map(a => ({ dataUrl: a.dataUrl, thumb: a.thumb || '', ts: a.ts || '', ...(a.tuFile ? { tuFile: true } : {}) })),
     dongHang: nhDongHang,
     tongTien,
     tongSoLuong: nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0),
@@ -5823,6 +5898,8 @@ window.nhLuuPhieu = async function(luuThat) {
     nhDaKhoiPhucNhap = false;
     nhPhieuHienTai = null;
     nhDongHang = [];
+    nhAnh = []; nhLoai = null;
+    if (dangSua) delete nhBoNhoAnh[dangSua.id];
     nhKho = nhKhoMacDinh();
     if (nut) { nut.disabled = false; nut.textContent = chuNut; }
     if (dangSua && coQuyen('nhaphang')) switchSub('ds'); else nhVeTao();
@@ -5856,6 +5933,8 @@ function nhChuanPhieu(r) {
   });
   return {
     id: r.id, maPhieu: r.maPhieu || r.kiotvietCode || r.id, kho: r.kho === 'ch' ? 'ch' : 'san',
+    loaiHang: NH_LOAI[r.loai] ? r.loai : '',
+    photos: (r.photos || []).map((a, i) => ({ thumb: a.thumb || '', ts: a.ts || '', mo: `nhXemAnh('${r.id}',${i})` })),
     trangThai: r.trangThai === 'tam' ? 'tam' : 'da_luu', items,
     tongSL: items.reduce((s, i) => s + i.sl, 0),
     tongGia: Number(r.tongTien) || items.reduce((s, i) => s + i.tong, 0),
@@ -11841,7 +11920,7 @@ function skuDuocXuatHuy(s) {
   return [s?.nhom1, s?.nhom2, s?.nhom3].some(n => n && ds.includes(String(n)));
 }
 
-function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
+function makeSKUSearch(inputId, dropdownId, giaId, chiNhom, locSp) {
   const input = document.getElementById(inputId);
   const box = document.getElementById(dropdownId);
   if (!input || !box) return;
@@ -11853,6 +11932,7 @@ function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
     if (apDungChiNhom) {
       pool = pool.filter(s => skuDuocXuatHuy(s) && !s.laCombo);
     }
+    if (typeof locSp === 'function') pool = pool.filter(locSp);
     // Dùng String(...) vì có bản ghi rác thiếu tên — gọi thẳng .toLowerCase()
     // trên undefined làm cả hàm ném lỗi, dropdown im lặng không hiện gì.
     const tim = val.toLowerCase();
@@ -13674,7 +13754,7 @@ window.chonAnhTuMay = function(mode) {
 window.themAnhTuFile = async function(input) {
   if (currentUserData?.role !== 'admin') { input.value = ''; return; }
   const mode = input.dataset.mode || '';
-  const laAnhHuy = mode.startsWith('xuat');
+  const laAnhHuy = mode.startsWith('xuat') || mode === 'nhaphang';
   const files = [...(input.files || [])];
   for (const f of files) {
     try {
@@ -13708,7 +13788,8 @@ window.themAnhTuFile = async function(input) {
         nho.width = Math.round(canvas.width * tl2); nho.height = Math.round(canvas.height * tl2);
         nho.getContext('2d').drawImage(canvas, 0, 0, nho.width, nho.height);
         photoData.thumb = nho.toDataURL('image/jpeg', 0.6);
-        xhNhanAnh(photoData, mode.split(':')[1] || null);
+        if (mode === 'nhaphang') nhNhanAnh(photoData);
+        else xhNhanAnh(photoData, mode.split(':')[1] || null);
       } else if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
     } catch(e) {
       console.error('Lỗi đọc ảnh:', e);
@@ -13724,7 +13805,7 @@ window.capturePhoto = function() {
   const canvas = document.getElementById('camera-canvas');
   // Thu nhỏ về tối đa 1280px — phiếu nhiều ảnh vẫn nằm gọn trong 1 tài liệu (giới hạn 1MB)
   // Ảnh xuất hủy 1024px — mỗi ảnh lưu riêng nên một phiếu chứa được nhiều ảnh
-  const laAnhHuy = String(mode).startsWith('xuat');
+  const laAnhHuy = String(mode).startsWith('xuat') || mode === 'nhaphang';   // 1024px + ảnh nhỏ
   const tlAnh = Math.min(1, (laAnhHuy ? 1024 : 1280) / Math.max(video.videoWidth || 1, video.videoHeight || 1));
   canvas.width = Math.round(video.videoWidth * tlAnh); canvas.height = Math.round(video.videoHeight * tlAnh);
   const ctx = canvas.getContext('2d');
@@ -13752,6 +13833,7 @@ window.capturePhoto = function() {
     photoData.thumb = nho.toDataURL('image/jpeg', 0.6);
   }
   if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
+  else if (mode === 'nhaphang') nhNhanAnh(photoData);
   else if (mode === 'checklist') {
     const clId = window._clPhotoTarget;
     const label = window._clPhotoLabel || '';
@@ -13796,14 +13878,17 @@ const PL = {
     dsLoai: [['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']], coGia: () => nhCoDuyet(),
     loaiCuaToi: () => dsKhoNhapDuocPhep(),
     trangThai: (p) => p.trangThai, dsTrangThai: [['tam', 'Phiếu tạm'], ['da_luu', 'Đã lưu']],
-    nhan: (p) => p.trangThai === 'tam'
+    nhomLoc: { tieuDe: 'LOẠI HÀNG', ds: [['phukien', 'Phụ kiện'], ['song', 'Cá/Tép/Cây']], lay: (p) => p.loaiHang },
+    nhan: (p) => (p.loaiHang ? `<span style="font-size:11px;color:#0369A1;background:#E0F2FE;padding:1px 7px;border-radius:4px;font-weight:600">${NH_LOAI[p.loaiHang]}</span> ` : '') + (p.trangThai === 'tam'
       ? '<span style="font-size:11px;color:#fff;background:#D97706;padding:1px 7px;border-radius:4px;font-weight:600">Phiếu tạm</span>'
-      : '<span style="font-size:11px;color:#16A34A;font-weight:600">Đã lưu</span>',
+      : '<span style="font-size:11px;color:#16A34A;font-weight:600">Đã lưu</span>'),
     tai: (L) => nhTaiDs(L), tim: () => nhTimDs() }
 };
 const plLoc = {}, plDs = { nhap: [], xuat: [], nhaphang: [] }, plTimChu = { nhap: '', xuat: '', nhaphang: '' }, plTimKq = { nhap: [], xuat: [], nhaphang: [] };
 const plCoGia = (C) => typeof C.coGia === 'function' ? C.coGia() : !!C.coGia;
-function plLocMacDinh() { const h = ngayLocal(); return { tu: h, den: h, loai: [], trangThai: [], nhanVien: [] }; }
+function plLocMacDinh() { const h = ngayLocal(); return { tu: h, den: h, loai: [], trangThai: [], nhanVien: [], nhom: [] }; }
+// Bấm ảnh: ảnh có sẵn thì mở luôn; ảnh nằm chỗ khác thì tải khi bấm
+const plMoAnh = (a) => a.mo || (a.dataUrl ? `viewPhoto('${a.dataUrl}')` : `xemAnhPhieu('${a.id}')`);
 const plMs = (p) => p.createdAt?.toMillis?.() || 0;
 
 async function plTai(mod) {
@@ -13832,11 +13917,12 @@ function plQuaLoc(mod, p) {
   const tt = C.trangThai ? C.trangThai(p) : plTrangThai(p);
   if (L.trangThai.length ? !L.trangThai.includes(tt) : p.deleted) return false;
   if (L.loai.length && !L.loai.includes(PL[mod].loai(p))) return false;
+  if (C.nhomLoc && L.nhom?.length && !L.nhom.includes(C.nhomLoc.lay(p))) return false;
   if (L.nhanVien.length && !L.nhanVien.includes(p.nguoiTao?.uid)) return false;
   return true;
 }
 function plDsLoc(mod) { return plDs[mod].filter(p => plQuaLoc(mod, p)); }
-function plSoBoLoc(mod) { const L = plLoc[mod]; return L.loai.length + L.trangThai.length + L.nhanVien.length; }
+function plSoBoLoc(mod) { const L = plLoc[mod]; return L.loai.length + L.trangThai.length + L.nhanVien.length + (L.nhom?.length || 0); }
 function plChuNgay(mod) {
   const L = plLoc[mod], f = (s) => s.split('-').reverse().join('/');
   return L.tu === L.den ? (L.tu === ngayLocal() ? 'Hôm nay · ' : '') + f(L.tu) : `${f(L.tu)} – ${f(L.den)}`;
@@ -13882,7 +13968,7 @@ function plThe(mod, p) {
           <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(ten)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
-          ${anh ? `<img src="${anh}" onclick="${a0.dataUrl ? `viewPhoto('${a0.dataUrl}')` : `xemAnhPhieu('${a0.id}')`}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer">` : ''}
+          ${anh ? `<img src="${anh}" onclick="${plMoAnh(a0)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer">` : ''}
           <button class="btn-xs" onclick="plXem('${mod}','${p.id}')">Xem chi tiết</button>
         </div>
       </div>
@@ -13959,6 +14045,7 @@ window.plMoLoc = function(mod) {
       const ds = C.dsLoai.filter(([k]) => cuaToi.length ? cuaToi.includes(k) : coTrongDs.has(k));
       return ds.length > 1 ? nhom(C.tieuDeLoai, ds.map(([k, t]) => o('pll-loai', k, t, L.loai)).join('')) : '';
     })()}
+    ${C.nhomLoc ? nhom(C.nhomLoc.tieuDe, C.nhomLoc.ds.map(([k, t]) => o('pll-nhom', k, t, L.nhom || [])).join('')) : ''}
     ${nhom('TRẠNG THÁI PHIẾU', (C.dsTrangThai || [['binhthuong', 'Bình thường'], ['dasua', 'Đã sửa'], ['daxoa', 'Đã xóa']]).map(([k, t]) => o('pll-tt', k, t, L.trangThai)).join(''))}
     ${nv.size ? nhom('NHÂN VIÊN', [...nv].map(([uid, ten]) => o('pll-nv', uid, ten, L.nhanVien)).join('')) : ''}`,
     `<button class="btn-outline" style="flex:1" onclick="plDatLaiLoc('${mod}')">Đặt lại</button>
@@ -13971,7 +14058,7 @@ window.plApDungLoc = async function(mod) {
   let den = document.getElementById('pll-den')?.value || tu;
   if (tu > den) [tu, den] = [den, tu];
   const doiNgay = tu !== plLoc[mod].tu || den !== plLoc[mod].den;
-  plLoc[mod] = { tu, den, loai: lay('pll-loai'), trangThai: lay('pll-tt'), nhanVien: lay('pll-nv') };
+  plLoc[mod] = { tu, den, loai: lay('pll-loai'), trangThai: lay('pll-tt'), nhanVien: lay('pll-nv'), nhom: lay('pll-nhom') };
   document.getElementById('pl-loc-modal').style.display = 'none';
   await plTai(mod);
 };
@@ -13983,7 +14070,7 @@ window.plDatLaiLoc = async function(mod) {
 };
 
 // Ảnh phiếu: ảnh nhỏ hiện ngay, bấm mới tải ảnh đầy đủ (lưu riêng ở anh_phieu)
-const plAnhNho = (a) => `<img src="${a.thumb || a.dataUrl}" onclick="${a.dataUrl ? `viewPhoto('${a.dataUrl}')` : `xemAnhPhieu('${a.id}')`}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer">`;
+const plAnhNho = (a) => `<img src="${a.thumb || a.dataUrl}" onclick="${plMoAnh(a)}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer">`;
 window.xemAnhPhieu = async function(id) {
   try {
     showToast('Đang mở ảnh...');
@@ -14017,7 +14104,7 @@ window.plXem = function(mod, id) {
         ${(p.photos || []).filter(a => a.skuId === h.skuId).map(plAnhNho).join('')}</div>` : ''}`;
   }).join('');
   // Ảnh chung (phiếu cũ / chuyển kho — chưa gắn theo mã hàng)
-  const anhCT = (p.photos || []).filter(a => !a.skuId).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
+  const anhCT = (p.photos || []).filter(a => !a.skuId).map(a => `<img src="${a.thumb || a.dataUrl}" onclick="${plMoAnh(a)}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
   const suaDuoc = !!C.quyenSua && coQuyen(C.quyenSua);
   const chan = mod === 'nhaphang'
     ? (p.trangThai === 'tam' && dsKhoNhapDuocPhep().includes(p.kho)
@@ -17841,7 +17928,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v497</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v498</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17895,7 +17982,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v497</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v498</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17941,7 +18028,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v497</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v498</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -18264,6 +18351,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
                 <b id="nh-tong-sl">0</b>
               </div>
               <div class="bh-dong-tt" id="nh-dong-tien" style="display:none"><span>Tổng tiền</span><b id="nh-tong-tien" style="color:var(--green)">0đ</b></div>
+              <div id="nh-anh-wrap" style="display:none;gap:6px;align-items:center;margin-top:4px"></div>
               <div id="nh-ghi-chu" style="font-size:11.5px;color:var(--text2)"></div>
             </div>
             <div style="display:flex;gap:8px">

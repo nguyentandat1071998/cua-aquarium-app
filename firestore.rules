@@ -170,13 +170,15 @@ service cloud.firestore {
     // Nhập hàng (nhóm Hàng hóa, không thuộc Sàn TMĐT nữa). kho: 'ch' | 'san' (phiếu cũ không có = 'san').
     // Phiếu tạm: ai có quyền nhập vào kho đó. Lưu thật (da_luu): phải có thêm quyền duyệt.
     function khoNhapDuoc(d) { return coQ('nh_kho_' + d.get('kho', 'san')); }
+    // Phiếu nhập Phụ kiện phải có ảnh hàng hóa (Cá/Tép/Cây tạm thời chưa bắt buộc)
+    function anhPhuKien(d) { return d.get('loai', '') != 'phukien' || (d.get('photos', []) is list && d.get('photos', []).size() > 0); }
     match /phieu_nhap_san/{id} {
       // Chỉ đọc phiếu của kho mình được nhập (danh sách trong app lấy qua máy chủ)
       allow read: if adm() || (coQ('nhaphang') && khoNhapDuoc(resource.data));
-      allow create: if adm() || (coQ('nhaphang') && khoNhapDuoc(request.resource.data)
+      allow create: if adm() || (coQ('nhaphang') && khoNhapDuoc(request.resource.data) && anhPhuKien(request.resource.data)
         && (request.resource.data.trangThai == 'tam' || coQ('nh_duyet')));
       allow update: if adm() || (coQ('nhaphang') && resource.data.trangThai == 'tam'
-        && khoNhapDuoc(resource.data) && khoNhapDuoc(request.resource.data)
+        && khoNhapDuoc(resource.data) && khoNhapDuoc(request.resource.data) && anhPhuKien(request.resource.data)
         && (request.resource.data.trangThai == 'tam' || coQ('nh_duyet')));
       allow delete: if adm();
     }
