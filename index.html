@@ -1658,6 +1658,41 @@ function roleLabel(r) {
   return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên bán hàng';
 }
 
+// ===== LINK DEMO =====
+// Link chính (nhân viên dùng): chỉ các phần đã ổn định.
+// Link demo (…/cua-aquarium-app/demo/ -> ?demo=1): đủ mọi tính năng, chỉ Admin vào, dùng chung dữ liệu thật.
+// Ưng phần nào thì xóa phần đó khỏi TINH_NANG_DEMO là lên link chính, không phải làm lại.
+const LA_BAN_DEMO = new URLSearchParams(location.search).has('demo');
+const TINH_NANG_DEMO = {
+  nhom: ['santmdt'],                          // nhóm menu chỉ có ở demo
+  muc: ['dathang', 'ketnoisan'],              // mục menu chỉ có ở demo
+  mod: ['dathang', 'tmdt', 'quetdonggoi']     // màn hình chặn ở link chính
+};
+const chiCoODemo = (mod) => !LA_BAN_DEMO && TINH_NANG_DEMO.mod.includes(mod);
+function veDaiDemo() {
+  if (!LA_BAN_DEMO || document.getElementById('dai-demo')) return;
+  document.title = 'CUA Aquarium · DEMO';
+  const d = document.createElement('div');
+  d.id = 'dai-demo';
+  d.style.cssText = 'background:#F59E0B;color:#111;font-size:12px;font-weight:700;text-align:center;padding:4px 10px;display:flex;gap:10px;justify-content:center;align-items:center';
+  d.innerHTML = `<span>DEMO · tính năng đang thử · dữ liệu thật</span><a href="${location.pathname}" style="color:#111;text-decoration:underline;font-weight:600">Về bản chính</a>`;
+  const vung = document.querySelector('.mobile-sticky-top');
+  if (vung) vung.prepend(d); else document.body.prepend(d);
+}
+function chanDemoNeuKhongPhaiAdmin() {
+  if (!LA_BAN_DEMO || currentUserData?.role === 'admin') return false;
+  document.body.innerHTML = `<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;font-family:sans-serif">
+    <div style="max-width:360px;text-align:center"><h3 style="margin-bottom:8px">Link demo chỉ dành cho Admin</h3>
+    <p style="color:#6B7280;font-size:14px;margin-bottom:16px">Bạn dùng link chính của cửa hàng nhé.</p>
+    <a href="${location.pathname}" style="display:inline-block;background:#16A34A;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600">Mở link chính</a></div></div>`;
+  return true;
+}
+if (!LA_BAN_DEMO) {
+  const st = document.createElement('style');
+  st.textContent = '#mod-tmdt,#sidebar-tmdt,#mod-quetdonggoi,#sidebar-quetdonggoi{display:none!important}';
+  document.head.appendChild(st);
+}
+
 // Tab -> quyền lớn. Tab không có trong bảng và không phải Admin thì không vào được.
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
@@ -1669,6 +1704,8 @@ const ANH_XA_QUYEN_THEO_MOD = {
 
 window.switchModule = function(mod) {
   if (mod === 'hanghoach') mod = 'hanghoa';   // màn "Hàng hóa CH" cũ đã gộp vào Hàng hóa
+  if (chiCoODemo(mod)) { showToast('Tính năng đang thử — chỉ có ở link demo', true); return; }
+  if (LA_BAN_DEMO && currentUserData?.role !== 'admin') { chanDemoNeuKhongPhaiAdmin(); return; }
   // Chặn thật ở tầng hàm — không chỉ ẩn nút, còn chặn cả gọi trực tiếp qua Console
   if (currentUserData.role !== 'admin') {
     const key = ANH_XA_QUYEN_THEO_MOD[mod];
@@ -11971,6 +12008,14 @@ const NHOM_MENU = [
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
   ]}
 ];
+// Link chính: bỏ các phần đang thử (chỉ hiện ở link demo)
+if (!LA_BAN_DEMO) {
+  for (let k = NHOM_MENU.length - 1; k >= 0; k--) {
+    const n = NHOM_MENU[k];
+    if (TINH_NANG_DEMO.nhom.includes(n.key)) { NHOM_MENU.splice(k, 1); continue; }
+    if (Array.isArray(n.muc)) n.muc = n.muc.filter(m => !TINH_NANG_DEMO.muc.includes(m.key));
+  }
+}
 
 let nhomMenuDangChon = null;
 
@@ -12382,6 +12427,8 @@ async function tinhQuyenModuleHienTai() {
 // Mở đúng module đầu tiên mà người dùng THỰC SỰ có quyền — không mở cứng "checklist" như trước
 // (an toàn: nếu 1 Vai trò tắt hẳn Checklist, không được phép mở nội dung đó ra dù chỉ là module mặc định)
 async function moModuleMacDinhTheoQuyen() {
+  if (chanDemoNeuKhongPhaiAdmin()) return;
+  veDaiDemo();
   const quyen = await tinhQuyenModuleHienTai();
   const thuTuUuTien = [
     ['banhang','banhang'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
@@ -18698,7 +18745,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v504</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v505</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -18752,7 +18799,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v504</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v505</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -18798,7 +18845,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v504</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v505</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
