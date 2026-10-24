@@ -76,23 +76,24 @@ service cloud.firestore {
       allow create, delete: if adm();
       allow update: if adm()
         || (chiDoi(['tonCuaHang']) && (
-              (qMot(['banhang', 'ck_ch_san', 'xh_kho_ch']) && giam('tonCuaHang'))   // bán, chuyển CH→Sàn, hủy ở CH: trừ
+              (qMot(['banhang', 'ck_ch_san']) && giam('tonCuaHang'))              // bán, chuyển CH→Sàn: trừ
            || ((qMot(['ck_san_ch', 'dbl_duyettra']) || nhapVao('ch')) && tang('tonCuaHang'))  // chuyển Sàn→CH, trả hàng, nhập: cộng
-           || qMot(['nhap_sua', 'xuat_sua'])))                                 // sửa/xóa phiếu: cả hai
+           || coQ('nhap_sua')))                                                 // sửa/xóa phiếu chuyển: cả hai
         || (coQ('tmdt_daytonkho') && chiDoi(['dayTonKho', 'demTonKho']));
     }
     // Tồn kho Sàn tách riêng: chỉ người có quyền xem kho Sàn / làm Sàn TMĐT mới đọc được.
     // Chuyển kho, xuất hủy, nhập hàng ghi được theo đúng chiều mà không cần đọc.
     match /ton_san/{id} {
       allow read: if qMot(['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho']);
-      // Trừ Sàn: chuyển Sàn→CH, hủy ở Sàn. Cộng Sàn: chuyển CH→Sàn, nhập hàng, nhập lại hàng hoàn.
+      // Trừ Sàn: chuyển Sàn→CH. Cộng Sàn: chuyển CH→Sàn, nhập hàng, nhập lại hàng hoàn.
+    // (Xuất hủy: worker trừ / hoàn tồn khi tạo, sửa, xóa phiếu — app không tự đổi.)
       allow create: if adm() || (chiCo(['soLuongTon']) && (
-              qMot(['nhap_sua', 'xuat_sua'])
-           || (qMot(['ck_san_ch', 'xh_kho_san']) && request.resource.data.soLuongTon <= 0)
+              coQ('nhap_sua')
+           || (coQ('ck_san_ch') && request.resource.data.soLuongTon <= 0)
            || ((qMot(['ck_ch_san', 'tmdt_hoantra']) || nhapVao('san')) && request.resource.data.soLuongTon >= 0)));
       allow update: if adm() || (chiDoi(['soLuongTon']) && (
-              qMot(['nhap_sua', 'xuat_sua'])
-           || (qMot(['ck_san_ch', 'xh_kho_san']) && giam('soLuongTon'))
+              coQ('nhap_sua')
+           || (coQ('ck_san_ch') && giam('soLuongTon'))
            || ((qMot(['ck_ch_san', 'tmdt_hoantra']) || nhapVao('san')) && tang('soLuongTon'))));
       allow delete: if adm();
     }
@@ -152,13 +153,12 @@ service cloud.firestore {
       allow update: if q('nhap_sua') || (q('nhap_xuatfile') && chiDoi(['daXuat', 'xuatAt']));
       allow delete: if adm();
     }
-    // Xuất hủy: tạo phiếu ở đúng kho mình được cấp
+    // Xuất hủy: phiếu do worker tạo (kiểm kho + danh mục được hủy, trừ kho KiotViet + app)
     match /phieu_huy/{id} {
       allow read: if qMot(['xuat_xemds', 'xuat_sua', 'luong_xemtatca', 'bc_tk_xuat']);
-      allow create: if adm()
-        || (coQ('xh_kho_ch') && request.resource.data.get('kho', '') == 'ch')
-        || (coQ('xh_kho_san') && request.resource.data.get('kho', '') == 'san');
-      allow update: if q('xuat_sua') || (q('xuat_xuatfile') && chiDoi(['daXuat', 'xuatAt']));
+      allow create: if adm();
+      // Sửa / xóa / khôi phục cũng qua worker (kiểm quyền xuat_sua, danh mục, tồn)
+      allow update: if adm() || (q('xuat_xuatfile') && chiDoi(['daXuat', 'xuatAt']));
       allow delete: if adm();
     }
     // Nhập hàng (nhóm Hàng hóa, không thuộc Sàn TMĐT nữa). kho: 'ch' | 'san' (phiếu cũ không có = 'san').

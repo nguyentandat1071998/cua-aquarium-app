@@ -11547,6 +11547,7 @@ async function apDungQuyenNgayLapTuc() {
     quyenModuleHienTai = snap.exists()
       ? locQuyen(snap.data().quyenModule || {}, snap.data().phienBanQuyen)
       : locQuyen({}, PHIEN_BAN_QUYEN);
+    xhNhomHienTai = snap.exists() ? chuanXhNhom(snap.data()) : [];
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
   }, () => {
@@ -11583,6 +11584,7 @@ async function tinhQuyenModuleHienTai() {
   if (!allVaiTro.length) await loadVaiTro();
   const vt = allVaiTro.find(v => v.id === currentUserData.vaiTroId);
   quyenModuleHienTai = locQuyen(vt?.quyenModule || {}, vt?.phienBanQuyen);
+  xhNhomHienTai = vt ? chuanXhNhom(vt) : [];
   return quyenModuleHienTai;
 }
 
@@ -11853,8 +11855,17 @@ function dangThaoTacNhanVien() {
   return false;
 }
 
-// Xuất hủy chỉ cho phép chọn SKU thuộc các nhóm hàng sống (không cho xuất hủy phụ kiện/thiết bị)
+// Xuất hủy: danh mục được hủy theo vai trò (vai_tro.xhNhom). ['*'] = tất cả.
+// Vai trò chưa chọn thì như trước: chỉ hàng sống. Máy chủ (worker) kiểm lại khi lưu phiếu.
 const XUAT_HUY_NHOM_CHO_PHEP = ['Cá cảnh', 'Cây thủy sinh', 'Tép, Tôm cảnh', 'Ốc'];
+let xhNhomHienTai = null;
+function chuanXhNhom(v) { return Array.isArray(v?.xhNhom) ? v.xhNhom.map(String) : XUAT_HUY_NHOM_CHO_PHEP; }
+function skuDuocXuatHuy(s) {
+  if (currentUserData?.role === 'admin') return true;
+  const ds = xhNhomHienTai || [];
+  if (ds.includes('*')) return true;
+  return [s?.nhom1, s?.nhom2, s?.nhom3].some(n => n && ds.includes(String(n)));
+}
 
 function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
   const input = document.getElementById(inputId);
@@ -11866,7 +11877,7 @@ function makeSKUSearch(inputId, dropdownId, giaId, chiNhom) {
     let pool = allSKUs;
     const apDungChiNhom = typeof chiNhom === 'function' ? chiNhom() : chiNhom;
     if (apDungChiNhom) {
-      pool = pool.filter(s => XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom1) || XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom2) || XUAT_HUY_NHOM_CHO_PHEP.includes(s.nhom3));
+      pool = pool.filter(s => skuDuocXuatHuy(s) && !s.laCombo);
     }
     // Dùng String(...) vì có bản ghi rác thiếu tên — gọi thẳng .toLowerCase()
     // trên undefined làm cả hàm ném lỗi, dropdown im lặng không hiện gì.
@@ -13462,6 +13473,8 @@ window.addXuatItem = function() {
   const gia = parseFloat(document.getElementById('xuat-item-gia').value) || 0;
   if (!ten || !skuId) { showToast('Vui lòng CHỌN hàng hóa từ danh sách gợi ý (không gõ tự do)', true); return; }
   if (sl < 1) { showToast('Số lượng phải lớn hơn 0', true); return; }
+  const skuChon = allSKUs.find(x => x.id === skuId);
+  if (!skuDuocXuatHuy(skuChon)) { showToast('Hàng này ngoài danh mục bạn được xuất hủy', true); return; }
   currentPhieu.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
   tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
   document.getElementById('xuat-item-sl').value = '1';
@@ -13524,32 +13537,27 @@ window.submitXuat = async function() {
   const btn = document.getElementById('btn-xuat-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
-    const total = currentPhieu.items.reduce((s,i) => s+i.tong, 0);
+    // Máy chủ kiểm quyền (kho + danh mục), tạo phiếu xuất hủy bên KiotViet (trừ kho bên đó),
+    // rồi ghi phiếu + trừ tồn trong app. Lỗi ở bước nào thì không bước nào được ghi.
     const maPhieu = await layMaPhieuMoi('PXH', 'pxh');
-    await setDoc(doc(db, 'phieu_huy', maPhieu), {
-      maPhieu,
-      kho,
-      truTon: true,           // phiếu từ nay trừ tồn kho app (phiếu cũ không có cờ này)
-      items: currentPhieu.items,
-      photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })),
-      tongGia: total,
-      tongSL: currentPhieu.items.reduce((s,i) => s+i.sl, 0),
-      nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten||currentUser.email },
-      createdAt: serverTimestamp(),
-      deleted: false,
-      versions: []
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'tao-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kho, maPhieu,
+        items: currentPhieu.items.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })),
+        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })) })
     });
-    const itemsDaLuu = currentPhieu.items;
+    const kq = await res.json().catch(() => ({}));
+    if (!kq.success) {
+      alert('Chưa lưu được phiếu xuất hủy:\n\n' + (kq.error || `Lỗi ${res.status}`));
+      btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
+      return;
+    }
     currentPhieu = { items: [], photos: [] };
     renderXuatItems();
     renderXuatPhotos();
-    try {
-      const kq = await dieuChinhTonKhoApp(itemsDaLuu, -1, kh.ma, { loai: 'Xuất hủy', ma: maPhieu });
-      showToast(`Đã lưu phiếu xuất hủy + trừ tồn ${kq.soDong} mã`);
-    } catch(e) {
-      console.error('Lỗi trừ tồn xuất hủy:', e);
-      alert('Phiếu đã lưu nhưng CHƯA TRỪ được tồn kho:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
-    }
+    showToast(`Đã lưu phiếu ${maPhieu} + trừ tồn ${kh.ten}${kq.kiotvietCode ? ' · ' + kq.kiotvietCode : ''}`);
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
 };
@@ -13826,6 +13834,7 @@ window.loadXuatList = async function(filter={}) {
         <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
       </div>
       <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · <b style="color:var(--red)">${KHO_HUY[khoHuyCuaPhieu(p)].ten}</b></div>
+      ${p.kiotvietCode ? `<div style="font-size:11px;color:var(--text2)">Mã phiếu: ${escHtml(p.kiotvietCode)}</div>` : ''}
       <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
       ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
       <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
@@ -13836,20 +13845,26 @@ window.loadXuatList = async function(filter={}) {
 
 window.doiTrangXuat = function(p) { xuatDsPage = p; loadXuatList(); };
 
+// Sửa / xóa / khôi phục phiếu xuất hủy: máy chủ làm trọn (phiếu KiotViet, phiếu app, tồn, thẻ kho)
+async function suaPhieuHuyMayChu(body) {
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'sua-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const kq = await res.json().catch(() => ({}));
+  if (!kq.success) throw new Error(kq.error || `Lỗi ${res.status}`);
+  return kq;
+}
+
 window.softDeleteXuat = async function(id) {
-  if (!await hoiXacNhan('Xóa phiếu này? Vẫn lưu trong mục Đã xóa.')) return;
-  const snap = await getDoc(doc(db,'phieu_huy',id));
-  const data = snap.data() || {};
-  await updateDoc(doc(db,'phieu_huy',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
-  // Phiếu có trừ tồn -> xóa phiếu thì hoàn lại tồn
-  if (data.truTon && !data.deleted) {
-    try {
-      await dieuChinhTonKhoApp(data.items || [], +1, KHO_HUY[khoHuyCuaPhieu(data)].ma, { loai: 'Xóa phiếu xuất hủy', ma: data.maPhieu || id });
-      showToast('Đã xóa phiếu + hoàn lại tồn');
-    } catch(e) {
-      alert('Đã xóa phiếu nhưng CHƯA HOÀN được tồn kho:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
-    }
-  } else showToast('Đã xóa phiếu');
+  if (!await hoiXacNhan('Xóa phiếu này? Vẫn lưu trong mục Đã xóa, tồn kho được hoàn lại.')) return;
+  try {
+    showToast('Đang xóa phiếu...');
+    await suaPhieuHuyMayChu({ maPhieu: id, loai: 'xoa' });
+    showToast('Đã xóa phiếu + hoàn lại tồn');
+  } catch(e) { alert('Chưa xóa được — ' + e.message); }
   loadXuatList();
 };
 
@@ -14046,6 +14061,15 @@ window.saveEdit = async function() {
     const version = { diff, editedBy: { uid: currentUser.uid, ten: currentUserData.ten }, editedAt: new Date() };
     const versions = [...(old.versions||[]), version];
 
+    // Xuất hủy: máy chủ sửa trọn (phiếu KiotViet, số lượng, tồn, lịch sử sửa)
+    if (collectionName === 'phieu_huy') {
+      try {
+        await suaPhieuHuyMayChu({ maPhieu: editingPhieuId, loai: 'sua',
+          items: newItems.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })) });
+      } catch(e) { alert('Chưa lưu được — ' + e.message); return; }
+      closeEdit(); showToast('Đã cập nhật phiếu'); loadXuatList();
+      return;
+    }
     // Nếu là Chuyển kho VÀ phiếu này đã từng đồng bộ KiotViet -> phải cập nhật bên đó TRƯỚC, lỗi thì dừng luôn
     if (collectionName === 'phieu_chuyenkho' && old.kiotvietId) {
       const idToken = await currentUser.getIdToken();
@@ -14083,7 +14107,7 @@ window.saveEdit = async function() {
         tongGia: total, tongSL: newItems.reduce((s,i) => s+i.sl, 0),
         versions, lastEditedBy: { uid: currentUser.uid, ten: currentUserData.ten }, lastEditedAt: serverTimestamp()
       };
-      if (collectionName === 'phieu_chuyenkho' && old.kiotvietId) {
+      if (old.kiotvietId && (collectionName === 'phieu_chuyenkho' || collectionName === 'phieu_huy')) {
         updatePayload.kiotvietId = old.kiotvietId;
         updatePayload.kiotvietCode = old.kiotvietCode;
       }
@@ -14115,25 +14139,6 @@ window.saveEdit = async function() {
           }
         } catch(e) {
           console.error('Lỗi chỉnh tồn kho khi sửa phiếu:', e);
-          alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
-        }
-      }
-      // Sửa phiếu xuất hủy (loại có trừ tồn): hủy thêm thì trừ thêm, bớt thì hoàn lại
-      if (collectionName === 'phieu_huy' && old.truTon) {
-        try {
-          const bangCu = new Map((old.items || []).map(i => [String(i.sku), Number(i.sl) || 0]));
-          const bangMoi = new Map(newItems.map(i => [String(i.sku), Number(i.sl) || 0]));
-          const tru = [], cong = [];
-          new Set([...bangCu.keys(), ...bangMoi.keys()]).forEach(ma => {
-            const d = (bangMoi.get(ma) || 0) - (bangCu.get(ma) || 0);
-            if (d > 0) tru.push({ sku: ma, sl: d }); else if (d < 0) cong.push({ sku: ma, sl: -d });
-          });
-          const maKho = KHO_HUY[khoHuyCuaPhieu(old)].ma;
-          const ctSua = { loai: 'Sửa phiếu xuất hủy', ma: old.maPhieu || editingPhieuId };
-          if (tru.length) await dieuChinhTonKhoApp(tru, -1, maKho, ctSua);
-          if (cong.length) await dieuChinhTonKhoApp(cong, +1, maKho, ctSua);
-        } catch(e) {
-          console.error('Lỗi chỉnh tồn kho khi sửa phiếu hủy:', e);
           alert('Phiếu đã sửa nhưng CHƯA CHỈNH được tồn kho app:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.');
         }
       }
@@ -16461,6 +16466,33 @@ function locQuyenXem(v) {
   return quyDoiTheoPhienBan(v.quyenModule, v.phienBanQuyen);
 }
 
+// Danh mục được xuất hủy: "Tất cả" hoặc tick từng nhóm (nhóm cấp 1, cấp 2 thụt vào)
+function veChonNhomXuatHuy(prefix, v) {
+  const ds = v ? chuanXhNhom(v) : XUAT_HUY_NHOM_CHO_PHEP;
+  const tatCa = ds.includes('*');
+  const cap1 = allNhomHang.filter(n => !n.chaId).sort((a, b) => (a.ten || '').localeCompare(b.ten || ''));
+  const ten = new Set([...cap1.map(n => n.ten), ...allNhomHang.map(n => n.ten)]);
+  const conLai = ds.filter(x => x !== '*' && !ten.has(x));   // tên cũ không còn trong danh mục: vẫn giữ
+  const o = (t, thut) => `<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);padding-left:${thut ? 18 : 0}px">
+    <input type="checkbox" class="${prefix}-xhnhom" value="${escHtml(t)}" ${ds.includes(t) ? 'checked' : ''} ${tatCa ? 'disabled' : ''}> ${escHtml(t)}</label>`;
+  return `
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:8px 10px;margin-top:2px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:4px">Danh mục được xuất hủy</div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:4px">
+        <input type="checkbox" id="${prefix}-xhnhom-tatca" ${tatCa ? 'checked' : ''}
+          onchange="document.querySelectorAll('.${prefix}-xhnhom').forEach(x => x.disabled = this.checked)"> Tất cả danh mục</label>
+      <div style="display:flex;flex-direction:column;gap:3px;max-height:220px;overflow:auto">
+        ${cap1.map(n => o(n.ten, false) + allNhomHang.filter(c => c.chaId === n.id).sort((a, b) => (a.ten || '').localeCompare(b.ten || '')).map(c => o(c.ten, true)).join('')).join('')}
+        ${conLai.map(t => o(t, false)).join('')}
+        ${!cap1.length && !conLai.length ? '<span style="font-size:12px;color:var(--text2)">Chưa có danh mục hàng.</span>' : ''}
+      </div>
+    </div>`;
+}
+function docChonNhomXuatHuy(prefix) {
+  if (document.getElementById(`${prefix}-xhnhom-tatca`)?.checked) return ['*'];
+  return [...new Set([...document.querySelectorAll(`.${prefix}-xhnhom`)].filter(x => x.checked).map(x => x.value))];
+}
+
 function renderFormVaiTro(prefix, v) {
   const ten = v?.ten || '';
   const quyen = locQuyenXem(v);
@@ -16480,7 +16512,8 @@ function renderFormVaiTro(prefix, v) {
           <div style="margin-bottom:4px">
             ${o(m.key, m.ten, true)}
             ${(m.con || []).length ? `<div style="padding-left:26px;margin-top:4px;display:flex;flex-direction:column;gap:4px">
-              ${m.con.map(c => o(c.key, c.ten, false)).join('')}</div>` : ''}
+              ${m.con.map(c => o(c.key, c.ten, false)).join('')}
+              ${m.key === 'xuat' ? veChonNhomXuatHuy(prefix, v) : ''}</div>` : ''}
           </div>`).join('')}
       </div>
       <p class="info-note" style="margin-bottom:10px">Luôn chỉ Admin làm: tài khoản & vai trò, thiết lập, giá vốn, thêm/sửa/xóa hàng hóa, ca làm việc, thiết lập lương. Chấm công vào/ra ca thì ai cũng làm được.</p>
@@ -16491,13 +16524,15 @@ function renderFormVaiTro(prefix, v) {
     </div>`;
 }
 
-window.moFormThemVaiTro = function() {
+window.moFormThemVaiTro = async function() {
   const el = document.getElementById('vaitro-form');
   if (el.innerHTML) { el.innerHTML = ''; return; }
+  if (!allNhomHang.length) await loadNhomHang().catch(() => {});
   el.innerHTML = renderFormVaiTro('vt-them', null);
 };
 
-window.moFormSuaVaiTro = function(id) {
+window.moFormSuaVaiTro = async function(id) {
+  if (!allNhomHang.length) await loadNhomHang().catch(() => {});
   document.querySelectorAll('[id^="vaitro-sua-"]').forEach(e => { if (e.id !== `vaitro-sua-${id}`) e.innerHTML = ''; });
   const el = document.getElementById(`vaitro-sua-${id}`);
   if (!el) return;
@@ -16517,12 +16552,14 @@ window.luuVaiTro = async function(prefix, id) {
   if (!ten) { showToast('Nhập tên vai trò', true); return; }
   const quyenModule = {};
   tatCaKhoaQuyen().forEach(k => { quyenModule[k] = !!document.getElementById(`${prefix}-m-${k}`)?.checked; });
+  const xhNhom = docChonNhomXuatHuy(prefix);
+  if (quyenModule.xuat && !xhNhom.length) { showToast('Chọn ít nhất một danh mục được xuất hủy (hoặc Tất cả)', true); return; }
 
   let idVaiTro = id;
   if (id) {
-    await updateDoc(doc(db, 'vai_tro', id), { ten, quyenModule, phienBanQuyen: PHIEN_BAN_QUYEN });
+    await updateDoc(doc(db, 'vai_tro', id), { ten, quyenModule, xhNhom, phienBanQuyen: PHIEN_BAN_QUYEN });
   } else {
-    const ref = await addDoc(collection(db, 'vai_tro'), { ten, quyenModule, phienBanQuyen: PHIEN_BAN_QUYEN, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, 'vai_tro'), { ten, quyenModule, xhNhom, phienBanQuyen: PHIEN_BAN_QUYEN, createdAt: serverTimestamp() });
     idVaiTro = ref.id;
   }
   // Ghi quyền vào thẻ đăng nhập của mọi người đang giữ vai trò này
@@ -16941,17 +16978,12 @@ window.loadDeletedList = async function() {
 };
 
 window.restoreXuat = async function(id) {
-  const snap = await getDoc(doc(db,'phieu_huy',id));
-  const data = snap.data() || {};
-  await updateDoc(doc(db,'phieu_huy',id),{deleted:false});
-  if (data.truTon && data.deleted) {
-    try {
-      await dieuChinhTonKhoApp(data.items || [], -1, KHO_HUY[khoHuyCuaPhieu(data)].ma, { loai: 'Khôi phục phiếu xuất hủy', ma: data.maPhieu || id });
-    } catch(e) {
-      alert('Đã khôi phục phiếu nhưng CHƯA TRỪ lại được tồn kho:\n' + e.message);
-    }
-  }
-  showToast('Đã khôi phục'); loadDeletedList();
+  try {
+    showToast('Đang khôi phục...');
+    await suaPhieuHuyMayChu({ maPhieu: id, loai: 'khoiphuc' });
+    showToast('Đã khôi phục');
+  } catch(e) { alert('Chưa khôi phục được — ' + e.message); }
+  loadDeletedList();
 };
 
 // ===== BÁO CÁO CHẤM CÔNG + CHECKLIST (Admin/Quản lý) =====
@@ -17656,7 +17688,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v485c</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v486</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17710,7 +17742,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v485c</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v486</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17756,7 +17788,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v485c</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v486</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
