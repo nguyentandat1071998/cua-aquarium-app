@@ -1657,6 +1657,12 @@ function showApp() {
 function roleLabel(r) {
   return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên bán hàng';
 }
+// Nhãn hiển thị theo VAI TRÒ đang gán (quyền tính theo vai trò). Trường role cũ chỉ còn để nhận biết Admin.
+function nhanVaiTro(u) {
+  if (u?.role === 'admin') return 'Quản trị';
+  const vt = u?.vaiTroId ? allVaiTro.find(v => v.id === u.vaiTroId) : null;
+  return vt ? (vt.ten || 'Vai trò') : 'Chưa gán vai trò';
+}
 
 // ===== LINK DEMO =====
 // Link chính (nhân viên dùng): chỉ các phần đã ổn định.
@@ -12430,6 +12436,7 @@ async function moModuleMacDinhTheoQuyen() {
   if (chanDemoNeuKhongPhaiAdmin()) return;
   veDaiDemo();
   const quyen = await tinhQuyenModuleHienTai();
+  const oVt = document.getElementById('user-role'); if (oVt) oVt.textContent = nhanVaiTro(currentUserData);
   const thuTuUuTien = [
     ['banhang','banhang'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
     ['xuat','xuat'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['dathang','dathang'], ['lichca','lichca'], ['chamcong','chamcong'],
@@ -16877,16 +16884,16 @@ async function loadDanhSachNV() {
   if (!users.length) return; // đang chờ dữ liệu đầu tiên từ listener, nó sẽ tự gọi lại loadDanhSachNV() khi có
   const canManage = laAdmin; // Cấp bậc lương vẫn chỉ Admin cấu hình được (không thuộc phạm vi mở quyền lần này)
   const luongCfg = canManage ? await getLuongConfig() : {};
-  if (coQuyenGanVaiTro || coQuyenTaoTk) await loadVaiTro();
+  if (coQuyenGanVaiTro || coQuyenTaoTk || !allVaiTro.length) await loadVaiTro();
   el.innerHTML = `
     <div class="admin-block">
       <h3>Danh sách nhân viên</h3>
       <div class="user-list">${users.map(u=>{
-        const tiers = luongCfg[u.role]?.tiers || [];
+        const tiers = (luongCfg[u.vaiTroId] || luongCfg[u.role])?.tiers || [];
         return `
         <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:6px">
           <div style="display:flex;justify-content:space-between;width:100%">
-            <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.role}">${roleLabel(u.role)}</span></div>
+            <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.vaiTroId && allVaiTro.some(v => v.id === u.vaiTroId) ? 'nhan_vien' : 'chua_gan'}">${escHtml(nhanVaiTro(u))}</span></div>
           </div>
           <span class="uemail">${u.email||''}</span>
           ${coQuyenGanVaiTro ? `
@@ -18586,6 +18593,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .rbadge.admin{background:#EDE9FE;color:#5B21B6}
 .rbadge.quan_ly{background:#FEF3C7;color:#B45309}
 .rbadge.nhan_vien{background:var(--green-bg);color:var(--green)}
+.rbadge.chua_gan{background:#F3F4F6;color:#6B7280}
 .admin-form input,.admin-form select{margin-bottom:8px}
 .info-note{font-size:12px;color:#B45309;background:#FEF3C7;padding:8px 10px;border-radius:6px;margin-bottom:10px}
 
@@ -18745,7 +18753,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v505</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v506</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -18799,7 +18807,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v505</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v506</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -18845,7 +18853,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v505</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v506</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
