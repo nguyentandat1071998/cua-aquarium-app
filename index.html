@@ -1792,13 +1792,6 @@ window.switchModule = function(mod) {
     moManHinhTMDT(manHinhTMDTHienTai);
     return;
   }
-  if (mod === 'nhaphang') {
-    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
-    document.getElementById('panel-nhaphang-main').style.display = 'block';
-    document.getElementById('sub-tab-bar').style.display = 'none';
-    renderNhapHangTab();
-    return;
-  }
   // Thống kê chuyển kho / xuất hủy: thuộc Báo cáo, tách hẳn khỏi màn tạo phiếu
   if (mod === 'tknhap' || mod === 'tkxuat') {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
@@ -1822,33 +1815,36 @@ window.switchModule = function(mod) {
   document.getElementById('sub-tab-bar').style.display = 'flex';
   // Update module buttons
   document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('mod-' + mod).classList.add('active');
+  document.getElementById('mod-' + mod)?.classList.add('active');
   // Update subtab colors
-  const color = mod === 'nhap' ? 'var(--green)' : 'var(--red)';
+  const color = (mod === 'nhap' || mod === 'nhaphang') ? 'var(--green)' : 'var(--red)';
   document.querySelectorAll('.sub-tab-bar .stab').forEach(b => {
     b.style.setProperty('--accent', color);
   });
   document.getElementById('sub-tab-bar').dataset.mod = mod;
   // Danh sách phiếu: chỉ hiện khi có quyền xem danh sách của đúng tab.
   // Thống kê đã chuyển sang Báo cáo (chỉ còn ở màn báo cá cũ).
-  const xemDS = mod === 'baoca' || coQuyen(mod + '_xemds');
+  const xemDS = coQuyenDsPhieu(mod);
   const bDs = document.getElementById('stab-ds'); if (bDs) bDs.style.display = xemDS ? '' : 'none';
   const bTk = document.getElementById('stab-thongke'); if (bTk) bTk.style.display = mod === 'baoca' ? '' : 'none';
   if (mod === 'nhap' || mod === 'xuat') veChonKhoPhieu(mod);
   // Không được tạo phiếu chiều/kho nào mà được xem danh sách -> mở thẳng danh sách
-  const taoDuoc = mod === 'nhap' ? dsChieuChuyenDuocPhep().length : mod === 'xuat' ? dsKhoHuyDuocPhep().length : 1;
+  const taoDuoc = mod === 'nhap' ? dsChieuChuyenDuocPhep().length : mod === 'xuat' ? dsKhoHuyDuocPhep().length
+    : mod === 'nhaphang' ? dsKhoNhapDuocPhep().length : 1;
   switchSub(!taoDuoc && xemDS ? 'ds' : 'tao');
 };
 
+// Nhập hàng: ai vào được Nhập hàng thì xem được danh sách (máy chủ chỉ trả phiếu kho mình được nhập)
+function coQuyenDsPhieu(mod) { return mod === 'baoca' || (mod === 'nhaphang' ? coQuyen('nhaphang') : coQuyen(mod + '_xemds')); }
 window.switchSub = function(sub) {
   if (sub === 'thongke' && activeModule !== 'baoca') sub = 'tao';
-  if (sub === 'ds' && activeModule !== 'baoca' && !coQuyen(activeModule + '_xemds')) {
+  if (sub === 'ds' && !coQuyenDsPhieu(activeModule)) {
     showToast('Bạn không có quyền xem danh sách phiếu', true);
     sub = 'tao';
   }
   activeSubTab = sub;
   // Tạo phiếu chuyển kho: khung vừa màn hình như Bán hàng, chỉ danh sách hàng cuộn
-  const khungVua = (activeModule === 'nhap' || activeModule === 'xuat') && sub === 'tao';
+  const khungVua = (activeModule === 'nhap' || activeModule === 'xuat' || activeModule === 'nhaphang') && sub === 'tao';
   document.documentElement.classList.toggle('khoa-cuon', khungVua);
   if (khungVua) requestAnimationFrame(bhVuaManHinh);
   document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
@@ -1862,8 +1858,10 @@ window.switchSub = function(sub) {
   // Load data when needed
   if (sub === 'ds') {
     if (activeModule === 'nhap') loadNhapList();
-    else loadXuatList();
+    else if (activeModule === 'nhaphang') plTai('nhaphang');
+    else if (activeModule === 'xuat') loadXuatList();
   }
+  if (sub === 'tao' && activeModule === 'nhaphang') nhVaoTao();
   if (sub === 'thongke') {
     if (activeModule === 'nhap') loadNhapStats();
     else if (activeModule === 'xuat') loadXuatStats();
@@ -5498,29 +5496,30 @@ window.ktHoanThanhDongGoi = async function() {
 };
 
 // ==========================================================================
-// ===== NHẬP HÀNG (nhóm Hàng hóa — chọn kho Cửa hàng hoặc Sàn) =====
+// ===== NHẬP HÀNG (nhóm Hàng hóa) — giao diện như Xuất hủy: Tạo phiếu / Danh sách =====
 //
 // Hai bước: "Lưu phiếu tạm" chỉ ghi mã + số lượng (chưa có giá), người có quyền
 // duyệt mở lại điền đơn giá rồi "Lưu phiếu". Người có quyền duyệt lưu thẳng được luôn.
-// Kho nhập theo quyền: nh_kho_ch (Cửa hàng), nh_kho_san (Sàn).
+// Kho nhập theo quyền: nh_kho_ch (Cửa hàng), nh_kho_san (Kho Online).
 // Chỉ khi "Lưu phiếu" mới gọi API tạo phiếu nhập bên KiotViet — phiếu tạm
 // không đụng tới tồn kho, tránh nhập nhầm khi chưa có giá.
+// Danh sách phiếu lấy qua máy chủ, chỉ trả phiếu của kho mình được nhập.
 // ==========================================================================
 
-let nhPhieuHienTai = null;   // phiếu đang mở (null = tạo mới)
-let nhDongHang = [];         // [{sku, ten, soLuong, donGia}]
-let nhDsPhieu = [];
+let nhPhieuHienTai = null;   // phiếu tạm đang mở để sửa/duyệt (null = tạo mới)
+let nhDongHang = [];         // [{sku, ten, soLuong, donGia, giaVonCu}]
 let nhDaKhoiPhucNhap = false;
 let nhKho = null;            // 'ch' | 'san' — kho nhập của phiếu đang soạn
 
 const TEN_KHO = { ch: 'Cửa hàng', san: 'Online' };
+const KHO_NHAP = { ch: { ten: 'Kho Cửa hàng', ma: 'cuahang' }, san: { ten: 'Kho Online', ma: 'san' } };
 function dsKhoNhapDuocPhep() { return ['ch', 'san'].filter(k => coQuyen('nh_kho_' + k)); }
 function nhCoDuyet() { return coQuyen('nh_duyet'); }
 function nhKhoMacDinh() { const ds = dsKhoNhapDuocPhep(); return ds.includes(nhKho) ? nhKho : (ds[0] || null); }
 window.nhChonKho = function(k) {
-  if (!dsKhoNhapDuocPhep().includes(k)) return;
+  if (nhPhieuHienTai || !dsKhoNhapDuocPhep().includes(k)) return;
   nhKho = k;
-  veManHinhSoanPhieu();
+  nhVeTao();
 };
 
 // ===== TỰ LƯU NHÁP VÀO MÁY =====
@@ -5530,19 +5529,14 @@ window.nhChonKho = function(k) {
 function nhKhoaNhap() {
   return `nhap_hang_nhap_${currentUser?.uid || 'chung'}`;
 }
-
 function nhLuuNhap() {
   try {
-    if (!nhDongHang.length) { localStorage.removeItem(nhKhoaNhap()); return; }
+    if (!nhDongHang.length && !nhPhieuHienTai) { localStorage.removeItem(nhKhoaNhap()); return; }
     localStorage.setItem(nhKhoaNhap(), JSON.stringify({
-      dongHang: nhDongHang,
-      kho: nhKho,
-      idPhieuDangSua: nhPhieuHienTai?.id || null,
-      luc: Date.now()
+      dongHang: nhDongHang, kho: nhKho, phieu: nhPhieuHienTai, luc: Date.now()
     }));
   } catch(e) { /* trình duyệt chặn hoặc hết dung lượng — bỏ qua, không chặn thao tác */ }
 }
-
 function nhDocNhap() {
   try {
     const s = localStorage.getItem(nhKhoaNhap());
@@ -5553,85 +5547,146 @@ function nhDocNhap() {
     return d;
   } catch(e) { return null; }
 }
-
 function nhXoaNhap() {
   try { localStorage.removeItem(nhKhoaNhap()); } catch(e) {}
 }
 
-async function renderNhapHangTab() {
-  const el = document.getElementById('nhaphang-than');
-  if (!el) return;
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
+// Mở tab Tạo phiếu: còn nháp chưa lưu thì mở lại luôn
+async function nhVaoTao() {
   if (!allSKUs.length) await loadSKUs();
-  const snap = await getDocs(query(collection(db, 'phieu_nhap_san'), orderBy('taoLuc', 'desc'), limit(50)));
-  nhDsPhieu = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted);
-  nhPhieuHienTai = null;
-  nhDongHang = [];
-
-  // Có bản nháp chưa lưu -> mở thẳng ra, đỡ mất công gõ lại
-  const nhap = nhDocNhap();
-  if (nhap?.dongHang?.length) {
-    nhDongHang = nhap.dongHang;
-    nhPhieuHienTai = nhap.idPhieuDangSua ? nhDsPhieu.find(p => p.id === nhap.idPhieuDangSua) || null : null;
-    nhKho = nhap.kho || nhPhieuHienTai?.kho || nhKhoMacDinh();
-    nhDaKhoiPhucNhap = true;
-    veManHinhSoanPhieu();
-    return;
+  if (!nhDongHang.length && !nhPhieuHienTai) {
+    const nhap = nhDocNhap();
+    if (nhap && (nhap.dongHang?.length || nhap.phieu)) {
+      nhDongHang = nhap.dongHang || [];
+      nhPhieuHienTai = nhap.phieu || null;
+      nhKho = nhap.kho || nhPhieuHienTai?.kho || null;
+      nhDaKhoiPhucNhap = true;
+    }
   }
-  veDanhSachPhieuNhap();
+  if (!nhPhieuHienTai) nhKho = nhKhoMacDinh();
+  nhVeTao();
 }
 
-function veDanhSachPhieuNhap() {
-  const el = document.getElementById('nhaphang-than');
-  const tam = nhDsPhieu.filter(p => p.trangThai === 'tam');
-  const xong = nhDsPhieu.filter(p => p.trangThai === 'da_luu');
-  const nhap = nhDocNhap();
-  el.innerHTML = `
-    ${nhap?.dongHang?.length ? `
-      <div style="background:#EFF6FF;border:1.5px solid #3B82F6;border-radius:10px;padding:12px;margin-bottom:12px;cursor:pointer" onclick="nhMoLaiNhap()">
-        <b style="font-size:13px;color:#1D4ED8">📝 Có phiếu đang soạn dở (${nhap.dongHang.length} mã)</b>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">Chạm để mở lại · lưu trên máy này, chưa gửi lên hệ thống</div>
-      </div>` : ''}
-    ${dsKhoNhapDuocPhep().length
-      ? '<button class="btn-g" style="width:100%;padding:13px;font-size:15px;margin-bottom:12px" onclick="nhTaoPhieuMoi()">+ Tạo phiếu nhập</button>'
-      : '<p class="info-note">Bạn chưa được cấp quyền nhập vào kho nào — chỉ xem được phiếu.</p>'}
-    ${tam.length ? `
-      <div style="font-size:11px;color:#D97706;font-weight:700;margin-bottom:6px">PHIẾU TẠM — CHỜ ĐIỀN GIÁ (${tam.length})</div>
-      ${tam.map(p => veThePhieu(p)).join('')}` : ''}
-    ${xong.length ? `
-      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:14px 0 6px">ĐÃ LƯU (${xong.length})</div>
-      ${xong.map(p => veThePhieu(p)).join('')}` : ''}
-    ${!nhDsPhieu.length ? '<p class="info-note">Chưa có phiếu nhập nào.</p>' : ''}`;
+function nhVeTao() {
+  const wrap = document.getElementById('nh-kho-wrap');
+  const than = document.getElementById('nh-than');
+  if (!wrap || !than) return;
+  const dsKho = dsKhoNhapDuocPhep();
+  const duyet = nhCoDuyet();
+  const sua = nhPhieuHienTai;
+  const duocNhap = !!nhKho && dsKho.includes(nhKho);
+  const kn = KHO_NHAP[nhKho] || null;
+
+  let dau = '';
+  if (sua) {
+    dau += `<div style="background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:7px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:center">
+      <div style="flex:1;min-width:0;font-size:13px">Phiếu tạm <b>${escHtml(sua.maPhieu || '')}</b> · ${kn ? kn.ten : ''}${sua.nguoiTao ? ` · ${escHtml(sua.nguoiTao)}` : ''}</div>
+      <button class="btn-xs" onclick="nhDongPhieu()">Đóng phiếu</button></div>`;
+  } else if (nhDaKhoiPhucNhap && nhDongHang.length) {
+    dau += `<div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:7px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:center">
+      <div style="flex:1;min-width:0;font-size:12.5px;color:#1D4ED8">Đã mở lại phiếu đang soạn dở lần trước.</div>
+      <button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="nhBoNhap()">Bỏ, làm mới</button></div>`;
+  }
+  if (!dsKho.length) dau += '<p class="info-note" style="margin:0 0 6px">Bạn chưa được cấp quyền nhập vào kho nào.</p>';
+  else if (sua && !duocNhap) dau += '<p class="info-note" style="margin:0 0 6px">Bạn không có quyền nhập vào kho của phiếu này.</p>';
+  else if (!sua) dau += dsKho.length > 1
+    ? `<div style="display:flex;gap:6px">${dsKho.map(k => `<button class="${k === nhKho ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0" onclick="nhChonKho('${k}')">${KHO_NHAP[k].ten}</button>`).join('')}</div>`
+    : `<div style="text-align:center;font-size:14px;font-weight:700;color:var(--green);padding:4px 0">Nhập hàng vào ${kn ? kn.ten : ''}</div>`;
+  wrap.innerHTML = dau;
+
+  const oTim = document.getElementById('nh-tim-hang');
+  if (oTim) oTim.style.display = duocNhap ? 'flex' : 'none';
+  const inp = document.getElementById('nh-tim');
+  if (inp && !inp.dataset.daGan) { inp.dataset.daGan = '1'; makeSKUSearch('nh-tim', 'nh-drop', null); }
+
+  // Thẻ từng mã hàng — giống Chuyển kho; người duyệt có thêm ô đơn giá
+  const xemTon = kn && (kn.ma === 'cuahang' || tonSanUnsub);
+  than.innerHTML = !nhDongHang.length
+    ? `<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">Chưa có hàng nào.<br>${duocNhap ? 'Gõ tên hoặc quét mã ở ô trên để thêm.' : ''}</div>`
+    : nhDongHang.map((d, i) => {
+      const sku = allSKUs.find(s => s.sku === d.sku);
+      const ton = xemTon && sku ? layTon(sku, kn.ma) : null;
+      const tt = (Number(d.soLuong) || 0) * (Number(d.donGia) || 0);
+      const doiGia = d.giaVonCu && Number(d.donGia) !== Number(d.giaVonCu);
+      return `
+      <div id="nh-dong-${i}" style="border:1px solid #E3F1E7;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#F7FCF8">
+        <div style="display:flex;gap:8px;align-items:center">
+          ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+          <div style="flex:1;min-width:0">
+            <b style="font-size:14px">${escHtml(d.ten)}</b>
+            <div style="font-size:11px;color:var(--text2)">${escHtml(d.sku)}${ton !== null ? ` · tồn ${kn.ten} <b>${ton}</b>` : ''}</div>
+          </div>
+          ${duocNhap ? `<button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="nhXoaDong(${i})" title="Bỏ mã này">✕</button>` : ''}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+          ${duocNhap ? `
+          <button class="btn-xs" style="width:32px;padding:6px" onclick="nhTangGiam(${i},-1)">−</button>
+          <input type="number" min="1" inputmode="numeric" value="${d.soLuong || ''}" onchange="nhSuaDong(${i},'soLuong',this.value)"
+            style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
+          <button class="btn-xs" style="width:32px;padding:6px" onclick="nhTangGiam(${i},1)">+</button>` : `<span style="font-size:14px">SL <b>${d.soLuong}</b></span>`}
+          <div style="flex:1"></div>
+          ${duyet ? `
+          <input type="number" min="0" inputmode="numeric" value="${d.donGia || ''}" placeholder="Đơn giá" ${duocNhap ? '' : 'disabled'}
+            onchange="nhSuaDong(${i},'donGia',this.value)" style="width:96px;padding:6px;text-align:right;font-size:14px${Number(d.donGia) ? '' : ';border-color:#F59E0B'}">
+          <b style="min-width:78px;text-align:right;font-size:13.5px">${fmt(tt)}đ</b>` : ''}
+        </div>
+        ${duyet && doiGia ? `<div style="font-size:11px;color:#D97706;text-align:right;margin-top:2px">giá cũ ${fmt(d.giaVonCu)}đ</div>` : ''}
+      </div>`;
+    }).join('');
+
+  const tongSl = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
+  const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
+  const thieuGia = nhDongHang.some(d => !Number(d.donGia));
+  const dat = (id, v) => { const o = document.getElementById(id); if (o) o.textContent = v; };
+  dat('nh-so-ma', nhDongHang.length);
+  dat('nh-tong-sl', tongSl);
+  dat('nh-tong-tien', fmt(tongTien) + 'đ');
+  const dongTien = document.getElementById('nh-dong-tien'); if (dongTien) dongTien.style.display = duyet ? '' : 'none';
+  const ghiChu = document.getElementById('nh-ghi-chu');
+  if (ghiChu) ghiChu.textContent = !nhDongHang.length ? ''
+    : !duyet ? 'Lưu phiếu tạm — người duyệt sẽ điền giá và lưu phiếu.'
+    : thieuGia ? 'Còn mã chưa có đơn giá — chưa "Lưu phiếu" được, dùng "Lưu phiếu tạm" nếu chưa biết giá.' : '';
+  const nutTam = document.getElementById('btn-nh-tam');
+  const nutLuu = document.getElementById('btn-nh-luu');
+  if (nutTam && !nutTam.textContent.includes('Đang')) nutTam.disabled = !nhDongHang.length || !duocNhap;
+  if (nutLuu) {
+    nutLuu.style.display = duyet ? '' : 'none';
+    if (!nutLuu.textContent.includes('Đang')) nutLuu.disabled = !nhDongHang.length || !duocNhap || thieuGia;
+  }
+  nhLuuNhap();
 }
 
-function veThePhieu(p) {
-  const luc = p.taoLuc?.toDate ? p.taoLuc.toDate() : null;
-  const tam = p.trangThai === 'tam';
-  const tongSl = (p.dongHang || []).reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
-  return `
-  <div onclick="nhMoPhieu('${p.id}')" style="border:1px solid var(--border);border-left:3px solid ${tam ? '#D97706' : '#16A34A'};border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <b style="font-size:13px">${escHtml(p.maPhieu || p.id)}</b>
-      <span style="font-size:10px;color:#fff;background:${tam ? '#D97706' : '#16A34A'};padding:2px 7px;border-radius:4px">${tam ? 'Phiếu tạm' : 'Đã lưu'}</span>
-      <span style="font-size:10px;color:#0369A1;background:#E0F2FE;padding:2px 7px;border-radius:4px">Kho ${TEN_KHO[p.kho || 'san']}</span>
-      ${p.kiotvietCode ? `<span style="font-size:10px;color:var(--text2)">Mã: ${escHtml(p.kiotvietCode)}</span>` : ''}
-    </div>
-    <div style="font-size:11px;color:var(--text2);margin-top:3px">
-      ${luc ? luc.toLocaleString('vi-VN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'}) : ''}
-      · ${(p.dongHang || []).length} mã · ${tongSl} sản phẩm
-      ${(p.tongTien && nhCoDuyet()) ? ` · <b>${Number(p.tongTien).toLocaleString('vi-VN')}đ</b>` : ''}
-      ${p.nguoiTao ? ` · ${escHtml(p.nguoiTao)}` : ''}
-    </div>
-  </div>`;
-}
+window.nhSuaDong = function(i, truong, giaTri) {
+  if (!nhDongHang[i]) return;
+  nhDongHang[i][truong] = truong === 'soLuong' ? Math.max(1, parseInt(giaTri) || 1) : Math.max(0, parseFloat(giaTri) || 0);
+  nhVeTao();
+};
+window.nhTangGiam = function(i, d) {
+  if (!nhDongHang[i]) return;
+  nhDongHang[i].soLuong = Math.max(1, (Number(nhDongHang[i].soLuong) || 0) + d);
+  nhVeTao();
+};
+window.nhXoaDong = function(i) {
+  nhDongHang.splice(i, 1);
+  nhVeTao();
+};
 
-// Thoát về danh sách. Giữ nguyên nháp để lát vào lại vẫn còn —
-// chỉ mất khi người dùng chủ động bỏ hoặc đã lưu phiếu.
-window.nhThoatSoanPhieu = function() {
-  nhDaKhoiPhucNhap = false;
-  nhPhieuHienTai = null;
-  nhDongHang = [];
-  veDanhSachPhieuNhap();
+// Chọn từ ô tìm kiếm (selectSKU) hoặc quét mã. Đã có thì +1.
+window.nhThemHang = function(maSku, ten) {
+  if (!nhKho || !dsKhoNhapDuocPhep().includes(nhKho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
+  let idx = nhDongHang.findIndex(d => d.sku === maSku);
+  if (idx >= 0) {
+    nhDongHang[idx].soLuong = (Number(nhDongHang[idx].soLuong) || 0) + 1;
+  } else {
+    // Điền sẵn giá vốn đang lưu trong app — hàng giá không đổi thì khỏi gõ lại.
+    // Giá vốn chỉ người duyệt mới thấy nên nhân viên vẫn để trống.
+    const sku = allSKUs.find(s => s.sku === maSku);
+    const giaCu = nhCoDuyet() ? (Number(sku?.giaVon) || 0) : 0;
+    nhDongHang.push({ sku: maSku, ten: ten || sku?.ten || '', soLuong: 1, donGia: giaCu, giaVonCu: giaCu });
+    idx = nhDongHang.length - 1;
+  }
+  nhVeTao();
+  setTimeout(() => document.getElementById('nh-dong-' + idx)?.scrollIntoView({ block: 'nearest' }), 30);
 };
 
 window.nhBoNhap = async function() {
@@ -5640,40 +5695,35 @@ window.nhBoNhap = async function() {
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
   nhDongHang = [];
-  veDanhSachPhieuNhap();
+  nhKho = nhKhoMacDinh();
+  nhVeTao();
 };
-
-window.nhMoLaiNhap = function() {
-  const nhap = nhDocNhap();
-  if (!nhap?.dongHang?.length) return;
-  nhDongHang = nhap.dongHang;
-  nhPhieuHienTai = nhap.idPhieuDangSua ? nhDsPhieu.find(p => p.id === nhap.idPhieuDangSua) || null : null;
-  nhKho = nhap.kho || nhPhieuHienTai?.kho || nhKhoMacDinh();
-  nhDaKhoiPhucNhap = true;
-  veManHinhSoanPhieu();
-};
-
-window.nhTaoPhieuMoi = async function() {
-  const nhap = nhDocNhap();
-  if (nhap?.dongHang?.length &&
-      !await hoiXacNhan(`Đang có phiếu soạn dở ${nhap.dongHang.length} mã.\n\nTạo phiếu mới sẽ bỏ phiếu đó. Tiếp tục?`)) return;
+window.nhDongPhieu = async function() {
+  if (!await hoiXacNhan('Đóng phiếu tạm đang mở?\n\nThay đổi chưa lưu sẽ mất, phiếu tạm vẫn còn trong Danh sách.')) return;
   nhXoaNhap();
   nhDaKhoiPhucNhap = false;
   nhPhieuHienTai = null;
   nhDongHang = [];
   nhKho = nhKhoMacDinh();
-  veManHinhSoanPhieu();
+  nhVeTao();
 };
 
-window.nhMoPhieu = function(id) {
-  const p = nhDsPhieu.find(x => x.id === id);
-  if (!p) return;
-  nhPhieuHienTai = p;
-  nhKho = p.kho || 'san';     // phiếu cũ (trước khi chọn kho) đều nhập kho Sàn
-  nhDongHang = JSON.parse(JSON.stringify(p.dongHang || []));
+// Mở phiếu tạm từ Danh sách để sửa / điền giá
+window.nhMoPhieu = async function(id) {
+  const p = plTimPhieu('nhaphang', id);
+  const r = p?._goc;
+  if (!r) { showToast('Không tìm thấy phiếu', true); return; }
+  if (r.trangThai !== 'tam') { showToast('Phiếu đã lưu — không sửa được nữa', true); return; }
+  const kho = r.kho === 'ch' ? 'ch' : 'san';
+  if (!dsKhoNhapDuocPhep().includes(kho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
+  if ((nhDongHang.length || nhPhieuHienTai) && nhPhieuHienTai?.id !== id &&
+      !await hoiXacNhan('Đang có phiếu soạn dở ở Tạo phiếu.\n\nMở phiếu này sẽ bỏ phiếu đó. Tiếp tục?')) return;
+  nhPhieuHienTai = { id: r.id, maPhieu: r.maPhieu || '', trangThai: 'tam', kho, nguoiTao: r.nguoiTao || '', nguoiTaoUid: r.nguoiTaoUid || '' };
+  nhKho = kho;
+  nhDongHang = JSON.parse(JSON.stringify(r.dongHang || []));
   // Phiếu tạm thường chưa có giá. Người duyệt mở ra thì gợi sẵn giá vốn
   // hiện tại để chỉ phải sửa những mã thật sự đổi giá.
-  if (p.trangThai === 'tam' && nhCoDuyet()) {
+  if (nhCoDuyet()) {
     nhDongHang.forEach(d => {
       if (!Number(d.donGia)) {
         const sku = allSKUs.find(s => s.sku === d.sku);
@@ -5682,153 +5732,18 @@ window.nhMoPhieu = function(id) {
       }
     });
   }
-  veManHinhSoanPhieu();
-};
-
-function veManHinhSoanPhieu() {
-  const el = document.getElementById('nhaphang-than');
-  const laAdmin = nhCoDuyet();   // tên cũ: người được điền giá + duyệt phiếu
-  const daLuu = nhPhieuHienTai?.trangThai === 'da_luu';
-  const dsKho = dsKhoNhapDuocPhep();
-  // Phiếu thuộc kho mình không được nhập -> chỉ xem
-  const chiXem = daLuu || !nhKho || !dsKho.includes(nhKho);
-  const tongSl = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0);
-  const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
-  const thieuGia = nhDongHang.some(d => !Number(d.donGia));
-
-  // Ghi nháp sau mỗi lần thay đổi. Phiếu đã lưu thì không cần.
-  if (!daLuu) nhLuuNhap();
-
-  el.innerHTML = `
-    <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="nhThoatSoanPhieu()">← Quay lại danh sách phiếu</button>
-    ${nhDaKhoiPhucNhap ? `<div style="background:#EFF6FF;border:1px solid #3B82F6;border-radius:8px;padding:10px 12px;margin-bottom:10px;display:flex;gap:8px;align-items:center">
-      <div style="flex:1;font-size:12px;color:#1D4ED8">Đã khôi phục phiếu đang soạn dở lần trước.</div>
-      <button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="nhBoNhap()">Bỏ, làm phiếu mới</button>
-    </div>` : ''}
-    ${nhPhieuHienTai ? `<div style="background:var(--bg);border-radius:8px;padding:10px 12px;margin-bottom:10px">
-      <b>${escHtml(nhPhieuHienTai.maPhieu || '')}</b>
-      <span style="font-size:11px;color:#fff;background:${daLuu ? '#16A34A' : '#D97706'};padding:2px 7px;border-radius:4px;margin-left:6px">${daLuu ? 'Đã lưu' : 'Phiếu tạm'}</span>
-      ${nhPhieuHienTai.kiotvietCode ? `<div style="font-size:11px;color:var(--text2);margin-top:3px">Mã phiếu: ${escHtml(nhPhieuHienTai.kiotvietCode)}</div>` : ''}
-    </div>` : ''}
-
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <span style="font-size:13px;color:var(--text2);white-space:nowrap">Nhập vào kho</span>
-      ${(daLuu || dsKho.length < 2 || chiXem)
-        ? `<b style="font-size:14px;color:#0369A1">${nhKho ? TEN_KHO[nhKho] : '—'}</b>`
-        : `<div style="display:flex;gap:6px;flex:1">${dsKho.map(k => `<button class="${nhKho === k ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:8px 6px;font-size:13px;margin:0" onclick="nhChonKho('${k}')">${TEN_KHO[k]}</button>`).join('')}</div>`}
-    </div>
-    ${daLuu ? '<p class="info-note">Phiếu đã lưu — không sửa được nữa.</p>' : chiXem ? '<p class="info-note">Bạn không có quyền nhập vào kho này — chỉ xem được phiếu.</p>' : `
-    <div class="field sku-wrap" style="margin-bottom:10px">
-      <input type="text" id="nh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:12px">
-      <div class="sku-drop" id="nh-drop"></div>
-    </div>`}
-
-    <div id="nh-bang"></div>
-
-    <div style="background:var(--bg);border-radius:10px;padding:12px;margin:12px 0">
-      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span style="color:var(--text2)">Số mã hàng</span><b>${nhDongHang.length}</b>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:${laAdmin ? '13' : '16'}px">
-        <span style="color:var(--text2)">Tổng số lượng</span><b>${tongSl}</b>
-      </div>
-      ${laAdmin ? `<div style="display:flex;justify-content:space-between;font-size:16px;padding-top:6px;margin-top:6px;border-top:1px solid var(--border)">
-        <span>Tổng tiền</span><b style="color:var(--green)">${tongTien.toLocaleString('vi-VN')}đ</b>
-      </div>` : ''}
-    </div>
-
-    ${chiXem ? '' : `
-    <div style="display:flex;gap:8px">
-      <button class="btn-outline" style="flex:1" onclick="nhLuuPhieu(false)">Lưu phiếu tạm</button>
-      ${laAdmin ? `<button class="btn-g" style="flex:1" onclick="nhLuuPhieu(true)">Lưu phiếu</button>` : ''}
-    </div>
-    ${laAdmin && thieuGia ? '<p class="info-note" style="margin-top:8px">Còn mã chưa có đơn giá — "Lưu phiếu" sẽ báo lỗi. Dùng "Lưu phiếu tạm" nếu chưa biết giá.</p>' : ''}
-    ${!laAdmin ? '<p class="info-note" style="margin-top:8px">Nhập mã và số lượng rồi lưu phiếu tạm. Người duyệt sẽ điền giá và lưu phiếu.</p>' : ''}`}`;
-
-  if (!chiXem) makeSKUSearch('nh-tim', 'nh-drop', null);
-  veBangHangNhap();
-}
-
-function veBangHangNhap() {
-  const el = document.getElementById('nh-bang');
-  if (!el) return;
-  const daLuu = nhPhieuHienTai?.trangThai === 'da_luu' || !nhKho || !dsKhoNhapDuocPhep().includes(nhKho);
-  // Giá nhập là thông tin nhạy cảm — chỉ người có quyền duyệt phiếu thấy và sửa được.
-  // Người khác chỉ nhập mã + số lượng, người duyệt mở phiếu tạm ra điền giá sau.
-  const xemDuocGia = nhCoDuyet();
-  if (!nhDongHang.length) { el.innerHTML = '<p class="info-note">Chưa có mã hàng nào. Dùng ô tìm kiếm phía trên để thêm.</p>'; return; }
-  el.innerHTML = nhDongHang.map((d, i) => {
-    const sku = allSKUs.find(s => s.sku === d.sku);
-    const thanhTien = (Number(d.soLuong) || 0) * (Number(d.donGia) || 0);
-    return `
-    <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="display:flex;gap:8px;align-items:center">
-        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
-        <div style="flex:1;min-width:0">
-          <b style="font-size:13px">${escHtml(d.ten)}</b>
-          <div style="font-size:11px;color:var(--text2)">${escHtml(d.sku)}</div>
-        </div>
-        ${daLuu ? '' : `<button class="btn-xs" style="background:#FEE2E2;color:#DC2626" onclick="nhXoaDong(${i})">Xóa</button>`}
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-        <div style="flex:1">
-          <label style="font-size:10px;color:var(--text2)">Số lượng</label>
-          <input type="number" min="0" value="${d.soLuong || ''}" ${daLuu ? 'disabled' : ''}
-            onchange="nhSuaDong(${i},'soLuong',this.value)" style="width:100%;padding:8px;text-align:center">
-        </div>
-        ${xemDuocGia ? `
-        <div style="flex:1.4">
-          <label style="font-size:10px;color:var(--text2)">Đơn giá nhập</label>
-          <input type="number" min="0" value="${d.donGia || ''}" ${daLuu ? 'disabled' : ''} placeholder="chưa có"
-            onchange="nhSuaDong(${i},'donGia',this.value)" style="width:100%;padding:8px;text-align:right">
-          ${(d.giaVonCu && Number(d.donGia) !== Number(d.giaVonCu))
-            ? `<div style="font-size:10px;color:#D97706;text-align:right;margin-top:2px">giá cũ ${Number(d.giaVonCu).toLocaleString('vi-VN')}đ</div>`
-            : (d.giaVonCu ? `<div style="font-size:10px;color:var(--text2);text-align:right;margin-top:2px">giá cũ</div>` : '')}
-        </div>
-        <div style="flex:1;text-align:right">
-          <label style="font-size:10px;color:var(--text2)">Thành tiền</label>
-          <div style="font-weight:700;font-size:14px;padding:8px 0">${thanhTien.toLocaleString('vi-VN')}đ</div>
-        </div>` : ''}
-      </div>
-    </div>`;
-  }).join('');
-}
-
-window.nhSuaDong = function(i, truong, giaTri) {
-  nhDongHang[i][truong] = Math.max(0, parseFloat(giaTri) || 0);
-  veManHinhSoanPhieu();
-};
-
-window.nhXoaDong = function(i) {
-  nhDongHang.splice(i, 1);
-  veManHinhSoanPhieu();
-};
-
-// Hàm chung selectSKU sẽ gọi vào đây khi người dùng chọn từ ô tìm kiếm
-window.nhThemHang = function(maSku, ten) {
-  const daCo = nhDongHang.findIndex(d => d.sku === maSku);
-  if (daCo >= 0) {
-    nhDongHang[daCo].soLuong = (Number(nhDongHang[daCo].soLuong) || 0) + 1;
-  } else {
-    // Điền sẵn giá vốn đang lưu trong app — hàng giá không đổi thì khỏi gõ lại,
-    // hàng đổi giá thì sửa đè lên. Giá vốn chỉ Admin mới thấy nên nhân viên vẫn để trống.
-    const sku = allSKUs.find(s => s.sku === maSku);
-    const giaCu = nhCoDuyet() ? (Number(sku?.giaVon) || 0) : 0;
-    nhDongHang.push({ sku: maSku, ten, soLuong: 1, donGia: giaCu, giaVonCu: giaCu });
-  }
-  veManHinhSoanPhieu();
+  nhDaKhoiPhucNhap = false;
+  const m = document.getElementById('pl-ct-modal'); if (m) m.style.display = 'none';
+  switchSub('tao');
 };
 
 window.nhLuuPhieu = async function(luuThat) {
   if (!nhDongHang.length) { showToast('Chưa có mã hàng nào', true); return; }
   if (nhDongHang.some(d => !Number(d.soLuong))) { showToast('Còn mã chưa nhập số lượng', true); return; }
-  // Chặn ở tầng hàm, không chỉ ẩn nút — tránh gọi thẳng qua Console (máy chủ cũng chặn)
+  // Chặn ở tầng hàm, không chỉ ẩn nút — tránh gọi thẳng qua Console (máy chủ + rules cũng chặn)
   if (!nhKho || !dsKhoNhapDuocPhep().includes(nhKho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
-  if (luuThat && !nhCoDuyet()) {
-    showToast('Bạn không có quyền duyệt phiếu nhập', true);
-    return;
-  }
-  const tenKho = TEN_KHO[nhKho];
+  if (luuThat && !nhCoDuyet()) { showToast('Bạn không có quyền duyệt phiếu nhập', true); return; }
+  const tenKho = KHO_NHAP[nhKho].ten;
 
   if (luuThat) {
     const thieu = nhDongHang.filter(d => !Number(d.donGia));
@@ -5836,11 +5751,12 @@ window.nhLuuPhieu = async function(luuThat) {
       alert(`Còn ${thieu.length} mã chưa có đơn giá:\n\n${thieu.map(d => '· ' + d.ten).join('\n')}\n\nĐiền giá rồi lưu lại, hoặc dùng "Lưu phiếu tạm".`);
       return;
     }
-    if (!await hoiXacNhan(`Lưu phiếu nhập vào kho ${tenKho}?\n\nTồn kho ${tenKho} sẽ tăng theo phiếu này. Không sửa lại được.`)) return;
+    if (!await hoiXacNhan(`Lưu phiếu nhập vào ${tenKho}?\n\nTồn ${tenKho} sẽ tăng theo phiếu này. Không sửa lại được.`, { nutDongY: 'Lưu phiếu' })) return;
   }
 
+  const dangSua = nhPhieuHienTai;
   const tongTien = nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0) * (Number(d.donGia) || 0), 0);
-  const maPhieu = nhPhieuHienTai?.maPhieu || `PN${Date.now().toString().slice(-8)}`;
+  const maPhieu = dangSua?.maPhieu || `PN${Date.now().toString().slice(-8)}`;
   const duLieu = {
     maPhieu,
     kho: nhKho,
@@ -5848,15 +5764,19 @@ window.nhLuuPhieu = async function(luuThat) {
     tongTien,
     tongSoLuong: nhDongHang.reduce((s, d) => s + (Number(d.soLuong) || 0), 0),
     trangThai: luuThat ? 'da_luu' : 'tam',
-    nguoiTao: nhPhieuHienTai?.nguoiTao || currentUserData?.ten || currentUser?.email || '',
+    nguoiTao: dangSua?.nguoiTao || currentUserData?.ten || currentUser?.email || '',
+    nguoiTaoUid: dangSua?.nguoiTaoUid || (dangSua ? '' : currentUser?.uid || ''),
     suaLuc: serverTimestamp()
   };
+  if (!duLieu.nguoiTaoUid) delete duLieu.nguoiTaoUid;
 
+  const nut = document.getElementById(luuThat ? 'btn-nh-luu' : 'btn-nh-tam');
+  const chuNut = nut?.textContent;
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
   try {
     // Đẩy sang KiotViet TRƯỚC khi ghi Firestore: nếu KiotViet lỗi thì phiếu vẫn
     // giữ nguyên trạng thái tạm, tránh app báo đã lưu mà kho bên kia không có gì.
     if (luuThat) {
-      showToast('Đang lưu phiếu nhập...');
       const idToken = await currentUser.getIdToken();
       const res = await fetch(WORKER_URL, {
         method: 'POST',
@@ -5873,24 +5793,24 @@ window.nhLuuPhieu = async function(luuThat) {
       if (!kq.success) { alert('Không lưu được phiếu:\n\n' + kq.error); return; }
       duLieu.kiotvietId = kq.kiotvietId || null;
       duLieu.kiotvietCode = kq.kiotvietCode || null;
+      // Mã phiếu = mã phiếu nhập bên KiotViet (PN...) cho dễ đối chiếu
+      if (kq.kiotvietCode) duLieu.maPhieu = String(kq.kiotvietCode);
       duLieu.luuThatLuc = serverTimestamp();
     }
 
-    if (nhPhieuHienTai) {
-      await updateDoc(doc(db, 'phieu_nhap_san', nhPhieuHienTai.id), duLieu);
+    if (dangSua) {
+      await updateDoc(doc(db, 'phieu_nhap_san', dangSua.id), duLieu);
     } else {
       duLieu.taoLuc = serverTimestamp();
       await addDoc(collection(db, 'phieu_nhap_san'), duLieu);
     }
 
     // CỘNG TỒN KHO ĐÃ CHỌN — chỉ khi lưu thật (phiếu tạm chưa nhập hàng thực sự).
-    let soDongTon = 0;
     if (luuThat) {
       try {
-        const kq = await dieuChinhTonKhoApp(
-          nhDongHang.map(d => ({ sku: d.sku, sl: d.soLuong })), +1, nhKho === 'ch' ? 'cuahang' : 'san',
-          { loai: 'Nhập hàng', ma: duLieu.kiotvietCode || maPhieu });
-        soDongTon = kq.soDong;
+        await dieuChinhTonKhoApp(
+          nhDongHang.map(d => ({ sku: d.sku, sl: d.soLuong })), +1, KHO_NHAP[nhKho].ma,
+          { loai: 'Nhập hàng', ma: duLieu.maPhieu });
       } catch(e) {
         console.error('Lỗi cộng tồn kho:', e);
         alert('Phiếu đã lưu nhưng CHƯA CỘNG được tồn kho trong app:\n' + e.message
@@ -5898,16 +5818,58 @@ window.nhLuuPhieu = async function(luuThat) {
       }
     }
 
-    showToast(luuThat
-      ? `Đã lưu phiếu + cộng tồn kho ${tenKho} ${soDongTon} mã${duLieu.kiotvietCode ? ' · ' + duLieu.kiotvietCode : ''}`
-      : 'Đã lưu phiếu tạm');
+    showToast(luuThat ? 'Tạo phiếu thành công' : 'Lưu phiếu tạm thành công');
     nhXoaNhap();              // đã lưu lên hệ thống, không cần giữ nháp trên máy nữa
     nhDaKhoiPhucNhap = false;
-    await renderNhapHangTab();
+    nhPhieuHienTai = null;
+    nhDongHang = [];
+    nhKho = nhKhoMacDinh();
+    if (nut) { nut.disabled = false; nut.textContent = chuNut; }
+    if (dangSua && coQuyen('nhaphang')) switchSub('ds'); else nhVeTao();
   } catch(e) {
     alert('Lỗi lưu phiếu: ' + e.message);
+  } finally {
+    if (nut && nut.textContent === 'Đang lưu...') { nut.textContent = chuNut; nhVeTao(); }
   }
 };
+
+// ===== DANH SÁCH PHIẾU NHẬP (dùng khung danh sách chung PL) =====
+// Lấy qua máy chủ: chỉ trả phiếu của kho người xem được nhập (Admin xem hết).
+async function nhGoiDs(body) {
+  if (!allSKUs.length) await loadSKUs();
+  const idToken = await currentUser.getIdToken();
+  const res = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: { 'x-action': 'ds-phieu-nhap', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const kq = await res.json().catch(() => ({}));
+  if (!kq.success) throw new Error(kq.error || `Lỗi ${res.status}`);
+  return (kq.phieu || []).map(nhChuanPhieu);
+}
+function nhChuanPhieu(r) {
+  const ms = Date.parse(r.taoLuc || r.suaLuc || '') || 0;
+  const items = (r.dongHang || []).map(d => {
+    const sl = Number(d.soLuong) || 0, gia = Number(d.donGia) || 0;
+    const sp = allSKUs.find(s => s.sku === d.sku);
+    return { sku: d.sku || '', skuId: sp?.id || '', ten: d.ten || sp?.ten || '', sl, gia, tong: sl * gia };
+  });
+  return {
+    id: r.id, maPhieu: r.maPhieu || r.kiotvietCode || r.id, kho: r.kho === 'ch' ? 'ch' : 'san',
+    trangThai: r.trangThai === 'tam' ? 'tam' : 'da_luu', items,
+    tongSL: items.reduce((s, i) => s + i.sl, 0),
+    tongGia: Number(r.tongTien) || items.reduce((s, i) => s + i.tong, 0),
+    nguoiTao: { uid: r.nguoiTaoUid || r.nguoiTao || '', ten: r.nguoiTao || '' },
+    createdAt: { toDate: () => new Date(ms), toMillis: () => ms },
+    deleted: !!r.deleted, _goc: r
+  };
+}
+async function nhTaiDs(L) {
+  const ds = await nhGoiDs({ tu: new Date(L.tu + 'T00:00:00').toISOString(), den: new Date(L.den + 'T23:59:59.999').toISOString() });
+  // Phiếu tạm (chờ điền giá) luôn hiện trên cùng, kể cả phiếu tạm của ngày trước
+  return ds.sort((a, b) => (a.trangThai === 'tam' ? 0 : 1) - (b.trangThai === 'tam' ? 0 : 1) || b.createdAt.toMillis() - a.createdAt.toMillis());
+}
+async function nhTimDs() { return nhGoiDs({ ganDay: true }); }
 
 // ==========================================================================
 // ===== HÀNG HÓA CỬA HÀNG =====
@@ -8619,6 +8581,12 @@ function bhXuLyMaQuet(ma) {
     if (bao) bao.textContent = `Không có hàng mã ${ma}`;
     return;
   }
+  if (activeModule === 'nhaphang') {
+    nhThemHang(sp.sku, sp.ten);
+    bip(1800, 110);
+    if (bao) bao.textContent = `Đã thêm: ${sp.ten} (SL ${nhDongHang.find(d => d.sku === sp.sku)?.soLuong || 1})`;
+    return;
+  }
   const laChuyenKho = activeModule === 'nhap';
   if (laChuyenKho) ckThemHang(sp.id); else bhThemHang(sp.sku, sp.ten);
   bip(1800, 110);
@@ -8642,7 +8610,7 @@ function bhVuaManHinh() {
   const day = parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14;
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
 }
-window.addEventListener('resize', () => { if (activeModule === 'banhang' || ((activeModule === 'nhap' || activeModule === 'xuat') && activeSubTab === 'tao')) bhVuaManHinh(); });
+window.addEventListener('resize', () => { if (activeModule === 'banhang' || ((activeModule === 'nhap' || activeModule === 'xuat' || activeModule === 'nhaphang') && activeSubTab === 'tao')) bhVuaManHinh(); });
 
 function veTabPhieu() {
   const el = document.getElementById('bh-tab-phieu');
@@ -13821,9 +13789,20 @@ const PL = {
   xuat: { col: 'phieu_huy', ten: 'phiếu xuất hủy', mau: 'var(--red)', quyenSua: 'xuat_sua', quyenFile: 'xuat_xuatfile',
     loai: (p) => khoHuyCuaPhieu(p), tenLoai: (p) => KHO_HUY[khoHuyCuaPhieu(p)].ten, tieuDeLoai: 'KHO',
     dsLoai: [['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']], coGia: true,
-    loaiCuaToi: () => dsKhoHuyDuocPhep() }
+    loaiCuaToi: () => dsKhoHuyDuocPhep() },
+  // Nhập hàng: tải qua máy chủ (chỉ phiếu kho mình được nhập), trạng thái Phiếu tạm / Đã lưu
+  nhaphang: { col: 'phieu_nhap_san', ten: 'phiếu nhập hàng', mau: 'var(--green)', quyenSua: null, quyenFile: null,
+    loai: (p) => p.kho === 'ch' ? 'ch' : 'san', tenLoai: (p) => KHO_NHAP[p.kho === 'ch' ? 'ch' : 'san'].ten, tieuDeLoai: 'KHO',
+    dsLoai: [['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']], coGia: () => nhCoDuyet(),
+    loaiCuaToi: () => dsKhoNhapDuocPhep(),
+    trangThai: (p) => p.trangThai, dsTrangThai: [['tam', 'Phiếu tạm'], ['da_luu', 'Đã lưu']],
+    nhan: (p) => p.trangThai === 'tam'
+      ? '<span style="font-size:11px;color:#fff;background:#D97706;padding:1px 7px;border-radius:4px;font-weight:600">Phiếu tạm</span>'
+      : '<span style="font-size:11px;color:#16A34A;font-weight:600">Đã lưu</span>',
+    tai: (L) => nhTaiDs(L), tim: () => nhTimDs() }
 };
-const plLoc = {}, plDs = { nhap: [], xuat: [] }, plTimChu = { nhap: '', xuat: '' }, plTimKq = { nhap: [], xuat: [] };
+const plLoc = {}, plDs = { nhap: [], xuat: [], nhaphang: [] }, plTimChu = { nhap: '', xuat: '', nhaphang: '' }, plTimKq = { nhap: [], xuat: [], nhaphang: [] };
+const plCoGia = (C) => typeof C.coGia === 'function' ? C.coGia() : !!C.coGia;
 function plLocMacDinh() { const h = ngayLocal(); return { tu: h, den: h, loai: [], trangThai: [], nhanVien: [] }; }
 const plMs = (p) => p.createdAt?.toMillis?.() || 0;
 
@@ -13834,11 +13813,14 @@ async function plTai(mod) {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const L = plLoc[mod];
   try {
-    const snap = await getDocs(query(collection(db, PL[mod].col),
-      where('createdAt', '>=', new Date(L.tu + 'T00:00:00')), where('createdAt', '<=', new Date(L.den + 'T23:59:59')),
-      orderBy('createdAt', 'desc'), limit(1000)));
-    plDs[mod] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  } catch(e) { console.error('Lỗi tải phiếu:', e); plDs[mod] = []; }
+    if (PL[mod].tai) plDs[mod] = await PL[mod].tai(L);
+    else {
+      const snap = await getDocs(query(collection(db, PL[mod].col),
+        where('createdAt', '>=', new Date(L.tu + 'T00:00:00')), where('createdAt', '<=', new Date(L.den + 'T23:59:59')),
+        orderBy('createdAt', 'desc'), limit(1000)));
+      plDs[mod] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+  } catch(e) { console.error('Lỗi tải phiếu:', e); plDs[mod] = []; showToast('Không tải được danh sách: ' + e.message, true); }
   if (plTimChu[mod]) await plTim(mod, plTimChu[mod], true); else plVe(mod);
 }
 window.loadNhapList = () => plTai('nhap');
@@ -13846,8 +13828,9 @@ window.loadXuatList = () => plTai('xuat');
 
 function plTrangThai(p) { return p.deleted ? 'daxoa' : (p.versions?.length ? 'dasua' : 'binhthuong'); }
 function plQuaLoc(mod, p) {
-  const L = plLoc[mod];
-  if (L.trangThai.length ? !L.trangThai.includes(plTrangThai(p)) : p.deleted) return false;
+  const L = plLoc[mod], C = PL[mod];
+  const tt = C.trangThai ? C.trangThai(p) : plTrangThai(p);
+  if (L.trangThai.length ? !L.trangThai.includes(tt) : p.deleted) return false;
   if (L.loai.length && !L.loai.includes(PL[mod].loai(p))) return false;
   if (L.nhanVien.length && !L.nhanVien.includes(p.nguoiTao?.uid)) return false;
   return true;
@@ -13867,8 +13850,9 @@ window.plTim = async function(mod, v, giuNguyen) {
   if (!tu) { plTimKq[mod] = []; plVe(mod); return; }
   const k = boDauTim(tu);
   try {
-    const snap = await getDocs(query(collection(db, PL[mod].col), orderBy('createdAt', 'desc'), limit(800)));
-    plTimKq[mod] = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p =>
+    const ds = PL[mod].tim ? await PL[mod].tim()
+      : (await getDocs(query(collection(db, PL[mod].col), orderBy('createdAt', 'desc'), limit(800)))).docs.map(d => ({ id: d.id, ...d.data() }));
+    plTimKq[mod] = ds.filter(p =>
       [p.maPhieu, p.kiotvietCode, p.nguoiTao?.ten, ...(p.items || []).flatMap(i => [i.sku, i.ten])].some(x => boDauTim(x).includes(k)));
   } catch(e) { showToast('Không tìm được: ' + e.message, true); plTimKq[mod] = []; }
   plVe(mod);
@@ -13883,7 +13867,7 @@ function plThe(mod, p) {
   const a0 = p.photos?.[0];
   const anh = a0?.thumb || a0?.dataUrl;
   return `
-    <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${p.deleted ? '#9CA3AF' : C.mau};border-radius:8px;padding:10px;margin-bottom:8px;${p.deleted ? 'opacity:.65' : ''}">
+    <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${p.deleted ? '#9CA3AF' : p.trangThai === 'tam' ? '#D97706' : C.mau};border-radius:8px;padding:10px;margin-bottom:8px;${p.deleted ? 'opacity:.65' : ''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div style="flex:1;min-width:0;cursor:pointer" onclick="plXem('${mod}','${p.id}')">
           <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
@@ -13891,9 +13875,10 @@ function plThe(mod, p) {
             <span style="font-size:12px;color:var(--text2)">${ddbThoiGian(t)}</span>
             ${p.deleted ? '<span style="font-size:11px;color:#DC2626;font-weight:600">Đã xóa</span>'
               : p.versions?.length ? `<span style="font-size:11px;color:#D97706;font-weight:600">Đã sửa ${p.versions.length} lần</span>` : ''}
+            ${C.nhan ? C.nhan(p) : ''}
           </div>
           <div style="font-size:12px;color:var(--text2);margin-top:3px">Nhân viên: ${escHtml(p.nguoiTao?.ten || '')}</div>
-          <div style="font-size:13px;margin-top:3px"><b style="color:${C.mau}">${C.tenLoai(p)}</b> · SL <b>${tongSL}</b>${C.coGia ? ` · <b>${fmt(p.tongGia)}đ</b>` : ''}</div>
+          <div style="font-size:13px;margin-top:3px"><b style="color:${C.mau}">${C.tenLoai(p)}</b> · SL <b>${tongSL}</b>${plCoGia(C) ? ` · <b>${fmt(p.tongGia)}đ</b>` : ''}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(ten)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
@@ -13914,6 +13899,7 @@ function plVe(mod) {
   const conHieuLuc = ds.filter(p => !p.deleted);
   const tongSL = conHieuLuc.reduce((s, p) => s + (Number(p.tongSL) || 0), 0);
   const tongGia = conHieuLuc.reduce((s, p) => s + (Number(p.tongGia) || 0), 0);
+  const coGia = plCoGia(C);
   el.innerHTML = `
     <div style="display:flex;gap:6px;margin-bottom:10px">
       <input id="${mod}-pl-tim" type="search" inputmode="search" placeholder="🔍 Mã phiếu, mã hoặc tên hàng, người tạo"
@@ -13927,15 +13913,15 @@ function plVe(mod) {
     ` : `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
         <div style="flex:1;min-width:0;font-size:13px;color:var(--text2)">${plChuNgay(mod)}${soLoc ? ` · đang lọc ${soLoc} mục` : ''}</div>
-        ${coQuyen(C.quyenFile) ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;padding:6px 12px" onclick="plXuatFile('${mod}')">Xuất file</button>` : ''}
+        ${C.quyenFile && coQuyen(C.quyenFile) ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;padding:6px 12px" onclick="plXuatFile('${mod}')">Xuất file</button>` : ''}
         <button class="btn-outline" style="flex:0 0 auto;width:auto;padding:6px 16px;${soLoc ? `border-color:${C.mau};color:${C.mau};font-weight:600` : ''}" onclick="plMoLoc('${mod}')">Lọc${soLoc ? ` (${soLoc})` : ''}</button>
       </div>
       <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;font-size:19px;font-weight:700">
           <span>${conHieuLuc.length} phiếu</span>
-          <span style="color:${C.mau}">${C.coGia ? fmt(tongGia) + 'đ' : 'SL ' + tongSL}</span>
+          <span style="color:${C.mau}">${coGia ? fmt(tongGia) + 'đ' : 'SL ' + tongSL}</span>
         </div>
-        ${C.coGia ? `<div style="font-size:13px;color:var(--text2);margin-top:4px">Tổng số lượng: <b style="color:var(--text)">${tongSL}</b></div>` : ''}
+        ${coGia ? `<div style="font-size:13px;color:var(--text2);margin-top:4px">Tổng số lượng: <b style="color:var(--text)">${tongSL}</b></div>` : ''}
       </div>
       ${ds.length ? ds.map(p => plThe(mod, p)).join('') : `<p class="info-note">${soLoc ? 'Không có phiếu nào khớp bộ lọc.' : 'Chưa có phiếu nào trong khoảng thời gian này.'}</p>`}
     `}`;
@@ -13973,7 +13959,7 @@ window.plMoLoc = function(mod) {
       const ds = C.dsLoai.filter(([k]) => cuaToi.length ? cuaToi.includes(k) : coTrongDs.has(k));
       return ds.length > 1 ? nhom(C.tieuDeLoai, ds.map(([k, t]) => o('pll-loai', k, t, L.loai)).join('')) : '';
     })()}
-    ${nhom('TRẠNG THÁI PHIẾU', o('pll-tt', 'binhthuong', 'Bình thường', L.trangThai) + o('pll-tt', 'dasua', 'Đã sửa', L.trangThai) + o('pll-tt', 'daxoa', 'Đã xóa', L.trangThai))}
+    ${nhom('TRẠNG THÁI PHIẾU', (C.dsTrangThai || [['binhthuong', 'Bình thường'], ['dasua', 'Đã sửa'], ['daxoa', 'Đã xóa']]).map(([k, t]) => o('pll-tt', k, t, L.trangThai)).join(''))}
     ${nv.size ? nhom('NHÂN VIÊN', [...nv].map(([uid, ten]) => o('pll-nv', uid, ten, L.nhanVien)).join('')) : ''}`,
     `<button class="btn-outline" style="flex:1" onclick="plDatLaiLoc('${mod}')">Đặt lại</button>
      <button class="${mod === 'xuat' ? 'btn-r' : 'btn-g'}" style="flex:1;margin:0" onclick="plApDungLoc('${mod}')">Áp dụng</button>`);
@@ -14012,6 +13998,7 @@ window.plXem = function(mod, id) {
   const p = plTimPhieu(mod, id);
   if (!p) { showToast('Không tìm thấy phiếu', true); return; }
   const t = p.createdAt?.toDate ? p.createdAt.toDate() : null;
+  const coGia = plCoGia(C);
   const hang = (p.items || []).map(h => {
     const sp = allSKUs.find(s => s.id === h.skuId) || allSKUs.find(s => s.sku === h.sku);
     const anh = sp?.anhFileId
@@ -14022,17 +14009,20 @@ window.plXem = function(mod, id) {
         ${anh}
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:14px">${escHtml(h.ten)}</div>
-          <div style="font-size:11px;color:var(--text2)">${escHtml(h.sku || '')}${C.coGia ? ` · ${fmt(h.gia)}đ` : ''}</div>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(h.sku || '')}${coGia ? ` · ${fmt(h.gia)}đ` : ''}</div>
         </div>
-        <div style="text-align:right;flex-shrink:0"><div style="font-weight:700;font-size:15px">×${h.sl}</div>${C.coGia ? `<div style="font-size:12px">${fmt(h.tong ?? h.sl * (h.gia || 0))}đ</div>` : ''}</div>
+        <div style="text-align:right;flex-shrink:0"><div style="font-weight:700;font-size:15px">×${h.sl}</div>${coGia ? `<div style="font-size:12px">${fmt(h.tong ?? h.sl * (h.gia || 0))}đ</div>` : ''}</div>
       </div>
       ${(p.photos || []).some(a => a.skuId === h.skuId) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;padding:6px 0 8px;border-bottom:1px solid var(--border)">
         ${(p.photos || []).filter(a => a.skuId === h.skuId).map(plAnhNho).join('')}</div>` : ''}`;
   }).join('');
   // Ảnh chung (phiếu cũ / chuyển kho — chưa gắn theo mã hàng)
   const anhCT = (p.photos || []).filter(a => !a.skuId).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
-  const suaDuoc = coQuyen(C.quyenSua);
-  const chan = suaDuoc ? (p.deleted
+  const suaDuoc = !!C.quyenSua && coQuyen(C.quyenSua);
+  const chan = mod === 'nhaphang'
+    ? (p.trangThai === 'tam' && dsKhoNhapDuocPhep().includes(p.kho)
+      ? `<button class="btn-g" style="flex:1;margin:0" onclick="nhMoPhieu('${p.id}')">${nhCoDuyet() ? 'Mở phiếu · điền giá & lưu' : 'Mở phiếu để sửa'}</button>` : '')
+    : suaDuoc ? (p.deleted
       ? (mod === 'xuat' ? `<button class="btn-g" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';restoreXuat('${p.id}')">Khôi phục phiếu</button>` : '')
       : `<button class="btn-outline" style="flex:1" onclick="document.getElementById('pl-ct-modal').style.display='none';${mod === 'xuat' ? 'openEditXuat' : 'openEditNhap'}('${p.id}')">Sửa</button>
          <button class="btn-r" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';${mod === 'xuat' ? 'softDeleteXuat' : 'deleteNhap'}('${p.id}')">Xóa phiếu</button>`) : '';
@@ -14040,13 +14030,14 @@ window.plXem = function(mod, id) {
     <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px">
       <div>Thời gian: <b>${ddbThoiGian(t) || '—'}</b></div>
       <div>Nhân viên: <b>${escHtml(p.nguoiTao?.ten || '')}</b></div>
-      <div>${mod === 'xuat' ? 'Kho' : 'Chiều chuyển'}: <b style="color:${C.mau}">${C.tenLoai(p)}</b></div>
+      <div>${mod === 'nhap' ? 'Chiều chuyển' : 'Kho'}: <b style="color:${C.mau}">${C.tenLoai(p)}</b></div>
+      ${C.nhan ? `<div>Trạng thái: ${C.nhan(p)}</div>` : ''}
       ${p.deleted ? `<div style="color:#DC2626;font-weight:600">Đã xóa${p.deletedBy?.ten ? ' bởi ' + escHtml(p.deletedBy.ten) : ''}</div>` : ''}
       ${p.daXuat ? '<div style="color:var(--text2)">Đã xuất file</div>' : ''}
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--text2)">HÀNG HÓA (${(p.items || []).length} mã · SL ${p.tongSL || 0})</div>
     ${hang}
-    ${C.coGia ? `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:16px;padding:8px 0">Tổng giá trị <span style="color:${C.mau}">${fmt(p.tongGia)}đ</span></div>` : ''}
+    ${coGia ? `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:16px;padding:8px 0">Tổng giá trị <span style="color:${C.mau}">${fmt(p.tongGia)}đ</span></div>` : ''}
     ${anhCT ? `<div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 6px">ẢNH MINH CHỨNG</div><div style="display:flex;gap:8px;flex-wrap:wrap">${anhCT}</div>` : ''}
     <div style="margin-top:10px">${renderLichSuSuaPhieu(p)}</div>`, chan);
   ddbCanhGiua('pl-ct-modal');
@@ -17850,7 +17841,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v495</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v496</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17904,7 +17895,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v495</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v496</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17950,7 +17941,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v495</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v496</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -18251,8 +18242,39 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <input type="file" id="anh-chon-file" accept="image/*" multiple style="display:none" onchange="themAnhTuFile(this)">
 
       <!-- NHẬP HÀNG (nhóm Hàng hóa) -->
-      <div class="panel" id="panel-nhaphang-main">
-        <div id="nhaphang-than"><div class="loading">Đang tải...</div></div>
+      <div class="panel" id="panel-nhaphang-tao">
+        <!-- Giống Chuyển kho / Xuất hủy: chọn kho, tìm/quét là thêm thẳng, danh sách cuộn, phần lưu cố định dưới -->
+        <div class="bh-khung" id="nh-khung">
+          <div id="nh-kho-wrap"></div>
+          <div id="nh-tim-hang" style="display:flex;gap:6px;margin:6px 0 6px;align-items:stretch">
+            <div class="field sku-wrap" style="flex:1;min-width:0;margin:0">
+              <input type="text" id="nh-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px;border-color:#86EFAC">
+              <div class="sku-drop" id="nh-drop"></div>
+            </div>
+            <button onclick="bhMoQuet()" title="Quét mã vạch" aria-label="Quét mã vạch"
+              style="flex:0 0 44px;border:1.5px solid #86EFAC;border-radius:8px;background:#F0FDF4;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>
+            </button>
+          </div>
+          <div class="bh-o-hang-trong" id="nh-than"></div>
+          <div class="bh-day-duoi">
+            <div class="bh-o-tt">
+              <div class="bh-dong-tt">
+                <span style="display:flex;align-items:center;gap:7px">Tổng số lượng <span class="bh-tron-sl" id="nh-so-ma">0</span></span>
+                <b id="nh-tong-sl">0</b>
+              </div>
+              <div class="bh-dong-tt" id="nh-dong-tien" style="display:none"><span>Tổng tiền</span><b id="nh-tong-tien" style="color:var(--green)">0đ</b></div>
+              <div id="nh-ghi-chu" style="font-size:11.5px;color:var(--text2)"></div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn-outline" id="btn-nh-tam" style="flex:1;margin:0" onclick="nhLuuPhieu(false)">Lưu phiếu tạm</button>
+              <button class="btn-g" id="btn-nh-luu" style="flex:1;margin:0;display:none" onclick="nhLuuPhieu(true)">Lưu phiếu</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="panel-nhaphang-ds">
+        <div id="nhaphang-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
 
       <!-- BÁO CÁO CHẤM CÔNG + CHECKLIST (Admin/Quản lý) -->

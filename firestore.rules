@@ -171,7 +171,8 @@ service cloud.firestore {
     // Phiếu tạm: ai có quyền nhập vào kho đó. Lưu thật (da_luu): phải có thêm quyền duyệt.
     function khoNhapDuoc(d) { return coQ('nh_kho_' + d.get('kho', 'san')); }
     match /phieu_nhap_san/{id} {
-      allow read: if q('nhaphang');
+      // Chỉ đọc phiếu của kho mình được nhập (danh sách trong app lấy qua máy chủ)
+      allow read: if adm() || (coQ('nhaphang') && khoNhapDuoc(resource.data));
       allow create: if adm() || (coQ('nhaphang') && khoNhapDuoc(request.resource.data)
         && (request.resource.data.trangThai == 'tam' || coQ('nh_duyet')));
       allow update: if adm() || (coQ('nhaphang') && resource.data.trangThai == 'tam'
