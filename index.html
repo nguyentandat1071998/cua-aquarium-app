@@ -13498,7 +13498,7 @@ function renderNhapPhotos() {
 // Xuất hủy: phiếu nhiều mã hàng, nhưng MỖI MÃ phải có ảnh chụp riêng.
 // Luồng: chụp ảnh trước -> chọn hàng cho ảnh đó -> mã hàng được thêm vào phiếu kèm ảnh.
 // Ảnh gắn skuId để người xem (và máy chủ) đối chiếu từng mã với ảnh của nó.
-const XH_TOI_DA_ANH = 8;   // cả phiếu (giữ phiếu nằm gọn trong 1 tài liệu)
+const XH_TOI_DA_ANH = 40;  // cả phiếu — mỗi ảnh lưu thành tài liệu riêng
 let xhAnhCho = [];         // ảnh vừa chụp, chưa chọn hàng
 const xhAnhCua = (skuId) => currentPhieu.photos.filter(p => p.skuId === skuId);
 const xhTongAnh = () => currentPhieu.photos.length + xhAnhCho.length;
@@ -13652,7 +13652,7 @@ window.submitXuat = async function() {
       headers: { 'x-action': 'tao-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ kho, maPhieu,
         items: currentPhieu.items.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })),
-        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts, skuId: p.skuId, tuFile: !!p.tuFile })) })
+        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, thumb: p.thumb, ts: p.ts, skuId: p.skuId, tuFile: !!p.tuFile })) })
     });
     const kq = await res.json().catch(() => ({}));
     if (!kq.success) {
@@ -13690,9 +13690,9 @@ window.capturePhoto = function() {
   const video = document.getElementById('camera-video');
   const canvas = document.getElementById('camera-canvas');
   // Thu nhỏ về tối đa 1280px — phiếu nhiều ảnh vẫn nằm gọn trong 1 tài liệu (giới hạn 1MB)
-  // Ảnh xuất hủy nhỏ hơn (800px) vì một phiếu chứa tới 8 ảnh
+  // Ảnh xuất hủy 1024px — mỗi ảnh lưu riêng nên một phiếu chứa được nhiều ảnh
   const laAnhHuy = String(mode).startsWith('xuat');
-  const tlAnh = Math.min(1, (laAnhHuy ? 800 : 1280) / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+  const tlAnh = Math.min(1, (laAnhHuy ? 1024 : 1280) / Math.max(video.videoWidth || 1, video.videoHeight || 1));
   canvas.width = Math.round(video.videoWidth * tlAnh); canvas.height = Math.round(video.videoHeight * tlAnh);
   const ctx = canvas.getContext('2d');
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -13708,8 +13708,16 @@ window.capturePhoto = function() {
   ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
   ctx.fillStyle = '#FFE566';
   ctx.fillText(label, 14, canvas.height - 10);
-  const dataUrl = canvas.toDataURL('image/jpeg', laAnhHuy ? 0.65 : 0.75);
+  const dataUrl = canvas.toDataURL('image/jpeg', laAnhHuy ? 0.7 : 0.75);
   const photoData = { dataUrl, ts };
+  // Ảnh nhỏ (160px) lưu kèm phiếu để danh sách hiện nhanh; ảnh đầy đủ mở khi bấm vào
+  if (laAnhHuy) {
+    const nho = document.createElement('canvas');
+    const tl2 = 160 / Math.max(canvas.width, canvas.height);
+    nho.width = Math.round(canvas.width * tl2); nho.height = Math.round(canvas.height * tl2);
+    nho.getContext('2d').drawImage(canvas, 0, 0, nho.width, nho.height);
+    photoData.thumb = nho.toDataURL('image/jpeg', 0.6);
+  }
   if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
   else if (mode === 'checklist') {
     const clId = window._clPhotoTarget;
@@ -13805,7 +13813,8 @@ function plThe(mod, p) {
   const items = p.items || [];
   const tongSL = items.reduce((s, i) => s + (Number(i.sl) || 0), 0);
   const ten = items.slice(0, 2).map(i => `${i.ten} ×${i.sl}`).join(', ') + (items.length > 2 ? ` +${items.length - 2} mã` : '');
-  const anh = p.photos?.[0]?.dataUrl;
+  const a0 = p.photos?.[0];
+  const anh = a0?.thumb || a0?.dataUrl;
   return `
     <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${p.deleted ? '#9CA3AF' : C.mau};border-radius:8px;padding:10px;margin-bottom:8px;${p.deleted ? 'opacity:.65' : ''}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -13821,7 +13830,7 @@ function plThe(mod, p) {
           <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(ten)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
-          ${anh ? `<img src="${anh}" onclick="viewPhoto('${anh}')" style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer">` : ''}
+          ${anh ? `<img src="${anh}" onclick="${a0.dataUrl ? `viewPhoto('${a0.dataUrl}')` : `xemAnhPhieu('${a0.id}')`}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer">` : ''}
           <button class="btn-xs" onclick="plXem('${mod}','${p.id}')">Xem chi tiết</button>
         </div>
       </div>
@@ -13915,6 +13924,17 @@ window.plDatLaiLoc = async function(mod) {
   if (cu.tu !== plLoc[mod].tu || cu.den !== plLoc[mod].den) await plTai(mod); else plVe(mod);
 };
 
+// Ảnh phiếu: ảnh nhỏ hiện ngay, bấm mới tải ảnh đầy đủ (lưu riêng ở anh_phieu)
+const plAnhNho = (a) => `<img src="${a.thumb || a.dataUrl}" onclick="${a.dataUrl ? `viewPhoto('${a.dataUrl}')` : `xemAnhPhieu('${a.id}')`}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer">`;
+window.xemAnhPhieu = async function(id) {
+  try {
+    showToast('Đang mở ảnh...');
+    const s2 = await getDoc(doc(db, 'anh_phieu', id));
+    if (!s2.exists()) { showToast('Không tìm thấy ảnh', true); return; }
+    viewPhoto(s2.data().dataUrl);
+  } catch(e) { showToast('Không mở được ảnh: ' + e.message, true); }
+};
+
 window.plXem = function(mod, id) {
   const C = PL[mod];
   const p = plTimPhieu(mod, id);
@@ -13935,7 +13955,7 @@ window.plXem = function(mod, id) {
         <div style="text-align:right;flex-shrink:0"><div style="font-weight:700;font-size:15px">×${h.sl}</div>${C.coGia ? `<div style="font-size:12px">${fmt(h.tong ?? h.sl * (h.gia || 0))}đ</div>` : ''}</div>
       </div>
       ${(p.photos || []).some(a => a.skuId === h.skuId) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;padding:6px 0 8px;border-bottom:1px solid var(--border)">
-        ${(p.photos || []).filter(a => a.skuId === h.skuId).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('')}</div>` : ''}`;
+        ${(p.photos || []).filter(a => a.skuId === h.skuId).map(plAnhNho).join('')}</div>` : ''}`;
   }).join('');
   // Ảnh chung (phiếu cũ / chuyển kho — chưa gắn theo mã hàng)
   const anhCT = (p.photos || []).filter(a => !a.skuId).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
@@ -17757,7 +17777,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v489</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v490</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17811,7 +17831,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v489</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v490</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17857,7 +17877,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v489</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v490</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
