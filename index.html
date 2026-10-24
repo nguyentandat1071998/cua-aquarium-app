@@ -5514,7 +5514,7 @@ let nhLoai = null;           // 'phukien' (bắt buộc ảnh, như Chuyển kho
 let nhAnh = [];              // ảnh phiếu Phụ kiện [{dataUrl, thumb, ts, tuFile?}]
 const NH_TOI_DA_ANH = 4;     // ảnh nằm trong phiếu (giới hạn 1MB/tài liệu)
 const NH_LOAI = { phukien: 'Phụ kiện', song: 'Hàng sống' };
-const NH_MO_TA = { phukien: 'Bắt buộc chụp ảnh hàng hóa', song: 'Cá, tép, cây, ốc' };
+const NH_MO_TA = { phukien: '', song: 'Cá, tép, cây, ốc' };
 window.nhMoChonKho = function() {
   const ds = dsKhoNhapDuocPhep();
   if (nhPhieuHienTai || ds.length < 2) return;
@@ -5523,7 +5523,7 @@ window.nhMoChonKho = function() {
 window.nhMoChonLoai = function() {
   if (nhPhieuHienTai) return;
   moBangChon('Loại hàng nhập', Object.keys(NH_LOAI).map(k => ({ gt: k, nhan: NH_LOAI[k],
-    phu: NH_MO_TA[k] + (k !== nhLoai && nhSoMaKhac(k) ? ` · đang soạn ${nhSoMaKhac(k)} mã` : '') })), nhLoai, nhChonLoai);
+    phu: [NH_MO_TA[k], k !== nhLoai && nhSoMaKhac(k) ? `đang soạn ${nhSoMaKhac(k)} mã` : ''].filter(Boolean).join(' · ') })), nhLoai, nhChonLoai);
 };
 
 // ===== BẢNG CHỌN KIỂU APP ĐIỆN THOẠI (trượt từ dưới lên) — dùng chung =====
@@ -8871,11 +8871,7 @@ function veDayDuoi() {
       <button class="bh-o-khach" onclick="bhMoKhungKhach()">
         ${kh ? `<b>${escHtml(kh.ten || 'Khách hàng')}</b><span>${escHtml(kh.sdt || '')}</span>` : '<span style="color:var(--text2)">+ Thêm khách hàng</span>'}
       </button>
-      <select class="bh-chon-tt" onchange="bhDoiCachTra(this.value)">
-        <option value="tienmat" ${p.cachTra === 'tienmat' ? 'selected' : ''}>Tiền mặt</option>
-        <option value="chuyenkhoan" ${p.cachTra === 'chuyenkhoan' ? 'selected' : ''}>Chuyển khoản</option>
-        <option value="ketHop" ${p.cachTra === 'ketHop' ? 'selected' : ''}>Kết hợp</option>
-      </select>
+      <button class="bh-chon-tt" aria-label="Cách thanh toán" style="font-weight:600" onclick="bhMoChonCachTra()">${BH_CACH_TRA[p.cachTra] || 'Tiền mặt'}</button>
     </div>
 
     <button class="btn-g" id="bh-nut-xong" ${coHang ? '' : 'disabled'}
@@ -9449,6 +9445,12 @@ window.bhDatGiam = function(i, v) {
 };
 window.bhXoaDong = function(i) { bhSuaDong(p => { p.gio.splice(i, 1); }); };
 
+const BH_CACH_TRA = { tienmat: 'Tiền mặt', chuyenkhoan: 'Chuyển khoản', ketHop: 'Kết hợp' };
+window.bhMoChonCachTra = function() {
+  const p = bhPhieuHienTai();
+  if (!p) return;
+  moBangChon('Cách thanh toán', Object.entries(BH_CACH_TRA).map(([gt, nhan]) => ({ gt, nhan })), p.cachTra || 'tienmat', bhDoiCachTra);
+};
 window.bhDoiCachTra = function(ma) {
   const p = bhPhieuHienTai();
   if (!p) return;
@@ -18012,7 +18014,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v500</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v501</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -18066,7 +18068,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v500</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v501</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -18112,7 +18114,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v500</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v501</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
