@@ -5514,7 +5514,46 @@ let nhLoai = null;           // 'phukien' (bắt buộc ảnh, như Chuyển kho
 let nhAnh = [];              // ảnh phiếu Phụ kiện [{dataUrl, thumb, ts, tuFile?}]
 const NH_TOI_DA_ANH = 4;     // ảnh nằm trong phiếu (giới hạn 1MB/tài liệu)
 const NH_LOAI = { phukien: 'Phụ kiện', song: 'Hàng sống' };
-const NH_ICON = { phukien: '📦', song: '🐟' };
+const NH_MO_TA = { phukien: 'Bắt buộc chụp ảnh hàng hóa', song: 'Cá, tép, cây, ốc' };
+window.nhMoChonKho = function() {
+  const ds = dsKhoNhapDuocPhep();
+  if (nhPhieuHienTai || ds.length < 2) return;
+  moBangChon('Nhập vào kho', ds.map(k => ({ gt: k, nhan: KHO_NHAP[k].ten })), nhKho, nhChonKho);
+};
+window.nhMoChonLoai = function() {
+  if (nhPhieuHienTai) return;
+  moBangChon('Loại hàng nhập', Object.keys(NH_LOAI).map(k => ({ gt: k, nhan: NH_LOAI[k],
+    phu: NH_MO_TA[k] + (k !== nhLoai && nhSoMaKhac(k) ? ` · đang soạn ${nhSoMaKhac(k)} mã` : '') })), nhLoai, nhChonLoai);
+};
+
+// ===== BẢNG CHỌN KIỂU APP ĐIỆN THOẠI (trượt từ dưới lên) — dùng chung =====
+let bangChonGoiLai = null, bangChonDs = [];
+window.moBangChon = function(tieuDe, ds, dangChon, goiLai) {
+  bangChonGoiLai = goiLai; bangChonDs = ds;
+  let nen = document.getElementById('bang-chon');
+  if (!nen) {
+    nen = document.createElement('div');
+    nen.id = 'bang-chon';
+    nen.className = 'bang-chon-nen';
+    nen.onclick = (e) => { if (e.target === nen) dongBangChon(); };
+    document.body.appendChild(nen);
+  }
+  nen.innerHTML = `<div class="bang-chon" role="dialog" aria-label="${escHtml(tieuDe)}">
+    <div class="bang-chon-keo"></div>
+    <div class="bang-chon-td">${escHtml(tieuDe)}</div>
+    ${ds.map((o, i) => `<button class="bang-chon-mt${o.gt === dangChon ? ' dang' : ''}" onclick="chonTrongBang(${i})">
+      <span style="display:flex;flex-direction:column;gap:2px;min-width:0"><span>${escHtml(o.nhan)}</span>${o.phu ? `<span class="phu">${escHtml(o.phu)}</span>` : ''}</span>
+      ${o.gt === dangChon ? '<span class="dau">✓</span>' : ''}</button>`).join('')}
+    <button class="bang-chon-huy" onclick="dongBangChon()">Hủy</button>
+  </div>`;
+  nen.style.display = 'flex';
+};
+window.dongBangChon = function() { const n = document.getElementById('bang-chon'); if (n) n.style.display = 'none'; };
+window.chonTrongBang = function(i) {
+  const o = bangChonDs[i], cb = bangChonGoiLai;
+  dongBangChon();
+  if (o && cb) cb(o.gt);
+};
 // Phiếu đang soạn của loại kia (đổi loại thì cất lại, quay về vẫn còn): { phukien: {dongHang, anh}, song: {...} }
 let nhSoanKhac = {};
 const nhSoMaKhac = (l) => (nhSoanKhac[l]?.dongHang || []).length;
@@ -5645,21 +5684,17 @@ function nhVeTao() {
   if (!dsKho.length) dau += '<p class="info-note" style="margin:0 0 6px">Bạn chưa được cấp quyền nhập vào kho nào.</p>';
   else if (sua && !duocNhap) dau += '<p class="info-note" style="margin:0 0 6px">Bạn không có quyền nhập vào kho của phiếu này.</p>';
   else {
-    // Chọn kho + loại hàng dạng ô thả xuống. Phiếu tạm đang mở thì cố định kho và loại.
-    const oChon = (coChon) => `flex:1;min-width:0;padding:8px 10px;font-size:14px;font-weight:600;border-radius:8px;margin:0;`
-      + (coChon ? 'border:1.5px solid #93C5FD;background:#EFF6FF;color:#1D4ED8' : 'border:1.5px dashed #2563EB;background:#fff;color:#2563EB');
+    // Chọn kho + loại hàng: ô có mũi tên như Bán hàng, bấm mở bảng chọn trượt từ dưới lên (kiểu app điện thoại).
+    // Phiếu tạm đang mở thì cố định kho và loại.
     const khoaKho = !!sua || dsKho.length < 2;
+    const khoa = 'background-image:none;padding-right:10px;cursor:default;opacity:.9';
     dau += `<div style="display:flex;gap:6px">
-      <select aria-label="Kho nhập" onchange="nhChonKho(this.value)" ${khoaKho ? 'disabled' : ''} style="${oChon(true)}">
-        ${(khoaKho && nhKho ? [nhKho] : dsKho).map(k => `<option value="${k}" ${k === nhKho ? 'selected' : ''}>🏬 ${KHO_NHAP[k].ten}</option>`).join('')}
-      </select>
-      <select aria-label="Loại hàng" onchange="nhChonLoai(this.value)" ${sua ? 'disabled' : ''} style="${oChon(!!nhLoai)}">
-        ${nhLoai ? '' : '<option value="" selected disabled>Chọn loại hàng…</option>'}
-        ${Object.entries(NH_LOAI).map(([k, t]) => `<option value="${k}" ${k === nhLoai ? 'selected' : ''}>${NH_ICON[k]} ${t}${k !== nhLoai && nhSoMaKhac(k) ? ` (đang soạn ${nhSoMaKhac(k)} mã)` : ''}</option>`).join('')}
-      </select>
+      <button class="bh-chon-tt" aria-label="Kho nhập" onclick="nhMoChonKho()" ${khoaKho ? 'disabled' : ''} style="font-weight:600;${khoaKho ? khoa : ''}">${kn ? kn.ten : 'Chọn kho'}</button>
+      <button class="bh-chon-tt" aria-label="Loại hàng" onclick="nhMoChonLoai()" ${sua ? 'disabled' : ''}
+        style="font-weight:600;${sua ? khoa : ''}${nhLoai ? '' : ';border-style:dashed;border-color:#2563EB;background-color:#fff;color:#2563EB'}">${nhLoai ? NH_LOAI[nhLoai] : 'Chọn loại hàng'}</button>
     </div>`;
     const khac = Object.keys(NH_LOAI).filter(k => k !== nhLoai && nhSoMaKhac(k));
-    if (!sua && khac.length) dau += `<div style="font-size:12px;color:#1D4ED8;margin-top:4px">📝 Còn phiếu ${khac.map(k => `<b>${NH_LOAI[k]}</b> đang soạn ${nhSoMaKhac(k)} mã`).join(', ')} — chọn lại loại đó để mở.</div>`;
+    if (!sua && khac.length) dau += `<div style="font-size:12px;color:#1D4ED8;margin-top:4px">Còn phiếu ${khac.map(k => `<b>${NH_LOAI[k]}</b> đang soạn ${nhSoMaKhac(k)} mã`).join(', ')} — chọn lại loại đó để mở.</div>`;
   }
   wrap.innerHTML = dau;
 
@@ -17672,6 +17707,19 @@ a.muc-btn{display:inline-flex;align-items:center}
 #btn-nh-luu{background:#2563EB}
 #btn-nh-tam{background:#DBEAFE;color:#1D4ED8;border:1.5px solid #93C5FD;font-weight:700}
 #btn-nh-tam:disabled,#btn-nh-luu:disabled{opacity:.5;cursor:not-allowed}
+/* Bảng chọn trượt từ dưới lên */
+.bang-chon-nen{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1200;display:none;align-items:flex-end;justify-content:center;animation:bcNen .15s}
+.bang-chon{background:var(--surface);width:100%;max-width:520px;border-radius:16px 16px 0 0;padding:6px 0 calc(12px + env(safe-area-inset-bottom));animation:bcLen .2s ease-out;max-height:75vh;overflow-y:auto}
+.bang-chon-keo{width:40px;height:4px;border-radius:2px;background:#D1D5DB;margin:4px auto 10px}
+.bang-chon-td{font-size:13px;color:var(--text2);text-align:center;padding:0 16px 10px;font-weight:600}
+.bang-chon-mt{display:flex;align-items:center;gap:10px;width:100%;padding:14px 20px;border:none;border-top:1px solid var(--border);background:none;font-size:16px;text-align:left;cursor:pointer;color:var(--text)}
+.bang-chon-mt:active{background:var(--bg)}
+.bang-chon-mt.dang{color:#1D4ED8;font-weight:700}
+.bang-chon-mt .phu{font-size:12.5px;color:var(--text2);font-weight:400}
+.bang-chon-mt .dau{margin-left:auto;font-size:18px;color:#1D4ED8}
+.bang-chon-huy{display:block;width:calc(100% - 24px);margin:8px 12px 0;padding:13px;border:none;border-radius:12px;background:var(--bg);font-size:15px;font-weight:600;cursor:pointer;color:var(--text)}
+@keyframes bcLen{from{transform:translateY(100%)}to{transform:none}}
+@keyframes bcNen{from{opacity:0}to{opacity:1}}
 .sub-tab-bar[data-mod="xuat"] .stab.active{color:var(--red);border-bottom-color:var(--red);background:#FDECEC;font-weight:700}
 
 /* CONTENT */
@@ -17964,7 +18012,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v499</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v500</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -18018,7 +18066,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v499</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v500</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -18064,7 +18112,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v499</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v500</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
