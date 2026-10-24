@@ -13473,7 +13473,7 @@ window.submitNhap = async function() {
           : 'Phiếu chưa hoàn tất nhận hàng — báo quản lý kiểm tra.')
         + (kvData.loiNhanHang ? `\n\n(App đã thử tự nhận nhưng không được: ${kvData.loiNhanHang})` : ''));
     } else {
-      showToast(`Đã lưu phiếu + trừ tồn ${ketQuaTon.soDong} mã${kvData.daTuNhanHang ? ' · đã nhận hàng' : ''}`);
+      showToast('Tạo phiếu thành công');
     }
     if (ketQuaTon.boQuaCombo.length) {
       showToast(`Combo không trừ tồn trực tiếp: ${ketQuaTon.boQuaCombo.join(', ')}`, true);
@@ -13495,80 +13495,129 @@ function renderNhapPhotos() {
 }
 
 // ===== XUẤT HỦY =====
-// Mỗi phiếu hủy chỉ MỘT loại hàng — chọn hàng khác là thay hàng đang chọn
-const XH_TOI_DA_ANH = 5;
+// Xuất hủy: phiếu nhiều mã hàng, nhưng MỖI MÃ phải có ảnh chụp riêng.
+// Luồng: chụp ảnh trước -> chọn hàng cho ảnh đó -> mã hàng được thêm vào phiếu kèm ảnh.
+// Ảnh gắn skuId để người xem (và máy chủ) đối chiếu từng mã với ảnh của nó.
+const XH_TOI_DA_ANH = 8;   // cả phiếu (giữ phiếu nằm gọn trong 1 tài liệu)
+let xhAnhCho = [];         // ảnh vừa chụp, chưa chọn hàng
+const xhAnhCua = (skuId) => currentPhieu.photos.filter(p => p.skuId === skuId);
+const xhTongAnh = () => currentPhieu.photos.length + xhAnhCho.length;
+
+window.xhChupAnh = function(skuId) {
+  if (!xhKho) { showToast('Chọn kho trước', true); return; }
+  if (xhTongAnh() >= XH_TOI_DA_ANH) { showToast(`Tối đa ${XH_TOI_DA_ANH} ảnh mỗi phiếu — lưu phiếu này rồi tạo phiếu mới`, true); return; }
+  openCamera(skuId ? 'xuat:' + skuId : 'xuat');
+};
+// Ảnh chụp xong (gọi từ capturePhoto)
+function xhNhanAnh(anh, skuId) {
+  if (skuId && currentPhieu.items.some(i => i.skuId === skuId)) currentPhieu.photos.push({ ...anh, skuId });
+  else xhAnhCho.push(anh);
+  veXuatHuyTao();
+}
 window.xhChonHang = function(skuId) {
   const sp = allSKUs.find(s => s.id === skuId);
   if (!sp) return;
-  if (!currentPhieu.photos.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
+  if (!xhAnhCho.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
   if (sp.laCombo) { showToast('Combo không xuất hủy trực tiếp — hủy từng món', true); return; }
   if (!skuDuocXuatHuy(sp)) { showToast('Hàng này ngoài danh mục bạn được xuất hủy', true); return; }
-  const gia = Number(sp.gia) || 0;
-  currentPhieu.items = [{ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia, tong: gia }];
+  if (!currentPhieu.items.some(i => i.skuId === skuId)) {
+    const gia = Number(sp.gia) || 0;
+    currentPhieu.items.push({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia, tong: gia });
+  }
+  xhAnhCho.forEach(a => currentPhieu.photos.push({ ...a, skuId }));
+  xhAnhCho = [];
   veXuatHuyTao();
 };
-window.xhXoaAnh = function(i) { currentPhieu.photos.splice(i, 1); veXuatHuyTao(); };
+window.xhXoaAnhCho = function(i) { xhAnhCho.splice(i, 1); veXuatHuyTao(); };
+window.xhXoaAnh = function(skuId, i) {
+  const ds = xhAnhCua(skuId);
+  if (ds.length <= 1) { showToast('Mỗi mã hàng phải có ít nhất 1 ảnh — muốn bỏ thì xóa cả mã', true); return; }
+  currentPhieu.photos.splice(currentPhieu.photos.indexOf(ds[i]), 1);
+  veXuatHuyTao();
+};
 
 function veXuatHuyTao() {
   const el = document.getElementById('xh-than');
   if (!el) return;
-  const anh = currentPhieu.photos;
-  const it = currentPhieu.items[0] || null;
+  const items = currentPhieu.items;
   const kh = KHO_HUY[xhKho] || null;
   const oTong = document.getElementById('xuat-total');
-  if (oTong) oTong.textContent = fmt(it ? it.sl * (it.gia || 0) : 0) + 'đ';
+  if (oTong) oTong.textContent = fmt(items.reduce((s, i) => s + i.sl * (i.gia || 0), 0)) + 'đ';
   const nut = document.getElementById('btn-xuat-submit');
-  if (nut && !nut.textContent.includes('Đang')) nut.disabled = !(anh.length && it && xhKho);
-  if (!anh.length) {
+  const duAnh = items.every(i => xhAnhCua(i.skuId).length);
+  if (nut && !nut.textContent.includes('Đang')) nut.disabled = !(items.length && duAnh && !xhAnhCho.length && xhKho);
+  const conChup = xhTongAnh() < XH_TOI_DA_ANH;
+  const thumb = (url, xoa) => `
+    <div style="position:relative;width:56px;height:56px;flex:0 0 56px">
+      <img src="${url}" onclick="viewPhoto('${url}')" style="width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer">
+      <button onclick="${xoa}" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:#111;color:#fff;font-size:11px;cursor:pointer;padding:0">✕</button>
+    </div>`;
+  const nutChup = (skuId, chu) => conChup ? `<button onclick="xhChupAnh(${skuId ? `'${skuId}'` : ''})" style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;border:2px dashed var(--red);background:#FEF2F2;color:var(--red);font-size:10.5px;font-weight:600;cursor:pointer;line-height:1.2">📷<br>${chu}</button>` : '';
+
+  // Chưa có gì: nút chụp lớn ở giữa
+  if (!items.length && !xhAnhCho.length) {
     el.innerHTML = `
       <div style="height:100%;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:12px">
-        <button onclick="openCamera('xuat')" ${xhKho ? '' : 'disabled'}
+        <button onclick="xhChupAnh()" ${xhKho ? '' : 'disabled'}
           style="width:132px;height:132px;border-radius:50%;border:3px solid var(--red);background:#FEF2F2;color:var(--red);font-size:16px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px">
           <span style="font-size:38px;line-height:1">📷</span>Chụp ảnh</button>
-        <div style="font-size:13px;color:var(--text2);max-width:280px">Chụp ảnh hàng cần hủy trước, sau đó mới chọn hàng và số lượng.<br>Mỗi phiếu chỉ một loại hàng.</div>
+        <div style="font-size:13px;color:var(--text2);max-width:290px">Chụp ảnh hàng cần hủy trước, sau đó chọn hàng và số lượng.<br>Mỗi mã hàng phải có ảnh riêng.</div>
       </div>`;
     return;
   }
-  const sku = it ? allSKUs.find(s => s.id === it.skuId) : null;
+
   const xemTon = kh && (kh.ma === 'cuahang' || tonSanUnsub);
-  const ton = it && sku && xemTon ? layTon(sku, kh.ma) : null;
-  el.innerHTML = `
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-      ${anh.map((p, i) => `
-        <div style="position:relative;width:64px;height:64px">
-          <img src="${p.dataUrl}" onclick="viewPhoto('${p.dataUrl}')" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer">
-          <button onclick="xhXoaAnh(${i})" style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:none;background:#111;color:#fff;font-size:12px;cursor:pointer;padding:0">✕</button>
-        </div>`).join('')}
-      ${anh.length < XH_TOI_DA_ANH ? `<button onclick="openCamera('xuat')" style="width:64px;height:64px;border-radius:8px;border:2px dashed var(--red);background:#FEF2F2;color:var(--red);font-size:11px;font-weight:600;cursor:pointer">📷<br>Chụp thêm</button>` : ''}
-    </div>
-    ${it ? `
-    <div style="border:1px solid #FECACA;border-radius:8px;padding:8px 10px;background:#FEF7F7">
+  const theHang = items.map((it, i) => {
+    const sku = allSKUs.find(s => s.id === it.skuId);
+    const ton = xemTon && sku ? layTon(sku, kh.ma) : null;
+    const anh = xhAnhCua(it.skuId);
+    return `
+    <div style="border:1px solid #FECACA;border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#FEF7F7">
       <div style="display:flex;gap:8px;align-items:center">
-        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:42px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
         <div style="flex:1;min-width:0">
           <b style="font-size:14px">${escHtml(it.ten)}</b>
           <div style="font-size:11px;color:var(--text2)">${escHtml(it.sku)} · ${fmt(it.gia)}đ${ton !== null ? ` · tồn <b style="color:${it.sl > ton ? 'var(--red)' : 'inherit'}">${ton}</b>` : ''}</div>
         </div>
-        <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="removeXuatItem(0)" title="Đổi hàng khác">✕</button>
+        <button class="btn-xs" style="width:30px;padding:6px" onclick="adjXuatQty(${i},-1)">−</button>
+        <input type="number" min="1" value="${it.sl}" onchange="setXuatQty(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:700">
+        <button class="btn-xs" style="width:30px;padding:6px" onclick="adjXuatQty(${i},1)">+</button>
+        <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="removeXuatItem(${i})" title="Bỏ mã này">✕</button>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
-        <span style="font-size:13px;color:var(--text2)">Số lượng hủy</span>
-        <div style="flex:1"></div>
-        <button class="btn-xs" style="width:34px;padding:7px" onclick="adjXuatQty(0,-1)">−</button>
-        <input type="number" min="1" value="${it.sl}" onchange="setXuatQty(0,this.value)" style="width:60px;padding:7px;text-align:center;font-size:16px;font-weight:700">
-        <button class="btn-xs" style="width:34px;padding:7px" onclick="adjXuatQty(0,1)">+</button>
+      <div style="display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px">
+        ${anh.map((a, j) => thumb(a.dataUrl, `xhXoaAnh('${it.skuId}',${j})`)).join('')}
+        ${nutChup(it.skuId, 'Thêm ảnh')}
       </div>
-      ${ton !== null && it.sl > ton ? '<div style="font-size:12px;color:var(--red);margin-top:4px">Vượt số đang tồn — máy chủ sẽ không cho lưu.</div>' : ''}
-    </div>` : `
-    <div class="field sku-wrap" style="margin:0">
-      <input type="text" id="xuat-item-ten" placeholder="Gõ tên hoặc mã hàng cần hủy..." autocomplete="off" style="padding:8px 10px;font-size:14px;border-color:#FCA5A5">
-      <div class="sku-drop" id="xuat-sku-drop"></div>
-    </div>
-    <div style="font-size:12px;color:var(--text2);margin-top:6px">Mỗi phiếu chỉ một loại hàng.</div>`}`;
-  if (!it) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, true);
+      ${ton !== null && it.sl > ton ? '<div style="font-size:12px;color:var(--red)">Vượt số đang tồn — máy chủ sẽ không cho lưu.</div>' : ''}
+    </div>`;
+  }).join('');
+
+  const khoiCho = xhAnhCho.length ? `
+    <div style="border:2px dashed var(--red);border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fff">
+      <div style="font-size:12.5px;font-weight:600;color:var(--red);margin-bottom:6px">Ảnh mới chụp — chọn hàng cho ảnh này</div>
+      <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px">
+        ${xhAnhCho.map((a, j) => thumb(a.dataUrl, `xhXoaAnhCho(${j})`)).join('')}
+        ${nutChup(null, 'Chụp thêm')}
+      </div>
+      <div class="field sku-wrap" style="margin:0">
+        <input type="text" id="xuat-item-ten" placeholder="Gõ tên hoặc mã hàng trong ảnh..." autocomplete="off" style="padding:8px 10px;font-size:14px;border-color:#FCA5A5">
+        <div class="sku-drop" id="xuat-sku-drop"></div>
+      </div>
+    </div>` : (conChup ? `
+    <button onclick="xhChupAnh()" style="width:100%;padding:11px;border:2px dashed var(--red);border-radius:8px;background:#FEF2F2;color:var(--red);font-weight:700;font-size:14px;cursor:pointer">
+      📷 Thêm mã hàng khác (chụp ảnh trước)</button>` : `<p class="info-note">Đã đủ ${XH_TOI_DA_ANH} ảnh — lưu phiếu này rồi tạo phiếu mới.</p>`);
+
+  el.innerHTML = theHang + khoiCho;
+  if (xhAnhCho.length) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, true);
 }
 
-window.removeXuatItem = function(i) { currentPhieu.items.splice(i,1); renderXuatItems(); };
+window.removeXuatItem = function(i) {
+  const it = currentPhieu.items[i];
+  if (!it) return;
+  currentPhieu.items.splice(i, 1);
+  currentPhieu.photos = currentPhieu.photos.filter(p => p.skuId !== it.skuId);
+  renderXuatItems();
+};
 window.adjXuatQty = function(i,d) {
   currentPhieu.items[i].sl = Math.max(1, currentPhieu.items[i].sl + d);
   currentPhieu.items[i].tong = currentPhieu.items[i].sl * currentPhieu.items[i].gia;
@@ -13583,13 +13632,14 @@ window.setXuatQty = function(i,v) {
 function renderXuatItems() { veXuatHuyTao(); }
 
 window.submitXuat = async function() {
-  if (!currentPhieu.photos.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
-  if (!currentPhieu.items.length) { showToast('Chưa chọn hàng cần hủy', true); return; }
-  if (currentPhieu.items.length > 1) { showToast('Mỗi phiếu chỉ một loại hàng', true); return; }
+  if (!currentPhieu.items.length) { showToast('Chụp ảnh và chọn hàng cần hủy trước', true); return; }
+  if (xhAnhCho.length) { showToast('Còn ảnh chưa chọn hàng — chọn hàng hoặc xóa ảnh đó', true); return; }
+  const thieuAnh = currentPhieu.items.filter(i => !xhAnhCua(i.skuId).length);
+  if (thieuAnh.length) { showToast('Mã chưa có ảnh: ' + thieuAnh.map(i => i.ten).join(', '), true); return; }
   const kho = xhKho;
   if (!kho || !dsKhoHuyDuocPhep().includes(kho)) { showToast('Bạn không có quyền xuất hủy ở kho này', true); return; }
   const kh = KHO_HUY[kho];
-  if (!await hoiXacNhan(`Lưu phiếu xuất hủy ở ${kh.ten}?\n\nTồn ${kh.ten} sẽ trừ theo phiếu.`, { nutDongY: 'Lưu phiếu', nguy: true })) return;
+  if (!await hoiXacNhan(`Lưu phiếu xuất hủy ở ${kh.ten}?`, { nutDongY: 'Lưu phiếu', nguy: true })) return;
   const btn = document.getElementById('btn-xuat-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
@@ -13602,7 +13652,7 @@ window.submitXuat = async function() {
       headers: { 'x-action': 'tao-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ kho, maPhieu,
         items: currentPhieu.items.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })),
-        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts, tuFile: !!p.tuFile })) })
+        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts, skuId: p.skuId, tuFile: !!p.tuFile })) })
     });
     const kq = await res.json().catch(() => ({}));
     if (!kq.success) {
@@ -13611,9 +13661,9 @@ window.submitXuat = async function() {
       return;
     }
     currentPhieu = { items: [], photos: [] };
+    xhAnhCho = [];
     renderXuatItems();
-    renderXuatPhotos();
-    showToast(`Đã lưu phiếu ${maPhieu} + trừ tồn ${kh.ten}${kq.kiotvietCode ? ' · ' + kq.kiotvietCode : ''}`);
+    showToast('Tạo phiếu thành công');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
   veXuatHuyTao();
@@ -13640,7 +13690,9 @@ window.capturePhoto = function() {
   const video = document.getElementById('camera-video');
   const canvas = document.getElementById('camera-canvas');
   // Thu nhỏ về tối đa 1280px — phiếu nhiều ảnh vẫn nằm gọn trong 1 tài liệu (giới hạn 1MB)
-  const tlAnh = Math.min(1, 1280 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+  // Ảnh xuất hủy nhỏ hơn (800px) vì một phiếu chứa tới 8 ảnh
+  const laAnhHuy = String(mode).startsWith('xuat');
+  const tlAnh = Math.min(1, (laAnhHuy ? 800 : 1280) / Math.max(video.videoWidth || 1, video.videoHeight || 1));
   canvas.width = Math.round(video.videoWidth * tlAnh); canvas.height = Math.round(video.videoHeight * tlAnh);
   const ctx = canvas.getContext('2d');
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -13656,7 +13708,7 @@ window.capturePhoto = function() {
   ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
   ctx.fillStyle = '#FFE566';
   ctx.fillText(label, 14, canvas.height - 10);
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+  const dataUrl = canvas.toDataURL('image/jpeg', laAnhHuy ? 0.65 : 0.75);
   const photoData = { dataUrl, ts };
   if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
   else if (mode === 'checklist') {
@@ -13676,7 +13728,7 @@ window.capturePhoto = function() {
       renderChecklist();
     }
   }
-  else { currentPhieu.photos.push(photoData); renderXuatPhotos(); }
+  else if (String(mode).startsWith('xuat')) xhNhanAnh(photoData, String(mode).split(':')[1] || null);
   closeCamera();
   showToast('Đã chụp ảnh');
 };
@@ -13881,9 +13933,12 @@ window.plXem = function(mod, id) {
           <div style="font-size:11px;color:var(--text2)">${escHtml(h.sku || '')}${C.coGia ? ` · ${fmt(h.gia)}đ` : ''}</div>
         </div>
         <div style="text-align:right;flex-shrink:0"><div style="font-weight:700;font-size:15px">×${h.sl}</div>${C.coGia ? `<div style="font-size:12px">${fmt(h.tong ?? h.sl * (h.gia || 0))}đ</div>` : ''}</div>
-      </div>`;
+      </div>
+      ${(p.photos || []).some(a => a.skuId === h.skuId) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;padding:6px 0 8px;border-bottom:1px solid var(--border)">
+        ${(p.photos || []).filter(a => a.skuId === h.skuId).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('')}</div>` : ''}`;
   }).join('');
-  const anhCT = (p.photos || []).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
+  // Ảnh chung (phiếu cũ / chuyển kho — chưa gắn theo mã hàng)
+  const anhCT = (p.photos || []).filter(a => !a.skuId).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
   const suaDuoc = coQuyen(C.quyenSua);
   const chan = suaDuoc ? (p.deleted
       ? (mod === 'xuat' ? `<button class="btn-g" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';restoreXuat('${p.id}')">Khôi phục phiếu</button>` : '')
@@ -13901,7 +13956,7 @@ window.plXem = function(mod, id) {
     <div style="font-size:12px;font-weight:600;color:var(--text2)">HÀNG HÓA (${(p.items || []).length} mã · SL ${p.tongSL || 0})</div>
     ${hang}
     ${C.coGia ? `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:16px;padding:8px 0">Tổng giá trị <span style="color:${C.mau}">${fmt(p.tongGia)}đ</span></div>` : ''}
-    ${anhCT ? `<div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 6px">ẢNH MINH CHỨNG (${p.photos.length})</div><div style="display:flex;gap:8px;flex-wrap:wrap">${anhCT}</div>` : ''}
+    ${anhCT ? `<div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 6px">ẢNH MINH CHỨNG</div><div style="display:flex;gap:8px;flex-wrap:wrap">${anhCT}</div>` : ''}
     <div style="margin-top:10px">${renderLichSuSuaPhieu(p)}</div>`, chan);
   ddbCanhGiua('pl-ct-modal');
 };
@@ -17409,8 +17464,8 @@ a.muc-btn{display:inline-flex;align-items:center}
 /* SUB TABS */
 .sub-tab-bar{display:flex;background:var(--surface);border-bottom:1px solid var(--border)}
 .stab{flex:1;padding:10px 8px;border:none;background:none;font-size:13px;font-weight:500;color:var(--text2);cursor:pointer;border-bottom:2.5px solid transparent;transition:all .15s}
-.sub-tab-bar[data-mod="nhap"] .stab.active{color:var(--green);border-bottom-color:var(--green)}
-.sub-tab-bar[data-mod="xuat"] .stab.active{color:var(--red);border-bottom-color:var(--red)}
+.sub-tab-bar[data-mod="nhap"] .stab.active{color:var(--green);border-bottom-color:var(--green);background:#E8F5EC;font-weight:700}
+.sub-tab-bar[data-mod="xuat"] .stab.active{color:var(--red);border-bottom-color:var(--red);background:#FDECEC;font-weight:700}
 
 /* CONTENT */
 .app-body{flex:1;padding:14px;max-width:680px;width:100%;margin:0 auto}
@@ -17702,7 +17757,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v488</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v489</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17756,7 +17811,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v488</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v489</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17802,7 +17857,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v488</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v489</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
