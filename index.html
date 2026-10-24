@@ -13384,6 +13384,7 @@ function veChonKhoPhieu(mod) {
       ? `<div style="display:flex;gap:6px">${ds.map(k => `<button class="${k === dang ? (laChuyen ? 'btn-g' : 'btn-r') : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0"
           onclick="chonKhoPhieu('${mod}','${k}')">${ten(k)}</button>`).join('')}</div>`
       : `<div style="text-align:center;font-size:14px;font-weight:700;color:${mau};padding:4px 0">${laChuyen ? '' : 'Xuất hủy ở '}${ten(dang)}</div>`;
+    document.querySelectorAll('.chi-admin-anh').forEach(b => b.style.display = currentUserData?.role === 'admin' ? '' : 'none');
     if (laChuyen) { renderNhapItems(); renderNhapPhotos(); } else veXuatHuyTao();
     return;
   }
@@ -13552,7 +13553,9 @@ function veXuatHuyTao() {
       <img src="${url}" onclick="viewPhoto('${url}')" style="width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer">
       <button onclick="${xoa}" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:none;background:#111;color:#fff;font-size:11px;cursor:pointer;padding:0">✕</button>
     </div>`;
-  const nutChup = (skuId, chu) => conChup ? `<button onclick="xhChupAnh(${skuId ? `'${skuId}'` : ''})" style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;border:2px dashed var(--red);background:#FEF2F2;color:var(--red);font-size:10.5px;font-weight:600;cursor:pointer;line-height:1.2">📷<br>${chu}</button>` : '';
+  const laAdmin = currentUserData?.role === 'admin';
+  const nutChup = (skuId, chu) => conChup ? `<button onclick="xhChupAnh(${skuId ? `'${skuId}'` : ''})" style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;border:2px dashed var(--red);background:#FEF2F2;color:var(--red);font-size:10.5px;font-weight:600;cursor:pointer;line-height:1.2">📷<br>${chu}</button>`
+    + (laAdmin ? `<button onclick="chonAnhTuMay('${skuId ? 'xuat:' + skuId : 'xuat'}')" title="Chọn ảnh từ máy (Admin)" style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;border:2px dashed var(--border);background:#fff;color:var(--text2);font-size:10.5px;font-weight:600;cursor:pointer;line-height:1.2">🖼<br>Chọn ảnh</button>` : '') : '';
 
   // Chưa có gì: nút chụp lớn ở giữa
   if (!items.length && !xhAnhCho.length) {
@@ -13562,6 +13565,7 @@ function veXuatHuyTao() {
           style="width:132px;height:132px;border-radius:50%;border:3px solid var(--red);background:#FEF2F2;color:var(--red);font-size:16px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px">
           <span style="font-size:38px;line-height:1">📷</span>Chụp ảnh</button>
         <div style="font-size:13px;color:var(--text2);max-width:290px">Chụp ảnh hàng cần hủy trước, sau đó chọn hàng và số lượng.<br>Mỗi mã hàng phải có ảnh riêng.</div>
+        ${laAdmin && xhKho ? `<button class="btn-xs" onclick="chonAnhTuMay('xuat')">🖼 Chọn ảnh từ máy (Admin)</button>` : ''}
       </div>`;
     return;
   }
@@ -13605,7 +13609,8 @@ function veXuatHuyTao() {
       </div>
     </div>` : (conChup ? `
     <button onclick="xhChupAnh()" style="width:100%;padding:11px;border:2px dashed var(--red);border-radius:8px;background:#FEF2F2;color:var(--red);font-weight:700;font-size:14px;cursor:pointer">
-      📷 Thêm mã hàng khác (chụp ảnh trước)</button>` : `<p class="info-note">Đã đủ ${XH_TOI_DA_ANH} ảnh — lưu phiếu này rồi tạo phiếu mới.</p>`);
+      📷 Thêm mã hàng khác (chụp ảnh trước)</button>
+    ${laAdmin ? `<button class="btn-xs" style="margin-top:6px" onclick="chonAnhTuMay('xuat')">🖼 Chọn ảnh từ máy (Admin)</button>` : ''}` : `<p class="info-note">Đã đủ ${XH_TOI_DA_ANH} ảnh — lưu phiếu này rồi tạo phiếu mới.</p>`);
 
   el.innerHTML = theHang + khoiCho;
   if (xhAnhCho.length) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, true);
@@ -13683,6 +13688,63 @@ window.openCamera = async function(mode) {
     showToast('Không mở được camera', true);
     modal.style.display = 'none';
   }
+};
+
+// ===== CHỌN ẢNH TỪ MÁY — CHỈ ADMIN (để test trên máy tính không có camera) =====
+// Nhân viên chỉ chụp trực tiếp. Ảnh chọn từ máy gắn nhãn "ảnh chọn" + cờ tuFile;
+// máy chủ chỉ nhận ảnh chọn từ máy khi người lưu là Admin.
+window.chonAnhTuMay = function(mode) {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ chụp ảnh trực tiếp', true); return; }
+  const input = document.getElementById('anh-chon-file');
+  if (!input) return;
+  input.dataset.mode = mode;
+  input.click();
+};
+window.themAnhTuFile = async function(input) {
+  if (currentUserData?.role !== 'admin') { input.value = ''; return; }
+  const mode = input.dataset.mode || '';
+  const laAnhHuy = mode.startsWith('xuat');
+  const files = [...(input.files || [])];
+  for (const f of files) {
+    try {
+      const anh = await new Promise((xong, hong) => {
+        const r = new FileReader();
+        r.onload = () => { const i = new Image(); i.onload = () => xong(i); i.onerror = hong; i.src = r.result; };
+        r.onerror = hong;
+        r.readAsDataURL(f);
+      });
+      const canvas = document.createElement('canvas');
+      const tyLe = Math.min(1, (laAnhHuy ? 1024 : 1280) / Math.max(anh.width, anh.height));
+      canvas.width = Math.round(anh.width * tyLe);
+      canvas.height = Math.round(anh.height * tyLe);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(anh, 0, 0, canvas.width, canvas.height);
+      const now = new Date();
+      const d2 = String(now.getDate()).padStart(2,'0'), m2 = String(now.getMonth()+1).padStart(2,'0'), y2 = String(now.getFullYear()).slice(-2);
+      const ts = `${d2}/${m2}/${y2} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
+      const label = `CUA Aquarium · ${currentUserData?.ten || ''} · ${ts} · ảnh chọn`;
+      const fontSize = Math.max(14, Math.round(canvas.width * 0.025));
+      ctx.font = `bold ${fontSize}px monospace`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
+      ctx.fillStyle = '#FFE566';
+      ctx.fillText(label, 14, canvas.height - 10);
+      const photoData = { dataUrl: canvas.toDataURL('image/jpeg', laAnhHuy ? 0.7 : 0.75), ts, tuFile: true };
+      if (laAnhHuy) {
+        const nho = document.createElement('canvas');
+        const tl2 = 160 / Math.max(canvas.width, canvas.height);
+        nho.width = Math.round(canvas.width * tl2); nho.height = Math.round(canvas.height * tl2);
+        nho.getContext('2d').drawImage(canvas, 0, 0, nho.width, nho.height);
+        photoData.thumb = nho.toDataURL('image/jpeg', 0.6);
+        xhNhanAnh(photoData, mode.split(':')[1] || null);
+      } else if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
+    } catch(e) {
+      console.error('Lỗi đọc ảnh:', e);
+      showToast('Không đọc được một ảnh', true);
+    }
+  }
+  input.value = '';
 };
 
 window.capturePhoto = function() {
@@ -17777,7 +17839,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v490</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v491</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17831,7 +17893,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v490</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v491</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17877,7 +17939,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v490</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v491</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -17964,6 +18026,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
               <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
                 <div class="photo-grid" id="nhap-photos" style="flex:1;min-width:0;display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;margin-top:0;align-items:center"></div>
                 <button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:7px 12px;white-space:nowrap" onclick="openCamera('nhap')">📷 Chụp ảnh</button>
+                <button class="btn-outline chi-admin-anh" style="flex:0 0 auto;width:auto;margin:0;padding:7px 10px;white-space:nowrap;display:none" onclick="chonAnhTuMay('nhap')" title="Chọn ảnh từ máy (Admin)">🖼</button>
               </div>
             </div>
             <button class="btn-g" id="btn-nhap-submit" style="margin:0" onclick="submitNhap()">Lưu phiếu chuyển kho</button>
@@ -18172,6 +18235,9 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <div class="panel" id="panel-tmdt-main">
         <div id="tmdt-content"><div class="loading">Đang tải...</div></div>
       </div>
+
+      <!-- Chọn ảnh từ máy (chỉ Admin dùng để test) -->
+      <input type="file" id="anh-chon-file" accept="image/*" multiple style="display:none" onchange="themAnhTuFile(this)">
 
       <!-- NHẬP HÀNG (nhóm Hàng hóa) -->
       <div class="panel" id="panel-nhaphang-main">
