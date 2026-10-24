@@ -1847,7 +1847,9 @@ window.switchSub = function(sub) {
     sub = 'tao';
   }
   activeSubTab = sub;
-  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  // Tạo phiếu chuyển kho: khung vừa màn hình như Bán hàng, chỉ danh sách hàng cuộn
+  document.documentElement.classList.toggle('khoa-cuon', activeModule === 'nhap' && sub === 'tao');
+  if (activeModule === 'nhap' && sub === 'tao') requestAnimationFrame(bhVuaManHinh);
   document.getElementById('stab-' + sub).classList.add('active');
   // Hide all content panels
   document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
@@ -8615,11 +8617,13 @@ function bhXuLyMaQuet(ma) {
     if (bao) bao.textContent = `Không có hàng mã ${ma}`;
     return;
   }
-  bhThemHang(sp.sku, sp.ten);
+  const laChuyenKho = activeModule === 'nhap';
+  if (laChuyenKho) ckThemHang(sp.id); else bhThemHang(sp.sku, sp.ten);
   bip(1800, 110);
   if (navigator.vibrate) navigator.vibrate(60);
-  const p = bhPhieuHienTai();
-  const sl = p?.gio.find(d => d.sku === sp.sku)?.soLuong || 1;
+  const sl = laChuyenKho
+    ? (currentNhap.items.find(d => d.skuId === sp.id)?.sl || 1)
+    : (bhPhieuHienTai()?.gio.find(d => d.sku === sp.sku)?.soLuong || 1);
   if (bao) bao.textContent = `Đã thêm: ${sp.ten} (SL ${sl})`;
   bhQuet.daThem.unshift(`${sp.ten} · SL ${sl}`);
   const ds = document.getElementById('bh-quet-ds');
@@ -8628,15 +8632,15 @@ function bhXuLyMaQuet(ma) {
 
 // Khung Bán hàng vừa khít màn hình: trang không cuộn, chỉ danh sách hàng cuộn
 function bhVuaManHinh() {
-  const k = document.querySelector('.bh-khung');
-  if (!k || !k.offsetParent) return;
+  const k = [...document.querySelectorAll('.bh-khung')].find(x => x.offsetParent);
+  if (!k) return;
   const vh = window.visualViewport?.height || window.innerHeight;
   if (window.scrollY) window.scrollTo(0, 0);
   const tren = k.getBoundingClientRect().top;
   const day = parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14;
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
 }
-window.addEventListener('resize', () => { if (activeModule === 'banhang') bhVuaManHinh(); });
+window.addEventListener('resize', () => { if (activeModule === 'banhang' || (activeModule === 'nhap' && activeSubTab === 'tao')) bhVuaManHinh(); });
 
 function veTabPhieu() {
   const el = document.getElementById('bh-tab-phieu');
@@ -10996,8 +11000,8 @@ const DANH_SACH_MODULE = [
   ]},
   // Chuyển kho: tick chiều nào thì chỉ chuyển được chiều đó (tick cả hai = chuyển cả hai chiều)
   { key: 'nhap', ten: 'Chuyển kho', con: [
-    { key: 'ck_san_ch', ten: 'Chuyển Sàn → Cửa hàng' },
-    { key: 'ck_ch_san', ten: 'Chuyển Cửa hàng → Sàn' },
+    { key: 'ck_san_ch', ten: 'Chuyển Kho Online → Cửa hàng' },
+    { key: 'ck_ch_san', ten: 'Chuyển Cửa hàng → Kho Online' },
     { key: 'nhap_xemds', ten: 'Xem danh sách phiếu' },
     { key: 'nhap_sua', ten: 'Sửa / xóa phiếu' },
     { key: 'nhap_xuatfile', ten: 'Xuất file' }
@@ -11927,6 +11931,11 @@ window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
   if (inputId === 'bh-tim') {
     input.value = '';
     bhThemHang(sku, ten);
+  }
+  // Chuyển kho: chọn là thêm thẳng vào phiếu (không cần nút "Thêm vào phiếu")
+  if (inputId === 'nhap-item-ten') {
+    input.value = ''; input.dataset.sku = ''; input.dataset.skuId = '';
+    ckThemHang(id);
   }
 };
 
@@ -13176,20 +13185,18 @@ function makeQtyButtons(wrapperId, inputId, onchange) {
   // handled inline in HTML
 }
 
-window.addNhapItem = function() {
-  const tenEl = document.getElementById('nhap-item-ten');
-  const ten = tenEl.value.trim();
-  const sku = tenEl.dataset.sku || '';
-  const skuId = tenEl.dataset.skuId || '';
-  const sl = parseInt(document.getElementById('nhap-item-sl').value) || 0;
-  const gia = parseFloat(document.getElementById('nhap-item-gia').value) || 0;
-  if (!ten || !skuId) { showToast('Vui lòng CHỌN hàng hóa từ danh sách gợi ý (không gõ tự do)', true); return; }
-  if (sl < 1) { showToast('Số lượng phải lớn hơn 0', true); return; }
-  currentNhap.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
-  tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
-  document.getElementById('nhap-item-sl').value = '1';
-  document.getElementById('nhap-item-gia').value = '';
+// Thêm 1 món vào phiếu chuyển kho (chọn từ ô tìm hoặc quét mã). Đã có thì +1.
+window.ckThemHang = function(skuId) {
+  const sp = allSKUs.find(s => s.id === skuId);
+  if (!sp) { showToast('Không tìm thấy hàng', true); return; }
+  if (sp.laCombo) { showToast('Combo không chuyển kho trực tiếp — chuyển từng món', true); return; }
+  const co = currentNhap.items.find(i => i.skuId === skuId);
+  if (co) { co.sl += 1; co.tong = co.sl * (co.gia || 0); }
+  else currentNhap.items.push({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia: Number(sp.gia) || 0, tong: Number(sp.gia) || 0 });
   renderNhapItems();
+  // Kéo dòng vừa thêm vào tầm nhìn
+  const idx = currentNhap.items.findIndex(i => i.skuId === skuId);
+  setTimeout(() => document.getElementById('ck-dong-' + idx)?.scrollIntoView({ block: 'nearest' }), 30);
 };
 
 window.removeNhapItem = function(i) { currentNhap.items.splice(i,1); renderNhapItems(); };
@@ -13206,34 +13213,43 @@ window.setNhapQty = function(i, v) {
 
 function renderNhapItems() {
   const el = document.getElementById('nhap-items-list');
-  const totalEl = document.getElementById('nhap-total');
+  if (!el) return;
+  const tongSL = currentNhap.items.reduce((s, i) => s + (Number(i.sl) || 0), 0);
+  const oTong = document.getElementById('nhap-total'); if (oTong) oTong.textContent = tongSL;
+  const oSoMa = document.getElementById('nhap-so-ma'); if (oSoMa) oSoMa.textContent = currentNhap.items.length;
+  const nut = document.getElementById('btn-nhap-submit');
+  if (nut && !nut.textContent.includes('Đang')) nut.disabled = !currentNhap.items.length || !ckChieu;
   if (!currentNhap.items.length) {
-    el.innerHTML = '<div class="empty-msg">Chưa có hàng nào.</div>';
-    totalEl.textContent = '0₫';
+    el.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">Chưa có hàng nào.<br>Gõ tên hoặc quét mã ở ô trên để thêm.</div>';
     return;
   }
-  const total = currentNhap.items.reduce((s,i) => s+i.tong, 0);
-  el.innerHTML = currentNhap.items.map((item,idx) => {
-    const skuObj = item.skuId ? allSKUs.find(s => s.id === item.skuId) : null;
+  const cc = CHIEU_CHUYEN[ckChieu] || null;
+  // Tồn kho đi: kho Online chỉ biết khi được xem kho Sàn
+  const xemTonDi = cc && (cc.tu === 'cuahang' || tonSanUnsub);
+  el.innerHTML = currentNhap.items.map((d, i) => {
+    const sku = allSKUs.find(s => s.id === d.skuId);
+    const ton = xemTonDi && sku ? layTon(sku, cc.tu) : null;
+    const thieu = ton !== null && d.sl > ton;
     return `
-    <div class="item-row">
-      <div class="item-left" style="display:flex;gap:8px;align-items:flex-start">
-        ${skuObj?.anhFileId
-          ? `<img loading="lazy" src="${anhThumbUrl(skuObj.anhFileId,100)}" onclick="viewPhoto('${anhThumbUrl(skuObj.anhFileId,900)}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
-          : `<div style="width:40px;height:40px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
-        <span class="item-name">${escHtml(item.ten)}</span>
-      </div>
-      <div class="item-right">
-        <div class="qty-ctrl">
-          <button onclick="adjNhapQty(${idx},-1)">−</button>
-          <input type="number" value="${item.sl}" onchange="setNhapQty(${idx},this.value)">
-          <button onclick="adjNhapQty(${idx},1)">+</button>
+    <div id="ck-dong-${i}" style="border:1px solid #E3F1E7;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#F7FCF8">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:0">
+          <b style="font-size:14px">${escHtml(d.ten)}</b>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(d.sku)}${ton !== null ? ` · tồn ${cc.tu === 'san' ? 'Kho Online' : 'Cửa hàng'} <b style="color:${thieu ? 'var(--red)' : 'inherit'}">${ton}</b>` : ''}</div>
         </div>
-        <button class="del-btn" onclick="removeNhapItem(${idx})">✕</button>
+        <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="removeNhapItem(${i})">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+        <button class="btn-xs" style="width:32px;padding:6px" onclick="adjNhapQty(${i},-1)">−</button>
+        <input type="number" min="1" value="${d.sl}" onchange="setNhapQty(${i},this.value)"
+          style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
+        <button class="btn-xs" style="width:32px;padding:6px" onclick="adjNhapQty(${i},1)">+</button>
+        <div style="flex:1"></div>
+        ${thieu ? '<span style="font-size:11px;color:var(--red)">vượt tồn</span>' : ''}
       </div>
     </div>`;
   }).join('');
-  totalEl.textContent = fmt(total) + '₫';
 }
 
 // ==========================================================================
@@ -13334,8 +13350,8 @@ window.soiGioDon = async function(maDonSan) {
 // Xuất hủy:   xh_kho_ch, xh_kho_san — hủy hàng ở kho nào thì trừ tồn kho đó.
 // Phiếu cũ (trước khi có chọn kho): chuyển kho = Sàn → CH, xuất hủy = kho Cửa hàng, không trừ tồn.
 const CHIEU_CHUYEN = {
-  san_ch: { ten: 'Sàn → Cửa hàng', tu: 'san', den: 'cuahang' },
-  ch_san: { ten: 'Cửa hàng → Sàn', tu: 'cuahang', den: 'san' }
+  san_ch: { ten: 'Kho Online → Cửa hàng', tu: 'san', den: 'cuahang' },
+  ch_san: { ten: 'Cửa hàng → Kho Online', tu: 'cuahang', den: 'san' }
 };
 const KHO_HUY = { ch: { ten: 'Kho Cửa hàng', ma: 'cuahang' }, san: { ten: 'Kho Sàn', ma: 'san' } };
 let ckChieu = null, xhKho = null;
@@ -13355,7 +13371,16 @@ function veChonKhoPhieu(mod) {
   const nut = document.getElementById(laChuyen ? 'btn-nhap-submit' : 'btn-xuat-submit');
   if (nut) nut.disabled = !dang;
   if (!ds.length) {
-    el.innerHTML = `<p class="info-note" style="margin:0">Bạn chưa được cấp quyền ${laChuyen ? 'chuyển kho chiều nào' : 'xuất hủy ở kho nào'}.</p>`;
+    el.innerHTML = `<p class="info-note" style="margin:${laChuyen ? '0 0 6px' : '0'}">Bạn chưa được cấp quyền ${laChuyen ? 'chuyển kho chiều nào' : 'xuất hủy ở kho nào'}.</p>`;
+    return;
+  }
+  if (laChuyen) {
+    el.innerHTML = ds.length > 1
+      ? `<div style="display:flex;gap:6px">${ds.map(k => `<button class="${k === dang ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0"
+          onclick="chonKhoPhieu('nhap','${k}')">${ten(k)}</button>`).join('')}</div>`
+      : `<div style="text-align:center;font-size:14px;font-weight:700;color:var(--green);padding:4px 0">${ten(dang)}</div>`;
+    renderNhapItems();
+    renderNhapPhotos();
     return;
   }
   el.innerHTML = `
@@ -13455,9 +13480,10 @@ window.submitNhap = async function() {
 
 function renderNhapPhotos() {
   const el = document.getElementById('nhap-photos');
-  if (!currentNhap.photos.length) { el.innerHTML = '<div class="empty-msg">Chưa có ảnh.</div>'; return; }
+  if (!el) return;
+  if (!currentNhap.photos.length) { el.innerHTML = '<span style="font-size:12px;color:var(--text2)">Chưa có ảnh minh chứng</span>'; return; }
   el.innerHTML = currentNhap.photos.map((p,i) => `
-    <div class="thumb-wrap">
+    <div class="thumb-wrap" style="width:44px;height:44px;flex:0 0 44px">
       <img src="${p.dataUrl}" onclick="viewPhoto('${p.dataUrl}')">
       <button onclick="currentNhap.photos.splice(${i},1);renderNhapPhotos()">✕</button>
     </div>`).join('');
@@ -14164,7 +14190,7 @@ window.locTkXuat = function(k) { tkLocXuat = k; loadXuatStats(); };
 
 async function loadNhapStats() {
   const el = document.getElementById('nhap-stats-content');
-  veLocThongKe('nhap-stats-loc', [['all','Tất cả'], ['san_ch','Sàn → Cửa hàng'], ['ch_san','Cửa hàng → Sàn']], tkLocNhap, 'locTkNhap');
+  veLocThongKe('nhap-stats-loc', [['all','Tất cả'], ['san_ch','Kho Online → Cửa hàng'], ['ch_san','Cửa hàng → Kho Online']], tkLocNhap, 'locTkNhap');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const snap = await getDocs(query(collection(db,'phieu_chuyenkho'), orderBy('createdAt','desc')));
   const all = snap.docs.map(d=>d.data()).filter(d=>!d.deleted && (tkLocNhap === 'all' || chieuCuaPhieu(d) === tkLocNhap));
@@ -17177,7 +17203,7 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-  makeSKUSearch('nhap-item-ten','nhap-sku-drop','nhap-item-gia');
+  makeSKUSearch('nhap-item-ten','nhap-sku-drop',null);
   makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia', true);
   makeSKUSearch('baoca-item-ten','baoca-sku-drop','baoca-dummy-gia');
   makeSKUSearch('edit-item-ten','edit-sku-drop','edit-item-gia', () => editState.collection === 'phieu_huy');
@@ -17688,7 +17714,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v486</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v487</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17742,7 +17768,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v486</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v487</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17788,7 +17814,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v486</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v487</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -17852,47 +17878,36 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <!-- NHẬP / TẠO -->
       <div class="panel" id="panel-nhap-tao">
-        <div class="card" id="nhap-chieu-wrap"></div>
-        <div class="card">
-          <div class="card-title">Tìm hàng hóa</div>
-          <div class="field sku-wrap">
-            <label>Tên hàng / SKU</label>
-            <input type="text" id="nhap-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
-            <div class="sku-drop" id="nhap-sku-drop"></div>
-          </div>
-          <div class="row2">
-            <div class="field" style="flex:1">
-              <label>Số lượng</label>
-              <div class="qty-ctrl">
-                <button onclick="document.getElementById('nhap-item-sl').value=Math.max(1,(parseInt(document.getElementById('nhap-item-sl').value)||1)-1)">−</button>
-                <input type="number" id="nhap-item-sl" value="1" min="1">
-                <button onclick="document.getElementById('nhap-item-sl').value=(parseInt(document.getElementById('nhap-item-sl').value)||0)+1">+</button>
-              </div>
+        <!-- Giống màn Bán hàng: chọn chiều, tìm/quét là thêm thẳng, danh sách cuộn, phần lưu cố định dưới -->
+        <div class="bh-khung" id="ck-khung">
+          <div id="nhap-chieu-wrap"></div>
+          <div style="display:flex;gap:6px;margin:6px 0 6px;align-items:stretch">
+            <div class="field sku-wrap" style="flex:1;min-width:0;margin:0">
+              <input type="text" id="nhap-item-ten" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px;border-color:#93C5FD">
+              <div class="sku-drop" id="nhap-sku-drop"></div>
             </div>
-            <input type="number" id="nhap-item-gia" readonly style="display:none">
+            <button onclick="bhMoQuet()" title="Quét mã vạch" aria-label="Quét mã vạch"
+              style="flex:0 0 44px;border:1.5px solid #93C5FD;border-radius:8px;background:#EFF6FF;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1E3A8A" stroke-width="2" stroke-linecap="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>
+            </button>
           </div>
-          <button class="btn-g" style="background:var(--green-mid)" onclick="addNhapItem()">+ Thêm vào phiếu</button>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Hàng trong phiếu</div>
-          <div class="items-list-wrap" id="nhap-items-list"><div class="empty-msg">Chưa có hàng nào.</div></div>
-          <div class="total-bar" style="display:none"><span>Tổng giá trị nhập</span><span id="nhap-total" class="g">0₫</span></div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Ảnh minh chứng</div>
-          <div class="photo-grid" id="nhap-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn-outline" style="flex:1" onclick="openCamera('nhap')">Chụp ảnh</button>
-            <button class="btn-outline" style="flex:1" onclick="document.getElementById('nhap-chon-file').click()">Chọn ảnh có sẵn</button>
+          <div class="bh-o-hang-trong" id="nhap-items-list"></div>
+          <div class="bh-day-duoi">
+            <div class="bh-o-tt">
+              <div class="bh-dong-tt">
+                <span style="display:flex;align-items:center;gap:7px">Tổng số lượng <span class="bh-tron-sl" id="nhap-so-ma">0</span></span>
+                <b id="nhap-total">0</b>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+                <div class="photo-grid" id="nhap-photos" style="flex:1;min-width:0;display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;margin-top:0;align-items:center"></div>
+                <button class="btn-outline" style="width:auto;margin:0;padding:7px 10px;white-space:nowrap" onclick="openCamera('nhap')">📷 Chụp ảnh</button>
+                <button class="btn-outline" style="width:auto;margin:0;padding:7px 10px;white-space:nowrap" onclick="document.getElementById('nhap-chon-file').click()" title="Chọn ảnh có sẵn">🖼</button>
+              </div>
+              <input type="file" id="nhap-chon-file" accept="image/*" multiple style="display:none" onchange="themAnhTuFile(this,'nhap')">
+            </div>
+            <button class="btn-g" id="btn-nhap-submit" style="margin:0" onclick="submitNhap()">Lưu phiếu chuyển kho</button>
           </div>
-          <!-- Máy tính không có camera vẫn thêm được ảnh minh chứng -->
-          <input type="file" id="nhap-chon-file" accept="image/*" multiple style="display:none"
-            onchange="themAnhTuFile(this,'nhap')">
         </div>
-
-        <button class="btn-g" id="btn-nhap-submit" onclick="submitNhap()">Lưu phiếu chuyển kho</button>
       </div>
 
       <!-- NHẬP / DANH SÁCH -->
@@ -17907,8 +17922,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
           <div class="field"><label>Chiều chuyển</label>
             <select id="nhap-filter-chieu">
               <option value="all">Tất cả</option>
-              <option value="san_ch">Sàn → Cửa hàng</option>
-              <option value="ch_san">Cửa hàng → Sàn</option>
+              <option value="san_ch">Kho Online → Cửa hàng</option>
+              <option value="ch_san">Cửa hàng → Kho Online</option>
             </select>
           </div>
           <div class="field"><label>Trạng thái xuất</label>
