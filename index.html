@@ -109,7 +109,131 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc, onSnapshot, runTransaction, writeBatch, increment, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, collection, addDoc as _addDoc, getDocs, doc, updateDoc as _updateDoc, deleteDoc as _deleteDoc, query, orderBy, where, limit, serverTimestamp, getDoc, setDoc as _setDoc, onSnapshot, runTransaction as _runTransaction, writeBatch as _writeBatch, increment, arrayUnion } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ===== LỊCH SỬ THAO TÁC: tự ghi mọi thay đổi dữ liệu + thao tác qua máy chủ =====
+// Mọi lệnh ghi Firestore đi qua các hàm bọc dưới đây; các thay đổi xảy ra liền nhau
+// (trong ~2 giây) của cùng một thao tác được gộp thành MỘT dòng lịch sử.
+const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu']);
+const NK_COL = {
+  skus: ['Hàng hóa', 'Kho'], ton_san: ['Tồn Kho Online', 'Kho'], gia_von: ['Giá vốn', 'Kho'], nhom_hang: ['Nhóm hàng', 'Kho'],
+  phieu_chuyenkho: ['Phiếu chuyển kho', 'Kho'], phieu_huy: ['Phiếu xuất hủy', 'Kho'], phieu_nhap_san: ['Phiếu nhập kho', 'Kho'], moc_hang_hong: ['Mốc hàng hỏng', 'Kho'],
+  don_dat_hang: ['Đơn đặt hàng', 'Đặt hàng'], don_dat_hang_gia: ['Giá / thanh toán đơn đặt hàng', 'Đặt hàng'], nha_cung_cap: ['Nhà cung cấp', 'Đặt hàng'],
+  so_quy: ['Phiếu chi', 'Sổ quỹ'],
+  don_ban_le: ['Đơn bán lẻ', 'Bán hàng'], phieu_tra_hang: ['Phiếu trả hàng', 'Bán hàng'], lenh_in: ['Lệnh in', 'Bán hàng'],
+  lich_ca: ['Lịch làm / chấm công', 'Nhân sự'], ca_lam_viec: ['Ca làm việc', 'Nhân sự'], khau_tru: ['Khấu trừ lương', 'Nhân sự'],
+  phu_cap: ['Phụ cấp', 'Nhân sự'], users: ['Tài khoản nhân viên', 'Nhân sự'],
+  vai_tro: ['Vai trò', 'Thiết lập'], cau_hinh: ['Cấu hình', 'Thiết lập'], settings: ['Cài đặt lương', 'Thiết lập'],
+  don_hang_san: ['Đơn sàn', 'Sàn TMĐT'], san_pham_dang: ['Sản phẩm sàn', 'Sàn TMĐT'], nhat_ky_dong_goi: ['Đóng gói', 'Sàn TMĐT'],
+  ca_benh: ['Cá bệnh', 'Checklist'], phieu_baoca: ['Báo cá', 'Checklist'], checklist: ['Checklist', 'Checklist']
+};
+const NK_TRUONG = { gia: 'giá bán', giaVon: 'giá vốn', tonCuaHang: 'tồn cửa hàng', soLuongTon: 'tồn', ten: 'tên', hoTen: 'họ tên',
+  deleted: 'xóa', trangThai: 'trạng thái', items: 'hàng hóa', dongHang: 'hàng hóa', vaiTroId: 'vai trò', quyenModule: 'quyền',
+  ngaySinh: 'ngày sinh', ngayVaoLam: 'ngày vào làm', sdt: 'SĐT', capBac: 'cấp bậc', ghiChu: 'ghi chú', photos: 'ảnh', kho: 'kho' };
+const NK_API = {
+  'tao-hoa-don-ban-le': ['Bán hàng: tạo hóa đơn', 'Bán hàng'], 'huy-hoa-don': ['Hủy hóa đơn', 'Bán hàng'],
+  'tra-hang': ['Duyệt phiếu trả hàng', 'Bán hàng'], 'tra-hoa-don-da-tra': ['Trả hàng hóa đơn', 'Bán hàng'],
+  'kh-luu': ['Lưu khách hàng', 'Khách hàng'],
+  'tao-phieu-huy': ['Tạo phiếu xuất hủy', 'Kho'], 'sua-phieu-huy': ['Sửa / xóa phiếu xuất hủy', 'Kho'],
+  'tao-phieu-chuyen': ['Tạo phiếu chuyển kho', 'Kho'], 'sua-phieu-chuyen': ['Sửa phiếu chuyển kho', 'Kho'], 'xoa-phieu-chuyen': ['Xóa phiếu chuyển kho', 'Kho'],
+  'tao-phieu-nhap-san': ['Lưu phiếu nhập kho (KiotViet)', 'Kho'],
+  'dong-bo-quyen': ['Ghi quyền tài khoản', 'Thiết lập']
+};
+const nkLaApiGhi = (a) => !!NK_API[a] || /^(tao|sua|xoa|huy|tra|luu|dong-bo|chuan-bi|xac-nhan|create|update|delete|day|nhan|dang-ky|cap)-/.test(a) && a !== 'tao-qr-hoa-don';
+let nkDem = [], nkHen = null;
+function nkGhiThaoTac(op, path, data) {
+  try {
+    if (!currentUser?.uid || !path) return;
+    const [col, id] = String(path).split('/');
+    if (op !== 'api' && NK_BO_QUA.has(col)) return;
+    const keys = data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data) : [];
+    nkDem.push({ op, col, id: id || '', keys, ma: data?.maPhieu || data?.maPC || '', deleted: data?.deleted === true, huy: data?.trangThai === 'huy' });
+    clearTimeout(nkHen);
+    nkHen = setTimeout(nkXa, 2000);
+  } catch(e) {}
+}
+function nkTenDoiTuong(col, id, ma) {
+  if (ma) return ma;
+  if (col === 'skus') return allSKUs.find(s => s.id === id)?.sku || id;
+  if (col === 'users') { const u = allUsersCache.find(x => x.id === id); return u ? (u.hoTen || u.ten || u.email) : id; }
+  if (col === 'vai_tro') return allVaiTro.find(v => v.id === id)?.ten || id;
+  return id;
+}
+function nkXa() {
+  const ds = nkDem; nkDem = []; nkHen = null;
+  if (!ds.length || !currentUser?.uid) return;
+  const uuTien = ['api', 'them', 'ghi', 'xoa', 'sua'];
+  const mo = (x) => {
+    if (x.op === 'api') return (NK_API[x.col]?.[0] || ('Máy chủ: ' + x.col)) + (x.id ? ' ' + x.id : '');
+    const ten = (NK_COL[x.col] || [x.col])[0];
+    const hd = x.deleted || x.op === 'xoa' ? 'Xóa' : x.huy ? 'Hủy' : (x.op === 'them' || x.op === 'ghi') ? (x.op === 'them' ? 'Tạo' : 'Lưu') : 'Sửa';
+    const truong = x.op === 'sua' && x.keys.length ? ` (${[...new Set(x.keys.map(k => NK_TRUONG[k] || k))].filter(k => k !== 'suaLuc' && k !== 'updatedAt').slice(0, 5).join(', ')})` : '';
+    return `${hd} ${ten.toLowerCase()} ${nkTenDoiTuong(x.col, x.id, x.ma)}${truong}`.replace(/\s+/g, ' ').trim();
+  };
+  // Gộp trùng (cùng thao tác trên cùng tài liệu)
+  const gon = []; const da = new Set();
+  ds.forEach(x => { const k = x.op + x.col + x.id; if (!da.has(k)) { da.add(k); gon.push(x); } });
+  const chinh = [...gon].sort((a, b) => {
+    const pa = a.op === 'api' ? 0 : /^(phieu|don|so_quy)/.test(a.col) ? 1 : 2, pb = b.op === 'api' ? 0 : /^(phieu|don|so_quy)/.test(b.col) ? 1 : 2;
+    return pa - pb || uuTien.indexOf(a.op) - uuTien.indexOf(b.op);
+  })[0];
+  const nhom = chinh.op === 'api' ? (NK_API[chinh.col]?.[1] || 'Khác') : ((NK_COL[chinh.col] || [])[1] || 'Khác');
+  _addDoc(collection(db, 'nhat_ky'), {
+    createdAt: serverTimestamp(), uid: currentUser.uid,
+    ten: currentUserData?.hoTen || currentUserData?.ten || currentUser.email || '', vaiTro: typeof nhanVaiTro === 'function' ? nhanVaiTro(currentUserData) : '',
+    man: (typeof tieuDeTheoModule === 'function' && tieuDeTheoModule(activeModule)) || activeModule || '',
+    hanhDong: mo(chinh), nhom, chiTiet: gon.slice(0, 40).map(mo), soThayDoi: gon.length, demo: LA_BAN_DEMO
+  }).catch(() => {});
+}
+// Thao tác không ghi dữ liệu nhưng cần lưu vết (đăng nhập, đăng xuất...)
+function nkGhiSuKien(hanhDong, nhom = 'Tài khoản') {
+  if (!currentUser?.uid) return Promise.resolve();
+  return _addDoc(collection(db, 'nhat_ky'), {
+    createdAt: serverTimestamp(), uid: currentUser.uid, ten: currentUserData?.hoTen || currentUserData?.ten || currentUser.email || '',
+    vaiTro: typeof nhanVaiTro === 'function' && currentUserData ? nhanVaiTro(currentUserData) : '', man: '', hanhDong, nhom, chiTiet: [], soThayDoi: 0, demo: LA_BAN_DEMO
+  }).catch(() => {});
+}
+const nkDuong = (ref) => ref?.path || '';
+const addDoc = (ref, data) => _addDoc(ref, data).then(r => { nkGhiThaoTac('them', r.path, data); return r; });
+const setDoc = (ref, data, opt) => _setDoc(ref, data, opt).then(r => { nkGhiThaoTac(opt?.merge ? 'sua' : 'ghi', nkDuong(ref), data); return r; });
+const updateDoc = (ref, ...a) => _updateDoc(ref, ...a).then(r => { nkGhiThaoTac('sua', nkDuong(ref), typeof a[0] === 'object' ? a[0] : Object.fromEntries([[a[0], a[1]]])); return r; });
+const deleteDoc = (ref) => _deleteDoc(ref).then(r => { nkGhiThaoTac('xoa', nkDuong(ref)); return r; });
+const writeBatch = (d) => {
+  const b = _writeBatch(d), ops = [];
+  const set = b.set.bind(b), upd = b.update.bind(b), del = b.delete.bind(b), commit = b.commit.bind(b);
+  b.set = (r, x, o) => { ops.push([o?.merge ? 'sua' : 'ghi', nkDuong(r), x]); return set(r, x, o); };
+  b.update = (r, ...a) => { ops.push(['sua', nkDuong(r), typeof a[0] === 'object' ? a[0] : null]); return upd(r, ...a); };
+  b.delete = (r) => { ops.push(['xoa', nkDuong(r)]); return del(r); };
+  b.commit = () => commit().then(x => { ops.forEach(o => nkGhiThaoTac(...o)); return x; });
+  return b;
+};
+const runTransaction = (d, fn) => {
+  let ops = [];
+  return _runTransaction(d, (tx) => {
+    ops = [];   // mỗi lần thử lại bắt đầu ghi lại từ đầu
+    const set = tx.set.bind(tx), upd = tx.update.bind(tx), del = tx.delete.bind(tx);
+    tx.set = (r, x, o) => { ops.push([o?.merge ? 'sua' : 'ghi', nkDuong(r), x]); return set(r, x, o); };
+    tx.update = (r, ...a) => { ops.push(['sua', nkDuong(r), typeof a[0] === 'object' ? a[0] : null]); return upd(r, ...a); };
+    tx.delete = (r) => { ops.push(['xoa', nkDuong(r)]); return del(r); };
+    return fn(tx);
+  }).then(x => { ops.forEach(o => nkGhiThaoTac(...o)); return x; });
+};
+// Thao tác qua máy chủ (bán hàng, phiếu KiotViet...): ghi khi máy chủ báo thành công
+{
+  const fetchGoc = window.fetch.bind(window);
+  window.fetch = function(u, o) {
+    const p = fetchGoc(u, o);
+    try {
+      const h = o?.headers || {};
+      const act = h['x-action'] || (typeof h.get === 'function' ? h.get('x-action') : '');
+      if (act && typeof WORKER_URL !== 'undefined' && String(u).startsWith(WORKER_URL) && nkLaApiGhi(act)) {
+        p.then(r => r.clone().json().then(j => { if (r.ok && j?.success !== false) nkGhiThaoTac('api', act + '/' + (j?.kiotvietCode || j?.code || j?.maPhieu || ''), null); }).catch(() => {})).catch(() => {});
+      }
+    } catch(e) {}
+    return p;
+  };
+}
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyD76g8Ky48BrJ7rDW6FhgZPreo3gba0rg4",
@@ -1592,12 +1716,13 @@ window.doLogin = async function() {
   const err = document.getElementById('login-err');
   if (!email || !pass) { err.textContent = 'Vui lòng nhập đầy đủ.'; return; }
   btn.disabled = true; btn.textContent = 'Đang đăng nhập...'; err.textContent = '';
-  try { await signInWithEmailAndPassword(auth, email, pass); }
+  try { window._nkVuaDangNhap = true; await signInWithEmailAndPassword(auth, email, pass); }
   catch(e) { err.textContent = 'Email hoặc mật khẩu không đúng.'; btn.disabled = false; btn.textContent = 'Đăng nhập'; }
 };
 
 window.doLogout = async function() {
   if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  try { if (nkHen) { clearTimeout(nkHen); nkXa(); } await nkGhiSuKien('Đăng xuất'); } catch(e) {}
   await signOut(auth);
 };
 
@@ -1621,6 +1746,7 @@ function showApp() {
   elVaoCa.style.display = 'none';
   elApp.style.display = 'flex';
   document.getElementById('user-name').textContent = currentUserData.ten || currentUser.email;
+  if (window._nkVuaDangNhap) { window._nkVuaDangNhap = false; nkGhiSuKien('Đăng nhập' + (LA_BAN_DEMO ? ' (link demo)' : '')); }
   document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
   if (currentUserData.role === 'admin') {
     document.getElementById('mod-admin').style.display = 'flex';
@@ -1671,7 +1797,7 @@ function nhanVaiTro(u) {
 const LA_BAN_DEMO = new URLSearchParams(location.search).has('demo');
 const TINH_NANG_DEMO = {
   nhom: ['santmdt'],                          // nhóm menu chỉ có ở demo
-  muc: ['dathang', 'ketnoisan'],              // mục menu chỉ có ở demo
+  muc: ['dathang'],                           // mục menu chỉ có ở demo
   mod: ['dathang', 'tmdt', 'quetdonggoi']     // màn hình chặn ở link chính
 };
 const chiCoODemo = (mod) => !LA_BAN_DEMO && TINH_NANG_DEMO.mod.includes(mod);
@@ -1767,11 +1893,13 @@ window.switchModule = function(mod) {
     }
     return;
   }
-  if (mod === 'thanhtoan' || mod === 'hethong') {
+  if (['thanhtoan', 'hethong', 'phanquyen', 'chamcongcd', 'inhoadon', 'ketnoi', 'nhatky'].includes(mod)) {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-thietlap-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
-    if (mod === 'hethong') renderHeThong(); else renderThietLapThanhToan();
+    if (mod === 'thanhtoan') renderThietLapThanhToan();
+    else if (mod === 'nhatky') renderNhatKy();
+    else renderHeThong(mod);
     return;
   }
   // Rời màn hình Bán hàng thì dừng tra hóa đơn — nếu không, vòng lặp chạy ngầm
@@ -10435,7 +10563,83 @@ function htGio(t) {
   return d && !isNaN(d) ? d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 }
 
-async function renderHeThong() {
+// ===== MÀN LỊCH SỬ THAO TÁC (Admin) =====
+let nkLoc = null, nkDs = [];
+const nkLocMacDinh = () => { const h = ngayLocal(); return { tu: h, den: h, uid: '', nhom: '', tim: '' }; };
+async function renderNhatKy() {
+  const el = document.getElementById('thietlap-content');
+  if (!el) return;
+  if (currentUserData?.role !== 'admin') { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
+  if (!nkLoc) nkLoc = nkLocMacDinh();
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  try {
+    const snap = await getDocs(query(collection(db, 'nhat_ky'),
+      where('createdAt', '>=', new Date(nkLoc.tu + 'T00:00:00')), where('createdAt', '<=', new Date(nkLoc.den + 'T23:59:59')),
+      orderBy('createdAt', 'desc'), limit(1500)));
+    nkDs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) { el.innerHTML = `<p class="info-note">Không tải được: ${escHtml(e.message)}</p>`; return; }
+  nkVe();
+}
+function nkVe() {
+  const el = document.getElementById('thietlap-content');
+  if (!el) return;
+  const L = nkLoc, k = boDauTim(L.tim.trim());
+  const nguoi = [...new Map(nkDs.map(x => [x.uid, x.ten])).entries()];
+  const nhomDs = [...new Set(nkDs.map(x => x.nhom).filter(Boolean))].sort();
+  const ds = nkDs.filter(x => (!L.uid || x.uid === L.uid) && (!L.nhom || x.nhom === L.nhom)
+    && (!k || [x.hanhDong, x.ten, ...(x.chiTiet || [])].some(t => boDauTim(t).includes(k))));
+  const f = (s) => s.split('-').reverse().join('/');
+  const homNay = ngayLocal(), homQua = ngayLocal(new Date(Date.now() - 864e5)), bayNgay = ngayLocal(new Date(Date.now() - 6 * 864e5));
+  const chip = (nhan, tu, den) => `<button class="btn-xs" style="${L.tu === tu && L.den === den ? 'background:#DBEAFE;color:#1D4ED8;font-weight:700' : ''}" onclick="nkDoiNgay('${tu}','${den}')">${nhan}</button>`;
+  el.innerHTML = `
+    <div class="card">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+        ${chip('Hôm nay', homNay, homNay)}${chip('Hôm qua', homQua, homQua)}${chip('7 ngày', bayNgay, homNay)}
+        <input type="date" value="${L.tu}" onchange="nkDoiNgay(this.value,null)" style="width:auto;padding:4px 6px;font-size:12px">
+        <span style="color:var(--text2)">–</span>
+        <input type="date" value="${L.den}" onchange="nkDoiNgay(null,this.value)" style="width:auto;padding:4px 6px;font-size:12px">
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button class="bh-chon-tt" style="font-weight:600" onclick="nkChonNguoi()">${escHtml(L.uid ? (nguoi.find(n => n[0] === L.uid)?.[1] || 'Nhân viên') : 'Tất cả nhân viên')}</button>
+        <button class="bh-chon-tt" style="font-weight:600" onclick="nkChonNhom()">${escHtml(L.nhom || 'Tất cả mục')}</button>
+      </div>
+      <input type="search" placeholder="🔍 Tìm thao tác, mã phiếu, mã hàng..." value="${escHtml(L.tim)}" oninput="nkDoiTim(this.value)" id="nk-tim">
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin:0 0 6px">${f(L.tu)}${L.den !== L.tu ? ' – ' + f(L.den) : ''} · ${ds.length} thao tác${nkDs.length >= 1500 ? ' (đang hiện 1.500 dòng mới nhất — thu hẹp ngày để xem hết)' : ''}</div>
+    <div id="nk-ds">${ds.length ? ds.map(x => {
+      const t = x.createdAt?.toDate ? x.createdAt.toDate() : null;
+      const ct = (x.chiTiet || []).filter(c => c !== x.hanhDong);
+      return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+          <b style="font-size:13.5px;min-width:0">${escHtml(x.hanhDong || '')}</b>
+          <span style="font-size:12px;color:var(--text2);white-space:nowrap">${t ? t.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' }) : ''}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">${escHtml(x.ten || '')}${x.vaiTro ? ' · ' + escHtml(x.vaiTro) : ''}${x.nhom ? ' · ' + escHtml(x.nhom) : ''}${x.man ? ' · màn ' + escHtml(x.man) : ''}${x.demo ? ' · <b style="color:#B45309">link demo</b>' : ''}</div>
+        ${ct.length ? `<details style="margin-top:4px"><summary style="font-size:12px;color:#1D4ED8;cursor:pointer">${ct.length} thay đổi kèm theo</summary>
+          <div style="font-size:12px;color:var(--text2);padding:4px 0 0 10px">${ct.map(c => '· ' + escHtml(c)).join('<br>')}</div></details>` : ''}
+      </div>`;
+    }).join('') : '<p class="info-note">Không có thao tác nào.</p>'}</div>`;
+  const o = document.getElementById('nk-tim'); if (o && L.tim) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+}
+window.nkDoiNgay = function(tu, den) {
+  if (tu) nkLoc.tu = tu; if (den) nkLoc.den = den;
+  if (nkLoc.tu > nkLoc.den) [nkLoc.tu, nkLoc.den] = [nkLoc.den, nkLoc.tu];
+  renderNhatKy();
+};
+let nkHenTim = null;
+window.nkDoiTim = function(v) { nkLoc.tim = v || ''; clearTimeout(nkHenTim); nkHenTim = setTimeout(nkVe, 250); };
+window.nkChonNguoi = function() {
+  const ds = [...new Map(nkDs.map(x => [x.uid, x.ten])).entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'vi'));
+  moBangChon('Nhân viên', [{ gt: '', nhan: 'Tất cả nhân viên' }, ...ds.map(([gt, nhan]) => ({ gt, nhan: nhan || gt }))], nkLoc.uid, (v) => { nkLoc.uid = v; nkVe(); });
+};
+window.nkChonNhom = function() {
+  const ds = [...new Set(nkDs.map(x => x.nhom).filter(Boolean))].sort();
+  moBangChon('Mục', [{ gt: '', nhan: 'Tất cả mục' }, ...ds.map(n => ({ gt: n, nhan: n }))], nkLoc.nhom, (v) => { nkLoc.nhom = v; nkVe(); });
+};
+
+// ===== THIẾT LẬP: mỗi mục một màn (Phân quyền, Chấm công, In hóa đơn, Kết nối, Hệ thống) =====
+async function renderHeThong(man = 'hethong') {
   const el = document.getElementById('thietlap-content');
   if (!el) return;
   if (currentUserData?.role !== 'admin') { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
@@ -10445,29 +10649,43 @@ async function renderHeThong() {
   };
   const [tn, ch, cc, cn] = await Promise.all([docCH('tinh_nang'), docCH('cua_hang'), docCH('cham_cong'), docCH('chi_nhanh')]);
   const v = (x, md = '') => escHtml(x === undefined || x === null ? md : String(x));
-
-  el.innerHTML = [
-    htThe('Tính năng', `
+  let the = [];
+  if (man === 'phanquyen') {
+    the = [
+      htThe('Vai trò', `
+        <p class="info-note">Mỗi vai trò là một bộ quyền (VD: "Nhân viên kho"). Gán vai trò cho từng người ở Nhân sự › Danh sách nhân viên.</p>
+        <button class="btn-g" onclick="moFormThemVaiTro()">+ Thêm vai trò mới</button>
+        <div id="vaitro-form" style="margin-top:10px"></div>
+        <div id="vaitro-list" style="margin-top:12px"></div>`),
+      LA_BAN_DEMO ? htThe('Sàn TMĐT', `
       <label style="display:flex;gap:10px;align-items:flex-start;font-size:14px;cursor:pointer">
         <input type="checkbox" id="ht-tmdt" ${tn.batTMDT ? 'checked' : ''} onchange="htLuuTinhNang()" style="width:20px;height:20px;margin-top:2px">
         <span><b>Bật nhóm Sàn TMĐT cho nhân viên</b><br>
         <span style="font-size:12px;color:var(--text2)">Tắt: nhân viên không thấy Đơn hàng sàn, Đóng gói, Sản phẩm trên sàn, Đẩy tồn kho.
         Admin luôn thấy (có dấu 🔒 khi đang tắt).</span></span>
-      </label>`),
-
-    htThe('Phân quyền & bảo mật dữ liệu', `
-      <p style="font-size:13px;margin-bottom:8px">Quyền tick trong vai trò được ghi vào thẻ đăng nhập của từng người.
-        Quy tắc bảo mật trên máy chủ dựa vào đó: không có quyền thì không nhận được dữ liệu.</p>
-      <div style="display:flex;flex-direction:column;gap:8px">
-        <button class="btn-outline" onclick="htDongBoQuyen()">① Ghi quyền cho tất cả tài khoản</button>
-        <button class="btn-outline" onclick="htChuyenTonSan()">② Chuyển tồn Kho Online sang chỗ riêng (làm một lần)</button>
-        <button class="btn-outline" onclick="htKiemThuRules()">③ Kiểm thử quy tắc bảo mật</button>
-        <button class="btn-g" id="ht-ap-dung-rules" disabled onclick="htApDungRules()">④ Áp dụng quy tắc bảo mật</button>
-        <button class="btn-outline" onclick="htQuayLaiRules()">↩ Quay lại quy tắc trước</button>
+      </label>`) : ''
+    ];
+  } else if (man === 'chamcongcd') {
+    the = [
+      htThe('Mã QR chấm công', `
+        <div style="text-align:center">
+          <div id="qr-display" style="margin:0 auto 10px;width:200px;height:200px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border-radius:8px"></div>
+          <p style="font-size:12px;color:var(--text2);margin-bottom:10px">In mã này dán tại quầy để nhân viên quét vào ca / ra ca.</p>
+          <button class="btn-g" onclick="printQR()">In mã QR</button>
+        </div>`),
+      htThe('Vị trí & nội dung QR', `
+      <div style="display:flex;gap:8px">
+        <div class="field" style="flex:1"><label>Vĩ độ cửa hàng</label><input id="ht-lat" inputmode="decimal" value="${v(cc.viDo ?? STORE_LAT)}"></div>
+        <div class="field" style="flex:1"><label>Kinh độ</label><input id="ht-lng" inputmode="decimal" value="${v(cc.kinhDo ?? STORE_LNG)}"></div>
       </div>
-      <div id="ht-baomat" style="font-size:13px;margin-top:10px"></div>`),
-
-    htThe('Thông tin in trên bill', `
+      <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="htLayViTri()">📍 Lấy vị trí hiện tại (đứng tại cửa hàng rồi bấm)</button>
+      <div class="field"><label>Bán kính cho phép chấm công (mét)</label><input id="ht-bankinh" type="number" value="${v(cc.banKinh ?? GPS_RADIUS)}"></div>
+      <div class="field"><label>Nội dung mã QR chấm công</label><input id="ht-qr" value="${v(cc.maQR ?? CHECKIN_QR_SECRET)}"></div>
+      <p class="info-note">Đổi nội dung QR thì phải in lại mã QR dán ở quầy (nút In mã QR ở trên).</p>
+      <button class="btn-g" style="width:100%" onclick="htLuuChamCong()">Lưu</button>`)
+    ];
+  } else if (man === 'inhoadon') {
+    the = [htThe('Thông tin in trên bill', `
       <div class="field"><label>Tên cửa hàng</label><input id="ht-ten" value="${v(ch.ten, 'CUA AQUARIUM')}"></div>
       <div class="field"><label>Địa chỉ</label><input id="ht-diachi" value="${v(ch.diaChi, '451A-451B Vườn Lài, TP.HCM')}"></div>
       <div class="field"><label>Số điện thoại</label><input id="ht-sdt" inputmode="tel" value="${v(ch.soDienThoai)}"></div>
@@ -10479,43 +10697,28 @@ async function renderHeThong() {
         <button class="btn-g" style="flex:1" onclick="htLuuCuaHang()">Lưu</button>
         <button class="btn-outline" onclick="htInThuBill()">🖨 In thử bill</button>
       </div>`),
-
-    htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
-
-    htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
-
-    htThe('Chi nhánh bán tại quầy', `
+      htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`)];
+  } else if (man === 'ketnoi') {
+    the = [htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
+      htThe('Chi nhánh bán tại quầy', `
       <p style="font-size:13px;margin-bottom:8px">Hóa đơn bán tại quầy đang tạo vào chi nhánh
         <b>${v(cn.tenBanLe || '')} ${v(chiNhanhBanLe())}</b>${cn.banLe ? '' : ' (mặc định trong code)'}.</p>
       <p class="info-note">Đổi sang chi nhánh Cửa hàng khi nhân viên đã chuyển hẳn sang bán bằng app — từ lúc đó hóa đơn bán lẻ trừ kho chi nhánh mới.</p>
       <div id="ht-chinhanh"><button class="btn-outline" style="width:100%" onclick="htTaiChiNhanh()">Tải danh sách chi nhánh từ KiotViet</button></div>`),
-
-    htThe('Webhook KiotViet', `
+      htThe('Webhook KiotViet', `
       <p style="font-size:13px;margin-bottom:8px">KiotViet báo về app khi đổi giá / hóa đơn. Mất webhook thì app không tự cập nhật.</p>
       <div id="ht-webhook"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn-outline" onclick="htXemWebhook()">Kiểm tra</button>
         <button class="btn-outline" onclick="htDangKyWebhook('product.update')">Đăng ký webhook giá</button>
         <button class="btn-outline" onclick="htDangKyWebhook('invoice.update')">Đăng ký webhook hóa đơn</button>
-      </div>`),
-
-    htThe('Chấm công', `
-      <div style="display:flex;gap:8px">
-        <div class="field" style="flex:1"><label>Vĩ độ cửa hàng</label><input id="ht-lat" inputmode="decimal" value="${v(cc.viDo ?? STORE_LAT)}"></div>
-        <div class="field" style="flex:1"><label>Kinh độ</label><input id="ht-lng" inputmode="decimal" value="${v(cc.kinhDo ?? STORE_LNG)}"></div>
-      </div>
-      <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="htLayViTri()">📍 Lấy vị trí hiện tại (đứng tại cửa hàng rồi bấm)</button>
-      <div class="field"><label>Bán kính cho phép chấm công (mét)</label><input id="ht-bankinh" type="number" value="${v(cc.banKinh ?? GPS_RADIUS)}"></div>
-      <div class="field"><label>Nội dung mã QR chấm công</label><input id="ht-qr" value="${v(cc.maQR ?? CHECKIN_QR_SECRET)}"></div>
-      <p class="info-note">Đổi nội dung QR thì phải in lại mã QR dán ở quầy (Quản trị hệ thống › mã QR chấm công).</p>
-      <button class="btn-g" style="width:100%" onclick="htLuuChamCong()">Lưu</button>`),
-
-    htThe('Hàng cùng loại', `
+      </div>`)];
+  } else {
+    the = [htThe('Hàng cùng loại', `
       <p style="font-size:13px;margin-bottom:8px">Lấy nhóm hàng cùng loại (cùng mã cha, khác thuộc tính) để Hàng hóa gom vào một khung. Hàng sửa giá sau này tự cập nhật nhóm.</p>
       <button class="btn-outline" style="width:100%" id="ht-nut-cl" onclick="htDongBoCungLoai()">Đồng bộ hàng cùng loại</button>
       <div id="ht-cl-kq" style="font-size:13px;margin-top:8px"></div>`),
-
-    htThe('Chỉnh tồn kho một mã', `
+      htThe('Chỉnh tồn kho một mã', `
       <div style="display:flex;gap:8px;margin-bottom:8px">
         <input id="ht-sku" placeholder="Mã SKU" style="flex:1">
         <button class="btn-outline" onclick="htXemTon()">Xem</button>
@@ -10526,11 +10729,25 @@ async function renderHeThong() {
         <input id="ht-ton-moi" type="number" placeholder="Tồn đúng thực tế" style="flex:1;min-width:80px">
         <button class="btn-g" onclick="htDatTon()">Đặt tồn</button>
       </div>
-      <p class="info-note" style="margin-top:8px">Chỉ dùng khi đếm thực tế thấy lệch. Ghi đè tồn trong app, không đổi bên KiotViet.</p>`)
-  ].join('');
-
-  htVeTramIn();
-  htVeKetNoiKol();
+      <p class="info-note" style="margin-top:8px">Chỉ dùng khi đếm thực tế thấy lệch. Ghi đè tồn trong app, không đổi bên KiotViet.</p>`),
+      htThe('Phiếu đã xóa', `<button class="btn-outline" style="width:100%" onclick="loadDeletedList()">Xem phiếu đã xóa</button><div id="deleted-list" style="margin-top:12px"></div>`),
+      LA_BAN_DEMO ? htThe('Kỹ thuật: quyền & quy tắc bảo mật (chỉ hiện ở link demo)', `
+      <p style="font-size:13px;margin-bottom:8px">Quyền tick trong vai trò được ghi vào thẻ đăng nhập của từng người.
+        Quy tắc bảo mật trên máy chủ dựa vào đó: không có quyền thì không nhận được dữ liệu.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn-outline" onclick="htDongBoQuyen()">① Ghi quyền cho tất cả tài khoản</button>
+        <button class="btn-outline" onclick="htChuyenTonSan()">② Chuyển tồn Kho Online sang chỗ riêng (làm một lần)</button>
+        <button class="btn-outline" onclick="htKiemThuRules()">③ Kiểm thử quy tắc bảo mật</button>
+        <button class="btn-g" id="ht-ap-dung-rules" disabled onclick="htApDungRules()">④ Áp dụng quy tắc bảo mật</button>
+        <button class="btn-outline" onclick="htQuayLaiRules()">↩ Quay lại quy tắc trước</button>
+      </div>
+      <div id="ht-baomat" style="font-size:13px;margin-top:10px"></div>`) : ''];
+  }
+  el.innerHTML = the.filter(Boolean).join('');
+  if (man === 'phanquyen') renderVaiTroList();
+  if (man === 'chamcongcd') generateQRCode();
+  if (man === 'inhoadon') htVeTramIn();
+  if (man === 'ketnoi') htVeKetNoiKol();
 }
 
 window.htLuuTinhNang = async function() {
@@ -11988,18 +12205,17 @@ const NHOM_MENU = [
     { key: 'spsan',     ten: 'Sản phẩm trên sàn', quyen: 'tmdt_sanpham',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('sanpham', true); } },
     { key: 'daytonkho', ten: 'Đẩy tồn kho',    quyen: 'tmdt_daytonkho',
-      moGi: () => { switchModule('tmdt'); moManHinhTMDT('daytonkho', true); } }
+      moGi: () => { switchModule('tmdt'); moManHinhTMDT('daytonkho', true); } },
+    { key: 'ketnoisan', ten: 'Kết nối sàn',    chiAdmin: true,
+      moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
   ]},
   { key: 'nhansu', ten: 'Nhân sự', muc: [
     { key: 'danhsachnv', ten: 'Danh sách nhân viên', chiAdmin: true,       moGi: () => moNVTab('danhsachnv') },
-    { key: 'chamcong',   ten: 'Chấm công',           quyen: 'chamcong',    moGi: () => moNVTab('chamcong') },
     // Lịch làm việc là mục phụ: nhân viên xem ca của mình ngay ở hàng mục con,
     // quản lý xếp ca thì vào nhóm Nhân sự.
     { key: 'lichca',     ten: 'Lịch làm việc',       quyen: 'lichca', phu: true, moGi: () => switchModule('lichca') },
-    { key: 'luong',      ten: 'Bảng lương',          quyen: 'luong', phu: true, moGi: () => moNVTab('luongnv') },
-    // Thiết lập lương chỉ Admin — đơn giá theo giờ và công thức thưởng
-    { key: 'calamviec', ten: 'Ca làm việc', chiAdmin: true, moGi: () => moNVTab('calamviec') },
-    { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') }
+    { key: 'chamcong',   ten: 'Chấm công',           quyen: 'chamcong',    moGi: () => moNVTab('chamcong') },
+    { key: 'luong',      ten: 'Bảng lương',          quyen: 'luong', phu: true, moGi: () => moNVTab('luongnv') }
   ]},
   { key: 'baocao', ten: 'Báo cáo', muc: [
     { key: 'bcngay',    ten: 'Báo cáo ngày',       quyen: 'bc_ngay',    moGi: () => switchModule('baocao') },
@@ -12007,11 +12223,15 @@ const NHOM_MENU = [
     { key: 'tkxuat',    ten: 'Thống kê xuất hủy',  quyen: 'bc_tk_xuat', moGi: () => switchModule('tkxuat') }
   ]},
   { key: 'thietlap', ten: 'Thiết lập', chiAdmin: true, muc: [
-    { key: 'hethong',    ten: 'Hệ thống',          chiAdmin: true, moGi: () => switchModule('hethong') },
+    { key: 'phanquyen',  ten: 'Phân quyền',        chiAdmin: true, moGi: () => switchModule('phanquyen') },
+    { key: 'calamviec',  ten: 'Ca làm việc',       chiAdmin: true, moGi: () => moNVTab('calamviec') },
+    { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') },
+    { key: 'chamcongcd', ten: 'Chấm công',         chiAdmin: true, moGi: () => switchModule('chamcongcd') },
+    { key: 'inhoadon',   ten: 'In hóa đơn',        chiAdmin: true, moGi: () => switchModule('inhoadon') },
     { key: 'thanhtoan',  ten: 'Thanh toán',        chiAdmin: true, moGi: () => switchModule('thanhtoan') },
-    { key: 'adminpanel', ten: 'Quản trị hệ thống', chiAdmin: true, moGi: () => switchAdmin() },
-    { key: 'ketnoisan',  ten: 'Kết nối sàn',       chiAdmin: true,
-      moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
+    { key: 'ketnoi',     ten: 'Kết nối',           chiAdmin: true, moGi: () => switchModule('ketnoi') },
+    { key: 'hethong',    ten: 'Hệ thống',          chiAdmin: true, moGi: () => switchModule('hethong') },
+    { key: 'nhatky',     ten: 'Lịch sử thao tác',  chiAdmin: true, moGi: () => switchModule('nhatky') }
   ]}
 ];
 // Link chính: bỏ các phần đang thử (chỉ hiện ở link demo)
@@ -12160,7 +12380,7 @@ function datTieuDeMan(ten) {
 }
 // Tên màn theo module (khi mở bằng đường khác ngoài menu)
 function tieuDeTheoModule(mod) {
-  const doiTen = { hanghoa: 'Tồn kho', baocao: 'Báo cáo ngày' };
+  const doiTen = { hanghoa: 'Tồn kho', baocao: 'Báo cáo ngày', chamcongcd: 'Cài đặt chấm công' };
   if (doiTen[mod]) return doiTen[mod];
   for (const n of NHOM_MENU) {
     if (n.moTrucTiep && n.key === mod) return n.ten;
@@ -16868,69 +17088,207 @@ async function getLuongConfig() {
 
 let allUsersCache = [];
 
+// ===== DANH SÁCH NHÂN VIÊN =====
+// Hồ sơ: họ tên, tên hiển thị (dùng khắp app), ngày sinh, ngày vào làm, SĐT. Tìm kiếm + sắp xếp.
+// Bấm vào một người để sửa hồ sơ / vai trò / cấp bậc; "Thêm nhân viên" mở cửa sổ nhập.
+let nvTimChu = '';
+let nvSapXep = (() => { try { return localStorage.getItem('nvSapXep') || 'ten'; } catch(e) { return 'ten'; } })();
+const NV_SAP_XEP = { ten: 'Tên (A–Z)', vaolam_moi: 'Vào làm gần nhất', vaolam_cu: 'Làm lâu nhất', sinhnhat: 'Sinh nhật sắp tới', vaitro: 'Theo vai trò' };
+const nvHoTen = (u) => u.hoTen || u.ten || u.email || '';
+const nvNgayChu = (s) => s ? String(s).split('-').reverse().join('/') : '';
+function nvTuoi(ns) {
+  if (!ns) return '';
+  const d = new Date(ns + 'T00:00:00'), n = new Date();
+  let t = n.getFullYear() - d.getFullYear();
+  if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) t--;
+  return t >= 0 && t < 120 ? t + ' tuổi' : '';
+}
+function nvThamNien(nv) {
+  if (!nv) return '';
+  const d = new Date(nv + 'T00:00:00'), n = new Date();
+  let th = (n.getFullYear() - d.getFullYear()) * 12 + n.getMonth() - d.getMonth() - (n.getDate() < d.getDate() ? 1 : 0);
+  if (th < 0) return 'chưa vào làm';
+  const nam = Math.floor(th / 12); th %= 12;
+  return nam ? `${nam} năm${th ? ' ' + th + ' tháng' : ''}` : (th ? th + ' tháng' : 'dưới 1 tháng');
+}
+function nvNgayToiSinhNhat(ns) {
+  if (!ns) return 9999;
+  const d = new Date(ns + 'T00:00:00'), n = new Date(); n.setHours(0, 0, 0, 0);
+  let k = new Date(n.getFullYear(), d.getMonth(), d.getDate());
+  if (k < n) k = new Date(n.getFullYear() + 1, d.getMonth(), d.getDate());
+  return Math.round((k - n) / 864e5);
+}
+const nvTenGoi = (u) => { const p = nvHoTen(u).trim().split(/\s+/); return p[p.length - 1] || ''; };
+
 async function loadDanhSachNV() {
   const el = document.getElementById('danhsachnv-content');
   if (!el) return;
-  if (!allUsersCache.length) {
-    el.innerHTML = '<div class="loading">Đang tải...</div>';
-  }
-  batDauTheoDoiNhanVien(); // tự khởi động theo dõi thời gian thực (chỉ chạy 1 lần, các lần sau bỏ qua)
-  const laAdmin = currentUserData.role === 'admin';
-  const q = quyenModuleHienTai || {};
-  // Tài khoản & vai trò: luôn chỉ Admin
-  const coQuyenTaoTk = laAdmin, coQuyenCapMk = laAdmin, coQuyenXoaTk = laAdmin, coQuyenGanVaiTro = laAdmin;
-  // Danh sách nhân viên không hiện tài khoản Admin (không thuộc phạm vi "nhân viên")
+  if (!allUsersCache.length) el.innerHTML = '<div class="loading">Đang tải...</div>';
+  batDauTheoDoiNhanVien(); // theo dõi thời gian thực (chỉ chạy 1 lần)
+  if (currentUserData.role !== 'admin') { el.innerHTML = '<p class="info-note">Chỉ Admin quản lý nhân viên.</p>'; return; }
+  if (!allVaiTro.length) await loadVaiTro();
+  // Danh sách nhân viên không hiện tài khoản Admin
   const users = allUsersCache.filter(u => u.role !== 'admin');
-  if (!users.length) return; // đang chờ dữ liệu đầu tiên từ listener, nó sẽ tự gọi lại loadDanhSachNV() khi có
-  const canManage = laAdmin; // Cấp bậc lương vẫn chỉ Admin cấu hình được (không thuộc phạm vi mở quyền lần này)
-  const luongCfg = canManage ? await getLuongConfig() : {};
-  if (coQuyenGanVaiTro || coQuyenTaoTk || !allVaiTro.length) await loadVaiTro();
-  el.innerHTML = `
-    <div class="admin-block">
-      <h3>Danh sách nhân viên</h3>
-      <div class="user-list">${users.map(u=>{
-        const tiers = (luongCfg[u.vaiTroId] || luongCfg[u.role])?.tiers || [];
-        return `
-        <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:6px">
-          <div style="display:flex;justify-content:space-between;width:100%">
-            <div><span class="uname">${escHtml(u.ten||u.email)}</span><span class="rbadge ${u.vaiTroId && allVaiTro.some(v => v.id === u.vaiTroId) ? 'nhan_vien' : 'chua_gan'}">${escHtml(nhanVaiTro(u))}</span></div>
-          </div>
-          <span class="uemail">${u.email||''}</span>
-          ${coQuyenGanVaiTro ? `
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:11px;color:var(--text2)">Vai trò:</span>
-            <select onchange="doiVaiTroNhanVien('${u.id}',this.value)" style="width:auto;padding:4px 8px;font-size:12px">
-              <option value="">-- Chưa gán --</option>
-              ${allVaiTro.map(v => `<option value="${v.id}" ${u.vaiTroId===v.id?'selected':''}>${escHtml(v.ten)}</option>`).join('')}
-            </select>
-          </div>` : ''}
-          ${canManage && tiers.length ? `
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:11px;color:var(--text2)">Cấp bậc:</span>
-            <select onchange="doiCapBac('${u.id}',this.value)" style="width:auto;padding:4px 8px;font-size:12px">
-              <option value="">Mặc định</option>
-              ${tiers.map(t => `<option value="${escHtml(t)}" ${u.capBac===t?'selected':''}>${escHtml(t)}</option>`).join('')}
-            </select>
-          </div>` : ''}
-          ${(coQuyenCapMk || coQuyenXoaTk) ? `<div style="display:flex;gap:8px">
-            ${coQuyenCapMk ? `<button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${escHtml(u.ten||u.email||'')}')">Cấp lại mật khẩu</button>` : ''}
-            ${coQuyenXoaTk ? `<button class="btn-xs danger" onclick="xoaTaiKhoan('${u.id}','${escHtml(u.ten||u.email||'')}')">Xóa tài khoản</button>` : ''}
-          </div>` : ''}
-        </div>`;
-      }).join('')}</div>
-      ${coQuyenTaoTk ? `<div class="admin-form">
-        <h4>Tạo tài khoản mới</h4>
-        <input id="new-ten" placeholder="Tên nhân viên">
-        <input id="new-email" type="email" placeholder="Email đăng nhập" autocomplete="off">
-        <input id="new-password" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="new-password">
-        <select id="new-vaitro">
-          <option value="admin">Admin</option>
-          ${allVaiTro.map(v => `<option value="${v.id}">${escHtml(v.ten)}</option>`).join('')}
-        </select>
-        <button class="btn-g" onclick="taoTaiKhoanMoi()">Tạo tài khoản</button>
-      </div>` : ''}
-    </div>`;
+  if (!users.length && !allUsersCache.length) return; // chờ dữ liệu đầu tiên từ listener
+  if (!el.querySelector('#nv-tim')) {
+    el.innerHTML = `
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="nv-tim" type="search" placeholder="🔍 Tìm tên, email, số điện thoại" value="${escHtml(nvTimChu)}"
+          oninput="nvDoiTim(this.value)" style="flex:1;min-width:0">
+        <button class="bh-chon-tt" id="nv-sapxep" style="flex:0 0 auto;min-width:150px;font-weight:600" onclick="nvMoSapXep()">${NV_SAP_XEP[nvSapXep]}</button>
+      </div>
+      <button class="btn-g" style="margin:0 0 10px" onclick="nvMoThem()">+ Thêm nhân viên</button>
+      <div id="nv-ds"></div>`;
+  }
+  nvVeDs();
 }
+window.nvDoiTim = function(v) { nvTimChu = v || ''; nvVeDs(); };
+window.nvMoSapXep = function() {
+  moBangChon('Sắp xếp', Object.entries(NV_SAP_XEP).map(([gt, nhan]) => ({ gt, nhan })), nvSapXep, (v) => {
+    nvSapXep = v; try { localStorage.setItem('nvSapXep', v); } catch(e) {}
+    const b = document.getElementById('nv-sapxep'); if (b) b.textContent = NV_SAP_XEP[v];
+    nvVeDs();
+  });
+};
+function nvVeDs() {
+  const el = document.getElementById('nv-ds');
+  if (!el) return;
+  const k = boDauTim(nvTimChu.trim());
+  let ds = allUsersCache.filter(u => u.role !== 'admin')
+    .filter(u => !k || [u.hoTen, u.ten, u.email, u.sdt].some(x => boDauTim(x).includes(k)));
+  const cmp = (a, b) => String(a).localeCompare(String(b), 'vi');
+  const theoTen = (a, b) => cmp(nvTenGoi(a), nvTenGoi(b)) || cmp(nvHoTen(a), nvHoTen(b));
+  if (nvSapXep === 'vaolam_moi') ds.sort((a, b) => cmp(b.ngayVaoLam || '', a.ngayVaoLam || '') || theoTen(a, b));
+  else if (nvSapXep === 'vaolam_cu') ds.sort((a, b) => cmp(a.ngayVaoLam || '9999', b.ngayVaoLam || '9999') || theoTen(a, b));
+  else if (nvSapXep === 'sinhnhat') ds.sort((a, b) => nvNgayToiSinhNhat(a.ngaySinh) - nvNgayToiSinhNhat(b.ngaySinh) || theoTen(a, b));
+  else if (nvSapXep === 'vaitro') ds.sort((a, b) => cmp(nhanVaiTro(a), nhanVaiTro(b)) || theoTen(a, b));
+  else ds.sort(theoTen);
+  el.innerHTML = `<div style="font-size:12px;color:var(--text2);margin-bottom:6px">${ds.length} nhân viên</div>` + (ds.length ? ds.map(u => {
+    const coVT = u.vaiTroId && allVaiTro.some(v => v.id === u.vaiTroId);
+    const sn = nvNgayToiSinhNhat(u.ngaySinh);
+    return `
+    <div onclick="nvMoSua('${u.id}')" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;cursor:pointer">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <b style="font-size:15px">${escHtml(nvHoTen(u))}</b>
+        <span class="rbadge ${coVT ? 'nhan_vien' : 'chua_gan'}" style="margin-left:0">${escHtml(nhanVaiTro(u))}</span>
+        ${u.capBac ? `<span style="font-size:11px;color:var(--text2)">${escHtml(u.capBac)}</span>` : ''}
+        ${sn <= 7 ? `<span style="font-size:11px;color:#DB2777;font-weight:600">🎂 ${sn ? 'còn ' + sn + ' ngày' : 'hôm nay'}</span>` : ''}
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:3px">
+        ${u.hoTen && u.ten && u.ten !== u.hoTen ? `Tên hiển thị: ${escHtml(u.ten)} · ` : ''}${escHtml(u.email || '')}${u.sdt ? ' · ' + escHtml(u.sdt) : ''}
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:2px">
+        ${u.ngaySinh ? `Sinh ${nvNgayChu(u.ngaySinh)} (${nvTuoi(u.ngaySinh)})` : 'Chưa có ngày sinh'}
+        · ${u.ngayVaoLam ? `Vào làm ${nvNgayChu(u.ngayVaoLam)} (${nvThamNien(u.ngayVaoLam)})` : 'Chưa có ngày vào làm'}
+      </div>
+    </div>`;
+  }).join('') : '<p class="info-note">Không có nhân viên nào khớp.</p>');
+}
+
+// Cửa sổ thêm / sửa nhân viên (dùng chung)
+let nvForm = null;   // { uid|null, vaiTroId, capBac }
+function nvVeForm(u) {
+  const moi = !u;
+  const v = (x) => escHtml(x || '');
+  const tiers = () => { const cfg = nvForm?.luongCfg || {}; return (cfg[nvForm?.vaiTroId] || {}).tiers || []; };
+  ddbMoKhung('nv-form-modal', moi ? 'Thêm nhân viên' : 'Sửa nhân viên', moi ? '' : escHtml(u.email || ''), `
+    <div class="field"><label>Họ tên</label><input id="nvf-hoten" maxlength="80" value="${v(u?.hoTen || u?.ten)}" placeholder="VD: Nguyễn Văn An"></div>
+    <div class="field"><label>Tên hiển thị trong app <span style="color:var(--text2);font-weight:400">(để trống = họ tên)</span></label><input id="nvf-ten" maxlength="40" value="${v(u?.hoTen && u?.ten !== u?.hoTen ? u.ten : '')}" placeholder="VD: An"></div>
+    <div style="display:flex;gap:8px">
+      <div class="field" style="flex:1"><label>Ngày sinh</label><input id="nvf-ns" type="date" value="${v(u?.ngaySinh)}"></div>
+      <div class="field" style="flex:1"><label>Ngày vào làm</label><input id="nvf-nvl" type="date" value="${v(u?.ngayVaoLam)}"></div>
+    </div>
+    <div class="field"><label>Số điện thoại</label><input id="nvf-sdt" inputmode="tel" maxlength="15" value="${v(u?.sdt)}"></div>
+    ${moi ? `
+    <div class="field"><label>Email đăng nhập</label><input id="nvf-email" type="email" autocomplete="off"></div>
+    <div class="field"><label>Mật khẩu (tối thiểu 6 ký tự)</label><input id="nvf-mk" type="password" autocomplete="new-password"></div>` : ''}
+    <div style="display:flex;gap:8px">
+      <div class="field" style="flex:1"><label>Vai trò</label><button class="bh-chon-tt" id="nvf-vt" style="width:100%;font-weight:600" onclick="nvChonVaiTro()">${escHtml(nvForm.vaiTroId === '__admin' ? 'Admin' : (allVaiTro.find(x => x.id === nvForm.vaiTroId)?.ten || 'Chưa gán vai trò'))}</button></div>
+      <div class="field" style="flex:1" id="nvf-cb-wrap"><label>Cấp bậc lương</label><button class="bh-chon-tt" id="nvf-cb" style="width:100%;font-weight:600" onclick="nvChonCapBac()">${escHtml(nvForm.capBac || 'Mặc định')}</button></div>
+    </div>
+    ${moi ? '' : `<div style="display:flex;gap:8px;margin-top:4px">
+      <button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${v(u.ten || u.email)}')">Cấp lại mật khẩu</button>
+      <button class="btn-xs danger" onclick="document.getElementById('nv-form-modal').style.display='none';xoaTaiKhoan('${u.id}','${v(u.ten || u.email)}')">Xóa tài khoản</button></div>`}`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('nv-form-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" id="nvf-luu" style="flex:1;margin:0" onclick="nvLuu()">${moi ? 'Thêm nhân viên' : 'Lưu'}</button>`);
+  ddbCanhGiua('nv-form-modal');
+  const cbw = document.getElementById('nvf-cb-wrap'); if (cbw) cbw.style.visibility = tiers().length ? '' : 'hidden';
+}
+window.nvMoThem = async function() {
+  if (currentUserData.role !== 'admin') return;
+  if (!allVaiTro.length) await loadVaiTro();
+  nvForm = { uid: null, vaiTroId: allVaiTro[0]?.id || '', capBac: '', luongCfg: await getLuongConfig() };
+  nvVeForm(null);
+  setTimeout(() => document.getElementById('nvf-hoten')?.focus(), 50);
+};
+window.nvMoSua = async function(uid) {
+  if (currentUserData.role !== 'admin') return;
+  const u = allUsersCache.find(x => x.id === uid);
+  if (!u) return;
+  nvForm = { uid, vaiTroId: u.vaiTroId || '', capBac: u.capBac || '', luongCfg: await getLuongConfig() };
+  nvVeForm(u);
+};
+window.nvChonVaiTro = function() {
+  const ds = allVaiTro.map(v => ({ gt: v.id, nhan: v.ten }));
+  if (!nvForm.uid) ds.push({ gt: '__admin', nhan: 'Admin (toàn quyền)' });
+  else ds.unshift({ gt: '', nhan: 'Chưa gán vai trò', phu: 'Chỉ chấm công được' });
+  moBangChon('Vai trò', ds, nvForm.vaiTroId, (v) => {
+    nvForm.vaiTroId = v; nvForm.capBac = '';
+    const b = document.getElementById('nvf-vt'); if (b) b.textContent = v === '__admin' ? 'Admin' : (allVaiTro.find(x => x.id === v)?.ten || 'Chưa gán vai trò');
+    const cb = document.getElementById('nvf-cb'); if (cb) cb.textContent = 'Mặc định';
+    const t = (nvForm.luongCfg?.[v] || {}).tiers || [];
+    const w = document.getElementById('nvf-cb-wrap'); if (w) w.style.visibility = t.length ? '' : 'hidden';
+  });
+};
+window.nvChonCapBac = function() {
+  const t = (nvForm.luongCfg?.[nvForm.vaiTroId] || {}).tiers || [];
+  moBangChon('Cấp bậc lương', [{ gt: '', nhan: 'Mặc định' }, ...t.map(x => ({ gt: x, nhan: x }))], nvForm.capBac, (v) => {
+    nvForm.capBac = v; const b = document.getElementById('nvf-cb'); if (b) b.textContent = v || 'Mặc định';
+  });
+};
+window.nvLuu = async function() {
+  const g = (id) => String(document.getElementById(id)?.value || '').trim();
+  const hoTen = g('nvf-hoten'), tenGoi = g('nvf-ten');
+  if (!hoTen) { showToast('Nhập họ tên', true); return; }
+  const hoSo = { hoTen, ten: tenGoi || hoTen, ngaySinh: g('nvf-ns'), ngayVaoLam: g('nvf-nvl'), sdt: g('nvf-sdt'), capBac: nvForm.capBac || '' };
+  const nut = document.getElementById('nvf-luu');
+  if (nvForm.uid) {
+    const cu = allUsersCache.find(x => x.id === nvForm.uid) || {};
+    const doiVT = (cu.vaiTroId || '') !== (nvForm.vaiTroId || '');
+    try {
+      nut.disabled = true;
+      await updateDoc(doc(db, 'users', nvForm.uid), { ...hoSo, vaiTroId: nvForm.vaiTroId || null });
+      let loi = '';
+      if (doiVT) { const kq = await dongBoQuyen({ uid: nvForm.uid }); if (!kq.success) loi = kq.error || 'lỗi'; }
+      document.getElementById('nv-form-modal').style.display = 'none';
+      showToast('Đã lưu ' + hoTen + (loi ? ' · chưa ghi được quyền: ' + loi : ''), !!loi);
+    } catch(e) { showToast('Không lưu được: ' + e.message, true); nut.disabled = false; }
+    return;
+  }
+  const email = g('nvf-email'), mk = document.getElementById('nvf-mk')?.value || '';
+  if (!email || !mk) { showToast('Nhập email và mật khẩu', true); return; }
+  if (mk.length < 6) { showToast('Mật khẩu cần tối thiểu 6 ký tự', true); return; }
+  const laAdminMoi = nvForm.vaiTroId === '__admin';
+  if (!laAdminMoi && !allVaiTro.some(v => v.id === nvForm.vaiTroId)) { showToast('Chọn vai trò', true); return; }
+  nut.disabled = true; nut.textContent = 'Đang tạo...';
+  try {
+    // Tạo qua app Firebase phụ để không làm mất phiên đăng nhập Admin hiện tại
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, email, mk);
+    const uid = cred.user.uid;
+    await setDoc(doc(db, 'users', uid), { ...hoSo, email, role: laAdminMoi ? 'admin' : 'nhan_vien', vaiTroId: laAdminMoi ? null : nvForm.vaiTroId, createdAt: serverTimestamp() });
+    await signOut(secondaryAuth);
+    await dongBoQuyen({ uid });
+    document.getElementById('nv-form-modal').style.display = 'none';
+    showToast('Đã thêm nhân viên ' + hoTen);
+  } catch(e) {
+    let msg = e.message || 'Lỗi không xác định';
+    if (e.code === 'auth/email-already-in-use') msg = 'Email này đã được dùng cho tài khoản khác';
+    else if (e.code === 'auth/invalid-email') msg = 'Email không hợp lệ';
+    else if (e.code === 'auth/weak-password') msg = 'Mật khẩu quá yếu';
+    showToast('Không thêm được: ' + msg, true);
+    nut.disabled = false; nut.textContent = 'Thêm nhân viên';
+  }
+};
 
 window.doiCapBac = async function(uid, capBac) {
   await updateDoc(doc(db,'users',uid), { capBac: capBac || '' });
@@ -18753,7 +19111,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v506</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v507</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -18807,7 +19165,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v506</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v507</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -18853,7 +19211,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v506</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v507</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>

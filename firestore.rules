@@ -206,6 +206,15 @@ service cloud.firestore {
       allow delete: if adm();
     }
 
+    // ===== LỊCH SỬ THAO TÁC: ai đăng nhập cũng ghi được dòng của chính mình; chỉ Admin xem; không sửa, không xóa =====
+    match /nhat_ky/{id} {
+      allow create: if dn() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['createdAt', 'uid', 'ten', 'vaiTro', 'man', 'hanhDong', 'nhom', 'chiTiet', 'soThayDoi', 'demo'])
+        && request.resource.data.createdAt == request.time;
+      allow read: if adm();
+      allow update, delete: if false;
+    }
+
     // ===== SỔ QUỸ (phiếu chi / thu) — nền cho quản lý dòng tiền =====
     // Không sửa, không xóa: chỉ được hủy (chuyển trạng thái, ghi lý do). Người ghi phải là chính mình.
     match /so_quy/{id} {
