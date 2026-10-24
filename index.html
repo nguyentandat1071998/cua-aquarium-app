@@ -1848,8 +1848,9 @@ window.switchSub = function(sub) {
   }
   activeSubTab = sub;
   // Tạo phiếu chuyển kho: khung vừa màn hình như Bán hàng, chỉ danh sách hàng cuộn
-  document.documentElement.classList.toggle('khoa-cuon', activeModule === 'nhap' && sub === 'tao');
-  if (activeModule === 'nhap' && sub === 'tao') requestAnimationFrame(bhVuaManHinh);
+  const khungVua = (activeModule === 'nhap' || activeModule === 'xuat') && sub === 'tao';
+  document.documentElement.classList.toggle('khoa-cuon', khungVua);
+  if (khungVua) requestAnimationFrame(bhVuaManHinh);
   document.getElementById('stab-' + sub).classList.add('active');
   // Hide all content panels
   document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
@@ -8640,7 +8641,7 @@ function bhVuaManHinh() {
   const day = parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14;
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
 }
-window.addEventListener('resize', () => { if (activeModule === 'banhang' || (activeModule === 'nhap' && activeSubTab === 'tao')) bhVuaManHinh(); });
+window.addEventListener('resize', () => { if (activeModule === 'banhang' || ((activeModule === 'nhap' || activeModule === 'xuat') && activeSubTab === 'tao')) bhVuaManHinh(); });
 
 function veTabPhieu() {
   const el = document.getElementById('bh-tab-phieu');
@@ -11937,6 +11938,8 @@ window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
     input.value = ''; input.dataset.sku = ''; input.dataset.skuId = '';
     ckThemHang(id);
   }
+  // Xuất hủy: chọn là vào phiếu luôn (một loại hàng)
+  if (inputId === 'xuat-item-ten') xhChonHang(id);
 };
 
 document.addEventListener('click', e => {
@@ -13371,16 +13374,17 @@ function veChonKhoPhieu(mod) {
   const nut = document.getElementById(laChuyen ? 'btn-nhap-submit' : 'btn-xuat-submit');
   if (nut) nut.disabled = !dang;
   if (!ds.length) {
-    el.innerHTML = `<p class="info-note" style="margin:${laChuyen ? '0 0 6px' : '0'}">Bạn chưa được cấp quyền ${laChuyen ? 'chuyển kho chiều nào' : 'xuất hủy ở kho nào'}.</p>`;
+    el.innerHTML = `<p class="info-note" style="margin:0 0 6px">Bạn chưa được cấp quyền ${laChuyen ? 'chuyển kho chiều nào' : 'xuất hủy ở kho nào'}.</p>`;
+    if (!laChuyen) veXuatHuyTao();
     return;
   }
-  if (laChuyen) {
+  {
+    const mau = laChuyen ? 'var(--green)' : 'var(--red)';
     el.innerHTML = ds.length > 1
-      ? `<div style="display:flex;gap:6px">${ds.map(k => `<button class="${k === dang ? 'btn-g' : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0"
-          onclick="chonKhoPhieu('nhap','${k}')">${ten(k)}</button>`).join('')}</div>`
-      : `<div style="text-align:center;font-size:14px;font-weight:700;color:var(--green);padding:4px 0">${ten(dang)}</div>`;
-    renderNhapItems();
-    renderNhapPhotos();
+      ? `<div style="display:flex;gap:6px">${ds.map(k => `<button class="${k === dang ? (laChuyen ? 'btn-g' : 'btn-r') : 'btn-outline'}" style="flex:1;padding:7px 4px;font-size:13px;margin:0"
+          onclick="chonKhoPhieu('${mod}','${k}')">${ten(k)}</button>`).join('')}</div>`
+      : `<div style="text-align:center;font-size:14px;font-weight:700;color:${mau};padding:4px 0">${laChuyen ? '' : 'Xuất hủy ở '}${ten(dang)}</div>`;
+    if (laChuyen) { renderNhapItems(); renderNhapPhotos(); } else veXuatHuyTao();
     return;
   }
   el.innerHTML = `
@@ -13476,6 +13480,7 @@ window.submitNhap = async function() {
     }
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu chuyển kho';
+  renderNhapItems();
 };
 
 function renderNhapPhotos() {
@@ -13490,23 +13495,78 @@ function renderNhapPhotos() {
 }
 
 // ===== XUẤT HỦY =====
-window.addXuatItem = function() {
-  const tenEl = document.getElementById('xuat-item-ten');
-  const ten = tenEl.value.trim();
-  const sku = tenEl.dataset.sku || '';
-  const skuId = tenEl.dataset.skuId || '';
-  const sl = parseInt(document.getElementById('xuat-item-sl').value) || 0;
-  const gia = parseFloat(document.getElementById('xuat-item-gia').value) || 0;
-  if (!ten || !skuId) { showToast('Vui lòng CHỌN hàng hóa từ danh sách gợi ý (không gõ tự do)', true); return; }
-  if (sl < 1) { showToast('Số lượng phải lớn hơn 0', true); return; }
-  const skuChon = allSKUs.find(x => x.id === skuId);
-  if (!skuDuocXuatHuy(skuChon)) { showToast('Hàng này ngoài danh mục bạn được xuất hủy', true); return; }
-  currentPhieu.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
-  tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
-  document.getElementById('xuat-item-sl').value = '1';
-  document.getElementById('xuat-item-gia').value = '';
-  renderXuatItems();
+// Mỗi phiếu hủy chỉ MỘT loại hàng — chọn hàng khác là thay hàng đang chọn
+const XH_TOI_DA_ANH = 5;
+window.xhChonHang = function(skuId) {
+  const sp = allSKUs.find(s => s.id === skuId);
+  if (!sp) return;
+  if (!currentPhieu.photos.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
+  if (sp.laCombo) { showToast('Combo không xuất hủy trực tiếp — hủy từng món', true); return; }
+  if (!skuDuocXuatHuy(sp)) { showToast('Hàng này ngoài danh mục bạn được xuất hủy', true); return; }
+  const gia = Number(sp.gia) || 0;
+  currentPhieu.items = [{ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia, tong: gia }];
+  veXuatHuyTao();
 };
+window.xhXoaAnh = function(i) { currentPhieu.photos.splice(i, 1); veXuatHuyTao(); };
+
+function veXuatHuyTao() {
+  const el = document.getElementById('xh-than');
+  if (!el) return;
+  const anh = currentPhieu.photos;
+  const it = currentPhieu.items[0] || null;
+  const kh = KHO_HUY[xhKho] || null;
+  const oTong = document.getElementById('xuat-total');
+  if (oTong) oTong.textContent = fmt(it ? it.sl * (it.gia || 0) : 0) + 'đ';
+  const nut = document.getElementById('btn-xuat-submit');
+  if (nut && !nut.textContent.includes('Đang')) nut.disabled = !(anh.length && it && xhKho);
+  if (!anh.length) {
+    el.innerHTML = `
+      <div style="height:100%;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:12px">
+        <button onclick="openCamera('xuat')" ${xhKho ? '' : 'disabled'}
+          style="width:132px;height:132px;border-radius:50%;border:3px solid var(--red);background:#FEF2F2;color:var(--red);font-size:16px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px">
+          <span style="font-size:38px;line-height:1">📷</span>Chụp ảnh</button>
+        <div style="font-size:13px;color:var(--text2);max-width:280px">Chụp ảnh hàng cần hủy trước, sau đó mới chọn hàng và số lượng.<br>Mỗi phiếu chỉ một loại hàng.</div>
+      </div>`;
+    return;
+  }
+  const sku = it ? allSKUs.find(s => s.id === it.skuId) : null;
+  const xemTon = kh && (kh.ma === 'cuahang' || tonSanUnsub);
+  const ton = it && sku && xemTon ? layTon(sku, kh.ma) : null;
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      ${anh.map((p, i) => `
+        <div style="position:relative;width:64px;height:64px">
+          <img src="${p.dataUrl}" onclick="viewPhoto('${p.dataUrl}')" style="width:64px;height:64px;object-fit:cover;border-radius:8px;cursor:pointer">
+          <button onclick="xhXoaAnh(${i})" style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;border:none;background:#111;color:#fff;font-size:12px;cursor:pointer;padding:0">✕</button>
+        </div>`).join('')}
+      ${anh.length < XH_TOI_DA_ANH ? `<button onclick="openCamera('xuat')" style="width:64px;height:64px;border-radius:8px;border:2px dashed var(--red);background:#FEF2F2;color:var(--red);font-size:11px;font-weight:600;cursor:pointer">📷<br>Chụp thêm</button>` : ''}
+    </div>
+    ${it ? `
+    <div style="border:1px solid #FECACA;border-radius:8px;padding:8px 10px;background:#FEF7F7">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:42px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:0">
+          <b style="font-size:14px">${escHtml(it.ten)}</b>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(it.sku)} · ${fmt(it.gia)}đ${ton !== null ? ` · tồn <b style="color:${it.sl > ton ? 'var(--red)' : 'inherit'}">${ton}</b>` : ''}</div>
+        </div>
+        <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="removeXuatItem(0)" title="Đổi hàng khác">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:8px">
+        <span style="font-size:13px;color:var(--text2)">Số lượng hủy</span>
+        <div style="flex:1"></div>
+        <button class="btn-xs" style="width:34px;padding:7px" onclick="adjXuatQty(0,-1)">−</button>
+        <input type="number" min="1" value="${it.sl}" onchange="setXuatQty(0,this.value)" style="width:60px;padding:7px;text-align:center;font-size:16px;font-weight:700">
+        <button class="btn-xs" style="width:34px;padding:7px" onclick="adjXuatQty(0,1)">+</button>
+      </div>
+      ${ton !== null && it.sl > ton ? '<div style="font-size:12px;color:var(--red);margin-top:4px">Vượt số đang tồn — máy chủ sẽ không cho lưu.</div>' : ''}
+    </div>` : `
+    <div class="field sku-wrap" style="margin:0">
+      <input type="text" id="xuat-item-ten" placeholder="Gõ tên hoặc mã hàng cần hủy..." autocomplete="off" style="padding:8px 10px;font-size:14px;border-color:#FCA5A5">
+      <div class="sku-drop" id="xuat-sku-drop"></div>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-top:6px">Mỗi phiếu chỉ một loại hàng.</div>`}`;
+  if (!it) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, true);
+}
 
 window.removeXuatItem = function(i) { currentPhieu.items.splice(i,1); renderXuatItems(); };
 window.adjXuatQty = function(i,d) {
@@ -13520,42 +13580,12 @@ window.setXuatQty = function(i,v) {
   renderXuatItems();
 };
 
-function renderXuatItems() {
-  const el = document.getElementById('xuat-items-list');
-  const totalEl = document.getElementById('xuat-total');
-  if (!currentPhieu.items.length) {
-    el.innerHTML = '<div class="empty-msg">Chưa có hàng nào.</div>';
-    totalEl.textContent = '0₫';
-    return;
-  }
-  const total = currentPhieu.items.reduce((s,i) => s+i.tong, 0);
-  el.innerHTML = currentPhieu.items.map((item,idx) => {
-    const skuObj = item.skuId ? allSKUs.find(s => s.id === item.skuId) : null;
-    return `
-    <div class="item-row">
-      <div class="item-left" style="display:flex;gap:8px;align-items:flex-start">
-        ${skuObj?.anhFileId
-          ? `<img loading="lazy" src="${anhThumbUrl(skuObj.anhFileId,100)}" onclick="viewPhoto('${anhThumbUrl(skuObj.anhFileId,900)}')" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
-          : `<div style="width:40px;height:40px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>`}
-        <span class="item-name">${escHtml(item.ten)}</span>
-      </div>
-      <div class="item-right">
-        <div class="qty-ctrl">
-          <button onclick="adjXuatQty(${idx},-1)">−</button>
-          <input type="number" value="${item.sl}" onchange="setXuatQty(${idx},this.value)">
-          <button onclick="adjXuatQty(${idx},1)">+</button>
-        </div>
-        <span class="item-total r">${fmt(item.tong)}₫</span>
-        <button class="del-btn" onclick="removeXuatItem(${idx})">✕</button>
-      </div>
-    </div>`;
-  }).join('');
-  totalEl.textContent = fmt(total) + '₫';
-}
+function renderXuatItems() { veXuatHuyTao(); }
 
 window.submitXuat = async function() {
-  if (!currentPhieu.items.length) { showToast('Chưa có hàng nào', true); return; }
-  if (!currentPhieu.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
+  if (!currentPhieu.photos.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
+  if (!currentPhieu.items.length) { showToast('Chưa chọn hàng cần hủy', true); return; }
+  if (currentPhieu.items.length > 1) { showToast('Mỗi phiếu chỉ một loại hàng', true); return; }
   const kho = xhKho;
   if (!kho || !dsKhoHuyDuocPhep().includes(kho)) { showToast('Bạn không có quyền xuất hủy ở kho này', true); return; }
   const kh = KHO_HUY[kho];
@@ -13572,7 +13602,7 @@ window.submitXuat = async function() {
       headers: { 'x-action': 'tao-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ kho, maPhieu,
         items: currentPhieu.items.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })),
-        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts })) })
+        photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, ts: p.ts, tuFile: !!p.tuFile })) })
     });
     const kq = await res.json().catch(() => ({}));
     if (!kq.success) {
@@ -13586,17 +13616,10 @@ window.submitXuat = async function() {
     showToast(`Đã lưu phiếu ${maPhieu} + trừ tồn ${kh.ten}${kq.kiotvietCode ? ' · ' + kq.kiotvietCode : ''}`);
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
+  veXuatHuyTao();
 };
 
-function renderXuatPhotos() {
-  const el = document.getElementById('xuat-photos');
-  if (!currentPhieu.photos.length) { el.innerHTML = '<div class="empty-msg">Chưa có ảnh.</div>'; return; }
-  el.innerHTML = currentPhieu.photos.map((p,i) => `
-    <div class="thumb-wrap">
-      <img src="${p.dataUrl}" onclick="viewPhoto('${p.dataUrl}')">
-      <button onclick="currentPhieu.photos.splice(${i},1);renderXuatPhotos()">✕</button>
-    </div>`).join('');
-}
+function renderXuatPhotos() { veXuatHuyTao(); }
 
 // ===== CAMERA =====
 window.openCamera = async function(mode) {
@@ -13612,62 +13635,15 @@ window.openCamera = async function(mode) {
   }
 };
 
-// Thêm ảnh từ file có sẵn — dành cho máy tính không có camera.
-// Vẫn gắn nhãn thời gian và tên người như ảnh chụp trực tiếp, và ghi rõ nguồn
-// là "ảnh chọn" để sau này đối chiếu biết ảnh nào chụp tại chỗ, ảnh nào chọn từ máy.
-window.themAnhTuFile = async function(input, mode) {
-  const files = [...(input.files || [])];
-  if (!files.length) return;
-  showToast(`Đang xử lý ${files.length} ảnh...`);
-
-  for (const f of files) {
-    try {
-      const anh = await new Promise((xong, hong) => {
-        const r = new FileReader();
-        r.onload = () => { const i = new Image(); i.onload = () => xong(i); i.onerror = hong; i.src = r.result; };
-        r.onerror = hong;
-        r.readAsDataURL(f);
-      });
-
-      // Thu nhỏ ảnh lớn về tối đa 1600px cho nhẹ, ảnh điện thoại thường 3000px+
-      const canvas = document.createElement('canvas');
-      const tyLe = Math.min(1, 1600 / Math.max(anh.width, anh.height));
-      canvas.width = Math.round(anh.width * tyLe);
-      canvas.height = Math.round(anh.height * tyLe);
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(anh, 0, 0, canvas.width, canvas.height);
-
-      const now = new Date();
-      const d2 = String(now.getDate()).padStart(2,'0'), m2 = String(now.getMonth()+1).padStart(2,'0'), y2 = String(now.getFullYear()).slice(-2);
-      const ts = `${d2}/${m2}/${y2} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:${String(now.getSeconds()).padStart(2,'0')}`;
-      const label = `CUA Aquarium · ${currentUserData?.ten || ''} · ${ts} · ảnh chọn`;
-      const fontSize = Math.max(14, Math.round(canvas.width * 0.025));
-      ctx.font = `bold ${fontSize}px monospace`;
-      const tw = ctx.measureText(label).width;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
-      ctx.fillStyle = '#FFE566';
-      ctx.fillText(label, 14, canvas.height - 10);
-
-      const photoData = { dataUrl: canvas.toDataURL('image/jpeg', 0.85), ts, tuFile: true };
-      if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
-      else if (mode === 'xuat') { currentPhieu.photos.push(photoData); renderXuatPhotos(); }
-    } catch(e) {
-      console.error('Lỗi đọc ảnh:', e);
-      showToast('Không đọc được một ảnh', true);
-    }
-  }
-  input.value = '';   // cho phép chọn lại cùng file lần sau
-  showToast('Đã thêm ảnh');
-};
-
 window.capturePhoto = function() {
   const mode = document.getElementById('camera-modal').dataset.mode;
   const video = document.getElementById('camera-video');
   const canvas = document.getElementById('camera-canvas');
-  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  // Thu nhỏ về tối đa 1280px — phiếu nhiều ảnh vẫn nằm gọn trong 1 tài liệu (giới hạn 1MB)
+  const tlAnh = Math.min(1, 1280 / Math.max(video.videoWidth || 1, video.videoHeight || 1));
+  canvas.width = Math.round(video.videoWidth * tlAnh); canvas.height = Math.round(video.videoHeight * tlAnh);
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   // Timestamp overlay
   const now = new Date();
   const d2=now.getDate().toString().padStart(2,'0'), m2=(now.getMonth()+1).toString().padStart(2,'0'), y2=now.getFullYear().toString().slice(-2);
@@ -13680,7 +13656,7 @@ window.capturePhoto = function() {
   ctx.fillRect(6, canvas.height - fontSize - 18, tw + 16, fontSize + 12);
   ctx.fillStyle = '#FFE566';
   ctx.fillText(label, 14, canvas.height - 10);
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
   const photoData = { dataUrl, ts };
   if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
   else if (mode === 'checklist') {
@@ -13710,63 +13686,243 @@ window.closeCamera = function() {
   document.getElementById('camera-modal').style.display = 'none';
 };
 
-// ===== DANH SÁCH NHẬP =====
-let nhapDsPage = 1;
+// ===== DANH SÁCH PHIẾU (Chuyển kho / Xuất hủy) — kiểu "Đơn đã bán" =====
 const DS_PAGE_SIZE = 20;
+const PL = {
+  nhap: { col: 'phieu_chuyenkho', ten: 'phiếu chuyển kho', mau: 'var(--green)', quyenSua: 'nhap_sua', quyenFile: 'nhap_xuatfile',
+    loai: (p) => chieuCuaPhieu(p), tenLoai: (p) => CHIEU_CHUYEN[chieuCuaPhieu(p)].ten, tieuDeLoai: 'CHIỀU CHUYỂN',
+    dsLoai: [['san_ch', 'Kho Online → Cửa hàng'], ['ch_san', 'Cửa hàng → Kho Online']], coGia: false },
+  xuat: { col: 'phieu_huy', ten: 'phiếu xuất hủy', mau: 'var(--red)', quyenSua: 'xuat_sua', quyenFile: 'xuat_xuatfile',
+    loai: (p) => khoHuyCuaPhieu(p), tenLoai: (p) => KHO_HUY[khoHuyCuaPhieu(p)].ten, tieuDeLoai: 'KHO',
+    dsLoai: [['ch', 'Kho Cửa hàng'], ['san', 'Kho Sàn']], coGia: true }
+};
+const plLoc = {}, plDs = { nhap: [], xuat: [] }, plTimChu = { nhap: '', xuat: '' }, plTimKq = { nhap: [], xuat: [] };
+function plLocMacDinh() { const h = ngayLocal(); return { tu: h, den: h, loai: [], trangThai: [], nhanVien: [] }; }
+const plMs = (p) => p.createdAt?.toMillis?.() || 0;
 
-window.loadNhapList = async function(filter={}) {
-  const el = document.getElementById('nhap-ds-list');
+async function plTai(mod) {
+  if (!plLoc[mod]) plLoc[mod] = plLocMacDinh();
+  const el = document.getElementById(mod + '-ds-list');
+  if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const snap = await getDocs(query(collection(db, 'phieu_chuyenkho'), orderBy('createdAt','desc')));
-  let docs = snap.docs.map(d => ({id:d.id,...d.data()}));
-  // Populate NV filter (dựa trên phiếu chưa xóa, cho gọn danh sách chọn)
-  const nvSet = [...new Set(docs.filter(d=>!d.deleted).map(d => d.nguoiTao?.ten).filter(Boolean))];
-  const sel = document.getElementById('nhap-filter-nv');
-  if (sel) { const cur=sel.value; sel.innerHTML='<option value="">Tất cả</option>'+nvSet.map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join(''); }
-  // Apply filters
-  const from = document.getElementById('nhap-filter-from')?.value;
-  const to = document.getElementById('nhap-filter-to')?.value;
-  const nv = document.getElementById('nhap-filter-nv')?.value;
-  const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
-  const filterTT = document.getElementById('nhap-filter-trangthai')?.value || 'all';
-  const filterChieu = document.getElementById('nhap-filter-chieu')?.value || 'all';
-  if (filterChieu !== 'all') docs = docs.filter(d => chieuCuaPhieu(d) === filterChieu);
-  if (from||to||nv||filterX!=='all'||filterTT!=='all') docs = docs.filter(d => {
-    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
-    if (from && ds < from) return false;
-    if (to && ds > to) return false;
-    if (nv && d.nguoiTao?.ten !== nv) return false;
-    if (filterX === 'chua' && d.daXuat) return false;
-    if (filterX === 'da' && !d.daXuat) return false;
-    if (filterTT === 'daxoa' && !d.deleted) return false;
-    if (filterTT === 'dasua' && !(d.versions?.length)) return false;
-    if (filterTT === 'binhthuong' && (d.deleted || d.versions?.length)) return false;
-    return true;
-  });
-  renderSummary('nhap', docs.filter(d => !d.deleted)); // Thống kê KHÔNG tính phiếu đã xóa
-  if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
-  const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
-  if (nhapDsPage > totalPages) nhapDsPage = totalPages;
-  const pageDocs = docs.slice((nhapDsPage-1)*DS_PAGE_SIZE, nhapDsPage*DS_PAGE_SIZE);
-  const canEdit = coQuyen('nhap_sua');
-  el.innerHTML = pageDocs.map(p => {
-    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
-    return `<div class="phieu-card green${p.deleted ? ' deleted' : ''}">
-      <div class="phieu-top">
-        <div><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
-        <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditNhap('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="deleteNhap('${p.id}')">Xóa</button>`:''}</div>
+  const L = plLoc[mod];
+  try {
+    const snap = await getDocs(query(collection(db, PL[mod].col),
+      where('createdAt', '>=', new Date(L.tu + 'T00:00:00')), where('createdAt', '<=', new Date(L.den + 'T23:59:59')),
+      orderBy('createdAt', 'desc'), limit(1000)));
+    plDs[mod] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) { console.error('Lỗi tải phiếu:', e); plDs[mod] = []; }
+  if (plTimChu[mod]) await plTim(mod, plTimChu[mod], true); else plVe(mod);
+}
+window.loadNhapList = () => plTai('nhap');
+window.loadXuatList = () => plTai('xuat');
+
+function plTrangThai(p) { return p.deleted ? 'daxoa' : (p.versions?.length ? 'dasua' : 'binhthuong'); }
+function plQuaLoc(mod, p) {
+  const L = plLoc[mod];
+  if (L.trangThai.length ? !L.trangThai.includes(plTrangThai(p)) : p.deleted) return false;
+  if (L.loai.length && !L.loai.includes(PL[mod].loai(p))) return false;
+  if (L.nhanVien.length && !L.nhanVien.includes(p.nguoiTao?.uid)) return false;
+  return true;
+}
+function plDsLoc(mod) { return plDs[mod].filter(p => plQuaLoc(mod, p)); }
+function plSoBoLoc(mod) { const L = plLoc[mod]; return L.loai.length + L.trangThai.length + L.nhanVien.length; }
+function plChuNgay(mod) {
+  const L = plLoc[mod], f = (s) => s.split('-').reverse().join('/');
+  return L.tu === L.den ? (L.tu === ngayLocal() ? 'Hôm nay · ' : '') + f(L.tu) : `${f(L.tu)} – ${f(L.den)}`;
+}
+function plTimPhieu(mod, id) { return plDs[mod].find(p => p.id === id) || plTimKq[mod].find(p => p.id === id) || null; }
+
+// Tìm: mã phiếu, mã đối chiếu, mã / tên hàng, người tạo (không dấu) — không giới hạn ngày
+window.plTim = async function(mod, v, giuNguyen) {
+  const tu = String(v || '').trim();
+  plTimChu[mod] = tu;
+  if (!tu) { plTimKq[mod] = []; plVe(mod); return; }
+  const k = boDauTim(tu);
+  try {
+    const snap = await getDocs(query(collection(db, PL[mod].col), orderBy('createdAt', 'desc'), limit(800)));
+    plTimKq[mod] = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p =>
+      [p.maPhieu, p.kiotvietCode, p.nguoiTao?.ten, ...(p.items || []).flatMap(i => [i.sku, i.ten])].some(x => boDauTim(x).includes(k)));
+  } catch(e) { showToast('Không tìm được: ' + e.message, true); plTimKq[mod] = []; }
+  plVe(mod);
+};
+
+function plThe(mod, p) {
+  const C = PL[mod];
+  const t = p.createdAt?.toDate ? p.createdAt.toDate() : null;
+  const items = p.items || [];
+  const tongSL = items.reduce((s, i) => s + (Number(i.sl) || 0), 0);
+  const ten = items.slice(0, 2).map(i => `${i.ten} ×${i.sl}`).join(', ') + (items.length > 2 ? ` +${items.length - 2} mã` : '');
+  const anh = p.photos?.[0]?.dataUrl;
+  return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${p.deleted ? '#9CA3AF' : C.mau};border-radius:8px;padding:10px;margin-bottom:8px;${p.deleted ? 'opacity:.65' : ''}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div style="flex:1;min-width:0;cursor:pointer" onclick="plXem('${mod}','${p.id}')">
+          <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+            <span style="font-weight:700;font-size:16px">${escHtml(p.maPhieu || p.id)}</span>
+            <span style="font-size:12px;color:var(--text2)">${ddbThoiGian(t)}</span>
+            ${p.deleted ? '<span style="font-size:11px;color:#DC2626;font-weight:600">Đã xóa</span>'
+              : p.versions?.length ? `<span style="font-size:11px;color:#D97706;font-weight:600">Đã sửa ${p.versions.length} lần</span>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px">Nhân viên: ${escHtml(p.nguoiTao?.ten || '')}</div>
+          <div style="font-size:13px;margin-top:3px"><b style="color:${C.mau}">${C.tenLoai(p)}</b> · SL <b>${tongSL}</b>${C.coGia ? ` · <b>${fmt(p.tongGia)}đ</b>` : ''}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(ten)}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
+          ${anh ? `<img src="${anh}" onclick="viewPhoto('${anh}')" style="width:44px;height:44px;object-fit:cover;border-radius:6px;cursor:pointer">` : ''}
+          <button class="btn-xs" onclick="plXem('${mod}','${p.id}')">Xem chi tiết</button>
+        </div>
       </div>
-      <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · <b style="color:var(--green)">${CHIEU_CHUYEN[chieuCuaPhieu(p)].ten}</b></div>
-      ${p.kiotvietCode ? `<div style="font-size:11px;color:var(--text2)">Mã phiếu: ${escHtml(p.kiotvietCode)}</div>` : ''}
-      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl}</span></div>`).join('')}</div>
-      ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
-      <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span></div>
-      ${renderLichSuSuaPhieu(p)}
     </div>`;
-  }).join('') + renderPagination(nhapDsPage, docs.length, DS_PAGE_SIZE, 'doiTrangNhap');
 }
 
-window.doiTrangNhap = function(p) { nhapDsPage = p; loadNhapList(); };
+function plVe(mod) {
+  const el = document.getElementById(mod + '-ds-list');
+  if (!el) return;
+  const C = PL[mod];
+  const tim = plTimChu[mod];
+  const ds = plDsLoc(mod);
+  const soLoc = plSoBoLoc(mod);
+  const conHieuLuc = ds.filter(p => !p.deleted);
+  const tongSL = conHieuLuc.reduce((s, p) => s + (Number(p.tongSL) || 0), 0);
+  const tongGia = conHieuLuc.reduce((s, p) => s + (Number(p.tongGia) || 0), 0);
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <input id="${mod}-pl-tim" type="search" inputmode="search" placeholder="🔍 Mã phiếu, mã hoặc tên hàng, người tạo"
+        value="${escHtml(tim)}" onkeydown="if(event.key==='Enter')plTim('${mod}',this.value)" style="flex:1;min-width:0">
+      <button class="btn-xs" style="padding:0 14px" onclick="plTim('${mod}',document.getElementById('${mod}-pl-tim').value)">Tìm</button>
+      ${tim ? `<button class="btn-xs" style="padding:0 12px" onclick="plTim('${mod}','')">✕</button>` : ''}
+    </div>
+    ${tim ? `
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Kết quả cho "<b>${escHtml(tim)}</b>": ${plTimKq[mod].length} phiếu</div>
+      ${plTimKq[mod].length ? plTimKq[mod].map(p => plThe(mod, p)).join('') : '<p class="info-note">Không có phiếu nào khớp.</p>'}
+    ` : `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <div style="flex:1;min-width:0;font-size:13px;color:var(--text2)">${plChuNgay(mod)}${soLoc ? ` · đang lọc ${soLoc} mục` : ''}</div>
+        ${coQuyen(C.quyenFile) ? `<button class="btn-outline" style="width:auto;padding:6px 12px" onclick="plXuatFile('${mod}')">Xuất file</button>` : ''}
+        <button class="btn-outline" style="width:auto;padding:6px 16px;${soLoc ? `border-color:${C.mau};color:${C.mau};font-weight:600` : ''}" onclick="plMoLoc('${mod}')">Lọc${soLoc ? ` (${soLoc})` : ''}</button>
+      </div>
+      <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;font-size:19px;font-weight:700">
+          <span>${conHieuLuc.length} phiếu</span>
+          <span style="color:${C.mau}">${C.coGia ? fmt(tongGia) + 'đ' : 'SL ' + tongSL}</span>
+        </div>
+        ${C.coGia ? `<div style="font-size:13px;color:var(--text2);margin-top:4px">Tổng số lượng: <b style="color:var(--text)">${tongSL}</b></div>` : ''}
+      </div>
+      ${ds.length ? ds.map(p => plThe(mod, p)).join('') : `<p class="info-note">${soLoc ? 'Không có phiếu nào khớp bộ lọc.' : 'Chưa có phiếu nào trong khoảng thời gian này.'}</p>`}
+    `}`;
+}
+
+window.plMoLoc = function(mod) {
+  const C = PL[mod], L = plLoc[mod] || (plLoc[mod] = plLocMacDinh());
+  const nv = new Map();
+  plDs[mod].forEach(p => { if (p.nguoiTao?.uid) nv.set(p.nguoiTao.uid, p.nguoiTao.ten || p.nguoiTao.uid); });
+  L.nhanVien.forEach(uid => { if (!nv.has(uid)) nv.set(uid, uid); });
+  const o = (ten, gt, nhan, mang) => `
+    <label style="display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--border);border-radius:8px;padding:6px 10px;margin:0 6px 6px 0;font-size:13px;cursor:pointer">
+      <input type="checkbox" name="${ten}" value="${escHtml(gt)}" ${mang.includes(gt) ? 'checked' : ''} style="width:16px;height:16px;margin:0">${escHtml(nhan)}
+    </label>`;
+  const nhom = (tieuDe, noiDung) => `<div style="font-size:12px;font-weight:600;color:var(--text2);margin:12px 0 6px">${tieuDe}</div>${noiDung}`;
+  const nhanh = (nhan, tu, den) => `<button class="btn-xs" style="margin:0 6px 6px 0" onclick="document.getElementById('pll-tu').value='${tu}';document.getElementById('pll-den').value='${den}'">${nhan}</button>`;
+  const homNay = new Date(), homQua = new Date(Date.now() - 864e5), bayNgay = new Date(Date.now() - 6 * 864e5);
+  const dauThang = new Date(homNay.getFullYear(), homNay.getMonth(), 1);
+  ddbMoKhung('pl-loc-modal', 'Lọc ' + C.ten, '', `
+    ${nhom('THỜI GIAN', `
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="date" id="pll-tu" value="${L.tu}" style="flex:1;min-width:0">
+        <span style="color:var(--text2)">–</span>
+        <input type="date" id="pll-den" value="${L.den}" style="flex:1;min-width:0">
+      </div>
+      <div style="margin-top:6px">
+        ${nhanh('Hôm nay', ngayLocal(homNay), ngayLocal(homNay))}
+        ${nhanh('Hôm qua', ngayLocal(homQua), ngayLocal(homQua))}
+        ${nhanh('7 ngày', ngayLocal(bayNgay), ngayLocal(homNay))}
+        ${nhanh('Tháng này', ngayLocal(dauThang), ngayLocal(homNay))}
+      </div>`)}
+    ${nhom(C.tieuDeLoai, C.dsLoai.map(([k, t]) => o('pll-loai', k, t, L.loai)).join(''))}
+    ${nhom('TRẠNG THÁI PHIẾU', o('pll-tt', 'binhthuong', 'Bình thường', L.trangThai) + o('pll-tt', 'dasua', 'Đã sửa', L.trangThai) + o('pll-tt', 'daxoa', 'Đã xóa', L.trangThai))}
+    ${nv.size ? nhom('NHÂN VIÊN', [...nv].map(([uid, ten]) => o('pll-nv', uid, ten, L.nhanVien)).join('')) : ''}`,
+    `<button class="btn-outline" style="flex:1" onclick="plDatLaiLoc('${mod}')">Đặt lại</button>
+     <button class="${mod === 'xuat' ? 'btn-r' : 'btn-g'}" style="flex:1;margin:0" onclick="plApDungLoc('${mod}')">Áp dụng</button>`);
+  ddbCanhGiua('pl-loc-modal');
+};
+window.plApDungLoc = async function(mod) {
+  const lay = (ten) => [...document.querySelectorAll(`input[name="${ten}"]:checked`)].map(x => x.value);
+  let tu = document.getElementById('pll-tu')?.value || ngayLocal();
+  let den = document.getElementById('pll-den')?.value || tu;
+  if (tu > den) [tu, den] = [den, tu];
+  const doiNgay = tu !== plLoc[mod].tu || den !== plLoc[mod].den;
+  plLoc[mod] = { tu, den, loai: lay('pll-loai'), trangThai: lay('pll-tt'), nhanVien: lay('pll-nv') };
+  document.getElementById('pl-loc-modal').style.display = 'none';
+  if (doiNgay) await plTai(mod); else plVe(mod);
+};
+window.plDatLaiLoc = async function(mod) {
+  const cu = plLoc[mod];
+  plLoc[mod] = plLocMacDinh();
+  document.getElementById('pl-loc-modal').style.display = 'none';
+  if (cu.tu !== plLoc[mod].tu || cu.den !== plLoc[mod].den) await plTai(mod); else plVe(mod);
+};
+
+window.plXem = function(mod, id) {
+  const C = PL[mod];
+  const p = plTimPhieu(mod, id);
+  if (!p) { showToast('Không tìm thấy phiếu', true); return; }
+  const t = p.createdAt?.toDate ? p.createdAt.toDate() : null;
+  const hang = (p.items || []).map(h => {
+    const sp = allSKUs.find(s => s.id === h.skuId) || allSKUs.find(s => s.sku === h.sku);
+    const anh = sp?.anhFileId
+      ? `<img loading="lazy" src="${anhThumbUrl(sp.anhFileId, 150)}" onclick="viewPhoto('${anhThumbUrl(sp.anhFileId, 900)}')" style="width:56px;height:56px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
+      : `<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--text2)">📦</div>`;
+    return `
+      <div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);align-items:center">
+        ${anh}
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:14px">${escHtml(h.ten)}</div>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(h.sku || '')}${C.coGia ? ` · ${fmt(h.gia)}đ` : ''}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0"><div style="font-weight:700;font-size:15px">×${h.sl}</div>${C.coGia ? `<div style="font-size:12px">${fmt(h.tong ?? h.sl * (h.gia || 0))}đ</div>` : ''}</div>
+      </div>`;
+  }).join('');
+  const anhCT = (p.photos || []).map(a => `<img src="${a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
+  const suaDuoc = coQuyen(C.quyenSua);
+  const chan = suaDuoc ? (p.deleted
+      ? (mod === 'xuat' ? `<button class="btn-g" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';restoreXuat('${p.id}')">Khôi phục phiếu</button>` : '')
+      : `<button class="btn-outline" style="flex:1" onclick="document.getElementById('pl-ct-modal').style.display='none';${mod === 'xuat' ? 'openEditXuat' : 'openEditNhap'}('${p.id}')">Sửa</button>
+         <button class="btn-r" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';${mod === 'xuat' ? 'softDeleteXuat' : 'deleteNhap'}('${p.id}')">Xóa phiếu</button>`) : '';
+  ddbMoKhung('pl-ct-modal', escHtml(p.maPhieu || p.id), C.tenLoai(p), `
+    <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px">
+      <div>Thời gian: <b>${ddbThoiGian(t) || '—'}</b></div>
+      <div>Nhân viên: <b>${escHtml(p.nguoiTao?.ten || '')}</b></div>
+      <div>${mod === 'xuat' ? 'Kho' : 'Chiều chuyển'}: <b style="color:${C.mau}">${C.tenLoai(p)}</b></div>
+      ${p.kiotvietCode ? `<div>Mã đối chiếu: <b>${escHtml(p.kiotvietCode)}</b></div>` : ''}
+      ${p.deleted ? `<div style="color:#DC2626;font-weight:600">Đã xóa${p.deletedBy?.ten ? ' bởi ' + escHtml(p.deletedBy.ten) : ''}</div>` : ''}
+      ${p.daXuat ? '<div style="color:var(--text2)">Đã xuất file</div>' : ''}
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--text2)">HÀNG HÓA (${(p.items || []).length} mã · SL ${p.tongSL || 0})</div>
+    ${hang}
+    ${C.coGia ? `<div style="display:flex;justify-content:space-between;font-weight:700;font-size:16px;padding:8px 0">Tổng giá trị <span style="color:${C.mau}">${fmt(p.tongGia)}đ</span></div>` : ''}
+    ${anhCT ? `<div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 6px">ẢNH MINH CHỨNG (${p.photos.length})</div><div style="display:flex;gap:8px;flex-wrap:wrap">${anhCT}</div>` : ''}
+    <div style="margin-top:10px">${renderLichSuSuaPhieu(p)}</div>`, chan);
+  ddbCanhGiua('pl-ct-modal');
+};
+
+// Xuất file theo danh sách đang lọc (không tính phiếu đã xóa), rồi đánh dấu đã xuất
+window.plXuatFile = async function(mod) {
+  const C = PL[mod];
+  const ds = plDsLoc(mod).filter(p => !p.deleted);
+  if (!ds.length) { showToast('Không có phiếu nào để xuất', true); return; }
+  const map = {};
+  ds.forEach(p => (p.items || []).forEach(i => {
+    const k = i.sku || i.ten;
+    if (!map[k]) map[k] = { ma: i.sku || '', ten: i.ten, sl: 0 };
+    map[k].sl += Number(i.sl) || 0;
+  }));
+  downloadCSV(Object.values(map), mod === 'nhap' ? 'chuyen-kho' : 'xuat-huy', mod === 'nhap' ? 'Số lượng chuyển' : 'Số lượng hủy');
+  try {
+    await Promise.all(ds.filter(p => !p.daXuat).map(p => updateDoc(doc(db, C.col, p.id), { daXuat: true, xuatAt: serverTimestamp() })));
+  } catch(e) { console.warn('Không đánh dấu được đã xuất:', e.message); }
+  plTai(mod);
+};
 
 window.deleteNhap = async function(id) {
   if (!await hoiXacNhan('Xóa phiếu chuyển kho này? Vẫn lưu lại, chỉ ẩn khỏi thống kê.')) return;
@@ -13805,72 +13961,6 @@ window.deleteNhap = async function(id) {
   loadNhapList();
 };
 
-window.applyNhapFilter = function() { nhapDsPage = 1; loadNhapList(); };
-window.clearNhapFilter = function() {
-  ['nhap-filter-from','nhap-filter-to'].forEach(id => document.getElementById(id).value='');
-  document.getElementById('nhap-filter-nv').value='';
-  document.getElementById('nhap-filter-xuat').value='all';
-  document.getElementById('nhap-filter-trangthai').value='all';
-  const fc = document.getElementById('nhap-filter-chieu'); if (fc) fc.value = 'all';
-  nhapDsPage = 1;
-  loadNhapList();
-};
-
-// ===== DANH SÁCH XUẤT =====
-let xuatDsPage = 1;
-
-window.loadXuatList = async function(filter={}) {
-  const el = document.getElementById('xuat-ds-list');
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const snap = await getDocs(query(collection(db, 'phieu_huy'), orderBy('createdAt','desc')));
-  let docs = snap.docs.map(d => ({id:d.id,...d.data()}));
-  const nvSet = [...new Set(docs.filter(d=>!d.deleted).map(d => d.nguoiTao?.ten).filter(Boolean))];
-  const sel = document.getElementById('xuat-filter-nv');
-  if (sel) { const cur=sel.value; sel.innerHTML='<option value="">Tất cả</option>'+nvSet.map(n=>`<option value="${n}"${cur===n?' selected':''}>${n}</option>`).join(''); }
-  const from = document.getElementById('xuat-filter-from')?.value;
-  const to = document.getElementById('xuat-filter-to')?.value;
-  const nv = document.getElementById('xuat-filter-nv')?.value;
-  const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
-  const filterTT = document.getElementById('xuat-filter-trangthai')?.value || 'all';
-  const filterKho = document.getElementById('xuat-filter-kho')?.value || 'all';
-  if (filterKho !== 'all') docs = docs.filter(d => khoHuyCuaPhieu(d) === filterKho);
-  if (from||to||nv||filterX!=='all'||filterTT!=='all') docs = docs.filter(d => {
-    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
-    if (from && ds < from) return false;
-    if (to && ds > to) return false;
-    if (nv && d.nguoiTao?.ten !== nv) return false;
-    if (filterX === 'chua' && d.daXuat) return false;
-    if (filterX === 'da' && !d.daXuat) return false;
-    if (filterTT === 'daxoa' && !d.deleted) return false;
-    if (filterTT === 'dasua' && !(d.versions?.length)) return false;
-    if (filterTT === 'binhthuong' && (d.deleted || d.versions?.length)) return false;
-    return true;
-  });
-  renderSummary('xuat', docs.filter(d => !d.deleted)); // Thống kê KHÔNG tính phiếu đã xóa
-  if (!docs.length) { el.innerHTML = '<div class="empty-msg">Không có phiếu nào.</div>'; return; }
-  const totalPages = Math.max(1, Math.ceil(docs.length / DS_PAGE_SIZE));
-  if (xuatDsPage > totalPages) xuatDsPage = totalPages;
-  const pageDocs = docs.slice((xuatDsPage-1)*DS_PAGE_SIZE, xuatDsPage*DS_PAGE_SIZE);
-  const canEdit = coQuyen('xuat_sua');
-  el.innerHTML = pageDocs.map(p => {
-    const date = p.createdAt?.toDate ? p.createdAt.toDate() : new Date();
-    return `<div class="phieu-card red${p.deleted ? ' deleted' : ''}">
-      <div class="phieu-top">
-        <div><span class="phieu-date">${p.maPhieu ? `<b>${p.maPhieu}</b> · ` : ''}${fmtDate(date)}</span>${p.daXuat ? `<span class="badge-xuat da">Đã xuất</span>` : `<span class="badge-xuat chua">Chưa xuất</span>`}</div>
-        <div class="phieu-acts">${(canEdit && !p.deleted)?`<button class="btn-xs" onclick="openEditXuat('${p.id}')">Sửa</button><button class="btn-xs danger" onclick="softDeleteXuat('${p.id}')">Xóa</button>`:''}</div>
-      </div>
-      <div class="phieu-nv">${p.nguoiTao?.ten||'—'} · <b style="color:var(--red)">${KHO_HUY[khoHuyCuaPhieu(p)].ten}</b></div>
-      ${p.kiotvietCode ? `<div style="font-size:11px;color:var(--text2)">Mã phiếu: ${escHtml(p.kiotvietCode)}</div>` : ''}
-      <div class="phieu-rows">${p.items.map(i=>`<div class="phieu-row"><span>${escHtml(i.ten)}</span><span>${i.sl} · ${fmt(i.tong)}₫</span></div>`).join('')}</div>
-      ${p.photos?.length?`<div class="phieu-thumbs">${p.photos.map(ph=>`<img src="${ph.dataUrl}" onclick="viewPhoto('${ph.dataUrl}')">`).join('')}</div>`:''}
-      <div class="phieu-footer"><span>Tổng: <b>${p.tongSL}</b></span><span class="r bold">${fmt(p.tongGia)}₫</span></div>
-      ${renderLichSuSuaPhieu(p)}
-    </div>`;
-  }).join('') + renderPagination(xuatDsPage, docs.length, DS_PAGE_SIZE, 'doiTrangXuat');
-}
-
-window.doiTrangXuat = function(p) { xuatDsPage = p; loadXuatList(); };
-
 // Sửa / xóa / khôi phục phiếu xuất hủy: máy chủ làm trọn (phiếu KiotViet, phiếu app, tồn, thẻ kho)
 async function suaPhieuHuyMayChu(body) {
   const idToken = await currentUser.getIdToken();
@@ -13891,17 +13981,6 @@ window.softDeleteXuat = async function(id) {
     await suaPhieuHuyMayChu({ maPhieu: id, loai: 'xoa' });
     showToast('Đã xóa phiếu + hoàn lại tồn');
   } catch(e) { alert('Chưa xóa được — ' + e.message); }
-  loadXuatList();
-};
-
-window.applyXuatFilter = function() { xuatDsPage = 1; loadXuatList(); };
-window.clearXuatFilter = function() {
-  ['xuat-filter-from','xuat-filter-to'].forEach(id => document.getElementById(id).value='');
-  document.getElementById('xuat-filter-nv').value='';
-  document.getElementById('xuat-filter-xuat').value='all';
-  document.getElementById('xuat-filter-trangthai').value='all';
-  const fk = document.getElementById('xuat-filter-kho'); if (fk) fk.value = 'all';
-  xuatDsPage = 1;
   loadXuatList();
 };
 
@@ -13949,7 +14028,8 @@ window.openEditPhieu = async function(collectionName, id) {
   editState.showGia = collectionName === 'phieu_huy';
   document.getElementById('edit-modal-title').textContent = collectionName === 'phieu_huy' ? 'Chỉnh sửa phiếu xuất hủy' : 'Chỉnh sửa phiếu chuyển kho';
   document.getElementById('edit-gia-wrap').style.display = editState.showGia ? '' : 'none';
-  document.getElementById('edit-add-section').style.display = '';
+  // Phiếu hủy: mỗi phiếu một loại hàng -> chỉ sửa số lượng, không thêm hàng
+  document.getElementById('edit-add-section').style.display = collectionName === 'phieu_huy' ? 'none' : '';
   document.getElementById('edit-baoca-note').style.display = 'none';
   document.getElementById('edit-item-ten').value = '';
   document.getElementById('edit-item-sl').value = '1';
@@ -14319,98 +14399,6 @@ window.exportBaocaCSV = async function() {
 };
 
 // ===== EXPORT CSV =====
-window.exportNhapCSV = async function() {
-  const from = document.getElementById('nhap-filter-from')?.value;
-  const to = document.getElementById('nhap-filter-to')?.value;
-  const filterX = document.getElementById('nhap-filter-xuat')?.value || 'all';
-  const snap = await getDocs(query(collection(db,'phieu_chuyenkho'), orderBy('createdAt','desc')));
-  let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
-  allDocs = allDocs.filter(d => {
-    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
-    if (from && ds<from) return false;
-    if (to && ds>to) return false;
-    if (filterX === 'chua' && d.daXuat) return false;
-    if (filterX === 'da' && !d.daXuat) return false;
-    return true;
-  });
-  if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
-  const map={};
-  allDocs.forEach(p => p.items.forEach(i => {
-    const k=i.sku||i.ten;
-    if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
-    map[k].sl+=i.sl;
-  }));
-  downloadCSV(Object.values(map), 'nhap-kho', 'Số lượng nhập');
-  // Đánh dấu đã xuất
-  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_chuyenkho',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
-  showToast(`Đã xuất CSV ${allDocs.length} phiếu`);
-  loadNhapList();
-};
-
-window.exportXuatCSV = async function() {
-  const from = document.getElementById('xuat-filter-from')?.value;
-  const to = document.getElementById('xuat-filter-to')?.value;
-  const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
-  const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
-  let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
-  allDocs = allDocs.filter(d => {
-    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
-    if (from && ds<from) return false;
-    if (to && ds>to) return false;
-    if (filterX === 'chua' && d.daXuat) return false;
-    if (filterX === 'da' && !d.daXuat) return false;
-    return true;
-  });
-  if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
-  const map={};
-  allDocs.forEach(p => p.items.forEach(i => {
-    const k=i.sku||i.ten;
-    if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
-    map[k].sl+=i.sl;
-  }));
-  downloadCSV(Object.values(map), 'xuat-huy', 'Số lượng hủy');
-  // Đánh dấu đã xuất
-  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_huy',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
-  showToast(`Đã xuất CSV ${allDocs.length} phiếu`);
-  loadXuatList();
-};
-
-// Xuất Excel (.xlsx) đúng khớp định dạng file mẫu "Xuất hủy" của KiotViet — dùng để Import trực tiếp
-// (an toàn hơn CSV vì đúng phần mở rộng .xlsx mà công cụ Import của KiotViet mong đợi)
-window.exportXuatHuyExcelChoKiotViet = async function() {
-  const from = document.getElementById('xuat-filter-from')?.value;
-  const to = document.getElementById('xuat-filter-to')?.value;
-  const filterX = document.getElementById('xuat-filter-xuat')?.value || 'all';
-  const snap = await getDocs(query(collection(db,'phieu_huy'), orderBy('createdAt','desc')));
-  let allDocs = snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.deleted);
-  allDocs = allDocs.filter(d => {
-    const ds = d.createdAt?.toDate ? d.createdAt.toDate().toISOString().slice(0,10) : '';
-    if (from && ds<from) return false;
-    if (to && ds>to) return false;
-    if (filterX === 'chua' && d.daXuat) return false;
-    if (filterX === 'da' && !d.daXuat) return false;
-    return true;
-  });
-  if (!allDocs.length) { showToast('Không có dữ liệu', true); return; }
-  const map={};
-  allDocs.forEach(p => p.items.forEach(i => {
-    const k=i.sku||i.ten;
-    if (!map[k]) map[k]={ma:i.sku||'',ten:i.ten,sl:0};
-    map[k].sl+=i.sl;
-  }));
-  const rows = Object.values(map);
-  // Đúng khớp header file mẫu thật của KiotViet: Mã hàng | Tên hàng | Đơn vị tính | Số lượng hủy
-  const data = [['Mã hàng','Tên hàng','Đơn vị tính','Số lượng hủy'], ...rows.map(r => [r.ma, r.ten, '', r.sl])];
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['!cols'] = [{wch:18},{wch:32},{wch:12},{wch:14}];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'XuatHuy');
-  XLSX.writeFile(wb, `xuat-huy-kiotviet-${new Date().toISOString().slice(0,10)}.xlsx`);
-  await Promise.all(allDocs.map(d => updateDoc(doc(db,'phieu_huy',d.id), { daXuat:true, xuatAt:serverTimestamp() })));
-  showToast(`Đã xuất Excel ${allDocs.length} phiếu`);
-  loadXuatList();
-};
-
 function buildCSVHeader(loaiPhieu, docs) {
   const nguoiXuat = currentUserData?.ten || currentUser?.email || '';
   const now = new Date();
@@ -17204,7 +17192,7 @@ document.addEventListener('input', e => {
 
 document.addEventListener('DOMContentLoaded', () => {
   makeSKUSearch('nhap-item-ten','nhap-sku-drop',null);
-  makeSKUSearch('xuat-item-ten','xuat-sku-drop','xuat-item-gia', true);
+
   makeSKUSearch('baoca-item-ten','baoca-sku-drop','baoca-dummy-gia');
   makeSKUSearch('edit-item-ten','edit-sku-drop','edit-item-gia', () => editState.collection === 'phieu_huy');
 });
@@ -17714,7 +17702,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v487</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v488</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -17768,7 +17756,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v487</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v488</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -17814,7 +17802,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v487</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v488</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -17901,9 +17889,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
               <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
                 <div class="photo-grid" id="nhap-photos" style="flex:1;min-width:0;display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;margin-top:0;align-items:center"></div>
                 <button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:7px 12px;white-space:nowrap" onclick="openCamera('nhap')">📷 Chụp ảnh</button>
-                <button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:7px 10px;white-space:nowrap" onclick="document.getElementById('nhap-chon-file').click()" title="Chọn ảnh có sẵn">🖼</button>
               </div>
-              <input type="file" id="nhap-chon-file" accept="image/*" multiple style="display:none" onchange="themAnhTuFile(this,'nhap')">
             </div>
             <button class="btn-g" id="btn-nhap-submit" style="margin:0" onclick="submitNhap()">Lưu phiếu chuyển kho</button>
           </div>
@@ -17912,47 +17898,6 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <!-- NHẬP / DANH SÁCH -->
       <div class="panel" id="panel-nhap-ds">
-        <div class="filter-bar">
-          <h4>Lọc phiếu</h4>
-          <div class="row2">
-            <div class="field"><label>Từ ngày</label><input type="date" id="nhap-filter-from"></div>
-            <div class="field"><label>Đến ngày</label><input type="date" id="nhap-filter-to"></div>
-          </div>
-          <div class="field"><label>Người nhập</label><select id="nhap-filter-nv"><option value="">Tất cả</option></select></div>
-          <div class="field"><label>Chiều chuyển</label>
-            <select id="nhap-filter-chieu">
-              <option value="all">Tất cả</option>
-              <option value="san_ch">Kho Online → Cửa hàng</option>
-              <option value="ch_san">Cửa hàng → Kho Online</option>
-            </select>
-          </div>
-          <div class="field"><label>Trạng thái xuất</label>
-            <select id="nhap-filter-xuat">
-              <option value="all">Tất cả</option>
-              <option value="chua">Chưa xuất</option>
-              <option value="da">Đã xuất</option>
-            </select>
-          </div>
-          <div class="field"><label>Trạng thái phiếu</label>
-            <select id="nhap-filter-trangthai">
-              <option value="all">Tất cả</option>
-              <option value="binhthuong">Bình thường</option>
-              <option value="dasua">Đã chỉnh sửa</option>
-              <option value="daxoa">Đã xóa</option>
-            </select>
-          </div>
-          <div class="filter-actions">
-            <button class="btn-apply-g" onclick="applyNhapFilter()">Lọc</button>
-            <button class="btn-clear" onclick="clearNhapFilter()">Xóa lọc</button>
-          </div>
-          <div id="nhap-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            <button class="btn-g" onclick="exportNhapCSV()" style="margin-top:0">Xuất CSV theo bộ lọc</button>
-          </div>
-        </div>
-        <div id="nhap-summary" style="display:none;background:var(--green-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
-          <div style="font-weight:600;color:var(--green);margin-bottom:6px">Tổng theo bộ lọc</div>
-          <div id="nhap-summary-content"></div>
-        </div>
         <div id="nhap-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
 
@@ -17964,96 +17909,21 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <!-- XUẤT / TẠO -->
       <div class="panel" id="panel-xuat-tao">
-        <div class="card" id="xuat-kho-wrap"></div>
-        <div class="card">
-          <div class="card-title">Tìm hàng hóa</div>
-          <div class="field sku-wrap">
-            <label>Tên hàng / SKU</label>
-            <input type="text" id="xuat-item-ten" placeholder="Gõ để tìm..." autocomplete="off">
-            <div class="sku-drop" id="xuat-sku-drop"></div>
-          </div>
-          <div class="row2">
-            <div class="field">
-              <label>Số lượng</label>
-              <div class="qty-ctrl">
-                <button onclick="document.getElementById('xuat-item-sl').value=Math.max(1,(parseInt(document.getElementById('xuat-item-sl').value)||1)-1)">−</button>
-                <input type="number" id="xuat-item-sl" value="1" min="1">
-                <button onclick="document.getElementById('xuat-item-sl').value=(parseInt(document.getElementById('xuat-item-sl').value)||0)+1">+</button>
-              </div>
+        <!-- Giống Bán hàng: chụp ảnh trước (nút ở giữa), rồi mới chọn MỘT loại hàng + số lượng -->
+        <div class="bh-khung" id="xh-khung">
+          <div id="xuat-kho-wrap"></div>
+          <div class="bh-o-hang-trong" id="xh-than" style="margin-top:6px"></div>
+          <div class="bh-day-duoi">
+            <div class="bh-o-tt">
+              <div class="bh-dong-tt"><span>Giá trị hủy</span><b id="xuat-total" style="color:var(--red)">0đ</b></div>
             </div>
-            <div class="field">
-              <label>Giá (₫)</label>
-              <input type="number" id="xuat-item-gia" readonly style="background:#f8f8f8">
-            </div>
+            <button class="btn-r" id="btn-xuat-submit" style="margin:0" onclick="submitXuat()">Lưu phiếu xuất hủy</button>
           </div>
-          <button class="btn-r" style="background:var(--red-mid)" onclick="addXuatItem()">+ Thêm vào phiếu</button>
         </div>
-
-        <div class="card">
-          <div class="card-title">Hàng trong phiếu</div>
-          <div class="items-list-wrap" id="xuat-items-list"><div class="empty-msg">Chưa có hàng nào.</div></div>
-          <div class="total-bar"><span>Tổng giá trị hủy</span><span id="xuat-total" class="r">0₫</span></div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Ảnh minh chứng</div>
-          <div class="photo-grid" id="xuat-photos"><div class="empty-msg">Chưa có ảnh.</div></div>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <button class="btn-outline" style="flex:1" onclick="openCamera('xuat')">Chụp ảnh</button>
-            <button class="btn-outline" style="flex:1" onclick="document.getElementById('xuat-chon-file').click()">Chọn ảnh có sẵn</button>
-          </div>
-          <!-- Máy tính không có camera vẫn thêm được ảnh minh chứng -->
-          <input type="file" id="xuat-chon-file" accept="image/*" multiple style="display:none"
-            onchange="themAnhTuFile(this,'xuat')">
-        </div>
-
-        <button class="btn-r" id="btn-xuat-submit" onclick="submitXuat()">Lưu phiếu xuất hủy</button>
       </div>
 
       <!-- XUẤT / DANH SÁCH -->
       <div class="panel" id="panel-xuat-ds">
-        <div class="filter-bar">
-          <h4>Lọc & Xuất file</h4>
-          <div class="row2">
-            <div class="field"><label>Từ ngày</label><input type="date" id="xuat-filter-from"></div>
-            <div class="field"><label>Đến ngày</label><input type="date" id="xuat-filter-to"></div>
-          </div>
-          <div class="field"><label>Người xuất</label><select id="xuat-filter-nv"><option value="">Tất cả</option></select></div>
-          <div class="field"><label>Kho</label>
-            <select id="xuat-filter-kho">
-              <option value="all">Tất cả</option>
-              <option value="ch">Kho Cửa hàng</option>
-              <option value="san">Kho Sàn</option>
-            </select>
-          </div>
-          <div class="field"><label>Trạng thái xuất</label>
-            <select id="xuat-filter-xuat">
-              <option value="all">Tất cả</option>
-              <option value="chua">Chưa xuất</option>
-              <option value="da">Đã xuất</option>
-            </select>
-          </div>
-          <div class="field"><label>Trạng thái phiếu</label>
-            <select id="xuat-filter-trangthai">
-              <option value="all">Tất cả</option>
-              <option value="binhthuong">Bình thường</option>
-              <option value="dasua">Đã chỉnh sửa</option>
-              <option value="daxoa">Đã xóa</option>
-            </select>
-          </div>
-          <div class="filter-actions">
-            <button class="btn-apply-r" onclick="applyXuatFilter()">Lọc</button>
-            <button class="btn-clear" onclick="clearXuatFilter()">Xóa lọc</button>
-          </div>
-          <div id="xuat-export-card" class="export-card-btn" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-            <button class="btn-r" onclick="exportXuatHuyExcelChoKiotViet()" style="margin-top:0;margin-bottom:8px">Xuất Excel phiếu hủy</button>
-            <button class="btn-outline" onclick="exportXuatCSV()" style="margin-top:0">Xuất CSV theo bộ lọc (lưu nội bộ)</button>
-          </div>
-        </div>
-        <div id="xuat-summary" style="display:none;background:var(--red-bg);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;font-size:13px">
-          <div style="font-weight:600;color:var(--red);margin-bottom:6px">Tổng theo bộ lọc</div>
-          <div id="xuat-summary-content"></div>
-        </div>
         <div id="xuat-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
 
