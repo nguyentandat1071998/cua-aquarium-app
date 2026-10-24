@@ -122,7 +122,7 @@ const NK_COL = {
   so_quy: ['Phiếu chi', 'Sổ quỹ'],
   don_ban_le: ['Đơn bán lẻ', 'Bán hàng'], phieu_tra_hang: ['Phiếu trả hàng', 'Bán hàng'], lenh_in: ['Lệnh in', 'Bán hàng'],
   lich_ca: ['Lịch làm / chấm công', 'Nhân sự'], ca_lam_viec: ['Ca làm việc', 'Nhân sự'], khau_tru: ['Khấu trừ lương', 'Nhân sự'],
-  phu_cap: ['Phụ cấp', 'Nhân sự'], users: ['Tài khoản nhân viên', 'Nhân sự'],
+  phu_cap: ['Phụ cấp', 'Nhân sự'], users: ['Tài khoản nhân viên', 'Nhân sự'], ho_so_nv: ['Hồ sơ nhân viên (CCCD, địa chỉ)', 'Nhân sự'],
   vai_tro: ['Vai trò', 'Thiết lập'], cau_hinh: ['Cấu hình', 'Thiết lập'], settings: ['Cài đặt lương', 'Thiết lập'],
   don_hang_san: ['Đơn sàn', 'Sàn TMĐT'], san_pham_dang: ['Sản phẩm sàn', 'Sàn TMĐT'], nhat_ky_dong_goi: ['Đóng gói', 'Sàn TMĐT'],
   ca_benh: ['Cá bệnh', 'Checklist'], phieu_baoca: ['Báo cá', 'Checklist'], checklist: ['Checklist', 'Checklist']
@@ -663,6 +663,7 @@ function suyCaTuGioVao(caDuoc, phutHienTai) {
 }
 
 async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
+  if (!allCaLamViec.length) await napCaLamViec();
   const ngay = getTodayISO();
   const shiftId = `${ngay}_${currentUser.uid}`;
   const shiftRef = doc(db, 'lich_ca', shiftId);
@@ -675,6 +676,14 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
     const data = snap.data();
     loaiCa = data.loaiCa || 'full';
     caId = data.caId || null;
+    // Ca gãy: đã xong khung 1 (đã ra) -> lần quét này là VÀO KHUNG 2
+    if (data.vaoLuc && data.thoatLuc && !data.vaoLuc2 && layCa(caId)?.khung2) {
+      await updateDoc(shiftRef, { vaoLuc2: serverTimestamp(), gpsOk2: gpsOk, gpsDist2: gpsInfo, isMock2: isMock, photo2: photoData });
+      currentShiftDocId = shiftId; currentShiftNgay = ngay; currentCa = loaiCa; currentCaId = caId;
+      await loadChecklistState(shiftId);
+      showToast('Đã vào khung 2 của ca gãy');
+      return;
+    }
     if (data.vaoLuc) {
       // Đã check-in ca này rồi (mở lại app) — không ghi đè giờ vào, khôi phục checklist
       currentShiftDocId = shiftId;
@@ -842,56 +851,177 @@ window.doiTuanLichCa = function(delta) {
   renderLichCaTab();
 };
 
+// ===== LỊCH LÀM VIỆC: 2 chế độ xem / xếp — Theo nhân viên và Theo ca, ngày nằm ngang =====
+let lichCaCheDo = (() => { try { return localStorage.getItem('lichCaCheDo') || 'nv'; } catch(e) { return 'nv'; } })();
+const THU_NGAN = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+// Giờ của ca, có cả khung thứ hai nếu là ca gãy: "8h30–12h00 · 17h00–21h30"
+function nhanGioCa(ca) {
+  if (!ca) return '';
+  return `${nhanGio(ca.batDau)}–${nhanGio(ca.ketThuc)}` + (ca.khung2 ? ` · ${nhanGio(ca.khung2.batDau)}–${nhanGio(ca.khung2.ketThuc)}` : '');
+}
+const gioTanCa = (ca) => ca?.khung2?.ketThuc ?? ca?.ketThuc;
+function lcTenCaCuaLich(s) { return layCa(s.caId)?.ten || s.tenCa || (s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Ca full'); }
+function lcMauCuaLich(s) { return layCa(s.caId)?.mau || CA_MAU[s.loaiCa] || CA_MAU.full; }
+
 async function renderLichCaTab() {
   const el = document.getElementById('lichca-content');
   if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   if (!allCaLamViec.length) await napCaLamViec();
   const dates = getWeekDatesISO(lichCaWeekOffset);
-  const start = dates[0], end = dates[6];
-  const snap = await getDocs(query(collection(db,'lich_cong_khai'), where('ngay','>=',start), where('ngay','<=',end)));
-  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
-  lichCaShiftsCache = shifts;
+  const snap = await getDocs(query(collection(db, 'lich_cong_khai'), where('ngay', '>=', dates[0]), where('ngay', '<=', dates[6])));
+  lichCaShiftsCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
   lichCaDatesCache = dates;
   const canEdit = coQuyen('lichca_xepca');
+  if (canEdit) {
+    try {
+      if (!lichCaUsersCache) lichCaUsersCache = (await getDocs(collection(db, 'users'))).docs.map(d => ({ id: d.id, ...d.data() }));
+      if (!allVaiTro.length) await loadVaiTro();
+      // Ai đã check-in thì khóa, không đổi / gỡ ca của người đang làm
+      const vl = await getDocs(query(collection(db, 'lich_ca'), where('ngay', '>=', dates[0]), where('ngay', '<=', dates[6])));
+      lichCaVaoLucCache = {};
+      vl.docs.forEach(d => { if (d.data().vaoLuc) lichCaVaoLucCache[d.id] = true; });
+    } catch(e) { console.warn('Không tải được dữ liệu xếp ca:', e.message); }
+  }
+  lcVe();
+}
+
+function lcVe() {
+  const el = document.getElementById('lichca-content');
+  if (!el) return;
+  const dates = lichCaDatesCache, shifts = lichCaShiftsCache || [];
+  const canEdit = coQuyen('lichca_xepca');
   const today = getTodayISO();
-  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
-
-  const daysHtml = dates.map(ngay => {
+  const nut = (k, t) => `<button class="${lichCaCheDo === k ? 'btn-g' : 'btn-outline'}" style="flex:1;margin:0;padding:7px" onclick="lcDoiCheDo('${k}')">${t}</button>`;
+  const dauCot = dates.map(ngay => {
     const d = new Date(ngay + 'T00:00:00');
-    const thu = thuTenFull[d.getDay()];
-    const isToday = ngay === today;
-    const dayShifts = shifts.filter(s => s.ngay === ngay);
-
-    // Gom theo ca thay vì liệt kê phẳng — nhìn là biết ca nào có ai.
-    // Ca sắp theo giờ tan, nên sáng đứng trước chiều, full đứng cuối.
-    const rows = veCacNhomCa(dayShifts, canEdit) ||
-      `<p style="font-size:12px;color:var(--text2);padding:4px 0">Chưa xếp ca</p>`;
-    return `
-      <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <h4 style="font-size:15px;font-weight:700">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
-          ${canEdit ? `<button class="btn-xs" onclick="moFormXepCa('${ngay}')">+ Xếp ca</button>` : ''}
-        </div>
-        <div id="xepca-form-${ngay}"></div>
-        ${rows}
-      </div>`;
+    return `<th class="${ngay === today ? 'lb-homnay' : ''}">${THU_NGAN[d.getDay()]}<br><span>${d.getDate()}/${d.getMonth() + 1}</span></th>`;
   }).join('');
 
+  let hang = '';
+  if (lichCaCheDo === 'nv') {
+    // Hàng = nhân viên: người có ca dùng được (quản lý) + mọi người đã có lịch trong tuần
+    const ds = new Map();
+    if (canEdit) (lichCaUsersCache || []).filter(u => !u.disabled && u.role !== 'admin' && caCuaVaiTro(u.vaiTroId).some(c => c.canXepLich !== false))
+      .forEach(u => ds.set(u.id, u.hoTen || u.ten || u.email));
+    shifts.forEach(s => { if (!ds.has(s.uid)) ds.set(s.uid, s.ten || ''); });
+    const nguoi = [...ds.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'vi'));
+    hang = nguoi.map(([uid, ten]) => `<tr><th class="lb-dau">${escHtml(ten)}</th>${dates.map(ngay => {
+      const s = shifts.find(x => x.ngay === ngay && x.uid === uid);
+      const khoa = !!lichCaVaoLucCache?.[`${ngay}_${uid}`];
+      const ca = s ? layCa(s.caId) : null;
+      const o = s ? `<div class="lb-chip" style="background:${lcMauCuaLich(s)}1A;border-color:${lcMauCuaLich(s)};color:${lcMauCuaLich(s)}">
+          <b>${escHtml(lcTenCaCuaLich(s))}</b>${ca ? `<span>${nhanGioCa(ca).replace(' · ', '<br>')}</span>` : ''}${khoa ? '<span>✓ đã vào ca</span>' : ''}</div>`
+        : (canEdit ? '<div class="lb-them">+</div>' : '');
+      return `<td class="${ngay === today ? 'lb-homnay' : ''}" ${canEdit ? `onclick="lcChonCaNV('${ngay}','${uid}')" style="cursor:pointer"` : ''}>${o}</td>`;
+    }).join('')}</tr>`).join('');
+    if (!nguoi.length) hang = `<tr><td colspan="8" style="padding:16px;color:var(--text2);text-align:center">Chưa có ai trong lịch tuần này.</td></tr>`;
+  } else {
+    // Hàng = ca: ô là danh sách người làm ca đó
+    const ca = caCanXepLich();
+    const caLich = new Set(shifts.map(s => s.caId).filter(Boolean));
+    const dsCa = [...ca, ...allCaLamViec.filter(c => c.canXepLich === false && caLich.has(c.id))];
+    hang = dsCa.map(c => `<tr><th class="lb-dau" style="border-left:3px solid ${c.mau || 'var(--green)'}"><b style="color:${c.mau || 'inherit'}">${escHtml(c.ten)}</b><span>${nhanGioCa(c).replace(' · ', '<br>')}</span></th>${dates.map(ngay => {
+      const ds = shifts.filter(s => s.ngay === ngay && s.caId === c.id).sort((a, b) => String(a.ten).localeCompare(String(b.ten), 'vi'));
+      return `<td class="${ngay === today ? 'lb-homnay' : ''}" ${canEdit ? `onclick="lcChonNVCa('${ngay}','${c.id}')" style="cursor:pointer"` : ''}>
+        ${ds.map(s => `<div class="lb-ten">${escHtml(s.ten || '')}${lichCaVaoLucCache?.[`${ngay}_${s.uid}`] ? ' ✓' : ''}</div>`).join('')}
+        ${canEdit ? '<div class="lb-them">+</div>' : (!ds.length ? '' : '')}</td>`;
+    }).join('')}</tr>`).join('');
+    // Lịch cũ chưa gắn ca trong module
+    const cu = shifts.filter(s => !s.caId || !layCa(s.caId));
+    if (cu.length) hang += `<tr><th class="lb-dau">Ca khác</th>${dates.map(ngay => `<td>${cu.filter(s => s.ngay === ngay).map(s => `<div class="lb-ten">${escHtml(s.ten || '')}</div>`).join('')}</td>`).join('')}</tr>`;
+    if (!dsCa.length) hang = `<tr><td colspan="8" style="padding:16px;color:var(--text2);text-align:center">Chưa có ca làm việc. Vào Thiết lập › Ca làm việc để tạo.</td></tr>`;
+  }
+
   el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:6px">
       <button class="btn-xs" onclick="doiTuanLichCa(-1)">← Tuần trước</button>
-      <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
+      <span style="font-size:13px;font-weight:600;text-align:center">${fmtDateOnly(new Date(dates[0] + 'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6] + 'T00:00:00'))}</span>
       <button class="btn-xs" onclick="doiTuanLichCa(1)">Tuần sau →</button>
     </div>
-    ${canEdit ? `
-    <div class="admin-block" style="margin-bottom:12px">
-      <button class="btn-g" style="width:100%" onclick="moFormXepCaTuan()">Xếp ca cả tuần (tất cả nhân viên)</button>
+    <div style="display:flex;gap:6px;margin-bottom:10px">${nut('nv', 'Theo nhân viên')}${nut('ca', 'Theo ca')}</div>
+    ${canEdit ? `<button class="btn-g" style="width:100%;margin:0 0 6px" onclick="moFormXepCaTuan()">Xếp ca</button>
       <div id="xepca-tuan-form"></div>
-      <button class="btn-outline" style="width:100%;margin-top:8px" onclick="dongBoLichCuSangCongKhai()">🔄 Đồng bộ lịch cũ (chỉ cần bấm 1 lần)</button>
-    </div>` : ''}
-    ${daysHtml}`;
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Chạm vào ô để xếp hoặc đổi ca.</div>` : ''}
+    <div class="lb-khung"><table class="lich-bang">
+      <thead><tr><th class="lb-dau">${lichCaCheDo === 'nv' ? 'Nhân viên' : 'Ca'}</th>${dauCot}</tr></thead>
+      <tbody>${hang}</tbody>
+    </table></div>`;
 }
+window.lcDoiCheDo = function(k) { lichCaCheDo = k; try { localStorage.setItem('lichCaCheDo', k); } catch(e) {} lcVe(); };
+
+// Ghi / gỡ một ô lịch (lich_ca riêng + bản công khai)
+async function lcGhiCa(ngay, uid, caId) {
+  const ca = layCa(caId);
+  const u = (lichCaUsersCache || []).find(x => x.id === uid);
+  const ten = u?.ten || u?.email || (lichCaShiftsCache || []).find(s => s.uid === uid)?.ten || '';
+  const shiftId = `${ngay}_${uid}`;
+  await setDoc(doc(db, 'lich_ca', shiftId), {
+    ngay, uid, ten, caId, tenCa: ca?.ten || '', loaiCa: ca?.loaiCaCu || 'full',
+    ngoaiLich: false, deleted: false, xepBoi: { uid: currentUser.uid, ten: currentUserData.ten || '' },
+    createdAt: serverTimestamp(), vaoLuc: null, thoatLuc: null
+  }, { merge: true });
+  await ghiLichCongKhai(shiftId, { ngay, uid, ten, caId, tenCa: ca?.ten || '', loaiCa: ca?.loaiCaCu || 'full' });
+}
+async function lcBoCa(ngay, uid) {
+  const shiftId = `${ngay}_${uid}`;
+  await updateDoc(doc(db, 'lich_ca', shiftId), { deleted: true, xoaLuc: serverTimestamp(), xoaBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' } });
+  await xoaLichCongKhai(shiftId);
+}
+// Theo nhân viên: chạm ô (người, ngày) -> chọn ca
+window.lcChonCaNV = function(ngay, uid) {
+  if (!coQuyen('lichca_xepca')) return;
+  if (lichCaVaoLucCache?.[`${ngay}_${uid}`]) { showToast('Người này đã vào ca hôm đó — không đổi được', true); return; }
+  const u = (lichCaUsersCache || []).find(x => x.id === uid);
+  const s = (lichCaShiftsCache || []).find(x => x.ngay === ngay && x.uid === uid);
+  const ds = (u ? caCuaVaiTro(u.vaiTroId) : allCaLamViec).filter(c => c.canXepLich !== false)
+    .map(c => ({ gt: c.id, nhan: c.ten, phu: nhanGioCa(c) + (c.khung2 ? ' (ca gãy)' : '') }));
+  if (s) ds.push({ gt: '__bo', nhan: 'Không xếp (nghỉ)', phu: 'Gỡ ca đang xếp' });
+  const d = new Date(ngay + 'T00:00:00');
+  moBangChon(`${u?.hoTen || u?.ten || s?.ten || ''} · ${THU_NGAN[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`, ds, s?.caId || '', async (v) => {
+    try {
+      if (v === '__bo') await lcBoCa(ngay, uid); else await lcGhiCa(ngay, uid, v);
+      showToast(v === '__bo' ? 'Đã gỡ ca' : 'Đã xếp ca');
+      renderLichCaTab();
+    } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+  });
+};
+// Theo ca: chạm ô (ca, ngày) -> tick người làm ca đó
+window.lcChonNVCa = function(ngay, caId) {
+  if (!coQuyen('lichca_xepca')) return;
+  const ca = layCa(caId);
+  const shifts = (lichCaShiftsCache || []).filter(s => s.ngay === ngay);
+  const nv = (lichCaUsersCache || []).filter(u => !u.disabled && u.role !== 'admin' && caCuaVaiTro(u.vaiTroId).some(c => c.id === caId))
+    .sort((a, b) => String(a.hoTen || a.ten).localeCompare(String(b.hoTen || b.ten), 'vi'));
+  const d = new Date(ngay + 'T00:00:00');
+  ddbMoKhung('lc-ca-modal', escHtml(ca?.ten || 'Ca'), `${THU_NGAN[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1} · ${nhanGioCa(ca)}`, nv.length ? nv.map(u => {
+    const s = shifts.find(x => x.uid === u.id);
+    const khoa = !!lichCaVaoLucCache?.[`${ngay}_${u.id}`];
+    const caKhac = s && s.caId !== caId ? lcTenCaCuaLich(s) : '';
+    return `<label style="display:flex;gap:10px;align-items:center;border:1.5px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:6px;cursor:${khoa ? 'not-allowed' : 'pointer'};opacity:${khoa ? .55 : 1}">
+      <input type="checkbox" name="lc-nv" value="${u.id}" ${s?.caId === caId ? 'checked' : ''} ${khoa ? 'disabled' : ''} style="width:18px;height:18px;margin:0">
+      <span style="flex:1"><b style="font-size:14px">${escHtml(u.hoTen || u.ten || u.email)}</b>
+        ${khoa ? '<div style="font-size:11px;color:var(--text2)">Đã vào ca — không đổi được</div>' : caKhac ? `<div style="font-size:11px;color:#D97706">Đang xếp ${escHtml(caKhac)} — tick sẽ chuyển sang ca này</div>` : ''}</span></label>`;
+  }).join('') : '<p class="info-note">Không có nhân viên nào thuộc vai trò dùng ca này.</p>',
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('lc-ca-modal').style.display='none'">Hủy</button>
+     ${nv.length ? `<button class="btn-g" style="flex:1;margin:0" onclick="lcLuuNVCa('${ngay}','${caId}')">Lưu</button>` : ''}`);
+  ddbCanhGiua('lc-ca-modal');
+};
+window.lcLuuNVCa = async function(ngay, caId) {
+  const hop = [...document.querySelectorAll('input[name="lc-nv"]')].filter(x => !x.disabled);
+  const shifts = (lichCaShiftsCache || []).filter(s => s.ngay === ngay);
+  try {
+    let n = 0;
+    for (const x of hop) {
+      const s = shifts.find(y => y.uid === x.value);
+      if (x.checked && s?.caId !== caId) { await lcGhiCa(ngay, x.value, caId); n++; }
+      if (!x.checked && s?.caId === caId) { await lcBoCa(ngay, x.value); n++; }
+    }
+    document.getElementById('lc-ca-modal').style.display = 'none';
+    showToast(n ? `Đã lưu ${n} thay đổi` : 'Không có thay đổi');
+    renderLichCaTab();
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
 
 // Gom ca đã xếp trong một ngày thành từng nhóm. Ca không có ai thì không hiện —
 // ca full không phải ngày nào cũng có người làm.
@@ -910,7 +1040,7 @@ function veCacNhomCa(dayShifts, canEdit) {
   // phụ: ca DÀI hơn xếp sau — full (13 tiếng) đứng dưới chiều (8 tiếng).
   const mocSap = (khoa) => {
     const ca = layCa(khoa);
-    if (ca) return { tan: ca.ketThuc, dai: ca.ketThuc - ca.batDau };
+    if (ca) return { tan: gioTanCa(ca), dai: gioTanCa(ca) - ca.batDau };
     const cu = {
       sang:  { tan: 16 * 60 + 30, dai: 8 * 60 },
       chieu: { tan: 21 * 60 + 30, dai: 8 * 60 },
@@ -979,9 +1109,11 @@ function renderShiftRow(s, canEdit) {
 
 // ===== CHẤM CÔNG (chỉ Admin/Quản lý) — dữ liệu check-in/out thực tế =====
 function renderChamCongRow(s) {
-  const caLabel = s.loaiCa === 'sang' ? 'Ca sáng' : s.loaiCa === 'chieu' ? 'Ca chiều' : 'Ca Full';
+  const caLabel = lcTenCaCuaLich(s);
   const today = getTodayISO();
-  const caInfo = CA_GIO[s.loaiCa] || CA_GIO.full;
+  const caInfo = layCa(s.caId) || CA_GIO[s.loaiCa] || CA_GIO.full;
+  const vao2 = s.vaoLuc2?.seconds ? new Date(s.vaoLuc2.seconds * 1000) : null;
+  const ra2 = s.thoatLuc2?.seconds ? new Date(s.thoatLuc2.seconds * 1000) : null;
   const vaoDate = s.vaoLuc?.seconds ? new Date(s.vaoLuc.seconds*1000) : null;
   const raDate = s.thoatLuc?.seconds ? new Date(s.thoatLuc.seconds*1000) : null;
   const qua12hDem = s.ngay < today;
@@ -1004,12 +1136,23 @@ function renderChamCongRow(s) {
     const som = caInfo.ketThuc - raPhut;
     if (som > 5) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Về sớm ${som}p</span>`);
   }
+  if (caInfo.khung2) {
+    if (vao2) {
+      const tre2 = vao2.getHours() * 60 + vao2.getMinutes() - caInfo.khung2.batDau;
+      if (tre2 > 0) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Khung 2 trễ ${tre2}p</span>`);
+    } else if (raDate && s.ngay <= today) badges.push(`<span class="rbadge" style="background:#EEE;color:var(--text2)">Chưa vào khung 2</span>`);
+    if (ra2) {
+      const som2 = caInfo.khung2.ketThuc - (ra2.getHours() * 60 + ra2.getMinutes());
+      if (som2 > 5) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">Khung 2 về sớm ${som2}p</span>`);
+    } else if (vao2) badges.push(`<span class="rbadge" style="background:#FEF3C7;color:#B45309">Đang làm khung 2</span>`);
+  }
   if (s.gpsOk === false) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS vào lệch</span>`);
   if (s.thoatGpsOk === false) badges.push(`<span class="rbadge" style="background:var(--red-bg);color:var(--red)">GPS ra lệch</span>`);
   if (s.ngoaiLich) badges.push(`<span class="rbadge" style="background:#EDE9FE;color:#5B21B6">Ngoài lịch</span>`);
 
   const tongGio = (s.khongCheckout || (vaoDate && !raDate && qua12hDem)) ? '0h'
-    : (vaoDate && raDate) ? ((raDate - vaoDate)/3600000).toFixed(1)+'h' : '—';
+    : (vaoDate && raDate) ? (((raDate - vaoDate) + (vao2 && ra2 ? ra2 - vao2 : 0))/3600000).toFixed(1)+'h' : '—';
+  const hh = (d) => d ? d.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—';
 
   return `
     <div class="user-row" style="flex-direction:column;align-items:flex-start;gap:4px;padding:8px 0">
@@ -1017,6 +1160,7 @@ function renderChamCongRow(s) {
       <div style="font-size:12px;color:var(--text2)">
         Vào: ${vaoDate ? vaoDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
         · Ra: ${raDate ? raDate.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'}) : '—'}
+        ${caInfo.khung2 ? ` · Vào 2: ${hh(vao2)} · Ra 2: ${hh(ra2)}` : ''}
         · Tổng: ${tongGio}
       </div>
       ${badges.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${badges.join('')}</div>` : ''}
@@ -1083,6 +1227,7 @@ async function renderChamCongTab() {
   const el = document.getElementById('chamcong-content');
   if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
+  if (!allCaLamViec.length) await napCaLamViec();
   const dates = getWeekDatesISO(chamCongWeekOffset);
   const start = dates[0], end = dates[6];
   // Không có quyền xem chấm công mọi người: chỉ hỏi máy chủ ca của chính mình
@@ -1539,12 +1684,23 @@ async function xuLyCheckout() {
   huyCheckout();
 
   statusEl.textContent = '⏳ Đang lưu...';
+  let laKhung1CaGay = false;
   if (currentShiftDocId) {
-    await updateDoc(doc(db, 'lich_ca', currentShiftDocId), {
-      thoatLuc: serverTimestamp(),
-      thoatGpsOk: gpsOk, thoatGpsDist: gpsInfo, thoatIsMock: isMock,
-      thoatPhoto: photoData
-    });
+    // Ca gãy đang ở khung 2 -> ghi giờ ra khung 2; còn lại ghi giờ ra như thường
+    let dd = {};
+    try { dd = (await getDoc(doc(db, 'lich_ca', currentShiftDocId))).data() || {}; } catch(e) {}
+    if (dd.vaoLuc2 && !dd.thoatLuc2) {
+      await updateDoc(doc(db, 'lich_ca', currentShiftDocId), {
+        thoatLuc2: serverTimestamp(), thoatGpsOk2: gpsOk, thoatGpsDist2: gpsInfo, thoatIsMock2: isMock, thoatPhoto2: photoData
+      });
+    } else {
+      await updateDoc(doc(db, 'lich_ca', currentShiftDocId), {
+        thoatLuc: serverTimestamp(),
+        thoatGpsOk: gpsOk, thoatGpsDist: gpsInfo, thoatIsMock: isMock,
+        thoatPhoto: photoData
+      });
+      laKhung1CaGay = !!layCa(dd.caId)?.khung2 && !dd.vaoLuc2;
+    }
   } else {
     showToast('Không tìm thấy phiếu ca để checkout, đã lưu thoát ca cục bộ', true);
   }
@@ -1552,7 +1708,7 @@ async function xuLyCheckout() {
   if (!gpsOk) {
     showToast(`Quét mã ngoài khu vực cửa hàng!!! (${gpsInfo})`, true);
   } else {
-    showToast('Check-out thành công!');
+    showToast(laKhung1CaGay ? 'Đã ra khung 1 — tới giờ khung 2 thì quét QR vào ca lại' : 'Check-out thành công!');
   }
 
   currentCa = null;
@@ -1692,7 +1848,7 @@ async function tryResumeShift() {
     const snap = await getDoc(doc(db, 'lich_ca', shiftId));
     if (snap.exists() && !snap.data().deleted) {
       const data = snap.data();
-      if (data.vaoLuc && !data.thoatLuc && !data.khongCheckout) {
+      if ((data.vaoLuc && !data.thoatLuc && !data.khongCheckout) || (data.vaoLuc2 && !data.thoatLuc2 && !data.khongCheckout)) {
         currentShiftDocId = shiftId;
         currentShiftNgay = ngay;
         currentCa = data.loaiCa || 'full';
@@ -4991,6 +5147,20 @@ function tinhThuongDonTheoCongThuc(d, ct) {
   return coDinh + phanTram;
 }
 
+// Tách thưởng đóng gói theo công thức của NGƯỜI ĐÓNG GÓI (không phải người đang xem bảng lương)
+function tachThuongDonGoi(d, ct) {
+  const coDinh = Number(ct.thuongMoiDonGoi) || 0;
+  const tong = tinhThuongDonTheoCongThuc(d, ct);
+  return { thuongCoDinh: coDinh, thuongDoanhThu: Math.max(0, tong - coDinh) };
+}
+// Hàng thuộc nhóm tươi sống? Chọn nhóm cha (VD "Cá cảnh") là gồm luôn mọi nhóm con bên dưới.
+function laHangTuoi(sku, tapNhom) {
+  if (!sku || !tapNhom || !tapNhom.size) return false;
+  const duong = nhomCuoiCuaSku(sku);
+  if (!duong) return false;
+  for (const n of tapNhom) if (duong === n || duong.startsWith(n + ' > ')) return true;
+  return false;
+}
 function tinhThuongDon(d) {
   const tt = trangThaiHienThi(d);
   const coDinh = Number(CONG_THUC_LUONG.thuongMoiDonGoi) || 0;
@@ -15765,9 +15935,11 @@ function phutMotCong() {
   return GIO_MOT_CONG * 60;
 }
 
-// Giờ có mặt tại cửa hàng (chưa trừ nghỉ)
+// Giờ có mặt tại cửa hàng (chưa trừ nghỉ). Ca gãy cộng cả hai khung.
 function gioCoMat(ca) {
-  return ((Number(ca?.ketThuc) || 0) - (Number(ca?.batDau) || 0)) / 60;
+  const k1 = (Number(ca?.ketThuc) || 0) - (Number(ca?.batDau) || 0);
+  const k2 = ca?.khung2 ? (Number(ca.khung2.ketThuc) || 0) - (Number(ca.khung2.batDau) || 0) : 0;
+  return (k1 + k2) / 60;
 }
 
 function nhanGio(phut) {
@@ -15823,14 +15995,14 @@ function veDanhSachCa() {
                     border-radius:10px;padding:12px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
             <div style="flex:1;min-width:0">
-              <b style="font-size:15px">${escHtml(c.ten)}</b>
+              <b style="font-size:15px">${escHtml(c.ten)}</b>${c.khung2 ? ' <span style="font-size:11px;color:#7C3AED;font-weight:600">CA GÃY</span>' : ''}
               <div style="font-size:13px;color:var(--text2);margin-top:2px">
-                ${nhanGio(c.batDau)} – ${nhanGio(c.ketThuc)}
+                ${nhanGioCa(c)}
                 <span style="font-size:11px">(có mặt ${gioCoMat(c).toFixed(1).replace('.0','')}h)</span>
               </div>
               <div style="font-size:12px;margin-top:2px">
-                Làm thực <b>${(Number(c.gioLamThuc) || GIO_MOT_CONG)}h</b>
-                → <b style="color:var(--green)">${soCongCuaCa(c).toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} công</b>
+                Tính lương: <b style="color:var(--green)">${soCongCuaCa(c).toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')} công</b>
+                <span style="color:var(--text2)">(${(Number(c.gioLamThuc) || GIO_MOT_CONG)} giờ làm, cứ ${GIO_MOT_CONG} giờ = 1 công)</span>
               </div>
               <div style="font-size:11px;color:var(--text2);margin-top:3px">
                 ${vt.length ? 'Áp dụng: ' + vt.map(escHtml).join(', ') : 'Áp dụng cho mọi vai trò'}
@@ -15924,8 +16096,10 @@ window.moSuaCa = function(caId) {
           </div>
         </div>
 
+        <div id="ca-khung2-wrap"></div>
+
         <div class="field">
-          <label>Giờ làm thực (đã trừ nghỉ giữa ca)</label>
+          <label>Số giờ tính lương (giờ có mặt trừ thời gian nghỉ)</label>
           <input type="number" id="ca-gio-thuc" value="${c?.gioLamThuc ?? c?.gioMotCong ?? 8}"
             min="0.5" max="24" step="0.5" oninput="caTinhLaiCong()">
           <div style="font-size:11px;color:var(--text2);margin-top:3px" id="ca-goi-y-cong"></div>
@@ -15971,8 +16145,36 @@ window.moSuaCa = function(caId) {
       </div>
     </div>`;
   m.style.display = 'flex';
+  caKhung2 = c?.khung2 ? { ...c.khung2 } : null;
+  caVeKhung2();
   caTinhLaiCong();   // hiện số công ngay khi mở
 };
+// Ca gãy: thêm một khung giờ vào–ra thứ hai trong ngày (VD 8h30–12h00 và 17h00–21h30)
+let caKhung2 = null;
+const caGioInput = (p) => `${String(Math.floor((p ?? 0) / 60)).padStart(2, '0')}:${String((p ?? 0) % 60).padStart(2, '0')}`;
+function caVeKhung2() {
+  const w = document.getElementById('ca-khung2-wrap');
+  if (!w) return;
+  w.innerHTML = caKhung2 ? `
+    <div style="border:1.5px dashed #A78BFA;border-radius:8px;padding:8px 10px;margin-bottom:10px;background:#FAF5FF">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <b style="font-size:12.5px;color:#7C3AED">Khung 2 (ca gãy)</b>
+        <button class="btn-xs" onclick="caBoKhung2()">✕ Bỏ khung 2</button>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div class="field" style="flex:1;margin:0"><label>Giờ vào 2</label><input type="time" id="ca-vao2" value="${caGioInput(caKhung2.batDau)}" oninput="caTinhLaiCong()"></div>
+        <div class="field" style="flex:1;margin:0"><label>Giờ ra 2</label><input type="time" id="ca-ra2" value="${caGioInput(caKhung2.ketThuc)}" oninput="caTinhLaiCong()"></div>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:4px">Nhân viên quét QR vào/ra 2 lần trong ngày: vào–ra khung 1, rồi vào–ra khung 2.</div>
+    </div>` : `<button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="caThemKhung2()">+ Thêm giờ vào-ra (ca gãy)</button>`;
+}
+window.caThemKhung2 = function() {
+  const doiPhut = (v) => { const [g, p] = String(v || '').split(':').map(Number); return (g || 0) * 60 + (p || 0); };
+  const ra1 = doiPhut(document.getElementById('ca-ra')?.value) || 12 * 60;
+  caKhung2 = { batDau: Math.min(ra1 + 4 * 60, 23 * 60), ketThuc: Math.min(ra1 + 8 * 60, 23 * 60 + 59) };
+  caVeKhung2(); caTinhLaiCong();
+};
+window.caBoKhung2 = function() { caKhung2 = null; caVeKhung2(); caTinhLaiCong(); };
 
 // Hiện ngay số công tương ứng khi Admin gõ giờ làm thực
 window.caTinhLaiCong = function() {
@@ -15980,11 +16182,14 @@ window.caTinhLaiCong = function() {
   const el = document.getElementById('ca-goi-y-cong');
   if (!el) return;
   const cong = gio / GIO_MOT_CONG;
+  const doiPhut = (v) => { const [g, p] = String(v || '').split(':').map(Number); return (g || 0) * 60 + (p || 0); };
+  const coMat = ((doiPhut(document.getElementById('ca-ra')?.value) - doiPhut(document.getElementById('ca-vao')?.value))
+    + (caKhung2 ? doiPhut(document.getElementById('ca-ra2')?.value) - doiPhut(document.getElementById('ca-vao2')?.value) : 0)) / 60;
   el.innerHTML = gio
-    ? `Chuẩn ${GIO_MOT_CONG} giờ = 1 công, nên ca này tính
-       <b style="color:var(--green)">${cong.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')} công</b>.
-       Lương ca = đơn giá một công × số này.`
-    : `Nhập số giờ làm thực tế, đã trừ thời gian nghỉ giữa ca.`;
+    ? `Có mặt ${coMat > 0 ? coMat.toFixed(1).replace('.0', '') : '?'} giờ. Cứ ${GIO_MOT_CONG} giờ = 1 công, nên ca này được
+       <b style="color:var(--green)">${cong.toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')} công</b>
+       → lương ca = đơn giá 1 công × ${cong.toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')}.`
+    : `Nhập số giờ làm (giờ có mặt trừ thời gian nghỉ giữa ca).`;
 };
 
 window.luuCa = async function(caId) {
@@ -15998,12 +16203,19 @@ window.luuCa = async function(caId) {
   const batDau = doiPhut(document.getElementById('ca-vao')?.value);
   const ketThuc = doiPhut(document.getElementById('ca-ra')?.value);
   if (ketThuc <= batDau) { showToast('Giờ ra phải sau giờ vào', true); return; }
+  let khung2 = null;
+  if (caKhung2) {
+    const b2 = doiPhut(document.getElementById('ca-vao2')?.value), k2 = doiPhut(document.getElementById('ca-ra2')?.value);
+    if (b2 < ketThuc) { showToast('Giờ vào 2 phải sau giờ ra khung 1', true); return; }
+    if (k2 <= b2) { showToast('Giờ ra 2 phải sau giờ vào 2', true); return; }
+    khung2 = { batDau: b2, ketThuc: k2 };
+  }
 
   const vaiTroIds = [...document.querySelectorAll('.ca-vaitro')]
     .filter(x => x.checked).map(x => x.value);
 
   const duLieu = {
-    ten, batDau, ketThuc,
+    ten, batDau, ketThuc, khung2,
     gioLamThuc: Number(document.getElementById('ca-gio-thuc')?.value) || GIO_MOT_CONG,
     mau: document.getElementById('ca-mau')?.value || '#16A34A',
     canXepLich: document.getElementById('ca-xep-lich')?.checked !== false,
@@ -16214,15 +16426,17 @@ async function tinhLuongThang(thang) {
       n.treGio = n.phutTre > 0 && !n.daXuLyTre;
     }
 
+    if (ca.vaoLuc2?.seconds) n.vao2 = new Date(ca.vaoLuc2.seconds * 1000);
+    if (ca.thoatLuc2?.seconds) n.ra2 = new Date(ca.thoatLuc2.seconds * 1000);
     if (n.vao && n.ra) {
-      n.phut = Math.max(0, Math.round((n.ra - n.vao) / 60000));
+      n.phut = Math.max(0, Math.round((n.ra - n.vao) / 60000)) + (n.vao2 && n.ra2 ? Math.max(0, Math.round((n.ra2 - n.vao2) / 60000)) : 0);
       // Lương tính theo SỐ CÔNG của ca, không theo thời gian có mặt — giữa ca có
       // nghỉ nên ở lâu hơn không có nghĩa làm nhiều hơn. Ca full 11 giờ làm thực
       // được 1,375 công.
       n.luong = Math.round(donGia * n.soCong);
 
       // Làm thêm: chỉ tính khi quản lý đã duyệt
-      n.phutLamThem = tinhPhutLamThem(n.ra, gioCa.ketThuc);
+      n.phutLamThem = gioCa.khung2 ? (n.ra2 ? tinhPhutLamThem(n.ra2, gioCa.khung2.ketThuc) : 0) : tinhPhutLamThem(n.ra, gioCa.ketThuc);
       n.lamThemDaDuyet = !!ca.lamThemDuyet;
       if (n.phutLamThem && n.lamThemDaDuyet) {
         n.tienLamThem = Math.round(donGia / phutMotCong() * n.phutLamThem * HE_SO_LAM_THEM);
@@ -16242,7 +16456,7 @@ async function tinhLuongThang(thang) {
     for (const h of (d.dongHang || [])) {
       const sku = allSKUs.find(x => x.sku === h.sku);
       const tienDong = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-      if (sku && nhomTuoi.has(nhomCuoiCuaSku(sku))) n.dtDoTuoi += tienDong;
+      if (laHangTuoi(sku, nhomTuoi)) n.dtDoTuoi += tienDong;
       else n.dtPhuKien += tienDong;
     }
     // Tiền trả lại trừ đều vào phụ kiện cho đơn giản; sai số nhỏ, không đáng phức tạp hóa
@@ -16256,7 +16470,7 @@ async function tinhLuongThang(thang) {
     n.soDonGoi++;
     const don = allDonHangSan.find(x => x.maDonSan === qt.maDonSan || x.maHoaDon === qt.maHoaDon);
     if (don) {
-      const t = tinhThuongDon(don);
+      const t = tachThuongDonGoi(don, ct);
       n.thuongDonGoi = (n.thuongDonGoi || 0) + (t.thuongCoDinh || 0);
       n.thuongDTGoi = (n.thuongDTGoi || 0) + (t.thuongDoanhThu || 0);
     } else {
@@ -16399,7 +16613,8 @@ async function tinhLuongTatCa(thang) {
     const soCong = caLV ? soCongCuaCa(caLV) : 1;
 
     if (ca.vaoLuc?.seconds && ca.thoatLuc?.seconds) {
-      const phut = Math.max(0, Math.round((ca.thoatLuc.seconds - ca.vaoLuc.seconds) / 60));
+      const phut = Math.max(0, Math.round((ca.thoatLuc.seconds - ca.vaoLuc.seconds) / 60))
+        + (ca.vaoLuc2?.seconds && ca.thoatLuc2?.seconds ? Math.max(0, Math.round((ca.thoatLuc2.seconds - ca.vaoLuc2.seconds) / 60)) : 0);
       n.soCa++; n.phut += phut;
       n.tongCong = (n.tongCong || 0) + soCong;
       n.luong += Math.round(donGia * soCong);
@@ -16412,7 +16627,14 @@ async function tinhLuongTatCa(thang) {
     }
     if (ca.vaoLuc?.seconds) {
       const v = new Date(ca.vaoLuc.seconds * 1000);
-      if (v.getHours() * 60 + v.getMinutes() > gioCa.batDau) n.soTre++;
+      const tre = v.getHours() * 60 + v.getMinutes() - gioCa.batDau;
+      if (tre > 0) n.soTre++;
+      // Trừ đi trễ — giống hệt cách tính ở bảng chi tiết từng người (trước đây bảng tháng bỏ sót)
+      const ctU = congThucCuaVaiTro(u.vaiTroId);
+      if (ctU.bat?.truTre && tre > (Number(ctU.phutChoTre) || 0) && !(ca.dieuChinhCa || ca.dieuChinhTre)) {
+        const tru = Math.round((Number(ctU.tienTruTre) || 0) + tre * (Number(ctU.truTheoPhut) || 0));
+        n.khauTru += tru; n.truTre = (n.truTre || 0) + tru;
+      }
     }
   }
 
@@ -16427,7 +16649,7 @@ async function tinhLuongTatCa(thang) {
     if (!ct.bat?.donGoi) continue;
     const don = allDonHangSan.find(x => x.maDonSan === q.maDonSan || x.maHoaDon === q.maHoaDon);
     if (don) {
-      const t = tinhThuongDon(don);
+      const t = tachThuongDonGoi(don, ct);
       n.thuongDon += t.thuongCoDinh || 0;
       n.thuongDT += t.thuongDoanhThu || 0;
     } else {
@@ -16456,13 +16678,16 @@ async function tinhLuongTatCa(thang) {
     dtCuaHang += thucThu;
     n.dtCaNhan = (n.dtCaNhan || 0) + thucThu;
 
-    // Doanh thu toàn cửa hàng, tách theo nhóm
+    // Doanh thu toàn cửa hàng, tách theo nhóm — trừ tiền trả hàng (tính vào phụ kiện, như thưởng cá nhân)
+    let chTuoi = 0, chPk = 0;
     for (const h of (d.dongHang || [])) {
       const sku = allSKUs.find(x => x.sku === h.sku);
       const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-      if (sku && nhomTuoiChung.has(nhomCuoiCuaSku(sku))) dtCuaHangTuoi += tien;
-      else dtCuaHangPhuKien += tien;
+      if (laHangTuoi(sku, nhomTuoiChung)) chTuoi += tien; else chPk += tien;
     }
+    const truVaoTuoi = Math.max(0, daTra - chPk);
+    dtCuaHangTuoi += Math.max(0, chTuoi - truVaoTuoi);
+    dtCuaHangPhuKien += Math.max(0, chPk - daTra);
 
     if (ct.bat?.banQuay) {
       const nhomTuoi = new Set(ct.nhomDoTuoi || []);
@@ -16470,8 +16695,9 @@ async function tinhLuongTatCa(thang) {
       for (const h of (d.dongHang || [])) {
         const sku = allSKUs.find(x => x.sku === h.sku);
         const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-        if (sku && nhomTuoi.has(nhomCuoiCuaSku(sku))) tuoi += tien; else pk += tien;
+        if (laHangTuoi(sku, nhomTuoi)) tuoi += tien; else pk += tien;
       }
+      tuoi = Math.max(0, tuoi - Math.max(0, daTra - pk));
       pk = Math.max(0, pk - daTra);
       n.thuongDon += Number(ct.thuongMoiDonBan) || 0;
       n.thuongDT += Math.round(tuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
@@ -16493,7 +16719,7 @@ async function tinhLuongTatCa(thang) {
         const tien = Number(it.tong) || 0;
         // Nhóm tươi sống lấy từ công thức của vai trò đầu tiên có bật — hàng hủy
         // là hàng chung, không thuộc riêng ai
-        if (sku && nhomTuoiChung.has(nhomCuoiCuaSku(sku))) tienHongTuoi += tien;
+        if (laHangTuoi(sku, nhomTuoiChung)) tienHongTuoi += tien;
         else tienHongPhuKien += tien;
       }
     }
@@ -16916,6 +17142,8 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
     const snap = await getDoc(ref);
     if (!snap.exists()) { showToast('Không tìm thấy ca này', true); return; }
     const ca = snap.data();
+    const caLV = layCa(ca.caId);
+    const gioThat = caLV || gioCa;
 
     const capNhat = {
       dieuChinhCa: {
@@ -16928,12 +17156,18 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
 
     if (thieuGioRa) {
       const ra = new Date(ngay + 'T00:00:00');
-      ra.setHours(Math.floor(gioCa.ketThuc / 60), gioCa.ketThuc % 60, 0, 0);
-      capNhat.thoatLuc = ra;
+      // Ca gãy đang ở khung 2: bổ sung giờ ra khung 2
+      if (ca.vaoLuc2 && !ca.thoatLuc2 && gioThat.khung2) {
+        ra.setHours(Math.floor(gioThat.khung2.ketThuc / 60), gioThat.khung2.ketThuc % 60, 0, 0);
+        capNhat.thoatLuc2 = ra;
+      } else {
+        ra.setHours(Math.floor(gioThat.ketThuc / 60), gioThat.ketThuc % 60, 0, 0);
+        capNhat.thoatLuc = ra;
+      }
       capNhat.khongCheckout = false;
     } else {
       const vao = new Date(ngay + 'T00:00:00');
-      vao.setHours(Math.floor(gioCa.batDau / 60), gioCa.batDau % 60, 0, 0);
+      vao.setHours(Math.floor(gioThat.batDau / 60), gioThat.batDau % 60, 0, 0);
       capNhat.vaoLuc = vao;
       capNhat.vaoLucGoc = ca.vaoLucGoc || ca.vaoLuc;   // không ghi đè nếu đã sửa lần trước
     }
@@ -17199,6 +17433,10 @@ function nvVeForm(u) {
       <div class="field" style="flex:1"><label>Ngày vào làm</label><input id="nvf-nvl" type="date" value="${v(u?.ngayVaoLam)}"></div>
     </div>
     <div class="field"><label>Số điện thoại</label><input id="nvf-sdt" inputmode="tel" maxlength="15" value="${v(u?.sdt)}"></div>
+    <div class="field"><label>Số CCCD</label><input id="nvf-cccd" inputmode="numeric" maxlength="12" value="${v(nvForm.hs?.cccd)}" placeholder="12 số"></div>
+    <div class="field"><label>Địa chỉ thường trú</label><input id="nvf-dctt" maxlength="200" value="${v(nvForm.hs?.diaChiThuongTru)}"></div>
+    <div class="field"><label>Chỗ ở hiện nay</label><input id="nvf-choo" maxlength="200" value="${v(nvForm.hs?.choOHienNay)}"></div>
+    <div style="font-size:11px;color:var(--text2);margin:-4px 0 10px">CCCD và địa chỉ lưu riêng, chỉ Admin xem được.</div>
     ${moi ? `
     <div class="field"><label>Email đăng nhập</label><input id="nvf-email" type="email" autocomplete="off"></div>
     <div class="field"><label>Mật khẩu (tối thiểu 6 ký tự)</label><input id="nvf-mk" type="password" autocomplete="new-password"></div>` : ''}
@@ -17217,7 +17455,7 @@ function nvVeForm(u) {
 window.nvMoThem = async function() {
   if (currentUserData.role !== 'admin') return;
   if (!allVaiTro.length) await loadVaiTro();
-  nvForm = { uid: null, vaiTroId: allVaiTro[0]?.id || '', capBac: '', luongCfg: await getLuongConfig() };
+  nvForm = { uid: null, vaiTroId: allVaiTro[0]?.id || '', capBac: '', luongCfg: await getLuongConfig(), hs: {} };
   nvVeForm(null);
   setTimeout(() => document.getElementById('nvf-hoten')?.focus(), 50);
 };
@@ -17225,7 +17463,8 @@ window.nvMoSua = async function(uid) {
   if (currentUserData.role !== 'admin') return;
   const u = allUsersCache.find(x => x.id === uid);
   if (!u) return;
-  nvForm = { uid, vaiTroId: u.vaiTroId || '', capBac: u.capBac || '', luongCfg: await getLuongConfig() };
+  nvForm = { uid, vaiTroId: u.vaiTroId || '', capBac: u.capBac || '', luongCfg: await getLuongConfig(), hs: {} };
+  try { const h = await getDoc(doc(db, 'ho_so_nv', uid)); nvForm.hs = h.exists() ? h.data() : {}; } catch(e) {}
   nvVeForm(u);
 };
 window.nvChonVaiTro = function() {
@@ -17251,6 +17490,9 @@ window.nvLuu = async function() {
   const hoTen = g('nvf-hoten'), tenGoi = g('nvf-ten');
   if (!hoTen) { showToast('Nhập họ tên', true); return; }
   const hoSo = { hoTen, ten: tenGoi || hoTen, ngaySinh: g('nvf-ns'), ngayVaoLam: g('nvf-nvl'), sdt: g('nvf-sdt'), capBac: nvForm.capBac || '' };
+  const cccd = g('nvf-cccd').replace(/\s/g, '');
+  if (cccd && !/^\d{9}$|^\d{12}$/.test(cccd)) { showToast('Số CCCD phải có 12 số (CMND cũ 9 số)', true); return; }
+  const hoSoRieng = { cccd, diaChiThuongTru: g('nvf-dctt'), choOHienNay: g('nvf-choo'), suaLuc: serverTimestamp() };
   const nut = document.getElementById('nvf-luu');
   if (nvForm.uid) {
     const cu = allUsersCache.find(x => x.id === nvForm.uid) || {};
@@ -17258,6 +17500,7 @@ window.nvLuu = async function() {
     try {
       nut.disabled = true;
       await updateDoc(doc(db, 'users', nvForm.uid), { ...hoSo, vaiTroId: nvForm.vaiTroId || null });
+      await setDoc(doc(db, 'ho_so_nv', nvForm.uid), hoSoRieng, { merge: true });
       let loi = '';
       if (doiVT) { const kq = await dongBoQuyen({ uid: nvForm.uid }); if (!kq.success) loi = kq.error || 'lỗi'; }
       document.getElementById('nv-form-modal').style.display = 'none';
@@ -17276,6 +17519,7 @@ window.nvLuu = async function() {
     const cred = await createUserWithEmailAndPassword(secondaryAuth, email, mk);
     const uid = cred.user.uid;
     await setDoc(doc(db, 'users', uid), { ...hoSo, email, role: laAdminMoi ? 'admin' : 'nhan_vien', vaiTroId: laAdminMoi ? null : nvForm.vaiTroId, createdAt: serverTimestamp() });
+    await setDoc(doc(db, 'ho_so_nv', uid), hoSoRieng, { merge: true });
     await signOut(secondaryAuth);
     await dongBoQuyen({ uid });
     document.getElementById('nv-form-modal').style.display = 'none';
@@ -17379,7 +17623,10 @@ function veChonNhomTuoi(vaiTroId, daChon) {
   const chon = ctNhomDaChon[vaiTroId] || [];
   const goTim = ctNhomDangGo[vaiTroId] || '';
 
-  const tatCa = [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean))].sort();
+  // Gợi ý cả nhóm cha: chọn "Cá cảnh" là gồm mọi nhóm con bên dưới
+  const tatCa = [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean).flatMap(p => {
+    const phan = p.split(' > '); return phan.map((_, i) => phan.slice(0, i + 1).join(' > '));
+  }))].sort();
   const tim = goTim.trim().toLowerCase();
   const goiY = tim
     ? tatCa.filter(n => !chon.includes(n) && n.toLowerCase().includes(tim)).slice(0, 8)
@@ -17466,7 +17713,7 @@ function veKhoiCongThucThuong(vaiTroId) {
       ${oSo('phanTramDoTuoi', 'Hàng tươi sống', 'Cá, tép, cây thủy sinh...', '%')}
       ${oSo('phanTramPhuKien', 'Phụ kiện', 'Thiết bị, thức ăn, hàng khô...', '%')}
       <div style="margin-bottom:8px;position:relative;z-index:100">
-        <div style="font-size:13px;margin-bottom:4px">Nhóm hàng tính là tươi sống</div>
+        <div style="font-size:13px;margin-bottom:4px">Nhóm hàng tính là tươi sống <span style="font-size:11px;color:var(--text2)">(chọn nhóm cha là gồm cả nhóm con)</span></div>
         <div id="${id('nhom')}"></div>
       </div>`;
     if (muc.key === 'dtCaNhan') return oSo('phanTramDTCaNhan', 'Phần trăm doanh thu cá nhân',
@@ -18406,6 +18653,7 @@ async function renderBaoCaoTab() {
     el.innerHTML = `<p class="info-note">Bạn không có quyền xem Báo cáo ngày.</p>`;
     return;
   }
+  if (!allCaLamViec.length) await napCaLamViec();
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   batDauTheoDoiNhanVien();
   if (!allUsersCache.length) await new Promise(r => setTimeout(r, 700));
@@ -18444,13 +18692,20 @@ function renderBaoCaoRow(u, ca) {
   } else if (tt.loai === 'nghidotxuat') {
     noiDungHtml = `<span class="baocao-badge" style="background:#FEE2E2;color:#DC2626">Nghỉ đột xuất</span>`;
   } else {
-    const caInfo = CA_GIO[ca.loaiCa] || CA_GIO.full;
+    const caInfo = layCa(ca.caId) || CA_GIO[ca.loaiCa] || CA_GIO.full;
     const vao = tinhTrangGio(ca.vaoLuc, caInfo.batDau, 'vao');
     const ra = ca.thoatLuc ? tinhTrangGio(ca.thoatLuc, caInfo.ketThuc, 'ra')
       : (ca.khongCheckout ? { label: 'Không check-out', mau: '#DC2626', bg: '#FEE2E2' } : { label: 'Đang trong ca', mau: '#6B7280', bg: '#F3F4F6' });
+    let k2 = '';
+    if (caInfo.khung2 && ca.thoatLuc) {
+      const v2 = ca.vaoLuc2 ? tinhTrangGio(ca.vaoLuc2, caInfo.khung2.batDau, 'vao') : { label: 'chưa vào', mau: '#6B7280', bg: '#F3F4F6' };
+      const r2 = ca.thoatLuc2 ? tinhTrangGio(ca.thoatLuc2, caInfo.khung2.ketThuc, 'ra') : (ca.vaoLuc2 ? { label: 'đang làm', mau: '#6B7280', bg: '#F3F4F6' } : null);
+      k2 = `<span class="baocao-badge" style="background:${v2.bg};color:${v2.mau}">Vào 2: ${v2.label}</span>`
+        + (r2 ? `<span class="baocao-badge" style="background:${r2.bg};color:${r2.mau}">Ra 2: ${r2.label}</span>` : '');
+    }
     noiDungHtml = `
       <span class="baocao-badge" style="background:${vao.bg};color:${vao.mau}">Vào: ${vao.label}</span>
-      <span class="baocao-badge" style="background:${ra.bg};color:${ra.mau}">Ra: ${ra.label}</span>`;
+      <span class="baocao-badge" style="background:${ra.bg};color:${ra.mau}">Ra: ${ra.label}</span>${k2}`;
   }
   const coTheXem = !!ca;
   return `
@@ -18952,6 +19207,21 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .rbadge.quan_ly{background:#FEF3C7;color:#B45309}
 .rbadge.nhan_vien{background:var(--green-bg);color:var(--green)}
 .rbadge.chua_gan{background:#F3F4F6;color:#6B7280}
+/* Bảng lịch làm việc: ngày nằm ngang, cột đầu cố định khi cuộn ngang */
+.lb-khung{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.lich-bang{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+.lich-bang th,.lich-bang td{border-bottom:1px solid var(--border);border-right:1px solid var(--border);padding:5px;vertical-align:top;min-width:78px}
+.lich-bang thead th{background:var(--bg);font-weight:700;text-align:center;font-size:12px}
+.lich-bang thead th span{font-weight:400;color:var(--text2);font-size:11px}
+.lich-bang .lb-dau{position:sticky;left:0;z-index:2;background:var(--surface);text-align:left;min-width:96px;max-width:120px;font-weight:600;font-size:12.5px}
+.lich-bang thead .lb-dau{background:var(--bg);z-index:3}
+.lich-bang .lb-dau span{display:block;font-size:10.5px;color:var(--text2);font-weight:400}
+.lich-bang td.lb-homnay,.lich-bang th.lb-homnay{background:#F0FDF4}
+.lb-chip{border:1px solid;border-radius:6px;padding:3px 5px;line-height:1.25}
+.lb-chip b{display:block;font-size:11.5px}
+.lb-chip span{display:block;font-size:10px;opacity:.85}
+.lb-ten{background:var(--bg);border-radius:5px;padding:2px 5px;margin-bottom:3px;font-size:11.5px}
+.lb-them{color:var(--text3, #9CA3AF);text-align:center;font-size:15px;line-height:1.2}
 .admin-form input,.admin-form select{margin-bottom:8px}
 .info-note{font-size:12px;color:#B45309;background:#FEF3C7;padding:8px 10px;border-radius:6px;margin-bottom:10px}
 
@@ -19111,7 +19381,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v507</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v508</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19165,7 +19435,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v507</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v508</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19211,7 +19481,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v507</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v508</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
