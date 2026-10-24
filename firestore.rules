@@ -206,6 +206,20 @@ service cloud.firestore {
       allow delete: if adm();
     }
 
+    // ===== SỔ QUỸ (phiếu chi / thu) — nền cho quản lý dòng tiền =====
+    // Không sửa, không xóa: chỉ được hủy (chuyển trạng thái, ghi lý do). Người ghi phải là chính mình.
+    match /so_quy/{id} {
+      allow read: if q('dh_thanhtoan');
+      allow create: if adm() || (coQ('dh_thanhtoan')
+        && request.resource.data.loai == 'chi'
+        && request.resource.data.soTien is number && request.resource.data.soTien > 0
+        && request.resource.data.trangThai == 'hieu_luc'
+        && request.resource.data.nguoi.uid == request.auth.uid);
+      allow update: if adm() || (coQ('dh_thanhtoan') && resource.data.trangThai == 'hieu_luc'
+        && request.resource.data.trangThai == 'huy' && chiDoi(['trangThai', 'lyDoHuy', 'huyLuc', 'huyBoi']));
+      allow delete: if false;
+    }
+
     // Báo cá mới về: đang tạm ẩn — chỉ Admin
     match /phieu_baoca/{id} {
       allow read, write: if adm();
