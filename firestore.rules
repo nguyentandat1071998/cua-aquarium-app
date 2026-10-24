@@ -71,7 +71,7 @@ service cloud.firestore {
     function nhapVao(kho) { return coQ('nh_duyet') && coQ('nh_kho_' + kho); }
     match /skus/{id} {
       // Chỉ người có việc cần tới hàng hóa mới đọc được danh mục (chỉ chấm công thì không)
-      allow read: if qMot(['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao', 'nhaphang',
+      allow read: if qMot(['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao', 'nhaphang', 'dathang',
         'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho']);
       allow create, delete: if adm();
       allow update: if adm()
@@ -142,7 +142,7 @@ service cloud.firestore {
 
     // ===== CHUYỂN KHO / XUẤT HỦY =====
     match /dem_phieu/{id} {
-      allow read, write: if qMot(['ck_san_ch', 'ck_ch_san', 'xh_kho_ch', 'xh_kho_san']);
+      allow read, write: if qMot(['ck_san_ch', 'ck_ch_san', 'xh_kho_ch', 'xh_kho_san', 'dathang']);
     }
     // Chuyển kho: tạo phiếu đúng chiều mình được cấp. Thống kê (Báo cáo) chỉ đọc.
     match /phieu_chuyenkho/{id} {
@@ -180,6 +180,29 @@ service cloud.firestore {
       allow update: if adm() || (coQ('nhaphang') && resource.data.trangThai == 'tam'
         && khoNhapDuoc(resource.data) && khoNhapDuoc(request.resource.data) && anhPhuKien(request.resource.data)
         && (request.resource.data.trangThai == 'tam' || coQ('nh_duyet')));
+      allow delete: if adm();
+    }
+
+    // ===== ĐẶT HÀNG NHÀ CUNG CẤP (chỉ trong app) =====
+    // Đơn không chứa giá; giá vốn + thanh toán ở don_dat_hang_gia, chỉ người có quyền mới đọc / ghi.
+    match /nha_cung_cap/{id} {
+      allow read, create, update: if q('dathang');
+      allow delete: if adm();
+    }
+    match /don_dat_hang/{id} {
+      allow read: if q('dathang');
+      allow create, update: if adm() || (coQ('dathang')
+        && !request.resource.data.keys().hasAny(['gia', 'tongTien', 'thanhToan', 'daThanhToan']));
+      allow delete: if adm();
+    }
+    match /don_dat_hang_gia/{id} {
+      allow read: if q('dh_giavon') || q('dh_thanhtoan');
+      allow create: if adm() || (coQ('dathang') && (
+        (coQ('dh_giavon') && chiCo(['gia', 'tongTien', 'suaLuc']))
+        || (coQ('dh_thanhtoan') && chiCo(['thanhToan', 'daThanhToan', 'suaLuc']))));
+      allow update: if adm() || (coQ('dathang') && (
+        (coQ('dh_giavon') && chiDoi(['gia', 'tongTien', 'suaLuc']))
+        || (coQ('dh_thanhtoan') && chiDoi(['thanhToan', 'daThanhToan', 'suaLuc']))));
       allow delete: if adm();
     }
 
