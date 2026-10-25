@@ -119,7 +119,7 @@ const NK_COL = {
   skus: ['Hàng hóa', 'Kho'], ton_san: ['Tồn Kho Online', 'Kho'], gia_von: ['Giá vốn', 'Kho'], nhom_hang: ['Nhóm hàng', 'Kho'],
   phieu_chuyenkho: ['Phiếu chuyển kho', 'Kho'], phieu_huy: ['Phiếu xuất hủy', 'Kho'], phieu_nhap_san: ['Phiếu nhập kho', 'Kho'], moc_hang_hong: ['Mốc hàng hỏng', 'Kho'],
   don_dat_hang: ['Đơn đặt hàng', 'Đặt hàng'], don_dat_hang_gia: ['Giá / thanh toán đơn đặt hàng', 'Đặt hàng'], nha_cung_cap: ['Nhà cung cấp', 'Đặt hàng'],
-  so_quy: ['Phiếu chi', 'Sổ quỹ'],
+  so_quy: ['Phiếu chi', 'Sổ quỹ'], phieu_dung_nb: ['Phiếu xuất dùng nội bộ', 'Kho'],
   don_ban_le: ['Đơn bán lẻ', 'Bán hàng'], phieu_tra_hang: ['Phiếu trả hàng', 'Bán hàng'], lenh_in: ['Lệnh in', 'Bán hàng'],
   lich_ca: ['Lịch làm / chấm công', 'Nhân sự'], ca_lam_viec: ['Ca làm việc', 'Nhân sự'], khau_tru: ['Khấu trừ lương', 'Nhân sự'],
   phu_cap: ['Phụ cấp', 'Nhân sự'], users: ['Tài khoản nhân viên', 'Nhân sự'], ho_so_nv: ['Hồ sơ nhân viên (CCCD, địa chỉ)', 'Nhân sự'],
@@ -137,6 +137,7 @@ const NK_API = {
   'tao-phieu-huy': ['Tạo phiếu xuất hủy', 'Kho'], 'sua-phieu-huy': ['Sửa / xóa phiếu xuất hủy', 'Kho'],
   'tao-phieu-chuyen': ['Tạo phiếu chuyển kho', 'Kho'], 'sua-phieu-chuyen': ['Sửa phiếu chuyển kho', 'Kho'], 'xoa-phieu-chuyen': ['Xóa phiếu chuyển kho', 'Kho'],
   'tao-phieu-nhap-san': ['Lưu phiếu nhập kho (KiotViet)', 'Kho'],
+  'tao-phieu-dung-nb': ['Gửi phiếu xuất dùng nội bộ', 'Kho'], 'duyet-phieu-dung-nb': ['Duyệt / từ chối / hủy phiếu xuất dùng nội bộ', 'Kho'],
   'dong-bo-quyen': ['Ghi quyền tài khoản', 'Thiết lập']
 };
 const nkLaApiGhi = (a) => !!NK_API[a] || /^(tao|sua|xoa|huy|tra|luu|dong-bo|chuan-bi|xac-nhan|create|update|delete|day|nhan|dang-ky|cap)-/.test(a) && a !== 'tao-qr-hoa-don';
@@ -2128,7 +2129,7 @@ if (!LA_BAN_DEMO) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'bc_ngay', tknhap: 'bc_tk_nhap', tkxuat: 'bc_tk_xuat', nhaphang: 'nhaphang', dathang: 'dathang',
-  hanghoa: 'hanghoa', banhang: 'banhang',
+  hanghoa: 'hanghoa', banhang: 'banhang', dungnb: 'dungnb',
   donbanle: 'donbanle', khachhang: 'khachhang', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
   chamcong: 'chamcong', luongnv: 'luong'
 };
@@ -2288,7 +2289,7 @@ window.switchModule = function(mod) {
   document.querySelectorAll('.mod-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('mod-' + mod)?.classList.add('active');
   // Update subtab colors
-  const color = mod === 'nhap' ? 'var(--green)' : (mod === 'nhaphang' || mod === 'dathang') ? '#2563EB' : 'var(--red)';
+  const color = mod === 'nhap' ? 'var(--green)' : (mod === 'nhaphang' || mod === 'dathang') ? '#2563EB' : mod === 'dungnb' ? '#D97706' : 'var(--red)';
   document.querySelectorAll('.sub-tab-bar .stab').forEach(b => {
     b.style.setProperty('--accent', color);
   });
@@ -2301,12 +2302,12 @@ window.switchModule = function(mod) {
   if (mod === 'nhap' || mod === 'xuat') veChonKhoPhieu(mod);
   // Không được tạo phiếu chiều/kho nào mà được xem danh sách -> mở thẳng danh sách
   const taoDuoc = mod === 'nhap' ? dsChieuChuyenDuocPhep().length : mod === 'xuat' ? dsKhoHuyDuocPhep().length
-    : mod === 'nhaphang' ? dsKhoNhapDuocPhep().length : 1;
+    : mod === 'nhaphang' ? dsKhoNhapDuocPhep().length : mod === 'dungnb' ? dsKhoDN().length : 1;
   switchSub(!taoDuoc && xemDS ? 'ds' : 'tao');
 };
 
 // Nhập hàng: ai vào được Nhập hàng thì xem được danh sách (máy chủ chỉ trả phiếu kho mình được nhập)
-function coQuyenDsPhieu(mod) { return mod === 'baoca' || ((mod === 'nhaphang' || mod === 'dathang') ? coQuyen(mod) : coQuyen(mod + '_xemds')); }
+function coQuyenDsPhieu(mod) { return mod === 'baoca' || ((mod === 'nhaphang' || mod === 'dathang' || mod === 'dungnb') ? coQuyen(mod) : coQuyen(mod + '_xemds')); }
 window.switchSub = function(sub) {
   if (sub === 'thongke' && activeModule !== 'baoca') sub = 'tao';
   if (sub === 'ds' && !coQuyenDsPhieu(activeModule)) {
@@ -2334,6 +2335,8 @@ window.switchSub = function(sub) {
   }
   if (sub === 'tao' && activeModule === 'nhaphang') nhVaoTao();
   if (sub === 'tao' && activeModule === 'dathang') dhVaoTao();
+  if (sub === 'tao' && activeModule === 'dungnb') dnVaoTao();
+  if (sub === 'ds' && activeModule === 'dungnb') dnTaiDs();
   if (sub === 'thongke') {
     if (activeModule === 'nhap') loadNhapStats();
     else if (activeModule === 'xuat') loadXuatStats();
@@ -12474,6 +12477,11 @@ const DANH_SACH_MODULE = [
     { key: 'xuat_sua', ten: 'Sửa / xóa phiếu' },
     { key: 'xuat_xuatfile', ten: 'Xuất file' }
   ]},
+  { key: 'dungnb', ten: 'Xuất dùng nội bộ', con: [
+    { key: 'dn_kho_ch', ten: 'Xuất dùng kho Cửa hàng' },
+    { key: 'dn_kho_san', ten: 'Xuất dùng Kho Online' },
+    { key: 'dn_xemds', ten: 'Xem phiếu của mọi người (không tick: chỉ phiếu của mình)' }
+  ]},
   { key: 'dathang', ten: 'Đặt hàng (nhà cung cấp)', con: [
     { key: 'dh_giavon', ten: 'Nhập / xem giá vốn, tổng tiền đơn' },
     { key: 'dh_thanhtoan', ten: 'Ghi thanh toán cho nhà cung cấp' }
@@ -12614,6 +12622,7 @@ const NHOM_MENU = [
     { key: 'tonkho',    ten: 'Tồn kho',        quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
+    { key: 'dungnb',    ten: 'Xuất dùng nội bộ', quyen: 'dungnb',  moGi: () => switchModule('dungnb') },
     { key: 'dathang',   ten: 'Đặt hàng',       quyen: 'dathang',   moGi: () => switchModule('dathang') },
     { key: 'nhaphang',  ten: 'Nhập kho',       quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') }
   ]},
@@ -13078,7 +13087,7 @@ async function moModuleMacDinhTheoQuyen() {
   const oVt = document.getElementById('user-role'); if (oVt) oVt.textContent = nhanVaiTro(currentUserData);
   const thuTuUuTien = [
     ['banhang','banhang'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
-    ['xuat','xuat'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['dathang','dathang'], ['lichca','lichca'], ['chamcong','chamcong'],
+    ['xuat','xuat'], ['dungnb','dungnb'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['dathang','dathang'], ['lichca','lichca'], ['chamcong','chamcong'],
     ['luong','luongnv'], ['bc_ngay','baocao'], ['bc_tk_nhap','tknhap'], ['bc_tk_xuat','tkxuat']
   ];
   // Mở từ liên kết (tab mới) -> vào đúng mục đó
@@ -13284,7 +13293,7 @@ function layGiaTriNhomHangDaChon(prefix) {
 
 let skusUnsub = null;
 // Danh mục hàng chỉ tải cho người có việc cần tới (khớp Firestore rules của skus)
-const KHOA_DOC_SKU = ['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao',
+const KHOA_DOC_SKU = ['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'dungnb', 'hanghoa', 'baocao',
   'nhaphang', 'dathang', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho'];
 function batDauTheoDoiSKU() {
   const duocDoc = KHOA_DOC_SKU.some(k => coQuyen(k));
@@ -15187,7 +15196,7 @@ window.chonAnhTuMay = function(mode) {
 window.themAnhTuFile = async function(input) {
   if (currentUserData?.role !== 'admin') { input.value = ''; return; }
   const mode = input.dataset.mode || '';
-  const laAnhHuy = mode.startsWith('xuat') || mode === 'nhaphang';
+  const laAnhHuy = mode.startsWith('xuat') || mode.startsWith('dungnb') || mode === 'nhaphang';
   const files = [...(input.files || [])];
   for (const f of files) {
     try {
@@ -15222,6 +15231,7 @@ window.themAnhTuFile = async function(input) {
         nho.getContext('2d').drawImage(canvas, 0, 0, nho.width, nho.height);
         photoData.thumb = nho.toDataURL('image/jpeg', 0.6);
         if (mode === 'nhaphang') nhNhanAnh(photoData);
+        else if (mode.startsWith('dungnb')) dnNhanAnh(photoData, mode.split(':')[1] || null);
         else xhNhanAnh(photoData, mode.split(':')[1] || null);
       } else if (mode === 'nhap') { currentNhap.photos.push(photoData); renderNhapPhotos(); }
     } catch(e) {
@@ -15238,7 +15248,7 @@ window.capturePhoto = function() {
   const canvas = document.getElementById('camera-canvas');
   // Thu nhỏ về tối đa 1280px — phiếu nhiều ảnh vẫn nằm gọn trong 1 tài liệu (giới hạn 1MB)
   // Ảnh xuất hủy 1024px — mỗi ảnh lưu riêng nên một phiếu chứa được nhiều ảnh
-  const laAnhHuy = String(mode).startsWith('xuat') || mode === 'nhaphang';   // 1024px + ảnh nhỏ
+  const laAnhHuy = String(mode).startsWith('xuat') || String(mode).startsWith('dungnb') || mode === 'nhaphang';   // 1024px + ảnh nhỏ
   const tlAnh = Math.min(1, (laAnhHuy ? 1024 : 1280) / Math.max(video.videoWidth || 1, video.videoHeight || 1));
   canvas.width = Math.round(video.videoWidth * tlAnh); canvas.height = Math.round(video.videoHeight * tlAnh);
   const ctx = canvas.getContext('2d');
@@ -15285,6 +15295,7 @@ window.capturePhoto = function() {
     }
   }
   else if (String(mode).startsWith('xuat')) xhNhanAnh(photoData, String(mode).split(':')[1] || null);
+  else if (String(mode).startsWith('dungnb')) dnNhanAnh(photoData, String(mode).split(':')[1] || null);
   closeCamera();
   showToast('Đã chụp ảnh');
 };
@@ -15515,6 +15526,195 @@ window.plDatLaiLoc = async function(mod) {
 
 // Ảnh phiếu: ảnh nhỏ hiện ngay, bấm mới tải ảnh đầy đủ (lưu riêng ở anh_phieu)
 const plAnhNho = (a) => `<img src="${a.thumb || a.dataUrl}" onclick="${plMoAnh(a)}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer">`;
+// ==========================================================================
+// ===== XUẤT DÙNG NỘI BỘ =====
+// Hàng lấy ra dùng cho bể trưng bày / vật tư tiêu hao của cửa hàng. Nhân viên tạo phiếu (bắt buộc
+// ảnh từng mã) -> chờ Admin duyệt. Duyệt mới tạo phiếu "Xuất dùng nội bộ" bên KiotViet và trừ tồn.
+// ==========================================================================
+const DN_KHO = { ch: { ten: 'Kho Cửa hàng', quyen: 'dn_kho_ch', maTon: 'cuahang' }, san: { ten: 'Kho Online', quyen: 'dn_kho_san', maTon: 'san' } };
+const DN_MUC = { trungbay: 'Bể trưng bày', vattu: 'Vật tư tiêu hao' };
+const DN_TT = { cho_duyet: 'Chờ duyệt', da_duyet: 'Đã duyệt', tu_choi: 'Từ chối', da_huy: 'Đã hủy' };
+const DN_MAU_TT = { cho_duyet: '#D97706', da_duyet: '#16A34A', tu_choi: '#DC2626', da_huy: '#9CA3AF' };
+const DN_MAU = '#D97706';
+const dsKhoDN = () => Object.keys(DN_KHO).filter(k => coQuyen(DN_KHO[k].quyen));
+let dnPhieu = null;   // { kho, mucDich, ghiChu, dong: [{ skuId, sku, ten, sl, anh: [] }] }
+let dnTimChu = '';
+
+function dnVaoTao() {
+  const ds = dsKhoDN();
+  if (!dnPhieu) dnPhieu = { kho: ds[0] || 'ch', mucDich: '', ghiChu: '', dong: [] };
+  if (!ds.includes(dnPhieu.kho)) dnPhieu.kho = ds[0] || 'ch';
+  dnVe();
+}
+function dnVe() {
+  const el = document.getElementById('dn-tao');
+  if (!el) return;
+  const P = dnPhieu, ds = dsKhoDN();
+  if (!ds.length) { el.innerHTML = '<p class="info-note">Bạn chưa được phân quyền tạo phiếu xuất dùng nội bộ.</p>'; return; }
+  const chip = (on, nhan, fn) => `<button class="${on ? '' : 'btn-outline'}" style="flex:1;margin:0;padding:8px;border-radius:8px;font-weight:600;${on ? `background:${DN_MAU};color:#fff;border:1.5px solid ${DN_MAU}` : ''}" onclick="${fn}">${nhan}</button>`;
+  const tongSL = P.dong.reduce((a, d) => a + d.sl, 0);
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:10px">
+      <div class="field"><label>Kho xuất</label>
+        <button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="dnChonKho()">${DN_KHO[P.kho].ten}</button></div>
+      <div class="field" style="margin-bottom:0"><label>Mục đích</label>
+        <div style="display:flex;gap:6px">${Object.entries(DN_MUC).map(([k, t]) => chip(P.mucDich === k, t, `dnDat('mucDich','${k}')`)).join('')}</div></div>
+    </div>
+    <div class="field sku-wrap" style="margin-bottom:8px">
+      <input type="text" id="dn-tim" placeholder="Gõ tên hoặc mã hàng..." autocomplete="off" value="${escHtml(dnTimChu)}" oninput="dnTim(this.value)" style="border-color:#FCD34D">
+      <div id="dn-kq"></div>
+    </div>
+    <div id="dn-dong">${P.dong.length ? P.dong.map((d, i) => {
+      const s = allSKUs.find(x => x.id === d.skuId);
+      const ton = layTon(s, DN_KHO[P.kho].maTon);
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;margin-bottom:8px">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${escHtml(d.ten)}</div>
+            <div style="font-size:11.5px;color:var(--text2)">${escHtml(d.sku)} · tồn ${ton}</div></div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button class="btn-xs" onclick="dnDoiSL(${i},-1)">−</button>
+            <input type="number" inputmode="numeric" min="1" value="${d.sl}" onchange="dnNhapSL(${i},this.value)" style="width:56px;text-align:center;padding:5px">
+            <button class="btn-xs" onclick="dnDoiSL(${i},1)">+</button>
+          </div>
+          <button class="btn-xs" onclick="dnBo(${i})" title="Bỏ dòng">✕</button>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center">
+          ${d.anh.map((a, j) => `<div style="position:relative"><img src="${a.thumb || a.dataUrl}" onclick="viewPhoto('${a.dataUrl}')" style="width:52px;height:52px;object-fit:cover;border-radius:6px;cursor:pointer">
+            <button onclick="dnBoAnh(${i},${j})" style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:#DC2626;color:#fff;font-size:11px;line-height:18px;padding:0;cursor:pointer">✕</button></div>`).join('')}
+          <button onclick="openCamera('dungnb:${d.skuId}')" style="width:52px;height:52px;border-radius:6px;border:2px dashed ${d.anh.length ? 'var(--border)' : '#DC2626'};background:#fff;cursor:pointer;font-size:18px" title="Chụp ảnh">📷</button>
+          ${currentUserData?.role === 'admin' ? `<button onclick="chonAnhTuMay('dungnb:${d.skuId}')" class="btn-xs" title="Chọn ảnh từ máy (Admin)">🖼</button>` : ''}
+          ${d.anh.length ? '' : '<span style="font-size:11.5px;color:#DC2626">Chưa có ảnh</span>'}
+        </div></div>`;
+    }).join('') : '<p class="info-note">Chưa có hàng. Tìm và thêm hàng cần xuất dùng.</p>'}</div>
+    <input id="dn-ghichu" maxlength="300" placeholder="Ghi chú (VD: bể 120 quầy thu ngân)" value="${escHtml(P.ghiChu)}" oninput="dnPhieu.ghiChu=this.value" style="margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px"><span>${P.dong.length} mã</span><b>Tổng số lượng ${tongSL}</b></div>
+    <button id="btn-dn-gui" style="width:100%;margin:0;padding:12px;border:none;border-radius:10px;background:${DN_MAU};color:#fff;font-weight:700;font-size:15px;cursor:pointer" onclick="dnGui()">Gửi Admin duyệt</button>`;
+  if (dnTimChu) dnTim(dnTimChu);
+}
+window.dnChonKho = function() {
+  moBangChon('Kho xuất', dsKhoDN().map(k => ({ gt: k, nhan: DN_KHO[k].ten })), dnPhieu.kho, (k) => { dnPhieu.kho = k; dnVe(); });
+};
+window.dnDat = function(k, v) { dnPhieu[k] = v; dnVe(); };
+window.dnTim = function(v) {
+  dnTimChu = v || '';
+  const box = document.getElementById('dn-kq');
+  if (!box) return;
+  const t = boDauTim(dnTimChu.trim());
+  if (!t) { box.innerHTML = ''; return; }
+  const kq = allSKUs.filter(s => !s.laCombo && !s.deleted && (boDauTim(s.ten || '').includes(t) || boDauTim(s.sku || '').includes(t))).slice(0, 8);
+  box.innerHTML = kq.length ? `<div style="border:1px solid var(--border);border-radius:8px;background:var(--surface);margin-top:4px;max-height:280px;overflow:auto">${kq.map(s => `
+    <div onclick="dnThem('${s.id}')" style="padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer">
+      <div style="font-size:13.5px;font-weight:600">${escHtml(s.ten || '')}</div>
+      <div style="font-size:11.5px;color:var(--text2)">${escHtml(s.sku || '')} · tồn ${layTon(s, DN_KHO[dnPhieu.kho].maTon)}</div></div>`).join('')}</div>`
+    : '<div style="font-size:12px;color:var(--text2);padding:6px 2px">Không tìm thấy hàng</div>';
+};
+window.dnThem = function(id) {
+  const s = allSKUs.find(x => x.id === id);
+  if (!s) return;
+  const co = dnPhieu.dong.find(d => d.skuId === id);
+  if (co) co.sl++; else dnPhieu.dong.push({ skuId: s.id, sku: s.sku, ten: s.ten || '', sl: 1, anh: [] });
+  dnTimChu = ''; dnVe();
+};
+window.dnDoiSL = function(i, d) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.max(1, x.sl + d); dnVe(); };
+window.dnNhapSL = function(i, v) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.max(1, Math.min(9999, parseInt(v) || 1)); dnVe(); };
+window.dnBo = function(i) { dnPhieu.dong.splice(i, 1); dnVe(); };
+window.dnBoAnh = function(i, j) { dnPhieu.dong[i]?.anh.splice(j, 1); dnVe(); };
+function dnNhanAnh(anh, skuId) {
+  const d = dnPhieu?.dong.find(x => x.skuId === skuId);
+  if (!d) return;
+  if (dnPhieu.dong.reduce((a, x) => a + x.anh.length, 0) >= 40) { showToast('Tối đa 40 ảnh mỗi phiếu', true); return; }
+  d.anh.push(anh); dnVe();
+}
+window.dnGui = async function() {
+  const P = dnPhieu;
+  if (!P.mucDich) { showToast('Chọn mục đích sử dụng', true); return; }
+  if (!P.dong.length) { showToast('Chưa có hàng', true); return; }
+  const thieu = P.dong.filter(d => !d.anh.length);
+  if (thieu.length) { showToast('Chụp ảnh cho: ' + thieu.map(d => d.ten).join(', '), true); return; }
+  const tongSL = P.dong.reduce((a, d) => a + d.sl, 0);
+  if (!await hoiXacNhan(`Gửi phiếu xuất dùng nội bộ ${tongSL} sản phẩm (${P.dong.length} mã) từ ${DN_KHO[P.kho].ten}?\n\nAdmin duyệt xong mới trừ tồn.`, { nutDongY: 'Gửi duyệt' })) return;
+  const nut = document.getElementById('btn-dn-gui');
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+  try {
+    const idToken = await currentUser.getIdToken();
+    const r = await fetch(WORKER_URL, { method: 'POST',
+      headers: { 'x-action': 'tao-phieu-dung-nb', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kho: P.kho, branchId: branchKhoTheoMa(P.kho), mucDich: P.mucDich, ghiChu: P.ghiChu,
+        items: P.dong.map(d => ({ skuId: d.skuId, sku: d.sku, ten: d.ten, sl: d.sl })),
+        photos: P.dong.flatMap(d => d.anh.map(a => ({ dataUrl: a.dataUrl, thumb: a.thumb, ts: a.ts, skuId: d.skuId, tuFile: !!a.tuFile }))) }) });
+    const kq = await r.json().catch(() => ({}));
+    if (!kq.success) throw new Error(kq.error || `Lỗi ${r.status}`);
+    showToast(`Đã gửi phiếu ${kq.maPhieu} — chờ Admin duyệt`);
+    dnPhieu = null; dnVaoTao();
+  } catch(e) {
+    showToast('Không gửi được: ' + e.message, true);
+    if (nut) { nut.disabled = false; nut.textContent = 'Gửi Admin duyệt'; }
+  }
+};
+
+// ----- Danh sách phiếu -----
+let dnDs = [], dnLocTT = 'cho_duyet';
+async function dnTaiDs() {
+  const el = document.getElementById('dungnb-ds-list');
+  if (!el) return;
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  try {
+    const tu = new Date(Date.now() - 60 * 864e5);
+    const xemHet = coQuyen('dn_xemds');
+    const snap = await getDocs(xemHet
+      ? query(collection(db, 'phieu_dung_nb'), where('createdAt', '>=', tu), orderBy('createdAt', 'desc'), limit(500))
+      : query(collection(db, 'phieu_dung_nb'), where('uidTao', '==', currentUser.uid), limit(300)));
+    dnDs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  } catch(e) { el.innerHTML = `<p class="info-note">Không tải được: ${escHtml(e.message)}</p>`; return; }
+  dnVeDs();
+}
+function dnVeDs() {
+  const el = document.getElementById('dungnb-ds-list');
+  if (!el) return;
+  const laAdmin = currentUserData?.role === 'admin';
+  const dem = (tt) => dnDs.filter(p => p.trangThai === tt).length;
+  const ds = dnDs.filter(p => p.trangThai === dnLocTT);
+  const tg = (p) => { const t = p.createdAt?.toDate ? p.createdAt.toDate() : null; return t ? t.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : ''; };
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${Object.entries(DN_TT).map(([k, t]) => `
+      <button class="btn-xs" style="${dnLocTT === k ? `background:${DN_MAU_TT[k]};color:#fff;font-weight:700` : ''}" onclick="dnLocTT='${k}';dnVeDs()">${t} (${dem(k)})</button>`).join('')}
+      <button class="btn-xs" onclick="dnTaiDs()" style="margin-left:auto">↻</button></div>
+    ${ds.length ? ds.map(p => `
+      <div style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${DN_MAU_TT[p.trangThai] || '#999'};border-radius:10px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+          <b style="font-size:14px">${escHtml(p.kiotvietCode || p.maPhieu || p.id)}</b>
+          <span style="font-size:12px;color:var(--text2);white-space:nowrap">${tg(p)}</span></div>
+        <div style="font-size:12.5px;color:var(--text2);margin-top:2px">${escHtml(DN_KHO[p.kho]?.ten || '')} · ${escHtml(DN_MUC[p.mucDich] || '')} · ${escHtml(p.nguoiTao?.ten || '')}${p.kiotvietCode ? ` · phiếu tạm ${escHtml(p.maPhieu)}` : ''}</div>
+        <div style="font-size:13px;margin-top:6px">${(p.items || []).map(i => `${escHtml(i.ten)} <b>×${i.sl}</b>`).join(' · ')}</div>
+        ${p.ghiChu ? `<div style="font-size:12px;color:var(--text2);margin-top:3px">Ghi chú: ${escHtml(p.ghiChu)}</div>` : ''}
+        ${(p.photos || []).length ? `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">${p.photos.map(a => `<img src="${a.thumb || ''}" onclick="xemAnhPhieu('${a.id}')" style="width:48px;height:48px;object-fit:cover;border-radius:6px;cursor:pointer;background:var(--bg)">`).join('')}</div>` : ''}
+        ${p.trangThai === 'tu_choi' ? `<div style="font-size:12px;color:#DC2626;margin-top:4px">Từ chối${p.nguoiXuLy?.ten ? ' bởi ' + escHtml(p.nguoiXuLy.ten) : ''}${p.lyDoTuChoi ? ': ' + escHtml(p.lyDoTuChoi) : ''}</div>` : ''}
+        ${p.trangThai === 'da_duyet' && p.nguoiXuLy?.ten ? `<div style="font-size:12px;color:#16A34A;margin-top:4px">Duyệt bởi ${escHtml(p.nguoiXuLy.ten)}</div>` : ''}
+        ${p.trangThai === 'da_huy' ? `<div style="font-size:12px;color:var(--text2);margin-top:4px">Đã hủy${p.nguoiHuy?.ten ? ' bởi ' + escHtml(p.nguoiHuy.ten) : ''}${p.lyDoHuy ? ': ' + escHtml(p.lyDoHuy) : ''}</div>` : ''}
+        ${laAdmin && p.trangThai === 'cho_duyet' ? `<div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn-outline" style="flex:1;margin:0;color:#DC2626;border-color:#FCA5A5" onclick="dnXuLy('${p.id}','tuchoi')">Từ chối</button>
+          <button style="flex:1;margin:0;border:none;border-radius:8px;background:#16A34A;color:#fff;font-weight:700;padding:9px;cursor:pointer" onclick="dnXuLy('${p.id}','duyet')">Duyệt</button></div>` : ''}
+        ${laAdmin && p.trangThai === 'da_duyet' ? `<div style="margin-top:8px"><button class="btn-xs danger" onclick="dnXuLy('${p.id}','huy')">Hủy phiếu (hoàn tồn)</button></div>` : ''}
+      </div>`).join('') : `<p class="info-note">Không có phiếu ${DN_TT[dnLocTT].toLowerCase()} trong 60 ngày gần đây.</p>`}`;
+}
+window.dnXuLy = async function(id, loai) {
+  const p = dnDs.find(x => x.id === id);
+  if (!p) return;
+  let lyDo = '';
+  if (loai === 'duyet') {
+    if (!await hoiXacNhan(`Duyệt phiếu ${p.maPhieu}?\n\nTạo phiếu Xuất dùng nội bộ bên KiotViet và trừ tồn ${DN_KHO[p.kho]?.ten || ''}: ${(p.items || []).map(i => `${i.ten} ×${i.sl}`).join(', ')}`, { nutDongY: 'Duyệt' })) return;
+  } else {
+    lyDo = String(await hoiNhap(loai === 'tuchoi' ? `Từ chối phiếu ${p.maPhieu}\n\nLý do:` : `Hủy phiếu ${p.kiotvietCode || p.maPhieu} (hủy bên KiotViet, hoàn tồn)\n\nLý do:`) || '').trim();
+    if (!lyDo) return;
+  }
+  try {
+    const kq = await goiWorkerAdmin('duyet-phieu-dung-nb', { maPhieu: p.id, loai, lyDo });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    showToast(loai === 'duyet' ? `Đã duyệt — ${kq.kiotvietCode || ''}` : loai === 'tuchoi' ? 'Đã từ chối' : 'Đã hủy phiếu, hoàn tồn');
+    dnTaiDs();
+  } catch(e) { showToast('Không xử lý được: ' + e.message, true); }
+};
+
 window.xemAnhPhieu = async function(id) {
   try {
     showToast('Đang mở ảnh...');
@@ -19954,7 +20154,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v522</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v523</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -20008,7 +20208,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v522</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v523</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -20054,7 +20254,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v522</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v523</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -20419,6 +20619,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
       <div class="panel" id="panel-dathang-ds">
         <div id="dathang-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
+      <div class="panel" id="panel-dungnb-tao"><div id="dn-tao" style="max-width:640px;margin:0 auto"></div></div>
+      <div class="panel" id="panel-dungnb-ds"><div id="dungnb-ds-list" style="max-width:760px;margin:0 auto"><div class="loading">Đang tải...</div></div></div>
       <div class="panel" id="panel-nhaphang-ds">
         <div id="nhaphang-ds-list"><div class="loading">Đang tải...</div></div>
       </div>

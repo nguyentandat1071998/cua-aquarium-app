@@ -78,7 +78,7 @@ service cloud.firestore {
     function nhapVao(kho) { return coQ('nh_duyet') && coQ('nh_kho_' + kho); }
     match /skus/{id} {
       // Chỉ người có việc cần tới hàng hóa mới đọc được danh mục (chỉ chấm công thì không)
-      allow read: if qMot(['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao', 'nhaphang', 'dathang',
+      allow read: if qMot(['banhang', 'donbanle', 'checklist', 'nhap', 'xuat', 'hanghoa', 'baocao', 'nhaphang', 'dathang', 'dungnb',
         'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho']);
       allow create, delete: if adm();
       allow update: if adm()
@@ -91,7 +91,7 @@ service cloud.firestore {
     // Tồn kho Sàn tách riêng: chỉ người có quyền xem kho Sàn / làm Sàn TMĐT mới đọc được.
     // Chuyển kho, xuất hủy, nhập hàng ghi được theo đúng chiều mà không cần đọc.
     match /ton_san/{id} {
-      allow read: if qMot(['hh_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho']);
+      allow read: if qMot(['hh_kho_san', 'dn_kho_san', 'tmdt_donhang', 'tmdt_hoantra', 'quetdonggoi', 'tmdt_sanpham', 'tmdt_daytonkho']);
       // Trừ Sàn: chuyển Sàn→CH. Cộng Sàn: chuyển CH→Sàn, nhập hàng, nhập lại hàng hoàn.
     // (Xuất hủy: worker trừ / hoàn tồn khi tạo, sửa, xóa phiếu — app không tự đổi.)
       allow create: if adm() || (chiCo(['soLuongTon']) && (
@@ -170,7 +170,14 @@ service cloud.firestore {
     }
     // Ảnh phiếu xuất hủy (mỗi ảnh một tài liệu, worker ghi): ai xem được phiếu hủy thì xem được ảnh
     match /anh_phieu/{id} {
-      allow read: if qMot(['xuat_xemds', 'xuat_sua', 'luong_xemtatca', 'bc_tk_xuat']);
+      allow read: if qMot(['xuat_xemds', 'xuat_sua', 'luong_xemtatca', 'bc_tk_xuat'])
+        || (resource.data.loai == 'dungnb' && (qMot(['dn_xemds']) || (nv() && resource.data.uid == toi())));
+      allow write: if false;
+    }
+
+    // Xuất dùng nội bộ: worker ghi (tạo, duyệt, từ chối, hủy). Đọc: người xem danh sách hoặc chính người tạo.
+    match /phieu_dung_nb/{id} {
+      allow read: if qMot(['dn_xemds']) || (nv() && resource.data.uidTao == toi());
       allow write: if false;
     }
 
