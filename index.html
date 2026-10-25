@@ -662,8 +662,11 @@ function suyCaTuGioVao(caDuoc, phutHienTai) {
   return { ca: xep[0].ca, canHoi };
 }
 
+let phutTreLanVao = 0;   // số phút trễ của lần quét vào vừa rồi — để báo "Vào ca · trễ …p"
 async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
   if (!allCaLamViec.length) await napCaLamViec();
+  phutTreLanVao = 0;
+  const phutBay = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
   const ngay = getTodayISO();
   const shiftId = `${ngay}_${currentUser.uid}`;
   const shiftRef = doc(db, 'lich_ca', shiftId);
@@ -679,6 +682,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
     // Ca gãy: đã xong khung 1 (đã ra) -> lần quét này là VÀO KHUNG 2
     if (data.vaoLuc && data.thoatLuc && !data.vaoLuc2 && layCa(caId)?.khung2) {
       await updateDoc(shiftRef, { vaoLuc2: serverTimestamp(), gpsOk2: gpsOk, gpsDist2: gpsInfo, isMock2: isMock, photo2: photoData });
+      phutTreLanVao = Math.max(0, phutBay() - layCa(caId).khung2.batDau);
       currentShiftDocId = shiftId; currentShiftNgay = ngay; currentCa = loaiCa; currentCaId = caId;
       await loadChecklistState(shiftId);
       return;
@@ -695,6 +699,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
     await updateDoc(shiftRef, {
       vaoLuc: serverTimestamp(), gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
     });
+    phutTreLanVao = Math.max(0, phutBay() - (layCa(caId) || CA_GIO[loaiCa] || CA_GIO.full).batDau);
   } else {
     // --- Không có lịch xếp trước ---
     // Vẫn cho check-in, đánh dấu ngoài lịch để quản lý biết.
@@ -716,6 +721,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
 
     caId = caChon.id;
     loaiCa = caChon.loaiCaCu || 'full';
+    phutTreLanVao = Math.max(0, phutBay() - caChon.batDau);
 
     await setDoc(shiftRef, {
       ngay, uid: currentUser.uid, ten: currentUserData?.ten || '',
@@ -794,9 +800,9 @@ async function chupAnhQRVaCheckin() {
   await xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData);
 
   if (!gpsOk) {
-    showToast(`Vào ca · ngoài khu vực cửa hàng (${gpsInfo})`, true);
+    showToast(`Vào ca${phutTreLanVao ? ` · trễ ${phutTreLanVao}p` : ''} · ngoài khu vực cửa hàng (${gpsInfo})`, true);
   } else {
-    showToast('Vào ca');
+    showToast(phutTreLanVao ? `Vào ca · trễ ${phutTreLanVao}p` : 'Vào ca', !!phutTreLanVao);
   }
 
   await loadBenhDanhSach();
@@ -1230,29 +1236,26 @@ async function renderChamCongTab() {
   const dates = getWeekDatesISO(chamCongWeekOffset);
   const start = dates[0], end = dates[6];
   // Không có quyền xem chấm công mọi người: chỉ hỏi máy chủ ca của chính mình
-  // (rules chặn tải ca người khác) rồi lọc tuần ở máy
   const xemHetCC = coQuyen('cc_xemtatca');
   const snap = xemHetCC
     ? await getDocs(query(collection(db,'lich_ca'), where('ngay','>=',start), where('ngay','<=',end)))
     : await getDocs(query(collection(db,'lich_ca'), where('uid','==',currentUser.uid)));
-  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()}))
+  ccShifts = snap.docs.map(d => ({id:d.id, ...d.data()}))
     .filter(s => !s.deleted && s.ngay >= start && s.ngay <= end);
+  // Danh sách người: ai có ca trong tuần + (Admin) mọi nhân viên đang làm để chấm bù người quên check-in
+  const nguoi = new Map();
+  if (currentUserData?.role === 'admin') {
+    try {
+      if (!ccUsers) ccUsers = (await getDocs(collection(db, 'users'))).docs.map(d => ({ id: d.id, ...d.data() }));
+      ccUsers.filter(u => !u.disabled && u.role !== 'admin').forEach(u => nguoi.set(u.id, u.hoTen || u.ten || u.email || ''));
+    } catch(e) {}
+  }
+  ccShifts.forEach(s => { if (!nguoi.has(s.uid)) nguoi.set(s.uid, s.ten || ''); });
+  if (!xemHetCC) { for (const k of [...nguoi.keys()]) if (k !== currentUser.uid) nguoi.delete(k); if (!nguoi.size) nguoi.set(currentUser.uid, currentUserData?.ten || ''); }
+  const dsNguoi = [...nguoi.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'vi'));
   const today = getTodayISO();
-  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
-
-  const daysHtml = dates.map(ngay => {
-    const d = new Date(ngay + 'T00:00:00');
-    const thu = thuTenFull[d.getDay()];
-    const isToday = ngay === today;
-    const dayShifts = shifts.filter(s => s.ngay === ngay).sort((a,b) => (a.ten||'').localeCompare(b.ten||''));
-    const rows = dayShifts.map(s => renderChamCongRow(s)).join('') ||
-      `<p style="font-size:12px;color:var(--text2);padding:4px 0">Không có ca nào</p>`;
-    return `
-      <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
-        <h4 style="font-size:13px;font-weight:600;margin-bottom:6px">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
-        ${rows}
-      </div>`;
-  }).join('');
+  const thu = ['CN','T2','T3','T4','T5','T6','T7'];
+  const laAdmin = currentUserData?.role === 'admin';
 
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -1260,8 +1263,134 @@ async function renderChamCongTab() {
       <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
       <button class="btn-xs" onclick="doiTuanChamCong(1)">Tuần sau →</button>
     </div>
-    ${daysHtml}`;
+    ${laAdmin ? '<p class="info-note" style="margin-bottom:8px">Bấm vào ô để sửa giờ vào / ra (nhân viên quên check-in, check-out).</p>' : ''}
+    <div class="lb-khung"><table class="lich-bang">
+      <thead><tr><th class="lb-dau">Nhân viên</th>${dates.map(n => { const d = new Date(n + 'T00:00:00');
+        return `<th class="${n === today ? 'lb-homnay' : ''}">${thu[d.getDay()]}<br><span>${d.getDate()}/${d.getMonth() + 1}</span></th>`; }).join('')}<th>Tổng</th></tr></thead>
+      <tbody>${dsNguoi.map(([uid, ten]) => {
+        let tongPhut = 0;
+        const o = dates.map(ngay => {
+          const s = ccShifts.find(x => x.uid === uid && x.ngay === ngay);
+          const r = s ? ccVeO(s) : { html: '', phut: 0 };
+          tongPhut += r.phut;
+          const bam = laAdmin && ngay <= today ? ` onclick="ccSuaGio('${ngay}','${uid}')" style="cursor:pointer"` : '';
+          return `<td class="${ngay === today ? 'lb-homnay' : ''}"${bam}>${r.html || (laAdmin && ngay <= today ? '<span style="color:var(--border);font-size:16px">+</span>' : '')}</td>`;
+        }).join('');
+        return `<tr><th class="lb-dau">${escHtml(ten)}</th>${o}<td style="text-align:center;font-weight:700">${tongPhut ? (tongPhut / 60).toFixed(1).replace('.0', '').replace('.', ',') + 'h' : '—'}</td></tr>`;
+      }).join('') || `<tr><td colspan="9" style="text-align:center;color:var(--text2)">Chưa có ca nào trong tuần</td></tr>`}</tbody>
+    </table></div>`;
 }
+let ccShifts = [], ccUsers = null;
+// Một ô của bảng chấm công: tên ca, giờ vào–ra, các nhãn trễ / về sớm / chưa check-out
+function ccVeO(s) {
+  const today = getTodayISO();
+  const ca = layCa(s.caId) || CA_GIO[s.loaiCa] || CA_GIO.full;
+  const tg = (ts) => ts?.seconds ? new Date(ts.seconds * 1000) : null;
+  const vao = tg(s.vaoLuc), ra = tg(s.thoatLuc), vao2 = tg(s.vaoLuc2), ra2 = tg(s.thoatLuc2);
+  const hh = (d) => d ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '--:--';
+  const ph = (d) => d.getHours() * 60 + d.getMinutes();
+  const nhan = (t, mau, nen) => `<div style="font-size:10.5px;font-weight:600;color:${mau};background:${nen};border-radius:4px;padding:0 4px;margin-top:2px;display:inline-block">${t}</div>`;
+  const ds = [];
+  const quaHan = s.ngay < today;
+  if (vao) { const t = ph(vao) - ca.batDau; if (t > 0) ds.push(nhan(`trễ ${t}p`, 'var(--red)', 'var(--red-bg)')); }
+  if (ra) { const t = ca.ketThuc - ph(ra); if (t > 5) ds.push(nhan(`sớm ${t}p`, 'var(--red)', 'var(--red-bg)')); }
+  if (ca.khung2 && vao2) { const t = ph(vao2) - ca.khung2.batDau; if (t > 0) ds.push(nhan(`K2 trễ ${t}p`, 'var(--red)', 'var(--red-bg)')); }
+  if (ca.khung2 && ra2) { const t = ca.khung2.ketThuc - ph(ra2); if (t > 5) ds.push(nhan(`K2 sớm ${t}p`, 'var(--red)', 'var(--red-bg)')); }
+  if (!vao && s.ngay <= today) ds.push(nhan('chưa vào', 'var(--text2)', '#EEE'));
+  else if (vao && !ra) ds.push(quaHan || s.khongCheckout ? nhan('quên ra', 'var(--red)', 'var(--red-bg)') : nhan('đang làm', '#B45309', '#FEF3C7'));
+  if (s.gpsOk === false || s.thoatGpsOk === false) ds.push(nhan('GPS lệch', 'var(--red)', 'var(--red-bg)'));
+  if (s.ngoaiLich) ds.push(nhan('ngoài lịch', '#5B21B6', '#EDE9FE'));
+  if (s.suaGio) ds.push(`<div title="${escHtml((s.suaGio.boi?.ten || '') + ': ' + (s.suaGio.lyDo || ''))}">${nhan('đã sửa', '#1D4ED8', '#DBEAFE')}</div>`);
+  const phut = (vao && ra ? (ra - vao) / 60000 : 0) + (vao2 && ra2 ? (ra2 - vao2) / 60000 : 0);
+  return { phut: Math.max(0, Math.round(phut)), html: `
+    <div style="font-size:11px;font-weight:700;color:${ca.mau || 'var(--green)'}">${escHtml(lcTenCaCuaLich(s))}</div>
+    <div style="font-size:12px;font-weight:600;white-space:nowrap">${vao || ra ? `${hh(vao)}–${hh(ra)}` : ''}</div>
+    ${ca.khung2 && (vao2 || ra2) ? `<div style="font-size:12px;font-weight:600;white-space:nowrap">${hh(vao2)}–${hh(ra2)}</div>` : ''}
+    <div style="display:flex;flex-direction:column;align-items:flex-start">${ds.join('')}</div>` };
+}
+// Ô giờ 24h, chọn được từng phút
+function ccOGio(id, phut) {
+  const g = Math.floor((Number(phut) || 0) / 60), p = (Number(phut) || 0) % 60, pad = (x) => String(x).padStart(2, '0');
+  return `<div style="display:flex;align-items:center;gap:4px">
+    <select id="${id}-h" style="flex:1;min-width:0;padding:8px 6px;font-size:15px;font-weight:600;text-align:center">${[...Array(24)].map((_, i) => `<option value="${i}" ${i === g ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select><b>:</b>
+    <select id="${id}-m" style="flex:1;min-width:0;padding:8px 6px;font-size:15px;font-weight:600;text-align:center">${[...Array(60)].map((_, i) => `<option value="${i}" ${i === p ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select></div>`;
+}
+let ccDang = null;
+// Admin sửa / bổ sung giờ vào – ra (quên check-in, quên check-out). Giữ giờ gốc + lý do.
+window.ccSuaGio = async function(ngay, uid) {
+  if (currentUserData?.role !== 'admin') return;
+  if (!allCaLamViec.length) await napCaLamViec();
+  let s = ccShifts.find(x => x.uid === uid && x.ngay === ngay);
+  if (!s) { try { const d = await getDoc(doc(db, 'lich_ca', `${ngay}_${uid}`)); if (d.exists() && !d.data().deleted) s = { id: d.id, ...d.data() }; } catch(e) {} }
+  const u = (ccUsers || allUsersCache || []).find(x => x.id === uid) || {};
+  const caDs = (typeof caCuaVaiTro === 'function' && u.vaiTroId ? caCuaVaiTro(u.vaiTroId) : []).length ? caCuaVaiTro(u.vaiTroId) : allCaLamViec.filter(c => !c.deleted);
+  ccDang = { ngay, uid, ten: s?.ten || u.hoTen || u.ten || '', s, caId: s?.caId || caDs[0]?.id || null };
+  ccVeForm();
+};
+function ccVeForm() {
+  const { ngay, s, caId, ten } = ccDang;
+  const ca = layCa(caId) || (s ? CA_GIO[s.loaiCa] : null) || CA_GIO.full;
+  const ph = (ts, mac) => ts?.seconds ? (d => d.getHours() * 60 + d.getMinutes())(new Date(ts.seconds * 1000)) : mac;
+  const co = (ts) => !!ts?.seconds;
+  const dong = (nhan, id, gt, coGT, tick) => `<div class="field"><label style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="${id}-co" ${coGT ? 'checked' : ''} style="width:16px;height:16px;margin:0"> ${nhan}</label>${ccOGio(id, gt)}</div>`;
+  ddbMoKhung('cc-modal', 'Sửa giờ chấm công', `${escHtml(ten)} · ${ngay.split('-').reverse().join('/')}`, `
+    <div class="field"><label>Ca</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="ccChonCa()">${escHtml(layCa(caId)?.ten || (s ? lcTenCaCuaLich(s) : 'Chọn ca'))}</button></div>
+    ${dong('Giờ vào', 'cc-vao', ph(s?.vaoLuc, ca.batDau), true)}
+    ${dong('Giờ ra', 'cc-ra', ph(s?.thoatLuc, ca.ketThuc), true)}
+    ${ca.khung2 ? dong('Giờ vào khung 2', 'cc-vao2', ph(s?.vaoLuc2, ca.khung2.batDau), true)
+      + dong('Giờ ra khung 2', 'cc-ra2', ph(s?.thoatLuc2, ca.khung2.ketThuc), true) : ''}
+    <div class="field"><label>Lý do (bắt buộc)</label><input id="cc-lydo" maxlength="200" placeholder="VD: quên check-out, điện thoại hết pin..." value=""></div>
+    ${s?.suaGio ? `<div style="font-size:11.5px;color:var(--text2)">Lần sửa trước: ${escHtml(s.suaGio.boi?.ten || '')} — ${escHtml(s.suaGio.lyDo || '')}</div>` : ''}`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('cc-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0" onclick="ccLuuGio()">Lưu</button>`);
+  ddbCanhGiua('cc-modal');
+}
+window.ccChonCa = function() {
+  const u = (ccUsers || allUsersCache || []).find(x => x.id === ccDang.uid) || {};
+  const ds = (u.vaiTroId && caCuaVaiTro(u.vaiTroId).length) ? caCuaVaiTro(u.vaiTroId) : allCaLamViec.filter(c => !c.deleted);
+  moBangChon('Chọn ca', ds.map(c => ({ gt: c.id, nhan: c.ten, phu: nhanGioCa(c) })), ccDang.caId, (v) => { ccDang.caId = v; ccVeForm(); });
+};
+window.ccLuuGio = async function() {
+  const { ngay, uid, s, caId } = ccDang;
+  const lyDo = document.getElementById('cc-lydo')?.value.trim();
+  if (!lyDo) { showToast('Ghi lý do sửa giờ', true); return; }
+  const lay = (id) => {
+    if (!document.getElementById(id + '-co')?.checked) return null;
+    const d = new Date(ngay + 'T00:00:00');
+    d.setHours(Number(document.getElementById(id + '-h').value), Number(document.getElementById(id + '-m').value), 0, 0);
+    return d;
+  };
+  const coK2 = !!document.getElementById('cc-vao2-h');
+  const vao = lay('cc-vao'), ra = lay('cc-ra'), vao2 = coK2 ? lay('cc-vao2') : null, ra2 = coK2 ? lay('cc-ra2') : null;
+  if (!vao && (ra || vao2 || ra2)) { showToast('Cần có giờ vào', true); return; }
+  if (vao && ra && ra <= vao) { showToast('Giờ ra phải sau giờ vào', true); return; }
+  if (vao2 && ra2 && ra2 <= vao2) { showToast('Giờ ra khung 2 phải sau giờ vào khung 2', true); return; }
+  const ca = layCa(caId);
+  const boi = { uid: currentUser.uid, ten: currentUserData?.ten || '' };
+  const suaGio = { lyDo, boi, luc: new Date().toISOString(),
+    goc: s?.suaGio?.goc || { vao: s?.vaoLuc || null, ra: s?.thoatLuc || null, vao2: s?.vaoLuc2 || null, ra2: s?.thoatLuc2 || null } };
+  const ref = doc(db, 'lich_ca', `${ngay}_${uid}`);
+  try {
+    if (s) {
+      const cn = { vaoLuc: vao, thoatLuc: ra, khongCheckout: false, suaGio };
+      if (layCa(caId)?.khung2 || s.vaoLuc2 || s.thoatLuc2) { cn.vaoLuc2 = vao2; cn.thoatLuc2 = ra2; }
+      if (caId && caId !== s.caId) { cn.caId = caId; cn.tenCa = ca?.ten || ''; }
+      await updateDoc(ref, cn);
+      if (caId && caId !== s.caId) await ghiLichCongKhai(ref.id, { ngay, uid, ten: s.ten || ccDang.ten, caId, tenCa: ca?.ten || '' });
+    } else {
+      if (!caId) { showToast('Chọn ca', true); return; }
+      await setDoc(ref, { ngay, uid, ten: ccDang.ten, caId, tenCa: ca?.ten || '', loaiCa: ca?.loaiCaCu || 'full',
+        ngoaiLich: true, deleted: false, xepBoi: boi, createdAt: serverTimestamp(),
+        vaoLuc: vao, thoatLuc: ra, ...(ca?.khung2 ? { vaoLuc2: vao2, thoatLuc2: ra2 } : {}), suaGio });
+      await ghiLichCongKhai(ref.id, { ngay, uid, ten: ccDang.ten, caId, tenCa: ca?.ten || '' });
+    }
+    document.getElementById('cc-modal').style.display = 'none';
+    showToast('Đã lưu giờ chấm công');
+    if (document.getElementById('chamcong-content')?.offsetParent) renderChamCongTab();
+    if (document.getElementById('luongnv-content')?.offsetParent) renderBangLuong();
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
 
 // ===== XẾP CA THEO NGÀY =====
 // Luồng: chọn ca -> tick nhiều nhân viên -> lưu một lượt. Trước đây mỗi lần chỉ
@@ -17011,7 +17140,7 @@ function veBangLuong(dl) {
                 ${(n.ghiChuDC || []).map(escHtml).join('<br>')}
               </td>
               <td><b>${fmt(n.tong)}</b></td>
-              ${xemHet ? `<td><button class="btn-xs" onclick="moDieuChinh('${n.ngay}')">+</button></td>` : ''}
+              ${xemHet ? `<td style="white-space:nowrap"><button class="btn-xs" onclick="moDieuChinh('${n.ngay}')">+</button>${laAdmin ? ` <button class="btn-xs" onclick="ccSuaGio('${n.ngay}','${uidXem}')">Sửa giờ</button>` : ''}</td>` : ''}
             </tr>`;
           }).join('')}
         </tbody>
@@ -17024,13 +17153,12 @@ function veBangLuong(dl) {
       ${tong.ctChiTiet.map(c => `
         <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
           <div style="min-width:0">
-            <div style="font-weight:600;font-size:13px">${escHtml(c.ten)}${c.loai === 'tru' ? `<span style="font-weight:400;font-size:11px;color:var(--text2)"> · trừ vào ${c.vaoLuong ? 'lương' : 'thưởng'}</span>` : ''}</div>
-            <div style="font-size:11.5px;color:var(--text2)">${c.khongCo ? 'Tính theo số liệu cả cửa hàng — xem ở bảng lương của quản lý'
+            <div style="font-weight:600;font-size:13px">${escHtml(c.ten)}</div>
+            <div style="font-size:11.5px;color:var(--text2)">${c.khongCo ? escHtml(c.lyDo || '')
               : `${escHtml(c.nhanCoSo)}: <b>${c.donVi === '%' ? String(Math.round(c.coSo * 10) / 10).replace('.', ',') : fmt(c.coSo)}</b> ${escHtml(c.donVi)}`}${c.ghiChu ? ' · ' + escHtml(c.ghiChu) : ''}</div>
           </div>
           <b style="white-space:nowrap;color:${c.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${c.khongCo ? '—' : (c.loai === 'tru' ? '−' : '+') + fmt(c.tien)}</b>
         </div>`).join('')}
-      ${tong.ctBoQua ? `<div style="font-size:11.5px;color:var(--text2);padding-top:6px">Khoản trừ vượt tiền thưởng ${fmt(tong.ctBoQua)}đ — không trừ vào lương.</div>` : ''}
       <div style="display:flex;justify-content:space-between;font-weight:700;padding-top:8px">
         <span>Thưởng còn lại${tong.truCT ? ' / trừ lương' : ''}</span><span>${fmt(tong.thuongCT || 0)}đ${tong.truCT ? ` / −${fmt(tong.truCT)}đ` : ''}</span></div>
     </div>` : ''}
@@ -17610,7 +17738,8 @@ function qtChiSo(coSo, q, du) {
 }
 function qtTinh(q, du) {
   const v = qtChiSo(q.coSo, q, du);
-  if (v === undefined) return { coSo: undefined, tien: 0, khongCo: true };
+  if (v === undefined) return { coSo: undefined, tien: 0, khongCo: true,
+    lyDo: q.coSo === 'ty_le_hang_hong' && du.phieuHuy && !(du.mocHong > 0) ? 'Chưa đặt mốc hàng hỏng tháng này' : '' };
   let tien = 0, ghiChu = '';
   const g = Number(q.giaTri) || 0;
   if (q.cachTinh === 'phan_tram') tien = v * g / 100;
@@ -17643,7 +17772,7 @@ function qtTinhChoNguoi(vaiTroId, du) {
     const r = qtTinh(q, du);
     const vaoLuong = q.loai === 'tru' && q.truVao === 'luong';
     if (q.loai !== 'tru') thuongGoc += r.tien; else if (vaoLuong) truLuong += r.tien; else truVaoThuong += r.tien;
-    chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, vaoLuong, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo });
+    chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, vaoLuong, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo, lyDo: r.lyDo });
   }
   const truDuoc = Math.min(thuongGoc, truVaoThuong);
   return { thuong: thuongGoc - truDuoc, tru: truLuong, thuongGoc, truVaoThuong, boQua: truVaoThuong - truDuoc, chiTiet };
@@ -19711,7 +19840,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v518</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v519</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19765,7 +19894,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v518</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v519</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19811,7 +19940,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v518</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v519</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
