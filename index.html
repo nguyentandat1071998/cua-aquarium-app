@@ -2048,12 +2048,13 @@ window.switchModule = function(mod) {
     }
     return;
   }
-  if (['thanhtoan', 'hethong', 'phanquyen', 'chamcongcd', 'inhoadon', 'ketnoi', 'nhatky'].includes(mod)) {
+  if (['thanhtoan', 'hethong', 'phanquyen', 'chamcongcd', 'inhoadon', 'ketnoi', 'nhatky', 'congthucthuong'].includes(mod)) {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-thietlap-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     if (mod === 'thanhtoan') renderThietLapThanhToan();
     else if (mod === 'nhatky') renderNhatKy();
+    else if (mod === 'congthucthuong') renderCongThucThuong();
     else renderHeThong(mod);
     return;
   }
@@ -12395,6 +12396,7 @@ const NHOM_MENU = [
     { key: 'phanquyen',  ten: 'Phân quyền',        chiAdmin: true, moGi: () => switchModule('phanquyen') },
     { key: 'calamviec',  ten: 'Ca làm việc',       chiAdmin: true, moGi: () => moNVTab('calamviec') },
     { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') },
+    { key: 'congthucthuong', ten: 'Công thức thưởng', chiAdmin: true, moGi: () => switchModule('congthucthuong') },
     { key: 'chamcongcd', ten: 'Chấm công',         chiAdmin: true, moGi: () => switchModule('chamcongcd') },
     { key: 'inhoadon',   ten: 'In hóa đơn',        chiAdmin: true, moGi: () => switchModule('inhoadon') },
     { key: 'thanhtoan',  ten: 'Thanh toán',        chiAdmin: true, moGi: () => switchModule('thanhtoan') },
@@ -17617,7 +17619,7 @@ async function renderThietLapLuong() {
         </div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
         <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu đơn giá công</button>
-        ${veKhoiCongThucThuong(r.key)}
+        <div style="font-size:12px;color:var(--text2);margin-top:8px">Thưởng / trừ của vai trò này: <a href="#" onclick="event.preventDefault();switchModule('congthucthuong')" style="color:#1D4ED8">mở Công thức thưởng</a></div>
       </div>`;
   }).join('');
 
@@ -17782,10 +17784,7 @@ function veKhoiCongThucThuong(vaiTroId) {
   });
 
   return `
-    <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px">
-        CÔNG THỨC THƯỞNG
-      </div>
+    <div>
 
       ${daBat.map(m => `
         <div style="border:1px solid var(--green);border-radius:8px;margin-bottom:8px">
@@ -17803,19 +17802,13 @@ function veKhoiCongThucThuong(vaiTroId) {
         </div>`).join('')}
 
       ${conLai.length ? `
-        <div style="display:flex;gap:6px;margin-bottom:8px">
-          <select id="${id('them-muc')}" style="flex:1">
-            <option value="">— Thêm mục thưởng —</option>
-            ${conLai.map(m => `<option value="${m.key}">${m.ten}</option>`).join('')}
-          </select>
-          <button class="btn-outline" style="width:auto;padding:0 16px"
-            onclick="ctThemMuc('${escHtml(vaiTroId)}')">Thêm</button>
-        </div>` : ''}
+        <button class="btn-outline" style="width:100%;margin-bottom:8px;border-color:var(--green);color:var(--green);font-weight:600"
+          onclick="ctMoThemMuc('${escHtml(vaiTroId)}')">+ Thêm mục thưởng / trừ</button>` : ''}
 
       ${daBat.length ? `
         <button class="btn-g" style="width:100%"
           onclick="luuCongThucThuong('${escHtml(vaiTroId)}')">Lưu công thức thưởng</button>`
-        : '<p class="info-note" style="margin:0">Chưa có mục thưởng nào cho vai trò này.</p>'}
+        : '<p class="info-note" style="margin:0">Chưa có mục nào. Bấm "+ Thêm mục thưởng / trừ" để bắt đầu.</p>'}
     </div>`;
 }
 
@@ -17904,6 +17897,14 @@ function layBacDangNhap(vaiTroId, macDinh) {
   }));
 }
 
+window.ctMoThemMuc = function(vaiTroId) {
+  const bat = congThucCuaVaiTro(vaiTroId).bat || {};
+  const ds = CAC_MUC_THUONG.filter(m => !bat[m.key] && !(m.xungDot || []).some(k => bat[k]));
+  moBangChon('Thêm mục thưởng / trừ', ds.map(m => ({ gt: m.key, nhan: m.ten, phu: m.moTa || '' })), '', async (k) => {
+    await ctBatTatMuc(vaiTroId, k, true);
+    showToast('Đã thêm — điền số rồi bấm Lưu');
+  });
+};
 window.ctThemMuc = async function(vaiTroId) {
   const el = document.getElementById(`ct-${vaiTroId}-them-muc`);
   const key = el?.value;
@@ -17924,7 +17925,7 @@ window.ctBatTatMuc = async function(vaiTroId, mucKey, bat) {
       alert(`Không bật cùng lúc với "${tenTrung}".\n\n`
         + `Cả hai đều tính trên doanh thu người đó bán — bật cả hai là thưởng hai lần.\n\n`
         + `Tắt mục kia trước rồi bật lại mục này.`);
-      renderThietLapLuong();
+      ctVeLai();
       return;
     }
   }
@@ -17938,12 +17939,31 @@ window.ctBatTatMuc = async function(vaiTroId, mucKey, bat) {
     const tatCa = { ...CONG_THUC_THEO_VAI_TRO, [vaiTroId]: c };
     await setDoc(doc(db, 'settings', 'cong_thuc_luong'), tatCa);
     CONG_THUC_THEO_VAI_TRO = tatCa;
-    await renderThietLapLuong();
+    await ctVeLai();
   } catch(e) {
     alert('Không lưu được: ' + e.message);
   }
 };
 
+const ctVeLai = () => activeModule === 'congthucthuong' ? renderCongThucThuong() : renderThietLapLuong();
+// Màn riêng: Thiết lập › Công thức thưởng — mỗi vai trò một khung
+async function renderCongThucThuong() {
+  const el = document.getElementById('thietlap-content');
+  if (!el) return;
+  if (currentUserData?.role !== 'admin') { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
+  el.innerHTML = '<div class="loading">Đang tải...</div>';
+  if (!allVaiTro.length) await loadVaiTro();
+  if (!allSKUs.length) await loadSKUs();
+  await napCongThucLuong();
+  const ds = allVaiTro.filter(v => !v.deleted);
+  el.innerHTML = `<p class="info-note" style="margin-bottom:12px">Thưởng và khoản trừ tính tự động vào Bảng lương hằng tháng. Mỗi vai trò cài riêng.</p>`
+    + (ds.length ? ds.map(v => `<div class="admin-block" style="margin-bottom:1rem"><h3 style="margin-bottom:10px">${escHtml(v.ten || v.id)}</h3>${veKhoiCongThucThuong(v.id)}</div>`).join('')
+      : '<p class="info-note">Chưa có vai trò nào. Tạo vai trò ở Thiết lập › Phân quyền trước.</p>');
+  for (const v of ds) {
+    const c = congThucCuaVaiTro(v.id);
+    if (c.bat?.banQuay) veChonNhomTuoi(v.id, ctNhomDaChon[v.id] || c.nhomDoTuoi || []);
+  }
+}
 window.luuCongThucThuong = async function(vaiTroId) {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
   // Ô tiền đánh dấu data-tien -> bỏ dấu chấm ngăn cách.
@@ -19400,7 +19420,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v510</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v511</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19454,7 +19474,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v510</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v511</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19500,7 +19520,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v510</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v511</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
