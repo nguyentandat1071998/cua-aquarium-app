@@ -1292,12 +1292,14 @@ function ccVeO(s) {
   const nhan = (t, mau, nen) => `<div style="font-size:10.5px;font-weight:600;color:${mau};background:${nen};border-radius:4px;padding:0 4px;margin-top:2px;display:inline-block">${t}</div>`;
   const ds = [];
   const quaHan = s.ngay < today;
-  if (vao) { const t = ph(vao) - ca.batDau; if (t > 0) ds.push(nhan(`trễ ${t}p`, 'var(--red)', 'var(--red-bg)')); }
+  if (vao) { const t = ph(vao) - ca.batDau; if (t > 0) ds.push(s.dieuChinhTre
+    ? `<div title="${escHtml('Bỏ trừ trễ: ' + (s.dieuChinhTre.lyDo || ''))}">${nhan(`trễ ${t}p · bỏ trừ`, '#1D4ED8', '#DBEAFE')}</div>`
+    : nhan(`trễ ${t}p`, 'var(--red)', 'var(--red-bg)')); }
   if (ra) { const t = ca.ketThuc - ph(ra); if (t > 5) ds.push(nhan(`sớm ${t}p`, 'var(--red)', 'var(--red-bg)')); }
   if (ca.khung2 && vao2) { const t = ph(vao2) - ca.khung2.batDau; if (t > 0) ds.push(nhan(`K2 trễ ${t}p`, 'var(--red)', 'var(--red-bg)')); }
   if (ca.khung2 && ra2) { const t = ca.khung2.ketThuc - ph(ra2); if (t > 5) ds.push(nhan(`K2 sớm ${t}p`, 'var(--red)', 'var(--red-bg)')); }
   if (!vao && s.ngay <= today) ds.push(nhan('chưa vào', 'var(--text2)', '#EEE'));
-  else if (vao && !ra) ds.push(quaHan || s.khongCheckout ? nhan('quên ra', 'var(--red)', 'var(--red-bg)') : nhan('đang làm', '#B45309', '#FEF3C7'));
+  else if (vao && !ra) ds.push(quaHan || s.khongCheckout ? nhan('Chưa kết thúc ca', 'var(--red)', 'var(--red-bg)') : nhan('đang làm', '#B45309', '#FEF3C7'));
   if (s.gpsOk === false || s.thoatGpsOk === false) ds.push(nhan('GPS lệch', 'var(--red)', 'var(--red-bg)'));
   if (s.ngoaiLich) ds.push(nhan('ngoài lịch', '#5B21B6', '#EDE9FE'));
   if (s.suaGio) ds.push(`<div title="${escHtml((s.suaGio.boi?.ten || '') + ': ' + (s.suaGio.lyDo || ''))}">${nhan('đã sửa', '#1D4ED8', '#DBEAFE')}</div>`);
@@ -1340,7 +1342,10 @@ function ccVeForm() {
     ${dong('Giờ ra', 'cc-ra', ph(s?.thoatLuc, ca.ketThuc), true)}
     ${ca.khung2 ? dong('Giờ vào khung 2', 'cc-vao2', ph(s?.vaoLuc2, ca.khung2.batDau), true)
       + dong('Giờ ra khung 2', 'cc-ra2', ph(s?.thoatLuc2, ca.khung2.ketThuc), true) : ''}
-    <div class="field"><label>Lý do (bắt buộc)</label><input id="cc-lydo" maxlength="200" placeholder="VD: quên check-out, điện thoại hết pin..." value=""></div>
+    <label style="display:flex;gap:8px;align-items:flex-start;border:1.5px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+      <input type="checkbox" id="cc-botre" ${s?.dieuChinhTre ? 'checked' : ''} style="width:18px;height:18px;margin:1px 0 0">
+      <span><b style="font-size:13px">Bỏ trừ tiền đi trễ</b><div style="font-size:11.5px;color:var(--text2)">Trễ có lý do chính đáng: không trừ tiền theo công thức, giờ trễ vẫn trừ khỏi công.</div></span></label>
+    <div class="field"><label>Lý do (bắt buộc)</label><input id="cc-lydo" maxlength="200" placeholder="VD: quên check-out, kẹt xe do tai nạn..." value=""></div>
     ${s?.suaGio ? `<div style="font-size:11.5px;color:var(--text2)">Lần sửa trước: ${escHtml(s.suaGio.boi?.ten || '')} — ${escHtml(s.suaGio.lyDo || '')}</div>` : ''}`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('cc-modal').style.display='none'">Hủy</button>
      <button class="btn-g" style="flex:1;margin:0" onclick="ccLuuGio()">Lưu</button>`);
@@ -1371,10 +1376,16 @@ window.ccLuuGio = async function() {
   const suaGio = { lyDo, boi, luc: new Date().toISOString(),
     goc: s?.suaGio?.goc || { vao: s?.vaoLuc || null, ra: s?.thoatLuc || null, vao2: s?.vaoLuc2 || null, ra2: s?.thoatLuc2 || null } };
   const ref = doc(db, 'lich_ca', `${ngay}_${uid}`);
+  const boTre = !!document.getElementById('cc-botre')?.checked;
+  const phutCu = (ts) => ts?.seconds ? Math.round(ts.seconds / 60) : null, phutMoi = (d) => d ? Math.round(d.getTime() / 60000) : null;
+  const doiGio = !s || phutCu(s.vaoLuc) !== phutMoi(vao) || phutCu(s.thoatLuc) !== phutMoi(ra)
+    || ((layCa(caId)?.khung2 || s.vaoLuc2 || s.thoatLuc2) && (phutCu(s.vaoLuc2) !== phutMoi(vao2) || phutCu(s.thoatLuc2) !== phutMoi(ra2))) || (caId && caId !== s.caId);
+  const caTre = layCa(caId) || CA_GIO.full;
+  const dcTre = boTre ? (s?.dieuChinhTre || { lyDo, phutTre: vao ? Math.max(0, vao.getHours() * 60 + vao.getMinutes() - caTre.batDau) : 0, boi, luc: new Date().toISOString() }) : null;
   try {
     if (s) {
-      const cn = { vaoLuc: vao, thoatLuc: ra, khongCheckout: false, suaGio };
-      if (layCa(caId)?.khung2 || s.vaoLuc2 || s.thoatLuc2) { cn.vaoLuc2 = vao2; cn.thoatLuc2 = ra2; }
+      const cn = doiGio ? { vaoLuc: vao, thoatLuc: ra, khongCheckout: false, suaGio, dieuChinhTre: dcTre } : { dieuChinhTre: dcTre };
+      if (doiGio && (layCa(caId)?.khung2 || s.vaoLuc2 || s.thoatLuc2)) { cn.vaoLuc2 = vao2; cn.thoatLuc2 = ra2; }
       if (caId && caId !== s.caId) { cn.caId = caId; cn.tenCa = ca?.ten || ''; }
       await updateDoc(ref, cn);
       if (caId && caId !== s.caId) await ghiLichCongKhai(ref.id, { ngay, uid, ten: s.ten || ccDang.ten, caId, tenCa: ca?.ten || '' });
@@ -1382,7 +1393,7 @@ window.ccLuuGio = async function() {
       if (!caId) { showToast('Chọn ca', true); return; }
       await setDoc(ref, { ngay, uid, ten: ccDang.ten, caId, tenCa: ca?.ten || '', loaiCa: ca?.loaiCaCu || 'full',
         ngoaiLich: true, deleted: false, xepBoi: boi, createdAt: serverTimestamp(),
-        vaoLuc: vao, thoatLuc: ra, ...(ca?.khung2 ? { vaoLuc2: vao2, thoatLuc2: ra2 } : {}), suaGio });
+        vaoLuc: vao, thoatLuc: ra, ...(ca?.khung2 ? { vaoLuc2: vao2, thoatLuc2: ra2 } : {}), suaGio, ...(dcTre ? { dieuChinhTre: dcTre } : {}) });
       await ghiLichCongKhai(ref.id, { ngay, uid, ten: ccDang.ten, caId, tenCa: ca?.ten || '' });
     }
     document.getElementById('cc-modal').style.display = 'none';
@@ -17122,7 +17133,7 @@ function veBangLuong(dl) {
                   ? `<div style="font-size:10px;color:var(--text2)" title="${escHtml(n.lyDoDieuChinh || '')}">trễ ${n.phutTreGoc ?? n.phutTre}′${n.coCtTre ? ' · −0đ' : ''}</div>
                      ${laAdmin && n.boQuaTre ? `<button class="btn-xs" style="font-size:10px;padding:1px 6px" onclick="hoanTacBoQuaTre('${n.ngay}')">Hoàn tác</button>` : ''}`
                   : `<div style="font-size:10px;color:var(--red)">trễ ${n.phutTreGoc ?? n.phutTre}′${n.coCtTre ? ` · −${fmt(n.tienTre || 0)}đ` : ''}</div>
-                     ${laAdmin ? `<button class="btn-xs bl-nut-xuly" style="font-size:10px;padding:1px 6px" onclick="boQuaTre('${n.ngay}',${n.phutTreGoc ?? n.phutTre})">Bỏ qua</button>` : ''}`) : ''}
+                     ${laAdmin ? `<button class="btn-xs bl-nut-xuly" style="font-size:10px;padding:1px 6px" onclick="boQuaTre('${n.ngay}',${n.phutTreGoc ?? n.phutTre})">Bỏ trừ trễ</button>` : ''}`) : ''}
                 ${n.vao && !n.ra ? '<div style="font-size:10px;color:#D97706">chưa kết ca</div>' : ''}
               </td>
               <td>${n.coCong ? (Math.round(n.soCong * 1000) / 1000).toString().replace('.', ',') : '—'}</td>
@@ -19840,7 +19851,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v519</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v520</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19894,7 +19905,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v519</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v520</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19940,7 +19951,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v519</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v520</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
