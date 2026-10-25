@@ -263,7 +263,11 @@ const WORKER_URL = 'https://cua-video-upload.nguyentandat1071998.workers.dev';
 // Chi nhánh trung tâm (634586).
 const CHI_NHANH_BAN_LE = 650408;   // mặc định; Admin đổi trong Thiết lập › Hệ thống (cau_hinh/chi_nhanh)
 let cauHinhChiNhanh = null;
-function chiNhanhBanLe() { return Number(cauHinhChiNhanh?.banLe) || CHI_NHANH_BAN_LE; }
+function chiNhanhBanLe() {
+  // Chế độ kho mới: bán tại quầy luôn trừ Kho Offline (Kho Cửa hàng)
+  if (typeof khoKVMoi === 'function' && khoKVMoi()) return KHO.CUA_HANG.branchId;
+  return Number(cauHinhChiNhanh?.banLe) || CHI_NHANH_BAN_LE;
+}
 
 // ===== CHECKLIST DATA =====
 
@@ -2091,9 +2095,9 @@ function nhanVaiTro(u) {
 // Ưng phần nào thì xóa phần đó khỏi TINH_NANG_DEMO là lên link chính, không phải làm lại.
 const LA_BAN_DEMO = new URLSearchParams(location.search).has('demo');
 const TINH_NANG_DEMO = {
-  nhom: ['santmdt'],                          // nhóm menu chỉ có ở demo
+  nhom: [],                                   // nhóm menu chỉ có ở demo
   muc: ['dathang'],                           // mục menu chỉ có ở demo
-  mod: ['dathang', 'tmdt', 'quetdonggoi']     // màn hình chặn ở link chính
+  mod: ['dathang']                            // màn hình chặn ở link chính
 };
 const chiCoODemo = (mod) => !LA_BAN_DEMO && TINH_NANG_DEMO.mod.includes(mod);
 function veDaiDemo() {
@@ -6413,7 +6417,7 @@ Vào Đặt hàng → mở đơn → "Đối chiếu & nhập kho" để lưu.`)
         body: JSON.stringify({
           items: nhDongHang.map(d => ({ sku: d.sku, ten: d.ten, soLuong: d.soLuong, donGia: d.donGia })),
           maPhieu,
-          kho: nhKho,
+          kho: nhKho, branchId: branchKhoTheoMa(nhKho),
           tenNguoiTao: currentUserData?.ten || currentUser?.email || ''
         })
       });
@@ -7116,7 +7120,7 @@ window.dhLuuNhapKho = async function() {
       method: 'POST',
       headers: { 'x-action': 'tao-phieu-nhap-san', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: items.map(r => ({ sku: r.sku, ten: r.ten, soLuong: Number(r.nhap), donGia: Number(r.gia) })),
-        maPhieu: don.maPhieu, kho: don.kho, tenNguoiTao: currentUserData?.ten || currentUser?.email || '' })
+        maPhieu: don.maPhieu, kho: don.kho, branchId: branchKhoTheoMa(don.kho), tenNguoiTao: currentUserData?.ten || currentUser?.email || '' })
     });
     const kq = await res.json();
     if (!kq.success) throw new Error(kq.error || 'KiotViet từ chối');
@@ -11018,9 +11022,10 @@ async function renderHeThong(man = 'hethong') {
       htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
       muc('thanhtoan', 'Thanh toán'), '<div id="ht-thanhtoan"><div class="loading">Đang tải...</div></div>',
       muc('ketnoi', 'Kết nối'), htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
+      htThe('Kho KiotViet', `<div id="ht-khokv"></div>`),
       htThe('Chi nhánh bán tại quầy', `
       <p style="font-size:13px;margin-bottom:8px">Hóa đơn bán tại quầy đang tạo vào chi nhánh
-        <b>${v(cn.tenBanLe || '')} ${v(chiNhanhBanLe())}</b>${cn.banLe ? '' : ' (mặc định trong code)'}.</p>
+        <b>${khoKVMoi() ? 'Kho Offline ' + chiNhanhBanLe() : v(cn.tenBanLe || '') + ' ' + v(chiNhanhBanLe())}</b>${khoKVMoi() ? ' (theo chế độ kho Chi nhánh trung tâm)' : (cn.banLe ? '' : ' (mặc định trong code)')}.</p>
       <p class="info-note">Đổi sang chi nhánh Cửa hàng khi nhân viên đã chuyển hẳn sang bán bằng app — từ lúc đó hóa đơn bán lẻ trừ kho chi nhánh mới.</p>
       <div id="ht-chinhanh"><button class="btn-outline" style="width:100%" onclick="htTaiChiNhanh()">Tải danh sách chi nhánh từ KiotViet</button></div>`),
       htThe('Webhook KiotViet', `
@@ -11065,7 +11070,7 @@ async function renderHeThong(man = 'hethong') {
   if (man === 'phanquyen') renderVaiTroList();
   if (man === 'chamcongcd') generateQRCode();
   if (['inhoadon', 'ketnoi', 'thanhtoan', 'hethong'].includes(man)) {
-    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan');
+    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV();
     if (man !== 'hethong') setTimeout(() => document.getElementById('ht-muc-' + man)?.scrollIntoView(), 50);
   }
 }
@@ -11295,6 +11300,86 @@ window.htGiaHanKol = async function() {
 };
 
 // ---------- Chi nhánh ----------
+// ---------- Kho KiotViet: chế độ + đồng bộ tồn ----------
+function htVeKhoKV() {
+  const el = document.getElementById('ht-khokv');
+  if (!el) return;
+  const moi = cauHinhKhoKV?.cheDo === 'moi';
+  const dong = (ten, id) => `<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0"><span>${ten}</span><b>${id}</b></div>`;
+  el.innerHTML = `
+    <div style="font-size:13px;margin-bottom:6px">Đang dùng: <b style="color:${moi ? 'var(--green)' : '#B45309'}">${moi ? 'Chi nhánh trung tâm (2 kho)' : 'Cách cũ (2 chi nhánh)'}</b>${LA_BAN_DEMO && !moi ? ' — <i>link demo đang chạy thử chế độ mới</i>' : ''}</div>
+    <div style="background:var(--bg);border-radius:8px;padding:6px 10px;margin-bottom:8px">
+      ${dong('Kho Online (đơn sàn)', KHO.SAN.branchId + (KHO.SAN.branchId === 634586 ? ' · Chi nhánh trung tâm' : ' · chi nhánh Sàn TMĐT'))}
+      ${dong('Kho Cửa hàng (bán tại quầy)', KHO.CUA_HANG.branchId + (KHO.CUA_HANG.branchId === 650302 ? ' · Kho Offline' : ' · Chi nhánh trung tâm'))}
+    </div>
+    <p class="info-note">Đồng bộ tồn: lấy số tồn thật của 2 kho bên KiotViet ghi vào app (Kho Online, Kho Cửa hàng). Nên chạy ngay trước khi chuyển chế độ và sau khi kiểm kho.</p>
+    <div id="ht-khokv-kq" style="font-size:12.5px;margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-outline" style="flex:1" onclick="htDongBoTonKV()">Đồng bộ tồn từ KiotViet</button>
+      ${moi ? `<button class="btn-xs danger" onclick="htDoiCheDoKho('cu')">Quay lại cách cũ</button>`
+            : `<button class="btn-g" style="flex:1;margin:0" onclick="htDoiCheDoKho('moi')">Chuyển sang Chi nhánh trung tâm</button>`}
+    </div>`;
+}
+window.htDoiCheDoKho = async function(cheDo) {
+  const moi = cheDo === 'moi';
+  const thongDiep = moi
+    ? 'Chuyển app sang Chi nhánh trung tâm?\n\n• Kho Online = Kho Online KiotViet (kho mặc định, nối sàn)\n• Kho Cửa hàng = Kho Offline (đang bán thật)\n\nTừ lúc này nhập kho, xuất hủy, chuyển kho, bán tại quầy trên app ghi thẳng vào 2 kho này. Nên Đồng bộ tồn ngay sau khi chuyển.'
+    : 'Quay lại cách cũ (Sàn TMĐT + Chi nhánh trung tâm)?';
+  if (!await hoiXacNhan(thongDiep, { nutDongY: moi ? 'Chuyển' : 'Quay lại', nguy: !moi })) return;
+  try {
+    await setDoc(doc(db, 'cau_hinh', 'kho_kv'), { cheDo, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true });
+    cauHinhKhoKV = { ...(cauHinhKhoKV || {}), cheDo }; apDungCheDoKho();
+    showToast(moi ? 'Đã chuyển sang Chi nhánh trung tâm' : 'Đã quay lại cách cũ');
+    htVeKhoKV();
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.htDongBoTonKV = async function() {
+  const kq = document.getElementById('ht-khokv-kq');
+  const ghi = (t) => { if (kq) kq.innerHTML = t; };
+  if (!allSKUs.length) await loadSKUs();
+  const bOn = KHO.SAN.branchId, bCH = KHO.CUA_HANG.branchId;
+  ghi('Đang đọc tồn từ KiotViet...');
+  const tonKV = new Map();
+  try {
+    for (let trang = 0; trang < 60; trang++) {
+      const r = await goiWorkerAdmin('ton-kv', { trang });
+      if (!r.success) throw new Error(r.error || 'KiotViet lỗi');
+      (r.ds || []).forEach(x => tonKV.set(x.ma, x.ton || {}));
+      ghi(`Đang đọc tồn từ KiotViet... ${tonKV.size}/${r.tong || '?'} mã`);
+      if (!r.ds?.length || tonKV.size >= (r.tong || 0)) break;
+    }
+  } catch(e) { ghi(`<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`); return; }
+  // So với tồn trong app
+  const snapSan = await getDocs(collection(db, 'ton_san'));
+  const tonSanApp = new Map(snapSan.docs.map(d => [d.id, Number(d.data().soLuongTon) || 0]));
+  const doi = [];
+  for (const s of allSKUs) {
+    if (s.loai === 'combo' || s.laCombo || !tonKV.has(s.sku)) continue;
+    const t = tonKV.get(s.sku);
+    const on = Number(t[bOn]) || 0, ch = Number(t[bCH]) || 0;
+    const onCu = tonSanApp.get(s.id) || 0, chCu = Number(s.tonCuaHang) || 0;
+    if (on !== onCu || ch !== chCu) doi.push({ s, on, ch, onCu, chCu });
+  }
+  const khongCo = allSKUs.filter(s => !tonKV.has(s.sku) && !(s.loai === 'combo' || s.laCombo)).length;
+  if (!doi.length) { ghi(`Tồn trong app đã khớp KiotViet (${tonKV.size} mã).`); return; }
+  ghi(`${doi.length} mã lệch tồn so với KiotViet${khongCo ? ` · ${khongCo} mã app không có bên KiotViet (giữ nguyên)` : ''}.<br>VD: ${doi.slice(0, 3).map(d => `${escHtml(d.s.sku)}: Online ${d.onCu}→${d.on}, Cửa hàng ${d.chCu}→${d.ch}`).join('; ')}`);
+  if (!await hoiXacNhan(`Ghi tồn KiotViet vào app cho ${doi.length} mã?\n\nKho Online ← ${bOn}\nKho Cửa hàng ← ${bCH}`, { nutDongY: 'Ghi tồn' })) return;
+  try {
+    for (let i = 0; i < doi.length; i += 200) {
+      const b = writeBatch(db);
+      doi.slice(i, i + 200).forEach(d => {
+        if (d.ch !== d.chCu) b.update(doc(db, 'skus', d.s.id), { tonCuaHang: d.ch });
+        if (d.on !== d.onCu) b.set(doc(db, 'ton_san', d.s.id), { soLuongTon: d.on }, { merge: true });
+      });
+      await b.commit();
+      ghi(`Đang ghi... ${Math.min(i + 200, doi.length)}/${doi.length}`);
+    }
+    doi.forEach(d => { d.s.tonCuaHang = d.ch; });
+    ghi(`<span style="color:var(--green)">Đã đồng bộ tồn ${doi.length} mã.</span>`);
+    showToast('Đã đồng bộ tồn từ KiotViet');
+  } catch(e) { ghi(`<span style="color:var(--red)">Lỗi khi ghi: ${escHtml(e.message)}</span>`); }
+};
+
 window.htTaiChiNhanh = async function() {
   const el = document.getElementById('ht-chinhanh');
   el.innerHTML = '<div class="loading">Đang tải...</div>';
@@ -11978,6 +12063,20 @@ const KHO = {
   SAN:      { ma: 'san',      ten: 'Kho Online', truong: 'soLuongTon', branchId: 650408 },
   CUA_HANG: { ma: 'cuahang',  ten: 'Kho Cửa hàng', truong: 'tonCuaHang', branchId: 634586 }
 };
+// ===== CHẾ ĐỘ KHO KIOTVIET (cau_hinh/kho_kv.cheDo) =====
+//   'cu'  : Kho Online = chi nhánh Sàn TMĐT (650408), Kho Cửa hàng = Chi nhánh trung tâm (634586)
+//   'moi' : gộp về Chi nhánh trung tâm — Kho Online = 634586 (kho mặc định, nối sàn),
+//           Kho Cửa hàng = Kho Offline 650302 (đang bán tại cửa hàng)
+// Link demo luôn chạy chế độ mới để thử trước.
+let cauHinhKhoKV = null;
+const khoKVMoi = () => LA_BAN_DEMO || cauHinhKhoKV?.cheDo === 'moi';
+function apDungCheDoKho() {
+  const moi = khoKVMoi();
+  KHO.SAN.branchId = moi ? 634586 : 650408;
+  KHO.CUA_HANG.branchId = moi ? 650302 : 634586;
+}
+apDungCheDoKho();
+const branchKhoTheoMa = (k) => (k === 'san' ? KHO.SAN : KHO.CUA_HANG).branchId;   // 'san' | 'ch' | 'cuahang'
 
 // Lấy tồn của một kho. Combo tính động từ thành phần, không lưu số riêng.
 function layTon(sku, maKho = 'san') {
@@ -12846,6 +12945,10 @@ function theoDoiTinhNang() {
   }, (e) => console.warn('[tính năng] không đọc được:', e.message));
   onSnapshot(doc(db, 'cau_hinh', 'chi_nhanh'), (snap) => {
     cauHinhChiNhanh = snap.exists() ? snap.data() : null;
+  }, () => {});
+  onSnapshot(doc(db, 'cau_hinh', 'kho_kv'), (snap) => {
+    cauHinhKhoKV = snap.exists() ? snap.data() : null;
+    apDungCheDoKho();
   }, () => {});
   onSnapshot(doc(db, 'cau_hinh', 'cham_cong'), (snap) => {
     const c = snap.exists() ? snap.data() : {};
@@ -15036,7 +15139,7 @@ window.submitXuat = async function() {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
       headers: { 'x-action': 'tao-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kho,
+      body: JSON.stringify({ kho, branchId: branchKhoTheoMa(kho),
         items: currentPhieu.items.map(i => ({ skuId: i.skuId, sku: i.sku, ten: i.ten, sl: i.sl, gia: i.gia })),
         photos: currentPhieu.photos.map(p => ({ dataUrl: p.dataUrl, thumb: p.thumb, ts: p.ts, skuId: p.skuId, tuFile: !!p.tuFile })) })
     });
@@ -19851,7 +19954,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v521</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v522</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19905,7 +20008,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v521</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v522</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19951,7 +20054,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v521</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v522</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
