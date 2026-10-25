@@ -681,7 +681,6 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
       await updateDoc(shiftRef, { vaoLuc2: serverTimestamp(), gpsOk2: gpsOk, gpsDist2: gpsInfo, isMock2: isMock, photo2: photoData });
       currentShiftDocId = shiftId; currentShiftNgay = ngay; currentCa = loaiCa; currentCaId = caId;
       await loadChecklistState(shiftId);
-      showToast('Đã vào khung 2 của ca gãy');
       return;
     }
     if (data.vaoLuc) {
@@ -795,9 +794,9 @@ async function chupAnhQRVaCheckin() {
   await xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData);
 
   if (!gpsOk) {
-    showToast(`Quét mã ngoài khu vực cửa hàng!!! (${gpsInfo})`, true);
+    showToast(`Vào ca · ngoài khu vực cửa hàng (${gpsInfo})`, true);
   } else {
-    showToast('Check-in thành công!');
+    showToast('Vào ca');
   }
 
   await loadBenhDanhSach();
@@ -1706,9 +1705,9 @@ async function xuLyCheckout() {
   }
 
   if (!gpsOk) {
-    showToast(`Quét mã ngoài khu vực cửa hàng!!! (${gpsInfo})`, true);
+    showToast(`Kết thúc ca · ngoài khu vực cửa hàng (${gpsInfo})`, true);
   } else {
-    showToast(laKhung1CaGay ? 'Đã ra khung 1 — tới giờ khung 2 thì quét QR vào ca lại' : 'Check-out thành công!');
+    showToast('Kết thúc ca');
   }
 
   currentCa = null;
@@ -15998,7 +15997,6 @@ function veDanhSachCa() {
               <b style="font-size:15px">${escHtml(c.ten)}</b>${c.khung2 ? ' <span style="font-size:11px;color:#7C3AED;font-weight:600">CA GÃY</span>' : ''}
               <div style="font-size:13px;color:var(--text2);margin-top:2px">
                 ${nhanGioCa(c)}
-                <span style="font-size:11px">(có mặt ${gioCoMat(c).toFixed(1).replace('.0','')}h)</span>
               </div>
               <div style="font-size:12px;margin-top:2px">
                 Tính lương: <b style="color:var(--green)">${soCongCuaCa(c).toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')} công</b>
@@ -16055,6 +16053,25 @@ window.taoCaMacDinh = async function() {
   }
 };
 
+// Ô chọn giờ kiểu 24h (giờ 00–23 : phút) — ô time của trình duyệt hay hiện AM/PM, dễ nhầm.
+// Giữ một input ẩn cùng id, giá trị "HH:MM", nên chỗ đọc giờ cũ không phải sửa.
+function oGio24(id, phut, khiDoi = '') {
+  phut = Number(phut) || 0;
+  const g = Math.floor(phut / 60), p = phut % 60;
+  const dsPhut = [...new Set([...Array(12)].map((_, i) => i * 5).concat(p))].sort((a, b) => a - b);
+  const pad = (x) => String(x).padStart(2, '0');
+  const doi = `gio24Doi('${id}');${khiDoi}`;
+  return `<div style="display:flex;align-items:center;gap:4px">
+    <select id="${id}-h" onchange="${doi}" style="flex:1;min-width:0;padding:8px 6px;font-size:15px;font-weight:600;text-align:center">${[...Array(24)].map((_, i) => `<option value="${i}" ${i === g ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select>
+    <b>:</b>
+    <select id="${id}-m" onchange="${doi}" style="flex:1;min-width:0;padding:8px 6px;font-size:15px;font-weight:600;text-align:center">${dsPhut.map(x => `<option value="${x}" ${x === p ? 'selected' : ''}>${pad(x)}</option>`).join('')}</select>
+    <input type="hidden" id="${id}" value="${pad(g)}:${pad(p)}">
+  </div>`;
+}
+window.gio24Doi = function(id) {
+  const h = document.getElementById(id + '-h')?.value || 0, m = document.getElementById(id + '-m')?.value || 0;
+  const o = document.getElementById(id); if (o) o.value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
 window.moSuaCa = function(caId) {
   const c = caId ? layCa(caId) : null;
   let m = document.getElementById('ca-modal');
@@ -16088,11 +16105,11 @@ window.moSuaCa = function(caId) {
         <div style="display:flex;gap:10px">
           <div class="field" style="flex:1">
             <label>Giờ vào</label>
-            <input type="time" id="ca-vao" value="${gio(c?.batDau ?? 8 * 60 + 30)}">
+            ${oGio24('ca-vao', c?.batDau ?? 8 * 60 + 30, 'caTinhLaiCong()')}
           </div>
           <div class="field" style="flex:1">
             <label>Giờ ra</label>
-            <input type="time" id="ca-ra" value="${gio(c?.ketThuc ?? 16 * 60 + 30)}">
+            ${oGio24('ca-ra', c?.ketThuc ?? 16 * 60 + 30, 'caTinhLaiCong()')}
           </div>
         </div>
 
@@ -16162,8 +16179,8 @@ function caVeKhung2() {
         <button class="btn-xs" onclick="caBoKhung2()">✕ Bỏ khung 2</button>
       </div>
       <div style="display:flex;gap:10px">
-        <div class="field" style="flex:1;margin:0"><label>Giờ vào 2</label><input type="time" id="ca-vao2" value="${caGioInput(caKhung2.batDau)}" oninput="caTinhLaiCong()"></div>
-        <div class="field" style="flex:1;margin:0"><label>Giờ ra 2</label><input type="time" id="ca-ra2" value="${caGioInput(caKhung2.ketThuc)}" oninput="caTinhLaiCong()"></div>
+        <div class="field" style="flex:1;margin:0"><label>Giờ vào 2</label>${oGio24('ca-vao2', caKhung2.batDau, 'caTinhLaiCong()')}</div>
+        <div class="field" style="flex:1;margin:0"><label>Giờ ra 2</label>${oGio24('ca-ra2', caKhung2.ketThuc, 'caTinhLaiCong()')}</div>
       </div>
       <div style="font-size:11px;color:var(--text2);margin-top:4px">Nhân viên quét QR vào/ra 2 lần trong ngày: vào–ra khung 1, rồi vào–ra khung 2.</div>
     </div>` : `<button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="caThemKhung2()">+ Thêm giờ vào-ra (ca gãy)</button>`;
@@ -19383,7 +19400,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v509</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v510</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19437,7 +19454,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v509</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v510</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19483,7 +19500,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v509</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v510</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
