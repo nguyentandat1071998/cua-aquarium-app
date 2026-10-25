@@ -15933,12 +15933,14 @@ function layCa(caId) {
 // Số công của một ca. Ca full làm thực 11 tiếng thì được 11/8 = 1,375 công.
 function soCongCuaCa(ca) {
   const gio = Number(ca?.gioLamThuc) || Number(ca?.gioMotCong) || GIO_MOT_CONG;
-  return gio / GIO_MOT_CONG;
+  return gio / gioQuyDoiCuaCa(ca);
 }
 
 // Số phút của một công — dùng quy đổi lương làm thêm theo phút
-function phutMotCong() {
-  return GIO_MOT_CONG * 60;
+// Số giờ = 1 công: mỗi ca tự đặt (VD ca đóng gói 9 giờ = 1 công), chưa đặt thì 8
+function gioQuyDoiCuaCa(ca) { return Number(ca?.gioQuyDoi) || GIO_MOT_CONG; }
+function phutMotCong(ca) {
+  return gioQuyDoiCuaCa(ca) * 60;
 }
 // Công THỰC TẾ của một ca (8 giờ = 1 công): giờ làm theo ca, TRỪ số phút đi trễ và về sớm.
 // Ca gãy: tính cả hai khung, bỏ khung 2 thì trừ cả khung. Ca Admin đã xử lý (lý do chính đáng)
@@ -15948,7 +15950,7 @@ function tinhCongThucTe(ca, caLV, gioCa) {
   if (!ca?.vaoLuc?.seconds || !ca?.thoatLuc?.seconds) return kq;
   kq.du = true;
   const ph = (ts) => { const d = new Date(ts.seconds * 1000); return d.getHours() * 60 + d.getMinutes(); };
-  const keHoach = (caLV ? soCongCuaCa(caLV) : 1) * phutMotCong();
+  const keHoach = (caLV ? soCongCuaCa(caLV) : 1) * phutMotCong(caLV);
   kq.phutTre = Math.max(0, ph(ca.vaoLuc) - gioCa.batDau);
   kq.phutVeSom = Math.max(0, gioCa.ketThuc - ph(ca.thoatLuc));
   if (gioCa.khung2) {
@@ -15957,9 +15959,10 @@ function tinhCongThucTe(ca, caLV, gioCa) {
       kq.phutVeSom += Math.max(0, gioCa.khung2.ketThuc - ph(ca.thoatLuc2));
     } else kq.phutVeSom += Math.max(0, gioCa.khung2.ketThuc - gioCa.khung2.batDau);
   }
-  if (ca.dieuChinhCa || ca.dieuChinhTre) kq.phutTre = 0;
+  kq.phutTreGoc = kq.phutTre;
+  if (ca.dieuChinhCa || ca.dieuChinhTre) kq.phutTre = 0;   // Admin đã duyệt bỏ qua
   kq.phutCong = Math.max(0, keHoach - kq.phutTre - kq.phutVeSom);
-  kq.soCong = kq.phutCong / phutMotCong();
+  kq.soCong = kq.phutCong / phutMotCong(caLV);
   return kq;
 }
 
@@ -16029,7 +16032,7 @@ function veDanhSachCa() {
               </div>
               <div style="font-size:12px;margin-top:2px">
                 Tính lương: <b style="color:var(--green)">${soCongCuaCa(c).toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')} công</b>
-                <span style="color:var(--text2)">(${(Number(c.gioLamThuc) || GIO_MOT_CONG)} giờ làm, cứ ${GIO_MOT_CONG} giờ = 1 công)</span>
+                <span style="color:var(--text2)">(${(Number(c.gioLamThuc) || GIO_MOT_CONG)} giờ làm, cứ ${gioQuyDoiCuaCa(c)} giờ = 1 công)</span>
               </div>
               <div style="font-size:11px;color:var(--text2);margin-top:3px">
                 ${vt.length ? 'Áp dụng: ' + vt.map(escHtml).join(', ') : 'Áp dụng cho mọi vai trò'}
@@ -16176,6 +16179,10 @@ window.moSuaCa = function(caId) {
           <label>Số giờ tính lương (giờ có mặt trừ thời gian nghỉ)</label>
           <input type="number" id="ca-gio-thuc" value="${c?.gioLamThuc ?? c?.gioMotCong ?? 8}"
             min="0.5" max="24" step="0.5" oninput="caTinhLaiCong()">
+        </div>
+        <div class="field">
+          <label>Số giờ = 1 công</label>
+          <input type="number" id="ca-gio-quydoi" value="${gioQuyDoiCuaCa(c)}" min="1" max="24" step="0.5" oninput="caTinhLaiCong()">
           <div style="font-size:11px;color:var(--text2);margin-top:3px" id="ca-goi-y-cong"></div>
         </div>
 
@@ -16257,12 +16264,13 @@ window.caTinhLaiCong = function() {
   const gio = Number(document.getElementById('ca-gio-thuc')?.value) || 0;
   const el = document.getElementById('ca-goi-y-cong');
   if (!el) return;
-  const cong = gio / GIO_MOT_CONG;
+  const quyDoi = Number(document.getElementById('ca-gio-quydoi')?.value) || GIO_MOT_CONG;
+  const cong = gio / quyDoi;
   const doiPhut = (v) => { const [g, p] = String(v || '').split(':').map(Number); return (g || 0) * 60 + (p || 0); };
   const coMat = ((doiPhut(document.getElementById('ca-ra')?.value) - doiPhut(document.getElementById('ca-vao')?.value))
     + (caKhung2 ? doiPhut(document.getElementById('ca-ra2')?.value) - doiPhut(document.getElementById('ca-vao2')?.value) : 0)) / 60;
   el.innerHTML = gio
-    ? `Có mặt ${coMat > 0 ? coMat.toFixed(1).replace('.0', '') : '?'} giờ. Cứ ${GIO_MOT_CONG} giờ = 1 công, nên ca này được
+    ? `Có mặt ${coMat > 0 ? coMat.toFixed(1).replace('.0', '') : '?'} giờ. Cứ ${String(quyDoi).replace('.', ',')} giờ = 1 công, nên ca này được
        <b style="color:var(--green)">${cong.toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')} công</b>
        → lương ca = đơn giá 1 công × ${cong.toFixed(3).replace(/0+$/,'').replace(/\.$/,'').replace('.', ',')}.`
     : `Nhập số giờ làm (giờ có mặt trừ thời gian nghỉ giữa ca).`;
@@ -16293,6 +16301,7 @@ window.luuCa = async function(caId) {
   const duLieu = {
     ten, batDau, ketThuc, khung2,
     gioLamThuc: Number(document.getElementById('ca-gio-thuc')?.value) || GIO_MOT_CONG,
+    gioQuyDoi: Number(document.getElementById('ca-gio-quydoi')?.value) || GIO_MOT_CONG,
     mau: document.getElementById('ca-mau')?.value || '#16A34A',
     canXepLich: document.getElementById('ca-xep-lich')?.checked !== false,
     vaiTroIds, deleted: false,
@@ -16481,6 +16490,7 @@ async function tinhLuongThang(thang) {
     n.loaiCa = ca.loaiCa;
     n.caId = ca.caId || null;
     n.daDieuChinh = !!(ca.dieuChinhCa || ca.dieuChinhTre);
+    n.boQuaTre = !!ca.dieuChinhTre;
     n.lyDoDieuChinh = ca.dieuChinhCa?.lyDo || ca.dieuChinhTre?.lyDo || '';
     if (ca.vaoLuc?.seconds) n.vao = new Date(ca.vaoLuc.seconds * 1000);
     if (ca.thoatLuc?.seconds) n.ra = new Date(ca.thoatLuc.seconds * 1000);
@@ -16506,7 +16516,7 @@ async function tinhLuongThang(thang) {
       n.phut = Math.max(0, Math.round((n.ra - n.vao) / 60000)) + (n.vao2 && n.ra2 ? Math.max(0, Math.round((n.ra2 - n.vao2) / 60000)) : 0);
       // Công theo giờ thực tế: trừ phút đi trễ, về sớm
       const cTT = tinhCongThucTe(ca, caLV, gioCa);
-      n.coCong = true; n.soCong = cTT.soCong; n.phutVeSom = cTT.phutVeSom;
+      n.coCong = true; n.soCong = cTT.soCong; n.phutVeSom = cTT.phutVeSom; n.phutTreGoc = cTT.phutTreGoc;
       if (cTT.phutTre || cTT.phutVeSom) n.ghiChuDC.push([cTT.phutTre ? `trễ ${cTT.phutTre}′` : '', cTT.phutVeSom ? `về sớm ${cTT.phutVeSom}′` : ''].filter(Boolean).join(', ') + ' (đã trừ công)');
       // Lương tính theo SỐ CÔNG của ca, không theo thời gian có mặt — giữa ca có
       // nghỉ nên ở lâu hơn không có nghĩa làm nhiều hơn. Ca full 11 giờ làm thực
@@ -16517,7 +16527,7 @@ async function tinhLuongThang(thang) {
       n.phutLamThem = gioCa.khung2 ? (n.ra2 ? tinhPhutLamThem(n.ra2, gioCa.khung2.ketThuc) : 0) : tinhPhutLamThem(n.ra, gioCa.ketThuc);
       n.lamThemDaDuyet = !!ca.lamThemDuyet;
       if (n.phutLamThem && n.lamThemDaDuyet) {
-        n.tienLamThem = Math.round(donGia / phutMotCong() * n.phutLamThem * HE_SO_LAM_THEM);
+        n.tienLamThem = Math.round(donGia / phutMotCong(caLV) * n.phutLamThem * HE_SO_LAM_THEM);
       }
     }
   }
@@ -16672,7 +16682,7 @@ async function tinhLuongTatCa(thang) {
       n.luong += Math.round(donGia * soCong);
       if (ca.lamThemDuyet) {
         const p = Number(ca.lamThemDuyet.soPhut) || 0;
-        n.lamThem += Math.round(donGia / phutMotCong() * p * HE_SO_LAM_THEM);
+        n.lamThem += Math.round(donGia / phutMotCong(caLV) * p * HE_SO_LAM_THEM);
       }
     }
     if (ca.vaoLuc?.seconds) {
@@ -16970,7 +16980,11 @@ function veBangLuong(dl) {
             return `
             <tr>
               <td>${nhanNgay}
-                ${n.treGio ? '<div style="font-size:10px;color:var(--red)">trễ</div>' : ''}
+                ${(n.phutTreGoc ?? n.phutTre) ? (n.daXuLyTre
+                  ? `<div style="font-size:10px;color:var(--text2)" title="${escHtml(n.lyDoDieuChinh || '')}">trễ ${n.phutTreGoc ?? n.phutTre}′ · đã bỏ qua</div>
+                     ${laAdmin && n.boQuaTre ? `<button class="btn-xs" style="font-size:10px;padding:1px 6px" onclick="hoanTacBoQuaTre('${n.ngay}')">Hoàn tác</button>` : ''}`
+                  : `<div style="font-size:10px;color:var(--red)">trễ ${n.phutTreGoc ?? n.phutTre}′</div>
+                     ${laAdmin ? `<button class="btn-xs bl-nut-xuly" style="font-size:10px;padding:1px 6px" onclick="boQuaTre('${n.ngay}',${n.phutTreGoc ?? n.phutTre})">Bỏ qua</button>` : ''}`) : ''}
                 ${n.vao && !n.ra ? '<div style="font-size:10px;color:#D97706">chưa kết ca</div>' : ''}
               </td>
               <td>${n.coCong ? (Math.round(n.soCong * 1000) / 1000).toString().replace('.', ',') : '—'}</td>
@@ -17092,6 +17106,29 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
   } catch(e) {
     alert('Không xử lý được: ' + e.message);
   }
+};
+
+// ===== BỎ QUA ĐI TRỄ (Admin) =====
+// Trễ có lý do chính đáng: giữ nguyên giờ chấm công gốc, chỉ đánh dấu bỏ qua kèm lý do.
+// Ca đã bỏ qua: không trừ phút trễ khỏi công, không tính vào "số lần / số phút đi trễ".
+window.boQuaTre = async function(ngay, phut) {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  const uid = blNhanVienDangXem || currentUser.uid;
+  const lyDo = String(await hoiNhap(`Bỏ qua đi trễ ${phut} phút ngày ${ngay.split('-').reverse().join('/')}\n\nLý do (bắt buộc):`) || '').trim();
+  if (!lyDo) return;
+  try {
+    await updateDoc(doc(db, 'lich_ca', `${ngay}_${uid}`), {
+      dieuChinhTre: { lyDo, phutTre: phut, boi: { uid: currentUser.uid, ten: currentUserData?.ten || '' }, luc: new Date().toISOString() }
+    });
+    showToast('Đã bỏ qua đi trễ'); renderBangLuong();
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.hoanTacBoQuaTre = async function(ngay) {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  if (!await hoiXacNhan('Hoàn tác — tính lại đi trễ cho ngày này?')) return;
+  const uid = blNhanVienDangXem || currentUser.uid;
+  try { await updateDoc(doc(db, 'lich_ca', `${ngay}_${uid}`), { dieuChinhTre: null }); showToast('Đã hoàn tác'); renderBangLuong(); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
 };
 
 // ===== DUYỆT LÀM THÊM GIỜ =====
@@ -19664,7 +19701,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v515</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v516</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19718,7 +19755,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v515</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v516</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19764,7 +19801,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v515</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v516</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
