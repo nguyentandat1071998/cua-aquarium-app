@@ -15944,7 +15944,7 @@ function phutMotCong(ca) {
 }
 // Công THỰC TẾ của một ca (8 giờ = 1 công): giờ làm theo ca, TRỪ số phút đi trễ và về sớm.
 // Ca gãy: tính cả hai khung, bỏ khung 2 thì trừ cả khung. Ca Admin đã xử lý (lý do chính đáng)
-// thì không trừ phút trễ. Làm thêm (đã duyệt) tính riêng ở cột Làm thêm.
+// vẫn trừ phút trễ (bỏ qua chỉ miễn khoản trừ tiền). Làm thêm (đã duyệt) tính riêng ở cột Làm thêm.
 function tinhCongThucTe(ca, caLV, gioCa) {
   const kq = { du: false, phutTre: 0, phutVeSom: 0, phutCong: 0, soCong: 0 };
   if (!ca?.vaoLuc?.seconds || !ca?.thoatLuc?.seconds) return kq;
@@ -15959,8 +15959,8 @@ function tinhCongThucTe(ca, caLV, gioCa) {
       kq.phutVeSom += Math.max(0, gioCa.khung2.ketThuc - ph(ca.thoatLuc2));
     } else kq.phutVeSom += Math.max(0, gioCa.khung2.ketThuc - gioCa.khung2.batDau);
   }
+  // Admin "bỏ qua đi trễ" chỉ miễn khoản trừ theo công thức (số lần / phút trễ); giờ trễ vẫn trừ khỏi công
   kq.phutTreGoc = kq.phutTre;
-  if (ca.dieuChinhCa || ca.dieuChinhTre) kq.phutTre = 0;   // Admin đã duyệt bỏ qua
   kq.phutCong = Math.max(0, keHoach - kq.phutTre - kq.phutVeSom);
   kq.soCong = kq.phutCong / phutMotCong(caLV);
   return kq;
@@ -16981,7 +16981,7 @@ function veBangLuong(dl) {
             <tr>
               <td>${nhanNgay}
                 ${(n.phutTreGoc ?? n.phutTre) ? (n.daXuLyTre
-                  ? `<div style="font-size:10px;color:var(--text2)" title="${escHtml(n.lyDoDieuChinh || '')}">trễ ${n.phutTreGoc ?? n.phutTre}′ · đã bỏ qua</div>
+                  ? `<div style="font-size:10px;color:var(--text2)" title="${escHtml(n.lyDoDieuChinh || '')}">trễ ${n.phutTreGoc ?? n.phutTre}′ · miễn trừ tiền</div>
                      ${laAdmin && n.boQuaTre ? `<button class="btn-xs" style="font-size:10px;padding:1px 6px" onclick="hoanTacBoQuaTre('${n.ngay}')">Hoàn tác</button>` : ''}`
                   : `<div style="font-size:10px;color:var(--red)">trễ ${n.phutTreGoc ?? n.phutTre}′</div>
                      ${laAdmin ? `<button class="btn-xs bl-nut-xuly" style="font-size:10px;padding:1px 6px" onclick="boQuaTre('${n.ngay}',${n.phutTreGoc ?? n.phutTre})">Bỏ qua</button>` : ''}`) : ''}
@@ -17110,11 +17110,12 @@ window.xuLyCa = async function(ngay, loaiCa, thieuGioRa) {
 
 // ===== BỎ QUA ĐI TRỄ (Admin) =====
 // Trễ có lý do chính đáng: giữ nguyên giờ chấm công gốc, chỉ đánh dấu bỏ qua kèm lý do.
-// Ca đã bỏ qua: không trừ phút trễ khỏi công, không tính vào "số lần / số phút đi trễ".
+// Ca đã bỏ qua: không tính vào công thức "số lần / số phút đi trễ" (không bị trừ tiền);
+// thời gian trễ vẫn trừ khỏi công.
 window.boQuaTre = async function(ngay, phut) {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
   const uid = blNhanVienDangXem || currentUser.uid;
-  const lyDo = String(await hoiNhap(`Bỏ qua đi trễ ${phut} phút ngày ${ngay.split('-').reverse().join('/')}\n\nLý do (bắt buộc):`) || '').trim();
+  const lyDo = String(await hoiNhap(`Bỏ qua đi trễ ${phut} phút ngày ${ngay.split('-').reverse().join('/')}\n\nKhông trừ tiền đi trễ, nhưng ${phut} phút vẫn trừ khỏi công. Lý do (bắt buộc):`) || '').trim();
   if (!lyDo) return;
   try {
     await updateDoc(doc(db, 'lich_ca', `${ngay}_${uid}`), {
@@ -19701,7 +19702,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v516</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v517</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19755,7 +19756,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v516</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v517</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19801,7 +19802,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v516</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v517</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
