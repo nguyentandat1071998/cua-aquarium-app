@@ -5163,8 +5163,10 @@ function laHangTuoi(sku, tapNhom) {
 }
 function tinhThuongDon(d) {
   const tt = trangThaiHienThi(d);
-  const coDinh = Number(CONG_THUC_LUONG.thuongMoiDonGoi) || 0;
-  const tyLe = Number(CONG_THUC_LUONG.phanTramDonGoi) || 0;
+  // Lấy từ bảng công thức: "số tiền × số đơn đóng gói" và "% doanh thu đơn đóng gói"
+  const cts = QUY_TAC_THUONG.filter(q => q.loai !== 'tru' && qtApDung(q, currentUserData?.vaiTroId));
+  const coDinh = cts.filter(q => q.coSo === 'so_don_goi' && q.cachTinh === 'moi_don_vi').reduce((t, q) => t + (Number(q.giaTri) || 0), 0);
+  const tyLe = cts.filter(q => q.coSo === 'dt_don_goi' && q.cachTinh === 'phan_tram').reduce((t, q) => t + (Number(q.giaTri) || 0), 0);
 
   // Trả hàng một phần: trừ đúng phần tiền món bị trả, giữ lại phần khách vẫn nhận
   const tienTra = Number(d.tienHangTra || 0);
@@ -5186,6 +5188,7 @@ function tinhThuongDon(d) {
 }
 
 async function renderQuetDongGoiTab() {
+  await napQuyTacThuong();
   const el = document.getElementById('tmdt-than');
   if (!el) return;
 
@@ -16379,7 +16382,7 @@ async function tinhLuongThang(thang) {
   const uidXem = blNhanVienDangXem || currentUser.uid;
 
   const cfg = await getLuongConfig();
-  await napCongThucLuong();
+  await napQuyTacThuong();
 
   // --- Ca làm việc ---
   // Xem lương mọi người: tải cả tháng rồi lọc. Chỉ xem lương mình: hỏi máy chủ đúng dữ liệu
@@ -16432,8 +16435,6 @@ async function tinhLuongThang(thang) {
   const q = locQuyenXem(vtNguoi);
   const laBanHang = !!q.banhang;
   const laDongGoi = !!q.quetdonggoi;
-  // Công thức thưởng của chính vai trò người này
-  const ct = congThucCuaVaiTro(nguoi.vaiTroId);
 
   // Gom mọi thứ theo NGÀY
   const theoNgay = new Map();
@@ -16495,40 +16496,6 @@ async function tinhLuongThang(thang) {
     }
   }
 
-  const nhomTuoi = new Set(ct.nhomDoTuoi || []);
-  for (const d of donBan) {
-    const t = d.taoLuc?.toDate ? d.taoLuc.toDate() : null;
-    if (!t) continue;
-    const ngay = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-    const n = layNgay(ngay);
-    n.soDonBan++;
-    // Trừ phần đã trả hàng khỏi doanh thu tính thưởng
-    const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
-    for (const h of (d.dongHang || [])) {
-      const sku = allSKUs.find(x => x.sku === h.sku);
-      const tienDong = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-      if (laHangTuoi(sku, nhomTuoi)) n.dtDoTuoi += tienDong;
-      else n.dtPhuKien += tienDong;
-    }
-    // Tiền trả lại trừ đều vào phụ kiện cho đơn giản; sai số nhỏ, không đáng phức tạp hóa
-    n.dtPhuKien = Math.max(0, n.dtPhuKien - daTra);
-  }
-
-  // Thưởng đóng gói tính LẠI từ đơn hàng thật, không dùng số lưu lúc quét —
-  // vì phần trăm doanh thu chỉ cộng khi đơn đã giao, mà lúc quét chưa biết.
-  for (const qt of cacLanQuet) {
-    const n = layNgay(qt.ngay);
-    n.soDonGoi++;
-    const don = allDonHangSan.find(x => x.maDonSan === qt.maDonSan || x.maHoaDon === qt.maHoaDon);
-    if (don) {
-      const t = tachThuongDonGoi(don, ct);
-      n.thuongDonGoi = (n.thuongDonGoi || 0) + (t.thuongCoDinh || 0);
-      n.thuongDTGoi = (n.thuongDTGoi || 0) + (t.thuongDoanhThu || 0);
-    } else {
-      n.thuongDonGoi = (n.thuongDonGoi || 0) + (Number(ct.thuongMoiDonGoi) || 0);
-    }
-  }
-
   // Điều chỉnh: loai 'thuong' thì cộng vào cột Thưởng, còn lại trừ vào Điều chỉnh
   for (const kt of cacKhauTru) {
     const n = layNgay(kt.ngay);
@@ -16542,33 +16509,8 @@ async function tinhLuongThang(thang) {
     }
   }
 
-  // Tính thưởng bán hàng theo ngày
-  for (const n of theoNgay.values()) {
-    // Trừ tự động khi đi trễ — chỉ áp khi Admin CHƯA xử lý ca đó
-    if (ct.bat?.truTre && n.treGio) {
-      const nguong = Number(ct.phutChoTre) || 0;
-      if (n.phutTre > nguong) {
-        n.truTre = Math.round((Number(ct.tienTruTre) || 0)
-          + n.phutTre * (Number(ct.truTheoPhut) || 0));
-        if (n.truTre) {
-          n.khauTru += n.truTre;
-          n.ghiChuDC.push(`−${fmt(n.truTre)}đ: đi trễ ${n.phutTre} phút`);
-        }
-      }
-    }
-
-    // Tách riêng để hiện thành hai cột: thưởng theo ĐƠN và thưởng theo DOANH THU
-    n.thuongDonBan = n.soDonBan * (Number(ct.thuongMoiDonBan) || 0);
-    n.thuongDTBan = Math.round(
-      n.dtDoTuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
-      + n.dtPhuKien * (Number(ct.phanTramPhuKien) || 0) / 100);
-
-    n.thuongDon = (laBanHang ? n.thuongDonBan : 0) + (laDongGoi ? (n.thuongDonGoi || 0) : 0);
-    n.thuongDT = (laBanHang ? n.thuongDTBan : 0) + (laDongGoi ? (n.thuongDTGoi || 0) : 0);
-    n.thuong = n.thuongDon + n.thuongDT;
-    n.tong = n.luong + (n.tienLamThem || 0) + n.thuongDon + n.thuongDT
-      + (n.thuongThem || 0) - n.khauTru;
-  }
+  // Thưởng / trừ theo công thức tính theo THÁNG (bên dưới), không chia theo ngày
+  for (const n of theoNgay.values()) n.tong = n.luong + (n.tienLamThem || 0) + (n.thuongThem || 0) - n.khauTru;
 
   const ds = [...theoNgay.values()].sort((a, b) => b.ngay.localeCompare(a.ngay));
   const tong = ds.reduce((s, n) => ({
@@ -16593,6 +16535,12 @@ async function tinhLuongThang(thang) {
   } catch(e) { tong.phuCap = 0; }
   tong.tong += tong.phuCap;
 
+  // Công thức thưởng / trừ do Admin đặt
+  const chung = await qtDuLieuCuaHang(thang, null);
+  const rCT = qtTinhChoNguoi(nguoi.vaiTroId, { ...chung, donBan, quetGoi: cacLanQuet, donSan: allDonHangSan, cacCa, soCong: tong.soCong });
+  tong.thuongCT = rCT.thuong; tong.truCT = rCT.tru; tong.ctChiTiet = rCT.chiTiet;
+  tong.tong += rCT.thuong - rCT.tru;
+
   return { thang, xemHet, uidXem, tenNguoi: nguoi.ten || currentUserData?.ten || '',
     laBanHang, laDongGoi, donGia, ngay: ds, tong };
 }
@@ -16600,6 +16548,38 @@ async function tinhLuongThang(thang) {
 // ===== DANH SÁCH LƯƠNG TOÀN CỬA HÀNG =====
 // Tải dữ liệu tháng MỘT LẦN rồi gom theo người, thay vì gọi tinhLuongThang cho
 // từng nhân viên — mười người là mười lần truy vấn, chậm và tốn.
+// Số liệu cả cửa hàng trong tháng (cho công thức tính theo cả cửa hàng).
+// Ai không có quyền xem thì phần đó để trống (undefined) — công thức đó hiện "—".
+async function qtDuLieuCuaHang(thang, donBanCoSan) {
+  const dauThang = `${thang}-01`;
+  const [nam, th] = thang.split('-').map(Number);
+  const cuoiThang = `${thang}-${String(new Date(nam, th, 0).getDate()).padStart(2, '0')}`;
+  const dau = new Date(dauThang + 'T00:00:00'), cuoi = new Date(cuoiThang + 'T23:59:59');
+  const kq = { donBanCH: donBanCoSan, phieuHuy: undefined, mocHong: 0, dtSan: undefined };
+  if (!kq.donBanCH) {
+    try {
+      const s = await getDocs(query(collection(db, 'don_ban_le'), where('taoLuc', '>=', dau), where('taoLuc', '<=', cuoi), limit(3000)));
+      kq.donBanCH = s.docs.map(d => d.data());
+    } catch(e) {}
+  }
+  try {
+    const s = await getDocs(query(collection(db, 'phieu_huy'), where('createdAt', '>=', dau), where('createdAt', '<=', cuoi)));
+    kq.phieuHuy = s.docs.map(d => d.data()).filter(p => !p.deleted).flatMap(p => p.items || []);
+  } catch(e) {}
+  try {
+    const mc = await getDoc(doc(db, 'moc_hang_hong', thang));
+    kq.mocHong = mc.exists() ? (Number(mc.data().soTien) || 0) : 0;
+  } catch(e) {}
+  if (coQuyen('luong_xemtatca') || currentUserData?.role === 'admin') {
+    kq.dtSan = allDonHangSan.reduce((t, d) => {
+      const ng = d.ngayDat?.toDate ? d.ngayDat.toDate().getTime() : 0;
+      if (ng < dau.getTime() || ng > cuoi.getTime() || trangThaiHienThi(d) !== 'da_giao') return t;
+      return t + Math.max(0, (Number(d.tongTien) || 0) - (Number(d.tienHangTra) || 0));
+    }, 0);
+  }
+  return kq;
+}
+
 async function tinhLuongTatCa(thang) {
   const dauThang = `${thang}-01`;
   const [nam, th] = thang.split('-').map(Number);
@@ -16607,7 +16587,7 @@ async function tinhLuongTatCa(thang) {
   const cuoiThang = `${thang}-${String(ngayCuoi).padStart(2, '0')}`;
 
   const cfg = await getLuongConfig();
-  await napCongThucLuong();
+  await napQuyTacThuong();
 
   const [sCa, sQuet, sKT] = await Promise.all([
     getDocs(query(collection(db, 'lich_ca'), where('ngay', '>=', dauThang), where('ngay', '<=', cuoiThang))),
@@ -16622,29 +16602,24 @@ async function tinhLuongTatCa(thang) {
       where('taoLuc', '<=', new Date(cuoiThang + 'T23:59:59')), limit(3000)));
     donBan = sDon.docs.map(d => d.data());
   } catch(e) { console.warn('Không tải được đơn bán lẻ:', e.message); }
+  const chung = await qtDuLieuCuaHang(thang, donBan);
 
   const theoNguoi = new Map();
   const lay = (uid) => {
     if (!theoNguoi.has(uid)) {
       const u = allUsersCache.find(x => x.id === uid);
-      // Bỏ qua tài khoản không còn trong hệ thống (đã xóa nhưng còn dữ liệu cũ)
-      // và tài khoản quản trị — admin không hưởng lương theo bảng này.
+      // Bỏ qua tài khoản đã xóa và Admin (không hưởng lương theo bảng này)
       if (!u || u.role === 'admin' || u.disabled) { theoNguoi.set(uid, null); return null; }
-      // Quyền nằm ở VAI TRÒ chứ không ở từng người — trước đây đọc u.quyen nên
-      // ai cũng rơi vào nhóm "Khác".
       const vt = allVaiTro.find(v => v.id === u.vaiTroId);
-      const q = vt?.quyenModule || {};
       theoNguoi.set(uid, {
         uid, ten: u.ten || u.email || '(không rõ)',
         vaiTroId: u.vaiTroId || '',
-        // Nhóm theo TÊN VAI TRÒ chứ không đoán từ quyền — quản lý có đủ mọi quyền
-        // nên đoán kiểu cũ là trúng hết các nhóm.
-        tenVaiTro: vt?.ten || (u.role === 'admin' ? 'Quản trị' : 'Chưa gán vai trò'),
+        tenVaiTro: vt?.ten || 'Chưa gán vai trò',
         vaiTro: u.role || 'nhan_vien', capBac: u.capBac || '',
-        laBanHang: !!q.banhang, laDongGoi: !!(q.tmdt_donggoi || q.tmdt),
         soCa: 0, phut: 0, tongCong: 0, luong: 0, lamThem: 0,
-        thuong: 0, thuongDon: 0, thuongDT: 0, thuongThem: 0,
-        khauTru: 0, soTre: 0, ghiChuHong: ''
+        thuongCT: 0, truCT: 0, ctChiTiet: [], thuongThem: 0,
+        khauTru: 0, soTre: 0,
+        _ca: [], _donBan: [], _quet: []
       });
     }
     return theoNguoi.get(uid);
@@ -16655,8 +16630,8 @@ async function tinhLuongTatCa(thang) {
     if (ca.deleted || !ca.uid) continue;
     const n = lay(ca.uid);
     if (!n) continue;
+    n._ca.push(ca);
     const u = allUsersCache.find(x => x.id === ca.uid) || {};
-    // Tra theo vaiTroId (khớp với thiết lập lương), lùi về role nếu chưa có
     const rates = (cfg[u.vaiTroId] || cfg[u.role || 'nhan_vien'])?.rates || {};
     const donGia = Number(rates[u.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
     const caLV = ca.caId ? layCa(ca.caId) : null;
@@ -16667,141 +16642,33 @@ async function tinhLuongTatCa(thang) {
       const phut = Math.max(0, Math.round((ca.thoatLuc.seconds - ca.vaoLuc.seconds) / 60))
         + (ca.vaoLuc2?.seconds && ca.thoatLuc2?.seconds ? Math.max(0, Math.round((ca.thoatLuc2.seconds - ca.vaoLuc2.seconds) / 60)) : 0);
       n.soCa++; n.phut += phut;
-      n.tongCong = (n.tongCong || 0) + soCong;
+      n.tongCong += soCong;
       n.luong += Math.round(donGia * soCong);
-
-      // Làm thêm đã duyệt cũng cộng vào đây
       if (ca.lamThemDuyet) {
         const p = Number(ca.lamThemDuyet.soPhut) || 0;
-        n.lamThem = (n.lamThem || 0) + Math.round(donGia / phutMotCong() * p * HE_SO_LAM_THEM);
+        n.lamThem += Math.round(donGia / phutMotCong() * p * HE_SO_LAM_THEM);
       }
     }
     if (ca.vaoLuc?.seconds) {
       const v = new Date(ca.vaoLuc.seconds * 1000);
-      const tre = v.getHours() * 60 + v.getMinutes() - gioCa.batDau;
-      if (tre > 0) n.soTre++;
-      // Trừ đi trễ — giống hệt cách tính ở bảng chi tiết từng người (trước đây bảng tháng bỏ sót)
-      const ctU = congThucCuaVaiTro(u.vaiTroId);
-      if (ctU.bat?.truTre && tre > (Number(ctU.phutChoTre) || 0) && !(ca.dieuChinhCa || ca.dieuChinhTre)) {
-        const tru = Math.round((Number(ctU.tienTruTre) || 0) + tre * (Number(ctU.truTheoPhut) || 0));
-        n.khauTru += tru; n.truTre = (n.truTre || 0) + tru;
-      }
+      if (v.getHours() * 60 + v.getMinutes() - gioCa.batDau > 0 && !(ca.dieuChinhCa || ca.dieuChinhTre)) n.soTre++;
     }
   }
-
-  // Đóng gói: mỗi vai trò một công thức riêng
-  for (const d of sQuet.docs) {
-    const q = d.data();
-    if (!q.uid) continue;
-    const n = lay(q.uid);
-    if (!n) continue;
-    const u = allUsersCache.find(x => x.id === q.uid) || {};
-    const ct = congThucCuaVaiTro(u.vaiTroId);
-    if (!ct.bat?.donGoi) continue;
-    const don = allDonHangSan.find(x => x.maDonSan === q.maDonSan || x.maHoaDon === q.maHoaDon);
-    if (don) {
-      const t = tachThuongDonGoi(don, ct);
-      n.thuongDon += t.thuongCoDinh || 0;
-      n.thuongDT += t.thuongDoanhThu || 0;
-    } else {
-      n.thuongDon += Number(ct.thuongMoiDonGoi) || 0;
-    }
-  }
-
-  // Nhóm tươi sống dùng chung cho doanh thu cửa hàng và hàng hỏng — lấy từ vai
-  // trò nào đã cấu hình, vì đây là phân loại hàng chứ không thuộc riêng ai
-  const nhomTuoiChung = new Set();
-  for (const vt of allVaiTro) {
-    for (const n of (congThucCuaVaiTro(vt.id).nhomDoTuoi || [])) nhomTuoiChung.add(n);
-  }
-
-  // Bán tại quầy: theo nhóm hàng và theo doanh thu cá nhân
-  let dtCuaHang = 0, dtCuaHangTuoi = 0, dtCuaHangPhuKien = 0;
+  for (const d of sQuet.docs) { const x = d.data(); if (x.uid) lay(x.uid)?._quet.push(x); }
+  let dtCuaHang = 0;
   for (const d of donBan) {
-    const uid = d.nguoiBan?.uid;
-    if (!uid) continue;
-    const n = lay(uid);
-    if (!n) continue;
-    const u = allUsersCache.find(x => x.id === uid) || {};
-    const ct = congThucCuaVaiTro(u.vaiTroId);
     const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
-    const thucThu = Math.max(0, (Number(d.phaiTra) || 0) - daTra);
-    dtCuaHang += thucThu;
-    n.dtCaNhan = (n.dtCaNhan || 0) + thucThu;
-
-    // Doanh thu toàn cửa hàng, tách theo nhóm — trừ tiền trả hàng (tính vào phụ kiện, như thưởng cá nhân)
-    let chTuoi = 0, chPk = 0;
-    for (const h of (d.dongHang || [])) {
-      const sku = allSKUs.find(x => x.sku === h.sku);
-      const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-      if (laHangTuoi(sku, nhomTuoiChung)) chTuoi += tien; else chPk += tien;
-    }
-    const truVaoTuoi = Math.max(0, daTra - chPk);
-    dtCuaHangTuoi += Math.max(0, chTuoi - truVaoTuoi);
-    dtCuaHangPhuKien += Math.max(0, chPk - daTra);
-
-    if (ct.bat?.banQuay) {
-      const nhomTuoi = new Set(ct.nhomDoTuoi || []);
-      let tuoi = 0, pk = 0;
-      for (const h of (d.dongHang || [])) {
-        const sku = allSKUs.find(x => x.sku === h.sku);
-        const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
-        if (laHangTuoi(sku, nhomTuoi)) tuoi += tien; else pk += tien;
-      }
-      tuoi = Math.max(0, tuoi - Math.max(0, daTra - pk));
-      pk = Math.max(0, pk - daTra);
-      n.thuongDon += Number(ct.thuongMoiDonBan) || 0;
-      n.thuongDT += Math.round(tuoi * (Number(ct.phanTramDoTuoi) || 0) / 100
-        + pk * (Number(ct.phanTramPhuKien) || 0) / 100);
-    }
+    dtCuaHang += Math.max(0, (Number(d.phaiTra) || 0) - daTra);
+    if (d.nguoiBan?.uid) lay(d.nguoiBan.uid)?._donBan.push(d);
   }
-
-  // Hàng hỏng trong tháng — lấy từ phiếu xuất hủy, tính theo GIÁ BÁN
-  let tienHongTuoi = 0, tienHongPhuKien = 0;
-  try {
-    const sHuy = await getDocs(query(collection(db, 'phieu_huy'),
-      where('createdAt', '>=', new Date(dauThang + 'T00:00:00')),
-      where('createdAt', '<=', new Date(cuoiThang + 'T23:59:59'))));
-    for (const d of sHuy.docs) {
-      const ph = d.data();
-      if (ph.deleted) continue;
-      for (const it of (ph.items || [])) {
-        const sku = allSKUs.find(x => x.sku === it.sku);
-        const tien = Number(it.tong) || 0;
-        // Nhóm tươi sống lấy từ công thức của vai trò đầu tiên có bật — hàng hủy
-        // là hàng chung, không thuộc riêng ai
-        if (laHangTuoi(sku, nhomTuoiChung)) tienHongTuoi += tien;
-        else tienHongPhuKien += tien;
-      }
-    }
-  } catch(e) { console.warn('Không tải được phiếu hủy:', e.message); }
-  const tongHong = tienHongTuoi + tienHongPhuKien;
-
-  // Mốc hàng hỏng của tháng — Admin đặt ở màn hình Bảng lương
-  let mocHong = 0;
-  try {
-    const mc = await getDoc(doc(db, 'moc_hang_hong', thang));
-    mocHong = mc.exists() ? (Number(mc.data().soTien) || 0) : 0;
-  } catch(e) {}
-
-  // Doanh thu sàn TMĐT trong tháng — chỉ tính đơn đã giao
-  const dauCat = new Date(dauThang).getTime();
-  const cuoiCat = new Date(cuoiThang + 'T23:59:59').getTime();
-  const dtSan = allDonHangSan.reduce((t, d) => {
-    const ng = d.ngayDat?.toDate ? d.ngayDat.toDate().getTime() : 0;
-    if (ng < dauCat || ng > cuoiCat) return t;
-    if (trangThaiHienThi(d) !== 'da_giao') return t;
-    return t + (Number(d.tongTien) || 0);
-  }, 0);
-
+  // Điều chỉnh tay: loại "thưởng" cộng, còn lại trừ
   for (const d of sKT.docs) {
     const kt = d.data();
-    if (!kt.uid) continue;
-    const nKT = lay(kt.uid);
-    if (nKT) nKT.khauTru += Number(kt.soTien) || 0;
+    const n = kt.uid && lay(kt.uid);
+    if (!n) continue;
+    if (kt.loai === 'thuong') n.thuongThem += Number(kt.soTien) || 0; else n.khauTru += Number(kt.soTien) || 0;
   }
 
-  // Phụ cấp và ghi chú lưu theo từng người từng tháng
   const phuCapTheoNguoi = new Map();
   try {
     const sPC = await getDocs(query(collection(db, 'phu_cap'), where('thang', '==', thang)));
@@ -16809,56 +16676,17 @@ async function tinhLuongTatCa(thang) {
   } catch(e) { console.warn('Không tải được phụ cấp:', e.message); }
 
   const ds = [...theoNguoi.values()].filter(Boolean).map(n => {
-    const u = allUsersCache.find(x => x.id === n.uid) || {};
-    const ct = congThucCuaVaiTro(u.vaiTroId);
-    // Ba loại thưởng theo doanh thu, bật cái nào tính cái đó
-    if (ct.bat?.dtCaNhan) n.thuongDT += Math.round((n.dtCaNhan || 0) * (Number(ct.phanTramDTCaNhan) || 0) / 100);
-    if (ct.bat?.dtCuaHang) {
-      n.thuongDT += Math.round(
-        dtCuaHangTuoi * (Number(ct.ptCuaHangTuoi) || 0) / 100
-        + dtCuaHangPhuKien * (Number(ct.ptCuaHangPhuKien) || 0) / 100
-        // Dữ liệu cũ chỉ có một mức chung
-        + (ct.ptCuaHangTuoi || ct.ptCuaHangPhuKien ? 0
-           : dtCuaHang * (Number(ct.phanTramDTCuaHang) || 0) / 100));
-    }
-
-    // Hàng hỏng: trong mốc thì thưởng, vượt mốc thì trừ theo bậc
-    if (ct.bat?.hangHong && mocHong > 0) {
-      const tyLe = tongHong / mocHong * 100;
-      if (tyLe <= 100) {
-        n.thuongHong = Number(ct.thuongDatMoc) || 0;
-        n.thuongThem += n.thuongHong;
-        n.ghiChuHong = `Hàng hỏng ${fmt(tongHong)}đ / mốc ${fmt(mocHong)}đ (${Math.round(tyLe)}%) — đạt mốc`;
-      } else {
-        // Tìm bậc theo NGƯỠNG TRÊN, không so cả hai đầu — nếu so cả hai thì
-        // 15.000.001đ trên mốc 15.000.000đ ra 100,0000067%: quá 100% nhưng chưa
-        // tới 101%, rơi vào khe giữa hai bậc và không bị trừ gì.
-        // Vượt bậc cuối cùng thì áp mức của bậc cuối.
-        const bacSap = [...(ct.bacHong || [])].sort((a, b) => (a.den || 0) - (b.den || 0));
-        const bac = bacSap.find(b => tyLe <= (Number(b.den) || 0)) || bacSap[bacSap.length - 1];
-        if (bac) {
-          n.truHong = Math.round(tongHong * (Number(bac.truPhanTram) || 0) / 100);
-          n.khauTru += n.truHong;
-          n.ghiChuHong = `Hàng hỏng ${tyLe.toFixed(1).replace('.0','')}% mốc`
-            + ` — trừ ${bac.truPhanTram}% giá bán = ${fmt(n.truHong)}đ`;
-        } else {
-          n.ghiChuHong = `Hàng hỏng ${tyLe.toFixed(1).replace('.0','')}% mốc — chưa đặt bậc trừ nào`;
-        }
-      }
-    }
-    if (ct.bat?.dtSan) n.thuongDT += Math.round(dtSan * (Number(ct.phanTramDTSan) || 0) / 100);
-
+    const r = qtTinhChoNguoi(n.vaiTroId, { ...chung, donBan: n._donBan, quetGoi: n._quet, donSan: allDonHangSan, cacCa: n._ca, soCong: n.tongCong });
+    const { _ca, _donBan, _quet, ...gon } = n;
     const pc = phuCapTheoNguoi.get(n.uid) || {};
     const phuCap = Number(pc.soTien) || 0;
-    return { ...n, phuCap, ghiChu: pc.ghiChu || n.ghiChuHong || '',
-      tong: n.luong + (n.lamThem || 0)
-        + (n.thuongDon || 0) + (n.thuongDT || 0) + (n.thuongThem || 0)
-        - n.khauTru + phuCap };
+    return { ...gon, thuongCT: r.thuong, truCT: r.tru, ctChiTiet: r.chiTiet, phuCap, ghiChu: pc.ghiChu || '',
+      tong: gon.luong + gon.lamThem + r.thuong - r.tru + gon.thuongThem - gon.khauTru + phuCap };
   }).sort((a, b) => b.tong - a.tong);
 
   blDanhSachHienTai = ds;
-  return { thang, danhSach: ds, dtCuaHang, dtCuaHangTuoi, dtCuaHangPhuKien,
-    dtSan, tongHong, tienHongTuoi, tienHongPhuKien, mocHong };
+  const tongHong = (chung.phieuHuy || []).reduce((s, it) => s + (Number(it.tong) || 0), 0);
+  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, mocHong: chung.mocHong };
 }
 
 function veDanhSachLuong(dl) {
@@ -16886,8 +16714,8 @@ function veDanhSachLuong(dl) {
         ${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
       <td>${fmt(n.luong)}</td>
       <td>${n.lamThem ? fmt(n.lamThem) : '—'}</td>
-      <td>${n.thuongDon ? fmt(n.thuongDon) : '—'}</td>
-      <td>${n.thuongDT ? fmt(n.thuongDT) : '—'}</td>
+      <td>${n.thuongCT ? `<span style="color:var(--green)">${fmt(n.thuongCT)}</span>` : '—'}</td>
+      <td>${n.truCT ? `<span style="color:var(--red)">−${fmt(n.truCT)}</span>` : '—'}</td>
       <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
       <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
       <td>
@@ -16938,8 +16766,6 @@ function veDanhSachLuong(dl) {
         <div style="font-size:12px;color:${dl.mocHong && dl.tongHong > dl.mocHong ? 'var(--red)' : 'var(--text2)'}">
           Đã hủy trong tháng: <b>${fmt(dl.tongHong || 0)}đ</b>
           ${dl.mocHong ? ` · ${Math.round((dl.tongHong || 0) / dl.mocHong * 100)}% mốc` : ''}
-          ${dl.tienHongTuoi || dl.tienHongPhuKien
-            ? `<br>tươi sống ${fmt(dl.tienHongTuoi || 0)}đ · phụ kiện ${fmt(dl.tienHongPhuKien || 0)}đ` : ''}
         </div>
       </div>` : ''}
 
@@ -16950,8 +16776,8 @@ function veDanhSachLuong(dl) {
             <tr>
               <th style="text-align:left">Họ tên</th>
               <th>Công</th><th>Lương</th><th>Làm thêm</th>
-              <th>Thưởng đơn</th><th>Thưởng<br><span style="font-weight:400;font-size:10px">doanh thu</span></th>
-              <th>Thưởng</th><th>Điều chỉnh<br><span style="font-weight:400;font-size:10px">thưởng</span></th>
+              <th>Thưởng<br><span style="font-weight:400;font-size:10px">công thức</span></th><th>Trừ<br><span style="font-weight:400;font-size:10px">công thức</span></th>
+              <th>Thưởng<br><span style="font-weight:400;font-size:10px">thêm</span></th><th>Điều chỉnh<br><span style="font-weight:400;font-size:10px">trừ</span></th>
               <th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng</th>
             </tr>
           </thead>
@@ -16984,7 +16810,7 @@ window.blTinhLaiDong = function(uid) {
   if (!o || !n) return;
   const pc = docTien(o);
   const tong = n.luong + (n.lamThem || 0)
-    + (n.thuongDon || 0) + (n.thuongDT || 0) + (n.thuongThem || 0) - n.khauTru + pc;
+    + (n.thuongCT || 0) - (n.truCT || 0) + (n.thuongThem || 0) - n.khauTru + pc;
   const el = document.getElementById(`bl-tong-${uid}`);
   if (el) el.textContent = fmt(tong);
   // Cập nhật tổng toàn cửa hàng
@@ -16992,7 +16818,7 @@ window.blTinhLaiDong = function(uid) {
     const oo = document.querySelector(`.bl-phucap[data-uid="${CSS.escape(x.uid)}"]`);
     const p = oo ? docTien(oo) : (x.phuCap || 0);
     return s + x.luong + (x.lamThem || 0)
-      + (x.thuongDon || 0) + (x.thuongDT || 0) + (x.thuongThem || 0) - x.khauTru + p;
+      + (x.thuongCT || 0) - (x.truCT || 0) + (x.thuongThem || 0) - x.khauTru + p;
   }, 0);
   const elT = document.getElementById('bl-tong-tat-ca');
   if (elT) elT.textContent = fmt(tongTat) + 'đ';
@@ -17094,9 +16920,7 @@ function veBangLuong(dl) {
         <thead>
           <tr>
             <th>Ngày</th><th>Công</th><th>Làm thêm</th>
-            ${laDongGoi ? '<th>Thưởng đơn</th>' : ''}
-            ${coThuong ? '<th>Thưởng<br><span style="font-weight:400;font-size:10px">doanh thu</span></th>' : ''}
-            <th>Thưởng</th>
+            <th>Thưởng<br><span style="font-weight:400;font-size:10px">thêm</span></th>
             <th>Điều chỉnh<br><span style="font-weight:400;font-size:10px">thưởng</span></th>
             <th style="text-align:left">Ghi chú</th>
             <th>Tổng</th>
@@ -17108,12 +16932,10 @@ function veBangLuong(dl) {
             <td>Cả tháng</td>
             <td>${tong.soCong ? tong.soCong.toFixed(2).replace(/\.?0+$/,'') : '—'}</td>
             <td>${tong.lamThem ? fmt(tong.lamThem) : '—'}</td>
-            ${laDongGoi ? `<td>${tong.thuongDon ? fmt(tong.thuongDon) : '—'}</td>` : ''}
-            ${coThuong ? `<td>${tong.thuongDT ? fmt(tong.thuongDT) : '—'}</td>` : ''}
             <td>${tong.thuongThem ? fmt(tong.thuongThem) : '—'}</td>
             <td>${tong.khauTru ? '−' + fmt(tong.khauTru) : '—'}</td>
             <td></td>
-            <td>${fmt(tong.tong - tong.phuCap)}</td>
+            <td>${fmt(tong.tong - tong.phuCap - (tong.thuongCT || 0) + (tong.truCT || 0))}</td>
             ${xemHet ? '<td></td>' : ''}
           </tr>
           ${ngay.map(n => {
@@ -17134,8 +16956,6 @@ function veBangLuong(dl) {
                      : `<span style="color:#D97706;font-size:11px">chờ duyệt</span>`}`)
                 : '—'}
               </td>
-              ${laDongGoi ? `<td>${n.thuongDon ? fmt(n.thuongDon) : '—'}</td>` : ''}
-              ${coThuong ? `<td>${n.thuongDT ? fmt(n.thuongDT) : '—'}</td>` : ''}
               <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
               <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
               <td style="text-align:left;font-size:11px;color:var(--text2);max-width:150px;white-space:normal">
@@ -17148,6 +16968,22 @@ function veBangLuong(dl) {
         </tbody>
       </table>
     </div>`}
+
+    ${(tong.ctChiTiet || []).length ? `
+    <div class="admin-block" style="margin-top:12px">
+      <h3 style="margin-bottom:4px">Thưởng / trừ theo công thức</h3>
+      ${tong.ctChiTiet.map(c => `
+        <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:13px">${escHtml(c.ten)}</div>
+            <div style="font-size:11.5px;color:var(--text2)">${c.khongCo ? 'Tính theo số liệu cả cửa hàng — xem ở bảng lương của quản lý'
+              : `${escHtml(c.nhanCoSo)}: <b>${c.donVi === '%' ? String(Math.round(c.coSo * 10) / 10).replace('.', ',') : fmt(c.coSo)}</b> ${escHtml(c.donVi)}`}${c.ghiChu ? ' · ' + escHtml(c.ghiChu) : ''}</div>
+          </div>
+          <b style="white-space:nowrap;color:${c.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${c.khongCo ? '—' : (c.loai === 'tru' ? '−' : '+') + fmt(c.tien)}</b>
+        </div>`).join('')}
+      <div style="display:flex;justify-content:space-between;font-weight:700;padding-top:8px">
+        <span>Cộng</span><span>${fmt((tong.thuongCT || 0) - (tong.truCT || 0))}đ</span></div>
+    </div>` : ''}
 
 `;
 }
@@ -17606,85 +17442,390 @@ const LUONG_ROLES = [
   { key: 'admin', label: 'Admin' },
 ];
 
+// ==========================================================================
+// ===== CÔNG THỨC THƯỞNG / TRỪ — do Admin tự tạo trong app =====
+// Mỗi công thức: tên, thưởng hay trừ, áp cho vai trò nào, TÍNH THEO chỉ số nào
+// (doanh thu, số đơn, số lần trễ...), lọc nhóm hàng, CÁCH TÍNH (%, số tiền × số lượng,
+// cố định khi đạt điều kiện, bậc thang). Lưu ở settings/quy_tac_thuong.
+// ==========================================================================
+const QT_CO_SO = {
+  dt_ban:          { ten: 'Doanh thu bán tại quầy — cá nhân', donVi: 'đ', nhom: true },
+  so_don_ban:      { ten: 'Số đơn bán tại quầy — cá nhân', donVi: 'đơn' },
+  dt_cuahang:      { ten: 'Doanh thu bán tại quầy — cả cửa hàng', donVi: 'đ', nhom: true, chung: true },
+  dt_san:          { ten: 'Doanh thu sàn TMĐT đã giao — cả cửa hàng', donVi: 'đ', chung: true },
+  so_don_goi:      { ten: 'Số đơn sàn đã đóng gói — cá nhân', donVi: 'đơn' },
+  dt_don_goi:      { ten: 'Doanh thu đơn sàn mình đóng gói (đã giao)', donVi: 'đ' },
+  so_cong:         { ten: 'Số công trong tháng', donVi: 'công' },
+  so_lan_tre:      { ten: 'Số lần đi trễ', donVi: 'lần', tre: true },
+  phut_tre:        { ten: 'Tổng số phút đi trễ', donVi: 'phút', tre: true },
+  tien_hang_hong:  { ten: 'Tiền hàng hỏng (giá bán) — cả cửa hàng', donVi: 'đ', nhom: true, chung: true },
+  ty_le_hang_hong: { ten: 'Hàng hỏng so với mốc tháng', donVi: '%', chung: true }
+};
+const QT_CACH = {
+  phan_tram:   { ten: 'Phần trăm', moTa: 'VD 2% doanh thu' },
+  moi_don_vi:  { ten: 'Số tiền × số lượng', moTa: 'VD 2.000đ mỗi đơn, 1.000đ mỗi phút trễ' },
+  co_dinh_neu: { ten: 'Số tiền cố định khi đạt điều kiện', moTa: 'VD thưởng 500.000đ nếu hàng hỏng ≤ 100% mốc' },
+  bac_thang:   { ten: 'Bậc thang', moTa: 'Mỗi khoảng một mức (số tiền hoặc %)' }
+};
+const QT_SO_SANH = { '>=': '≥', '>': '>', '<=': '≤', '<': '<' };
+let QUY_TAC_THUONG = [];
+async function napQuyTacThuong() {
+  try {
+    const d = await getDoc(doc(db, 'settings', 'quy_tac_thuong'));
+    QUY_TAC_THUONG = d.exists() && Array.isArray(d.data().ds) ? d.data().ds : [];
+  } catch(e) { console.warn('Không nạp được công thức thưởng:', e.message); }
+  return QUY_TAC_THUONG;
+}
+async function luuQuyTacThuong(ds) {
+  await setDoc(doc(db, 'settings', 'quy_tac_thuong'), { ds, suaLuc: serverTimestamp(), suaBoi: currentUserData?.ten || '' });
+  QUY_TAC_THUONG = ds;
+}
+// Hàng thuộc nhóm? Nhóm cha gồm cả nhóm con.
+function qtLocHang(sku, nhomHang) {
+  const k = nhomHang?.kieu || 'tat_ca';
+  if (k === 'tat_ca' || !(nhomHang.ds || []).length) return true;
+  const co = laHangTuoi(sku, new Set(nhomHang.ds));
+  return k === 'chi' ? co : !co;
+}
+// Doanh thu một đơn bán lẻ theo bộ lọc nhóm; tiền khách trả lại chia theo tỷ lệ phần được chọn
+function qtDoanhThuDon(d, nhomHang) {
+  let tong = 0, chon = 0;
+  for (const h of (d.dongHang || [])) {
+    const tien = (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0);
+    tong += tien;
+    if (qtLocHang(allSKUs.find(x => x.sku === h.sku), nhomHang)) chon += tien;
+  }
+  // Khách thực trả (đã trừ giảm giá cả đơn) trừ tiền hoàn trả, rồi lấy phần của nhóm được chọn
+  const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
+  const thucThu = Math.max(0, (d.phaiTra != null ? Number(d.phaiTra) || 0 : tong) - daTra);
+  return tong > 0 ? thucThu * chon / tong : 0;
+}
+// du = { donBan, donBanCH, quetGoi, donSan, cacCa, soCong, dtSan, phieuHuy, mocHong }
+// Trả về undefined khi không có dữ liệu (VD nhân viên tự xem lương: không tải được số cả cửa hàng)
+function qtChiSo(coSo, q, du) {
+  switch (coSo) {
+    case 'dt_ban': return (du.donBan || []).reduce((s, d) => s + qtDoanhThuDon(d, q.nhomHang), 0);
+    case 'so_don_ban': return (du.donBan || []).length;
+    case 'dt_cuahang': return du.donBanCH ? du.donBanCH.reduce((s, d) => s + qtDoanhThuDon(d, q.nhomHang), 0) : undefined;
+    case 'dt_san': return du.dtSan;
+    case 'so_don_goi': return (du.quetGoi || []).length;
+    case 'dt_don_goi': return (du.quetGoi || []).reduce((s, qt) => {
+      const don = (du.donSan || []).find(x => x.maDonSan === qt.maDonSan || x.maHoaDon === qt.maHoaDon);
+      if (!don || trangThaiHienThi(don) !== 'da_giao') return s;
+      return s + Math.max(0, (Number(don.tongTien) || 0) - (Number(don.tienHangTra) || 0));
+    }, 0);
+    case 'so_cong': return du.soCong || 0;
+    case 'so_lan_tre': case 'phut_tre': {
+      let lan = 0, phut = 0;
+      for (const ca of (du.cacCa || [])) {
+        if (!ca.vaoLuc?.seconds || ca.dieuChinhCa || ca.dieuChinhTre) continue;
+        const gioCa = layCa(ca.caId) || CA_GIO[ca.loaiCa] || CA_GIO.full;
+        const v = new Date(ca.vaoLuc.seconds * 1000);
+        const tre = v.getHours() * 60 + v.getMinutes() - gioCa.batDau;
+        if (tre > (Number(q.nguongPhut) || 0)) { lan++; phut += tre; }
+      }
+      return coSo === 'so_lan_tre' ? lan : phut;
+    }
+    case 'tien_hang_hong': return du.phieuHuy ? du.phieuHuy.reduce((s, it) => qtLocHang(allSKUs.find(x => x.sku === it.sku), q.nhomHang) ? s + (Number(it.tong) || 0) : s, 0) : undefined;
+    case 'ty_le_hang_hong': {
+      if (!du.phieuHuy || !(du.mocHong > 0)) return undefined;
+      return du.phieuHuy.reduce((s, it) => s + (Number(it.tong) || 0), 0) / du.mocHong * 100;
+    }
+  }
+  return undefined;
+}
+function qtTinh(q, du) {
+  const v = qtChiSo(q.coSo, q, du);
+  if (v === undefined) return { coSo: undefined, tien: 0, khongCo: true };
+  let tien = 0, ghiChu = '';
+  const g = Number(q.giaTri) || 0;
+  if (q.cachTinh === 'phan_tram') tien = v * g / 100;
+  else if (q.cachTinh === 'moi_don_vi') tien = v * g;
+  else if (q.cachTinh === 'co_dinh_neu') {
+    const n = Number(q.nguong) || 0, op = q.soSanh || '>=';
+    const dat = op === '>=' ? v >= n : op === '>' ? v > n : op === '<=' ? v <= n : v < n;
+    tien = dat ? g : 0;
+  } else if (q.cachTinh === 'bac_thang') {
+    const bac = [...(q.bac || [])].sort((a, b) => (Number(a.den) || 0) - (Number(b.den) || 0));
+    if (bac.length && v > (Number(q.batDauTu) || 0)) {
+      const b = bac.find(x => v <= (Number(x.den) || 0)) || bac[bac.length - 1];
+      if (b.donVi === '%') {
+        const nhan = qtChiSo(q.coSoNhan || q.coSo, q, du) || 0;
+        tien = nhan * (Number(b.giaTri) || 0) / 100;
+        ghiChu = `bậc đến ${fmt(b.den)}: ${b.giaTri}% × ${fmt(Math.round(nhan))}`;
+      } else { tien = Number(b.giaTri) || 0; ghiChu = `bậc đến ${fmt(b.den)}`; }
+    }
+  }
+  return { coSo: v, tien: Math.round(tien), ghiChu };
+}
+const qtApDung = (q, vaiTroId) => q.bat !== false && (!(q.apDung || []).length || q.apDung.includes(vaiTroId));
+// Tính toàn bộ công thức cho một người: trả về tổng thưởng, tổng trừ, chi tiết từng dòng
+function qtTinhChoNguoi(vaiTroId, du) {
+  let thuong = 0, tru = 0; const chiTiet = [];
+  for (const q of QUY_TAC_THUONG) {
+    if (!qtApDung(q, vaiTroId)) continue;
+    const r = qtTinh(q, du);
+    if (q.loai === 'tru') tru += r.tien; else thuong += r.tien;
+    chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo });
+  }
+  return { thuong, tru, chiTiet };
+}
+// Câu mô tả công thức cho người đọc
+function qtMoTa(q) {
+  const cs = QT_CO_SO[q.coSo]?.ten || q.coSo;
+  const nh = QT_CO_SO[q.coSo]?.nhom && q.nhomHang?.kieu && q.nhomHang.kieu !== 'tat_ca' && (q.nhomHang.ds || []).length
+    ? ` (${q.nhomHang.kieu === 'chi' ? 'chỉ' : 'trừ'} nhóm ${q.nhomHang.ds.join(', ')})` : '';
+  const tr = QT_CO_SO[q.coSo]?.tre ? ` (trễ quá ${Number(q.nguongPhut) || 0} phút)` : '';
+  const g = Number(q.giaTri) || 0;
+  if (q.cachTinh === 'phan_tram') return `${String(g).replace('.', ',')}% × ${cs}${nh}${tr}`;
+  if (q.cachTinh === 'moi_don_vi') return `${fmt(g)}đ × ${cs}${nh}${tr}`;
+  if (q.cachTinh === 'co_dinh_neu') return `${fmt(g)}đ nếu ${cs}${nh}${tr} ${QT_SO_SANH[q.soSanh || '>=']} ${fmt(Number(q.nguong) || 0)}${QT_CO_SO[q.coSo]?.donVi === '%' ? '%' : ''}`;
+  if (q.cachTinh === 'bac_thang') return `Bậc thang theo ${cs}${nh}${tr}${q.batDauTu ? `, khi vượt ${fmt(q.batDauTu)}` : ''}: `
+    + [...(q.bac || [])].sort((a, b) => a.den - b.den).map(b => `≤ ${fmt(b.den)} → ${b.donVi === '%' ? b.giaTri + '% ' + (QT_CO_SO[q.coSoNhan || q.coSo]?.ten || '') : fmt(b.giaTri) + 'đ'}`).join('; ');
+  return '';
+}
+
+// ===== THIẾT LẬP LƯƠNG: Bảng đơn giá công + Bảng công thức thưởng / trừ =====
 async function renderThietLapLuong() {
   const el = document.getElementById('thietlapluong-content');
   if (!el) return;
-  if (currentUserData.role !== 'admin') {
-    el.innerHTML = `<p class="info-note">Chỉ Admin mới có quyền thiết lập bảng lương.</p>`;
-    return;
-  }
+  if (currentUserData.role !== 'admin') { el.innerHTML = `<p class="info-note">Chỉ Admin mới có quyền thiết lập bảng lương.</p>`; return; }
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   const cfg = await getLuongConfig();
   if (!allVaiTro.length) await loadVaiTro();
+  await napQuyTacThuong();
   await napCongThucLuong();
-
-  // Lấy vai trò THẬT từ hệ thống thay vì danh sách viết cứng — thêm vai trò mới
-  // (như Nhân viên đóng gói) là tự hiện, không phải sửa code.
-  const cacVaiTro = allVaiTro.length
-    ? allVaiTro.map(v => ({ key: v.id, label: v.ten || v.id }))
-    : LUONG_ROLES;
-
-  // Cấu hình còn sót của vai trò đã xóa (hoặc khóa vai trò cũ) — cho xóa hẳn
-  const conVT = new Set(allVaiTro.map(v => v.id));
+  const vts = allVaiTro.filter(v => !v.deleted);
+  // Cấp bậc dùng chung cho mọi vai trò -> mỗi cấp bậc là một CỘT
+  const capBac = [...new Set(vts.flatMap(v => cfg[v.id]?.tiers || []))];
+  const giaO = (vt, tier) => {
+    const r = cfg[vt]?.rates || {};
+    const x = tier === '' ? (r[MUC_LUONG_MAC_DINH] ?? r[''] ?? 0) : r[tier];
+    return x ? Number(x).toLocaleString('vi-VN') : '';
+  };
+  // Cấu hình còn sót của vai trò đã xóa
+  const conVT = new Set(vts.map(v => v.id));
   const moCoi = [...new Set([...Object.keys(cfg), ...Object.keys(CONG_THUC_THEO_VAI_TRO)])].filter(k => !conVT.has(k));
-  const khoiMoCoi = !allVaiTro.length || !moCoi.length ? '' : `
-    <div class="admin-block" style="margin-bottom:1rem;border:1.5px dashed #F59E0B">
+  el.innerHTML = `
+    <div class="admin-block" style="margin-bottom:1rem">
+      <h3 style="margin-bottom:4px">Bảng đơn giá công</h3>
+      <p class="info-note">Đơn giá cho 1 công theo vai trò (hàng) và cấp bậc (cột). Ô trống ở một cấp bậc = vai trò đó không dùng cấp này.</p>
+      ${vts.length ? `<div class="lb-khung"><table class="lich-bang" id="dg-bang">
+        <thead><tr><th class="lb-dau">Vai trò</th><th>Mặc định</th>${capBac.map(t => `<th>${escHtml(t)} <button class="btn-xs" style="padding:0 5px;margin-left:2px" title="Xóa cấp bậc" onclick="dgXoaCapBac('${escHtml(t)}')">✕</button></th>`).join('')}</tr></thead>
+        <tbody>${vts.map(v => `<tr><th class="lb-dau">${escHtml(v.ten || v.id)}</th>
+          <td><input class="dg-o" data-vt="${v.id}" data-tier="" type="text" inputmode="numeric" value="${giaO(v.id, '')}" placeholder="0" oninput="dinhDangTien(this)" style="width:100%;min-width:84px;text-align:right;padding:6px"></td>
+          ${capBac.map(t => `<td><input class="dg-o" data-vt="${v.id}" data-tier="${escHtml(t)}" type="text" inputmode="numeric" value="${giaO(v.id, t)}" placeholder="—" oninput="dinhDangTien(this)" style="width:100%;min-width:84px;text-align:right;padding:6px"></td>`).join('')}
+        </tr>`).join('')}</tbody></table></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn-outline" style="flex:1;margin:0" onclick="dgThemCapBac()">+ Thêm cấp bậc</button>
+        <button class="btn-g" style="flex:1;margin:0" onclick="dgLuu()">Lưu bảng đơn giá</button>
+      </div>` : '<p class="info-note">Chưa có vai trò nào. Tạo ở Thiết lập › Phân quyền.</p>'}
+    </div>
+
+    <div class="admin-block" style="margin-bottom:1rem">
+      <h3 style="margin-bottom:4px">Bảng công thức thưởng / trừ</h3>
+      <p class="info-note">Tự đặt tên và công thức. Bảng lương tháng tự tính theo các dòng đang bật.</p>
+      ${QUY_TAC_THUONG.length ? `<div class="lb-khung"><table class="lich-bang">
+        <thead><tr><th class="lb-dau">Tên</th><th>Loại</th><th style="min-width:200px">Công thức</th><th>Áp dụng</th><th>Bật</th><th></th></tr></thead>
+        <tbody>${QUY_TAC_THUONG.map(q => `<tr style="${q.bat === false ? 'opacity:.5' : ''}">
+          <th class="lb-dau">${escHtml(q.ten || '(chưa đặt tên)')}</th>
+          <td><span style="font-weight:700;color:${q.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${q.loai === 'tru' ? 'Trừ' : 'Thưởng'}</span></td>
+          <td style="white-space:normal;font-size:12px">${escHtml(qtMoTa(q))}</td>
+          <td style="white-space:normal;font-size:12px">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || 'vai trò đã xóa')).join(', ') : 'Mọi vai trò'}</td>
+          <td style="text-align:center"><input type="checkbox" ${q.bat !== false ? 'checked' : ''} onchange="qtBatTat('${q.id}',this.checked)" style="width:18px;height:18px"></td>
+          <td style="white-space:nowrap"><button class="btn-xs" onclick="qtMoSua('${q.id}')">Sửa</button> <button class="btn-xs danger" onclick="qtXoa('${q.id}')">Xóa</button></td>
+        </tr>`).join('')}</tbody></table></div>` : '<p class="info-note">Chưa có công thức nào.</p>'}
+      <button class="btn-g" style="width:100%;margin-top:10px" onclick="qtMoSua()">+ Thêm công thức</button>
+    </div>
+
+    ${moCoi.length ? `<div class="admin-block" style="margin-bottom:1rem;border:1.5px dashed #F59E0B">
       <h3 style="color:#92400E">Cấu hình cũ của vai trò đã xóa (${moCoi.length})</h3>
-      <p class="info-note">Không còn vai trò nào dùng, nhưng người còn giữ mã vai trò cũ vẫn bị tính lương / thưởng theo cấu hình này. Nên xóa.</p>
-      ${moCoi.map(k => {
-        const c = CONG_THUC_THEO_VAI_TRO[k], l = cfg[k];
-        const mucBat = c ? CAC_MUC_THUONG.filter(m => c.bat?.[m.key]).map(m => m.ten) : [];
-        const nguoi = (allUsersCache || []).filter(u => u.vaiTroId === k || (!u.vaiTroId && u.role === k)).map(u => u.hoTen || u.ten || u.email);
-        return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:center">
-          <div style="flex:1;min-width:0;font-size:12.5px">
-            <b>${escHtml(k === 'nhan_vien' ? 'Nhân viên (kiểu cũ)' : k === 'quan_ly' ? 'Quản lý (kiểu cũ)' : 'Vai trò đã xóa')}</b> <span style="color:var(--text2)">${escHtml(k)}</span>
-            <div style="color:var(--text2)">${l ? `Đơn giá: ${Object.entries(l.rates || {}).filter(([, x]) => x).map(([t, x]) => `${t === 'mac_dinh' ? 'Mặc định' : t} ${fmt(x)}đ`).join(', ') || '—'}` : ''}${mucBat.length ? ` · Thưởng: ${mucBat.join(', ')}` : ''}</div>
-            ${nguoi.length ? `<div style="color:#B45309">Còn áp cho: ${nguoi.map(escHtml).join(', ')}</div>` : ''}
-          </div>
-          <button class="btn-xs danger" onclick="xoaCauHinhCu('${escHtml(k)}')">Xóa</button></div>`;
-      }).join('')}
-    </div>`;
-
-  el.innerHTML = khoiMoCoi + cacVaiTro.map(r => {
-    const roleCfg = cfg[r.key] || { tiers: [], rates: {} };
-    const tiers = roleCfg.tiers || [];
-    const rates = roleCfg.rates || {};
-    return `
-      <div class="admin-block" style="margin-bottom:1rem">
-        <h3>${r.label}</h3>
-        <div id="luong-tiers-${r.key}">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <span style="flex:1;font-size:13px;color:var(--text2)">Mặc định ${tiers.length?'(chưa gán cấp bậc)':'(áp dụng cho mọi người)'}</span>
-            <input type="text" inputmode="numeric" class="luong-rate" data-role="${escHtml(r.key)}" data-tier=""
-              value="${Number(rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0).toLocaleString('vi-VN')}"
-              oninput="dinhDangTien(this)" placeholder="đ/công" style="width:120px;text-align:right">
-          </div>
-          ${tiers.map(t => `
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <span style="flex:1;font-size:13px">${escHtml(t)}</span>
-            <input type="text" inputmode="numeric" class="luong-rate" data-role="${escHtml(r.key)}" data-tier="${escHtml(t)}"
-              value="${Number(rates[t]||0).toLocaleString('vi-VN')}"
-              oninput="dinhDangTien(this)" placeholder="đ/công" style="width:120px;text-align:right">
-            <button class="btn-xs danger" onclick="xoaCapBac('${r.key}','${escHtml(t)}')">Xóa</button>
-          </div>`).join('')}
-        </div>
-        <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
-        <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu đơn giá công</button>
-        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
-          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">CÔNG THỨC THƯỞNG / TRỪ</div>
-          ${veKhoiCongThucThuong(r.key)}
-        </div>
-      </div>`;
-  }).join('');
-
-  // Lương giờ tra theo vaiTroId của nhân viên
-
-  // Vẽ phần chọn nhóm cho vai trò nào có bật mục bán tại quầy
-  for (const r of cacVaiTro) {
-    const c = congThucCuaVaiTro(r.key);
-    if (c.bat?.banQuay) veChonNhomTuoi(r.key, ctNhomDaChon[r.key] || c.nhomDoTuoi || []);
-  }
+      <p class="info-note">Còn sót từ vai trò đã xóa / công thức kiểu cũ. Không còn được dùng để tính lương — có thể xóa cho gọn.</p>
+      ${moCoi.map(k => `<div style="display:flex;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin-bottom:6px">
+        <span style="flex:1;font-size:12.5px">${escHtml(k === 'nhan_vien' ? 'Nhân viên (kiểu cũ)' : 'Vai trò đã xóa')} <span style="color:var(--text2)">${escHtml(k)}</span></span>
+        <button class="btn-xs danger" onclick="xoaCauHinhCu('${escHtml(k)}')">Xóa</button></div>`).join('')}
+      <button class="btn-xs danger" onclick="xoaCauHinhCuTatCa()">Xóa tất cả</button>
+    </div>` : ''}`;
 }
+
+// --- Bảng đơn giá ---
+window.dgThemCapBac = async function() {
+  const ten = String(await hoiNhap('Tên cấp bậc mới (VD: Cấp 1, Thử việc...)') || '').trim();
+  if (!ten) return;
+  const cfg = await getLuongConfig();
+  for (const v of allVaiTro) {
+    if (!cfg[v.id]) cfg[v.id] = { tiers: [], rates: {} };
+    cfg[v.id].tiers = [...new Set([...(cfg[v.id].tiers || []), ten])];
+  }
+  await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg);
+  renderThietLapLuong();
+};
+window.dgXoaCapBac = async function(ten) {
+  if (!await hoiXacNhan(`Xóa cấp bậc "${ten}" ở mọi vai trò?\n\nNgười đang gán cấp này sẽ tính theo đơn giá Mặc định.`)) return;
+  const cfg = await getLuongConfig();
+  for (const k of Object.keys(cfg)) {
+    if (cfg[k]?.tiers) cfg[k].tiers = cfg[k].tiers.filter(t => t !== ten);
+    if (cfg[k]?.rates) delete cfg[k].rates[ten];
+  }
+  await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg);
+  renderThietLapLuong();
+};
+window.dgLuu = async function() {
+  const cfg = await getLuongConfig();
+  document.querySelectorAll('.dg-o').forEach(o => {
+    const vt = o.dataset.vt, tier = o.dataset.tier;
+    if (!cfg[vt]) cfg[vt] = { tiers: [], rates: {} };
+    if (!cfg[vt].rates) cfg[vt].rates = {};
+    const v = docTien(o);
+    if (tier === '') cfg[vt].rates[MUC_LUONG_MAC_DINH] = v;
+    else if (v) cfg[vt].rates[tier] = v; else delete cfg[vt].rates[tier];
+  });
+  try { await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg); showToast('Đã lưu bảng đơn giá'); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.xoaCauHinhCuTatCa = async function() {
+  if (!await hoiXacNhan('Xóa hết cấu hình cũ của vai trò đã xóa?', { nguy: true, nutDongY: 'Xóa hết' })) return;
+  const conVT = new Set(allVaiTro.map(v => v.id));
+  const cfg = await getLuongConfig();
+  const ks = [...new Set([...Object.keys(cfg), ...Object.keys(CONG_THUC_THEO_VAI_TRO)])].filter(k => !conVT.has(k));
+  for (const k of ks) await xoaCauHinhVaiTro(k);
+  showToast(`Đã xóa ${ks.length} cấu hình cũ`); renderThietLapLuong();
+};
+
+// --- Bảng công thức ---
+window.qtBatTat = async function(id, bat) {
+  const ds = QUY_TAC_THUONG.map(q => q.id === id ? { ...q, bat } : q);
+  try { await luuQuyTacThuong(ds); showToast(bat ? 'Đã bật' : 'Đã tắt'); renderThietLapLuong(); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.qtXoa = async function(id) {
+  const q = QUY_TAC_THUONG.find(x => x.id === id);
+  if (!await hoiXacNhan(`Xóa công thức "${q?.ten || ''}"?`, { nguy: true, nutDongY: 'Xóa' })) return;
+  try { await luuQuyTacThuong(QUY_TAC_THUONG.filter(x => x.id !== id)); showToast('Đã xóa'); renderThietLapLuong(); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+let qtDang = null;   // công thức đang soạn
+window.qtMoSua = function(id) {
+  const q = id ? QUY_TAC_THUONG.find(x => x.id === id) : null;
+  qtDang = q ? JSON.parse(JSON.stringify(q)) : { id: 'qt' + Date.now().toString(36), ten: '', loai: 'thuong', apDung: [], coSo: 'dt_ban',
+    nhomHang: { kieu: 'tat_ca', ds: [] }, nguongPhut: 0, cachTinh: 'phan_tram', giaTri: 0, soSanh: '>=', nguong: 0, bac: [], batDauTu: 0, coSoNhan: '', bat: true };
+  qtVeForm(!q);
+};
+function qtVeForm(moi) {
+  const q = qtDang, cs = QT_CO_SO[q.coSo] || {};
+  const so = (id, gt, ph = '0') => `<input id="${id}" type="text" inputmode="decimal" value="${gt ?? ''}" placeholder="${ph}" style="text-align:right">`;
+  const tien = (id, gt) => `<input id="${id}" type="text" inputmode="numeric" value="${gt ? Number(gt).toLocaleString('vi-VN') : ''}" placeholder="0" oninput="dinhDangTien(this)" style="text-align:right">`;
+  const chip = (on, nhan, fn) => `<button class="${on ? 'btn-g' : 'btn-outline'}" style="flex:1;margin:0;padding:8px" onclick="${fn}">${nhan}</button>`;
+  let cach = '';
+  if (q.cachTinh === 'phan_tram') cach = `<div class="field"><label>Tỷ lệ (%)</label>${so('qtf-gt', q.giaTri)}</div>`;
+  else if (q.cachTinh === 'moi_don_vi') cach = `<div class="field"><label>Số tiền mỗi ${escHtml(cs.donVi || 'đơn vị')} (đ)</label>${tien('qtf-gt', q.giaTri)}</div>`;
+  else if (q.cachTinh === 'co_dinh_neu') cach = `
+    <div class="field"><label>Điều kiện</label><div style="display:flex;gap:6px;align-items:center">
+      <span style="font-size:13px;flex:1">${escHtml(cs.ten || '')}</span>
+      <button class="bh-chon-tt" id="qtf-ss" style="flex:0 0 64px;font-weight:700" onclick="qtChonSoSanh()">${QT_SO_SANH[q.soSanh || '>=']}</button>
+      <div style="flex:0 0 120px">${so('qtf-nguong', q.nguong)}</div><span style="font-size:12px">${escHtml(cs.donVi || '')}</span></div></div>
+    <div class="field"><label>Số tiền (đ)</label>${tien('qtf-gt', q.giaTri)}</div>`;
+  else if (q.cachTinh === 'bac_thang') cach = `
+    <div class="field"><label>Chỉ tính khi ${escHtml(cs.ten || '')} vượt (để 0 nếu tính từ đầu)</label>${so('qtf-batdau', q.batDauTu)}</div>
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">CÁC BẬC (theo ${escHtml(cs.ten || '')}, đơn vị ${escHtml(cs.donVi || '')})</div>
+    <div id="qtf-bac">${(q.bac || []).map((b, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <span style="font-size:12px;white-space:nowrap">Đến</span><input class="qtf-bden" type="text" inputmode="decimal" value="${b.den ?? ''}" style="flex:1;min-width:0;text-align:right">
+      <span style="font-size:12px">→</span><input class="qtf-bgt" type="text" inputmode="decimal" value="${b.giaTri ?? ''}" style="flex:1;min-width:0;text-align:right">
+      <button class="bh-chon-tt qtf-bdv" data-dv="${b.donVi === '%' ? '%' : 'đ'}" style="flex:0 0 48px;font-weight:700" onclick="qtDoiDonViBac(this)">${b.donVi === '%' ? '%' : 'đ'}</button>
+      <button class="btn-xs" onclick="qtXoaBac(${i})">✕</button></div>`).join('')}</div>
+    <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="qtThemBac()">+ Thêm bậc</button>
+    <div class="field"><label>Bậc tính bằng % thì lấy % của</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCoSo('coSoNhan')">${escHtml(QT_CO_SO[q.coSoNhan || q.coSo]?.ten || '')}</button></div>`;
+  ddbMoKhung('qt-modal', moi ? 'Thêm công thức' : 'Sửa công thức', '', `
+    <div class="field"><label>Tên</label><input id="qtf-ten" maxlength="80" value="${escHtml(q.ten || '')}" placeholder="VD: Thưởng doanh số cá"></div>
+    <div class="field"><label>Loại</label><div style="display:flex;gap:6px">${chip(q.loai !== 'tru', 'Thưởng (+)', "qtDat('loai','thuong')")}${chip(q.loai === 'tru', 'Trừ (−)', "qtDat('loai','tru')")}</div></div>
+    <div class="field"><label>Áp dụng cho</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonVaiTro()">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || '?')).join(', ') : 'Mọi vai trò'}</button></div>
+    <div class="field"><label>Tính theo</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCoSo('coSo')">${escHtml(cs.ten || '')}</button></div>
+    ${cs.nhom ? `<div class="field"><label>Nhóm hàng</label><div style="display:flex;gap:6px;margin-bottom:6px">
+        ${chip((q.nhomHang?.kieu || 'tat_ca') === 'tat_ca', 'Tất cả', "qtDatNhom('tat_ca')")}${chip(q.nhomHang?.kieu === 'chi', 'Chỉ nhóm…', "qtDatNhom('chi')")}${chip(q.nhomHang?.kieu === 'tru', 'Trừ nhóm…', "qtDatNhom('tru')")}</div>
+        ${(q.nhomHang?.kieu || 'tat_ca') !== 'tat_ca' ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">${(q.nhomHang.ds || []).map((n, i) => `<span style="display:inline-flex;gap:4px;align-items:center;padding:3px 8px;border-radius:12px;background:#F0FDF4;border:1px solid var(--green);font-size:12px">${escHtml(n)}<button onclick="qtBoNhom(${i})" style="border:none;background:none;cursor:pointer;padding:0">✕</button></span>`).join('') || '<span style="font-size:12px;color:var(--text2)">Chưa chọn nhóm</span>'}</div>
+        <button class="btn-xs" onclick="qtThemNhom()">+ Chọn nhóm hàng</button>` : ''}</div>` : ''}
+    ${cs.tre ? `<div class="field"><label>Chỉ tính khi trễ quá (phút)</label>${so('qtf-nguongphut', q.nguongPhut)}</div>` : ''}
+    <div class="field"><label>Cách tính</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCach()">${escHtml(QT_CACH[q.cachTinh]?.ten || '')}</button></div>
+    ${cach}
+    <div id="qtf-xem" style="background:var(--bg);border-radius:8px;padding:8px 10px;font-size:12.5px"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('qt-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0" onclick="qtLuu()">Lưu</button>`);
+  ddbCanhGiua('qt-modal');
+  qtDocForm(); const x = document.getElementById('qtf-xem'); if (x) x.innerHTML = `<b>${qtDang.loai === 'tru' ? 'Trừ' : 'Thưởng'}:</b> ${escHtml(qtMoTa(qtDang))}`;
+  document.querySelectorAll('#qt-modal input').forEach(o => o.addEventListener('input', () => { qtDocForm(); const x2 = document.getElementById('qtf-xem'); if (x2) x2.innerHTML = `<b>${qtDang.loai === 'tru' ? 'Trừ' : 'Thưởng'}:</b> ${escHtml(qtMoTa(qtDang))}`; }));
+}
+// Đọc các ô đang có trên form vào qtDang (giữ khi vẽ lại)
+function qtDocForm() {
+  const q = qtDang; if (!q) return;
+  const gt = (id) => document.getElementById(id);
+  const so = (o) => Number(String(o?.value || '').replace(',', '.')) || 0;
+  if (gt('qtf-ten')) q.ten = gt('qtf-ten').value.trim();
+  if (gt('qtf-gt')) q.giaTri = q.cachTinh === 'phan_tram' ? so(gt('qtf-gt')) : docTien(gt('qtf-gt'));
+  if (gt('qtf-nguong')) q.nguong = so(gt('qtf-nguong'));
+  if (gt('qtf-nguongphut')) q.nguongPhut = so(gt('qtf-nguongphut'));
+  if (gt('qtf-batdau')) q.batDauTu = so(gt('qtf-batdau'));
+  const den = [...document.querySelectorAll('.qtf-bden')], g2 = [...document.querySelectorAll('.qtf-bgt')], dv = [...document.querySelectorAll('.qtf-bdv')];
+  if (den.length) q.bac = den.map((o, i) => ({ den: so(o), giaTri: dv[i]?.dataset.dv === '%' ? so(g2[i]) : (Number(String(g2[i]?.value || '').replace(/[^\d]/g, '')) || 0), donVi: dv[i]?.dataset.dv || 'đ' }));
+}
+window.qtDat = function(k, v) { qtDocForm(); qtDang[k] = v; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
+window.qtDatNhom = function(kieu) { qtDocForm(); qtDang.nhomHang = { kieu, ds: qtDang.nhomHang?.ds || [] }; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
+window.qtBoNhom = function(i) { qtDocForm(); qtDang.nhomHang.ds.splice(i, 1); qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
+window.qtThemNhom = function() {
+  qtDocForm();
+  const tatCa = [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean).flatMap(p => { const ph = p.split(' > '); return ph.map((_, i) => ph.slice(0, i + 1).join(' > ')); }))].sort();
+  const da = new Set(qtDang.nhomHang.ds || []);
+  moBangChon('Chọn nhóm hàng (nhóm cha gồm cả nhóm con)', tatCa.filter(n => !da.has(n)).map(n => ({ gt: n, nhan: n })), '', (n) => {
+    qtDang.nhomHang.ds = [...(qtDang.nhomHang.ds || []), n]; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id));
+  });
+};
+window.qtChonCoSo = function(truong) {
+  qtDocForm();
+  moBangChon(truong === 'coSoNhan' ? 'Lấy % của' : 'Tính theo', Object.entries(QT_CO_SO).filter(([, c]) => truong !== 'coSoNhan' || c.donVi === 'đ').map(([gt, c]) => ({ gt, nhan: c.ten, phu: 'Đơn vị: ' + c.donVi })), qtDang[truong] || qtDang.coSo, (v) => {
+    qtDang[truong] = v; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id));
+  });
+};
+window.qtChonCach = function() {
+  qtDocForm();
+  moBangChon('Cách tính', Object.entries(QT_CACH).map(([gt, c]) => ({ gt, nhan: c.ten, phu: c.moTa })), qtDang.cachTinh, (v) => {
+    qtDang.cachTinh = v; if (v === 'bac_thang' && !(qtDang.bac || []).length) qtDang.bac = [{ den: 0, giaTri: 0, donVi: 'đ' }];
+    qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id));
+  });
+};
+window.qtChonSoSanh = function() {
+  qtDocForm();
+  moBangChon('So sánh', Object.entries(QT_SO_SANH).map(([gt, nhan]) => ({ gt, nhan })), qtDang.soSanh || '>=', (v) => { qtDang.soSanh = v; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); });
+};
+window.qtChonVaiTro = function() {
+  qtDocForm();
+  const ds = allVaiTro.filter(v => !v.deleted);
+  ddbMoKhung('qt-vt-modal', 'Áp dụng cho vai trò', 'Không chọn vai trò nào = áp dụng cho mọi vai trò', ds.map(v => `
+    <label style="display:flex;gap:10px;align-items:center;border:1.5px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:6px;cursor:pointer">
+      <input type="checkbox" name="qt-vt" value="${v.id}" ${(qtDang.apDung || []).includes(v.id) ? 'checked' : ''} style="width:18px;height:18px;margin:0"> ${escHtml(v.ten || v.id)}</label>`).join(''),
+    `<button class="btn-g" style="flex:1;margin:0" onclick="qtLuuVaiTro()">Xong</button>`);
+  ddbCanhGiua('qt-vt-modal');
+};
+window.qtLuuVaiTro = function() {
+  qtDang.apDung = [...document.querySelectorAll('input[name="qt-vt"]:checked')].map(x => x.value);
+  document.getElementById('qt-vt-modal').style.display = 'none';
+  qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id));
+};
+window.qtThemBac = function() { qtDocForm(); qtDang.bac = [...(qtDang.bac || []), { den: 0, giaTri: 0, donVi: 'đ' }]; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
+window.qtXoaBac = function(i) { qtDocForm(); qtDang.bac.splice(i, 1); qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
+window.qtDoiDonViBac = function(b) { b.dataset.dv = b.dataset.dv === '%' ? 'đ' : '%'; b.textContent = b.dataset.dv; qtDocForm(); const x = document.getElementById('qtf-xem'); if (x) x.innerHTML = `<b>${qtDang.loai === 'tru' ? 'Trừ' : 'Thưởng'}:</b> ${escHtml(qtMoTa(qtDang))}`; };
+window.qtLuu = async function() {
+  qtDocForm();
+  const q = qtDang;
+  if (!q.ten) { showToast('Đặt tên cho công thức', true); return; }
+  if (q.cachTinh === 'bac_thang' && !(q.bac || []).length) { showToast('Thêm ít nhất 1 bậc', true); return; }
+  if (q.cachTinh !== 'bac_thang' && !(Number(q.giaTri) > 0)) { showToast('Nhập giá trị lớn hơn 0', true); return; }
+  if (!QT_CO_SO[q.coSo]?.nhom) q.nhomHang = { kieu: 'tat_ca', ds: [] };
+  const ds = QUY_TAC_THUONG.some(x => x.id === q.id) ? QUY_TAC_THUONG.map(x => x.id === q.id ? q : x) : [...QUY_TAC_THUONG, q];
+  try {
+    await luuQuyTacThuong(ds);
+    document.getElementById('qt-modal').style.display = 'none';
+    showToast('Đã lưu công thức'); renderThietLapLuong();
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
 
 // Chọn nhóm hàng tươi sống: chỉ hiện nhóm ĐÃ CHỌN thành một hàng thẻ, thêm mới
 // qua ô tìm kiếm có gợi ý. Trước đây xổ hết mấy chục nhóm ra, nhìn rối mắt.
@@ -19490,7 +19631,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v512</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v513</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19544,7 +19685,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v512</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v513</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19590,7 +19731,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v512</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v513</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
