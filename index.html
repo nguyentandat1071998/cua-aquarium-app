@@ -11054,6 +11054,8 @@ window.kmMoSoan = function(id) {
     id: 'km' + Date.now().toString(36), ten: '', loai: 'tang', bat: true, tuMs: homNay.getTime(), denMs: homNay.getTime() + 30 * 86400000 - 60000,
     tang: { skus: [], nhoms: [], x: 10, y: 1 }, combo: { items: [], gia: 0 }, giam: { skus: [], nhoms: [], kieu: 'pt', giaTri: 10 }
   };
+  const mCu = document.getElementById('km-soan'); if (mCu) mCu.innerHTML = '';   // bỏ ô ngày giờ của lần soạn trước
+  kmSua.khongHan = !!goc && !goc.denMs;
   kmSua.tang = kmSua.tang || { skus: [], nhoms: [], x: 10, y: 1 };
   kmSua.combo = kmSua.combo || { items: [], gia: 0 };
   kmSua.giam = kmSua.giam || { skus: [], nhoms: [], kieu: 'pt', giaTri: 10 };
@@ -11061,6 +11063,7 @@ window.kmMoSoan = function(id) {
 };
 function kmVeSoan(laSua) {
   const k = kmSua; if (!k) return;
+  kmDocGio();   // giữ ngày giờ đang gõ dở trước khi vẽ lại
   const chip = (lo, nhan) => `<button class="btn-xs" style="flex:1;padding:8px;${k.loai === lo ? `background:${KM_MAU[lo]};color:#fff;font-weight:700` : ''}" onclick="kmDat('loai','${lo}')">${nhan}</button>`;
   const pvKey = k.loai === 'giam' ? 'giam' : 'tang';
   const pv = k[pvKey];
@@ -11109,21 +11112,43 @@ function kmVeSoan(laSua) {
     ${rieng}
     <label class="km-nhan">Thời gian</label>
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <input type="datetime-local" value="${kmGioLocal(k.tuMs)}" onchange="kmDat('tuMs',this.value)" style="flex:1;min-width:150px">
+      <input type="datetime-local" id="km-tu" value="${kmGioLocal(k.tuMs)}" onchange="kmDat('tuMs',this.value)" style="flex:1;min-width:150px">
       <span>→</span>
-      <input type="datetime-local" value="${kmGioLocal(k.denMs)}" onchange="kmDat('denMs',this.value)" style="flex:1;min-width:150px">
+      ${k.khongHan ? '<span style="flex:1;min-width:150px;font-size:13px;color:var(--text2);padding:8px 0">Không giới hạn</span>'
+        : `<input type="datetime-local" id="km-den" value="${kmGioLocal(k.denMs)}" onchange="kmDat('denMs',this.value)" style="flex:1;min-width:150px">`}
     </div>
-    <div style="font-size:11px;color:var(--text2);margin-top:4px">Ngoài khoảng này chương trình tự tắt. Để trống ô kết thúc = chạy đến khi tắt tay.</div>`,
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;cursor:pointer">
+      <input type="checkbox" ${k.khongHan ? 'checked' : ''} onchange="kmDatKhongHan(this.checked)" style="width:auto;margin:0"> Không giới hạn ngày kết thúc (chạy đến khi bấm Tắt)
+    </label>
+    <div style="font-size:11px;color:var(--text2);margin-top:4px">Ngoài khoảng thời gian này chương trình tự tắt.</div>`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('km-soan').style.display='none'">Hủy</button>
      <button class="btn-g" style="flex:2" onclick="kmLuu()">Lưu chương trình</button>`);
   const thanMoi = document.querySelector('#km-soan > div > div:nth-child(2)');
   if (thanMoi && cuon) thanMoi.scrollTop = cuon;
 }
 window.kmDatTen = function(v) { if (kmSua) kmSua.ten = String(v || ''); };
+window.kmDatKhongHan = function(bat) {
+  const k = kmSua; if (!k) return;
+  kmDocGio();
+  k.khongHan = !!bat;
+  if (!bat && !k.denMs) { const d = new Date(Math.max(Date.now(), k.tuMs || 0) + 30 * 86400000); d.setHours(23, 59, 0, 0); k.denMs = d.getTime(); }
+  kmVeSoan(dsKhuyenMai.some(x => x.id === k.id));
+};
+// Đọc thẳng ô ngày giờ (sự kiện change của ô ngày giờ không phải lúc nào cũng chạy khi xóa/gõ dở)
+function kmDocGio() {
+  const k = kmSua; if (!k) return '';
+  const doc1 = (id) => { const o = document.getElementById(id); if (!o) return undefined; if (!o.value) return o.validity?.badInput ? NaN : null; const t = new Date(o.value).getTime(); return Number.isFinite(t) ? t : NaN; };
+  const tu = doc1('km-tu'), den = doc1('km-den');
+  if (tu !== undefined) k.tuMs = tu;
+  if (den !== undefined) k.denMs = den;
+  if (Number.isNaN(k.tuMs) || (k.tuMs && new Date(k.tuMs).getFullYear() < 2020)) return 'Ngày bắt đầu chưa đúng — chọn lại ngày giờ';
+  if (!k.khongHan && (Number.isNaN(k.denMs) || (k.denMs && new Date(k.denMs).getFullYear() < 2020))) return 'Ngày kết thúc chưa đúng — chọn lại, hoặc tick “Không giới hạn ngày kết thúc”';
+  return '';
+}
 window.kmDat = function(truong, v) {
   const k = kmSua; if (!k) return;
   if (truong === 'loai') k.loai = v;
-  else if (truong === 'tuMs' || truong === 'denMs') k[truong] = v ? new Date(v).getTime() : null;
+  else if (truong === 'tuMs' || truong === 'denMs') { kmDocGio(); k[truong] = v ? new Date(v).getTime() : null; }
   else if (truong === 'giam.kieu') k.giam.kieu = v;
   else { const [a, b] = truong.split('.'); k[a][b] = Math.max(0, Number(v) || 0); }
   kmVeSoan(dsKhuyenMai.some(x => x.id === k.id));
@@ -11151,8 +11176,11 @@ window.kmBoCombo = (i) => { kmSua.combo.items.splice(i, 1); kmVeSoan(dsKhuyenMai
 window.kmLuu = async function() {
   const k = kmSua; if (!k) return;
   k.ten = String(k.ten || '').trim().slice(0, 80);
+  const loiGio = kmDocGio();
+  if (k.khongHan) k.denMs = null;
   const loi = !k.ten ? 'Nhập tên chương trình'
-    : k.tuMs && k.denMs && k.denMs <= k.tuMs ? 'Thời gian kết thúc phải sau bắt đầu'
+    : loiGio ? loiGio
+    : k.tuMs && k.denMs && k.denMs <= k.tuMs ? `Ngày kết thúc (${kmNgay(k.denMs)}) phải sau ngày bắt đầu (${kmNgay(k.tuMs)})`
     : k.loai === 'tang' && (!(k.tang.x >= 1) || !(k.tang.y >= 1)) ? 'Nhập số mua và số tặng'
     : k.loai === 'tang' && !k.tang.skus.length && !k.tang.nhoms.length ? 'Chọn mã hàng hoặc nhóm hàng được áp dụng'
     : k.loai === 'giam' && !(k.giam.giaTri > 0) ? 'Nhập mức giảm'
@@ -20517,7 +20545,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v527</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v528</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -20571,7 +20599,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v527</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v528</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -20617,7 +20645,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v527</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v528</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
