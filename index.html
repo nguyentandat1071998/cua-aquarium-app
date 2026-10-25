@@ -15940,6 +15940,28 @@ function soCongCuaCa(ca) {
 function phutMotCong() {
   return GIO_MOT_CONG * 60;
 }
+// Công THỰC TẾ của một ca (8 giờ = 1 công): giờ làm theo ca, TRỪ số phút đi trễ và về sớm.
+// Ca gãy: tính cả hai khung, bỏ khung 2 thì trừ cả khung. Ca Admin đã xử lý (lý do chính đáng)
+// thì không trừ phút trễ. Làm thêm (đã duyệt) tính riêng ở cột Làm thêm.
+function tinhCongThucTe(ca, caLV, gioCa) {
+  const kq = { du: false, phutTre: 0, phutVeSom: 0, phutCong: 0, soCong: 0 };
+  if (!ca?.vaoLuc?.seconds || !ca?.thoatLuc?.seconds) return kq;
+  kq.du = true;
+  const ph = (ts) => { const d = new Date(ts.seconds * 1000); return d.getHours() * 60 + d.getMinutes(); };
+  const keHoach = (caLV ? soCongCuaCa(caLV) : 1) * phutMotCong();
+  kq.phutTre = Math.max(0, ph(ca.vaoLuc) - gioCa.batDau);
+  kq.phutVeSom = Math.max(0, gioCa.ketThuc - ph(ca.thoatLuc));
+  if (gioCa.khung2) {
+    if (ca.vaoLuc2?.seconds && ca.thoatLuc2?.seconds) {
+      kq.phutTre += Math.max(0, ph(ca.vaoLuc2) - gioCa.khung2.batDau);
+      kq.phutVeSom += Math.max(0, gioCa.khung2.ketThuc - ph(ca.thoatLuc2));
+    } else kq.phutVeSom += Math.max(0, gioCa.khung2.ketThuc - gioCa.khung2.batDau);
+  }
+  if (ca.dieuChinhCa || ca.dieuChinhTre) kq.phutTre = 0;
+  kq.phutCong = Math.max(0, keHoach - kq.phutTre - kq.phutVeSom);
+  kq.soCong = kq.phutCong / phutMotCong();
+  return kq;
+}
 
 // Giờ có mặt tại cửa hàng (chưa trừ nghỉ). Ca gãy cộng cả hai khung.
 function gioCoMat(ca) {
@@ -16482,6 +16504,10 @@ async function tinhLuongThang(thang) {
     if (ca.thoatLuc2?.seconds) n.ra2 = new Date(ca.thoatLuc2.seconds * 1000);
     if (n.vao && n.ra) {
       n.phut = Math.max(0, Math.round((n.ra - n.vao) / 60000)) + (n.vao2 && n.ra2 ? Math.max(0, Math.round((n.ra2 - n.vao2) / 60000)) : 0);
+      // Công theo giờ thực tế: trừ phút đi trễ, về sớm
+      const cTT = tinhCongThucTe(ca, caLV, gioCa);
+      n.coCong = true; n.soCong = cTT.soCong; n.phutVeSom = cTT.phutVeSom;
+      if (cTT.phutTre || cTT.phutVeSom) n.ghiChuDC.push([cTT.phutTre ? `trễ ${cTT.phutTre}′` : '', cTT.phutVeSom ? `về sớm ${cTT.phutVeSom}′` : ''].filter(Boolean).join(', ') + ' (đã trừ công)');
       // Lương tính theo SỐ CÔNG của ca, không theo thời gian có mặt — giữa ca có
       // nghỉ nên ở lâu hơn không có nghĩa làm nhiều hơn. Ca full 11 giờ làm thực
       // được 1,375 công.
@@ -16515,7 +16541,7 @@ async function tinhLuongThang(thang) {
   const ds = [...theoNgay.values()].sort((a, b) => b.ngay.localeCompare(a.ngay));
   const tong = ds.reduce((s, n) => ({
     phut: s.phut + n.phut, luong: s.luong + n.luong,
-    soCong: s.soCong + (n.luong ? (n.soCong || 1) : 0),
+    soCong: s.soCong + (n.coCong ? n.soCong : 0),
     lamThem: s.lamThem + (n.tienLamThem || 0),
     phutLamThem: s.phutLamThem + (n.lamThemDaDuyet ? n.phutLamThem : 0),
     thuongDon: s.thuongDon + (n.thuongDon || 0),
@@ -16538,7 +16564,7 @@ async function tinhLuongThang(thang) {
   // Công thức thưởng / trừ do Admin đặt
   const chung = await qtDuLieuCuaHang(thang, null);
   const rCT = qtTinhChoNguoi(nguoi.vaiTroId, { ...chung, donBan, quetGoi: cacLanQuet, donSan: allDonHangSan, cacCa, soCong: tong.soCong });
-  tong.thuongCT = rCT.thuong; tong.truCT = rCT.tru; tong.ctChiTiet = rCT.chiTiet;
+  tong.thuongCT = rCT.thuong; tong.truCT = rCT.tru; tong.ctChiTiet = rCT.chiTiet; tong.ctBoQua = rCT.boQua;
   tong.tong += rCT.thuong - rCT.tru;
 
   return { thang, xemHet, uidXem, tenNguoi: nguoi.ten || currentUserData?.ten || '',
@@ -16636,7 +16662,7 @@ async function tinhLuongTatCa(thang) {
     const donGia = Number(rates[u.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
     const caLV = ca.caId ? layCa(ca.caId) : null;
     const gioCa = caLV || CA_GIO[ca.loaiCa] || CA_GIO.full;
-    const soCong = caLV ? soCongCuaCa(caLV) : 1;
+    const soCong = tinhCongThucTe(ca, caLV, gioCa).soCong;
 
     if (ca.vaoLuc?.seconds && ca.thoatLuc?.seconds) {
       const phut = Math.max(0, Math.round((ca.thoatLuc.seconds - ca.vaoLuc.seconds) / 60))
@@ -16680,7 +16706,7 @@ async function tinhLuongTatCa(thang) {
     const { _ca, _donBan, _quet, ...gon } = n;
     const pc = phuCapTheoNguoi.get(n.uid) || {};
     const phuCap = Number(pc.soTien) || 0;
-    return { ...gon, thuongCT: r.thuong, truCT: r.tru, ctChiTiet: r.chiTiet, phuCap, ghiChu: pc.ghiChu || '',
+    return { ...gon, thuongCT: r.thuong, truCT: r.tru, ctChiTiet: r.chiTiet, ctTruThuong: r.thuongGoc - r.thuong, phuCap, ghiChu: pc.ghiChu || '',
       tong: gon.luong + gon.lamThem + r.thuong - r.tru + gon.thuongThem - gon.khauTru + phuCap };
   }).sort((a, b) => b.tong - a.tong);
 
@@ -16714,7 +16740,7 @@ function veDanhSachLuong(dl) {
         ${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
       <td>${fmt(n.luong)}</td>
       <td>${n.lamThem ? fmt(n.lamThem) : '—'}</td>
-      <td>${n.thuongCT ? `<span style="color:var(--green)">${fmt(n.thuongCT)}</span>` : '—'}</td>
+      <td>${n.thuongCT ? `<span style="color:var(--green)">${fmt(n.thuongCT)}</span>` : '—'}${n.ctTruThuong ? `<div style="font-size:10px;color:var(--red)">đã trừ ${fmt(n.ctTruThuong)}</div>` : ''}</td>
       <td>${n.truCT ? `<span style="color:var(--red)">−${fmt(n.truCT)}</span>` : '—'}</td>
       <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
       <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
@@ -16776,7 +16802,7 @@ function veDanhSachLuong(dl) {
             <tr>
               <th style="text-align:left">Họ tên</th>
               <th>Công</th><th>Lương</th><th>Làm thêm</th>
-              <th>Thưởng<br><span style="font-weight:400;font-size:10px">công thức</span></th><th>Trừ<br><span style="font-weight:400;font-size:10px">công thức</span></th>
+              <th>Thưởng<br><span style="font-weight:400;font-size:10px">sau khấu trừ</span></th><th>Trừ<br><span style="font-weight:400;font-size:10px">vào lương</span></th>
               <th>Thưởng<br><span style="font-weight:400;font-size:10px">thêm</span></th><th>Điều chỉnh<br><span style="font-weight:400;font-size:10px">trừ</span></th>
               <th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng</th>
             </tr>
@@ -16947,7 +16973,7 @@ function veBangLuong(dl) {
                 ${n.treGio ? '<div style="font-size:10px;color:var(--red)">trễ</div>' : ''}
                 ${n.vao && !n.ra ? '<div style="font-size:10px;color:#D97706">chưa kết ca</div>' : ''}
               </td>
-              <td>${n.luong ? (n.soCong || 1).toFixed(3).replace(/0+$/,'').replace(/\.$/,'') : '—'}</td>
+              <td>${n.coCong ? (Math.round(n.soCong * 1000) / 1000).toString().replace('.', ',') : '—'}</td>
               <td>
                 ${n.phutLamThem ? (n.lamThemDaDuyet
                   ? `<span style="color:var(--green)">${fmt(n.tienLamThem)}</span>`
@@ -16975,14 +17001,15 @@ function veBangLuong(dl) {
       ${tong.ctChiTiet.map(c => `
         <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
           <div style="min-width:0">
-            <div style="font-weight:600;font-size:13px">${escHtml(c.ten)}</div>
+            <div style="font-weight:600;font-size:13px">${escHtml(c.ten)}${c.loai === 'tru' ? `<span style="font-weight:400;font-size:11px;color:var(--text2)"> · trừ vào ${c.vaoLuong ? 'lương' : 'thưởng'}</span>` : ''}</div>
             <div style="font-size:11.5px;color:var(--text2)">${c.khongCo ? 'Tính theo số liệu cả cửa hàng — xem ở bảng lương của quản lý'
               : `${escHtml(c.nhanCoSo)}: <b>${c.donVi === '%' ? String(Math.round(c.coSo * 10) / 10).replace('.', ',') : fmt(c.coSo)}</b> ${escHtml(c.donVi)}`}${c.ghiChu ? ' · ' + escHtml(c.ghiChu) : ''}</div>
           </div>
           <b style="white-space:nowrap;color:${c.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${c.khongCo ? '—' : (c.loai === 'tru' ? '−' : '+') + fmt(c.tien)}</b>
         </div>`).join('')}
+      ${tong.ctBoQua ? `<div style="font-size:11.5px;color:var(--text2);padding-top:6px">Khoản trừ vượt tiền thưởng ${fmt(tong.ctBoQua)}đ — không trừ vào lương.</div>` : ''}
       <div style="display:flex;justify-content:space-between;font-weight:700;padding-top:8px">
-        <span>Cộng</span><span>${fmt((tong.thuongCT || 0) - (tong.truCT || 0))}đ</span></div>
+        <span>Thưởng còn lại${tong.truCT ? ' / trừ lương' : ''}</span><span>${fmt(tong.thuongCT || 0)}đ${tong.truCT ? ` / −${fmt(tong.truCT)}đ` : ''}</span></div>
     </div>` : ''}
 
 `;
@@ -17192,7 +17219,7 @@ const PHUT_MOT_CONG = 8 * 60;
 const PHUT_TOI_THIEU_LAM_THEM = 5;
 
 // Giờ làm thêm hưởng 150% đơn giá
-const HE_SO_LAM_THEM = 1.5;
+const HE_SO_LAM_THEM = 1;   // làm thêm tính như giờ thường (8 giờ = 1 công)
 
 // Số phút làm thêm của một ca: tính từ giờ ra quy định tới lúc check-out thật
 function tinhPhutLamThem(gioRaThat, gioCaKetThuc) {
@@ -17561,14 +17588,18 @@ function qtTinh(q, du) {
 const qtApDung = (q, vaiTroId) => q.bat !== false && (!(q.apDung || []).length || q.apDung.includes(vaiTroId));
 // Tính toàn bộ công thức cho một người: trả về tổng thưởng, tổng trừ, chi tiết từng dòng
 function qtTinhChoNguoi(vaiTroId, du) {
-  let thuong = 0, tru = 0; const chiTiet = [];
+  // Khoản trừ mặc định TRỪ VÀO THƯỞNG: thưởng về 0 là hết, không đụng lương cơ bản.
+  // Chỉ khoản nào Admin chọn "trừ vào lương" mới trừ vào tổng lương.
+  let thuongGoc = 0, truVaoThuong = 0, truLuong = 0; const chiTiet = [];
   for (const q of QUY_TAC_THUONG) {
     if (!qtApDung(q, vaiTroId)) continue;
     const r = qtTinh(q, du);
-    if (q.loai === 'tru') tru += r.tien; else thuong += r.tien;
-    chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo });
+    const vaoLuong = q.loai === 'tru' && q.truVao === 'luong';
+    if (q.loai !== 'tru') thuongGoc += r.tien; else if (vaoLuong) truLuong += r.tien; else truVaoThuong += r.tien;
+    chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, vaoLuong, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo });
   }
-  return { thuong, tru, chiTiet };
+  const truDuoc = Math.min(thuongGoc, truVaoThuong);
+  return { thuong: thuongGoc - truDuoc, tru: truLuong, thuongGoc, truVaoThuong, boQua: truVaoThuong - truDuoc, chiTiet };
 }
 // Câu mô tả công thức cho người đọc
 function qtMoTa(q) {
@@ -17629,7 +17660,7 @@ async function renderThietLapLuong() {
         <thead><tr><th class="lb-dau">Tên</th><th>Loại</th><th style="min-width:200px">Công thức</th><th>Áp dụng</th><th>Bật</th><th></th></tr></thead>
         <tbody>${QUY_TAC_THUONG.map(q => `<tr style="${q.bat === false ? 'opacity:.5' : ''}">
           <th class="lb-dau">${escHtml(q.ten || '(chưa đặt tên)')}</th>
-          <td><span style="font-weight:700;color:${q.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${q.loai === 'tru' ? 'Trừ' : 'Thưởng'}</span></td>
+          <td><span style="font-weight:700;color:${q.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${q.loai === 'tru' ? 'Trừ' : 'Thưởng'}</span>${q.loai === 'tru' ? `<div style="font-size:10.5px;color:var(--text2)">vào ${q.truVao === 'luong' ? 'lương' : 'thưởng'}</div>` : ''}</td>
           <td style="white-space:normal;font-size:12px">${escHtml(qtMoTa(q))}</td>
           <td style="white-space:normal;font-size:12px">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || 'vai trò đã xóa')).join(', ') : 'Mọi vai trò'}</td>
           <td style="text-align:center"><input type="checkbox" ${q.bat !== false ? 'checked' : ''} onchange="qtBatTat('${q.id}',this.checked)" style="width:18px;height:18px"></td>
@@ -17738,6 +17769,8 @@ function qtVeForm(moi) {
   ddbMoKhung('qt-modal', moi ? 'Thêm công thức' : 'Sửa công thức', '', `
     <div class="field"><label>Tên</label><input id="qtf-ten" maxlength="80" value="${escHtml(q.ten || '')}" placeholder="VD: Thưởng doanh số cá"></div>
     <div class="field"><label>Loại</label><div style="display:flex;gap:6px">${chip(q.loai !== 'tru', 'Thưởng (+)', "qtDat('loai','thuong')")}${chip(q.loai === 'tru', 'Trừ (−)', "qtDat('loai','tru')")}</div></div>
+    ${q.loai === 'tru' ? `<div class="field"><label>Trừ vào</label><div style="display:flex;gap:6px">${chip(q.truVao !== 'luong', 'Tiền thưởng', "qtDat('truVao','thuong')")}${chip(q.truVao === 'luong', 'Tổng lương', "qtDat('truVao','luong')")}</div>
+      <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${q.truVao === 'luong' ? 'Trừ thẳng vào tổng lương.' : 'Trừ vào thưởng, thưởng về 0 thì dừng — lương cơ bản giữ nguyên.'}</div></div>` : ''}
     <div class="field"><label>Áp dụng cho</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonVaiTro()">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || '?')).join(', ') : 'Mọi vai trò'}</button></div>
     <div class="field"><label>Tính theo</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCoSo('coSo')">${escHtml(cs.ten || '')}</button></div>
     ${cs.nhom ? `<div class="field"><label>Nhóm hàng</label><div style="display:flex;gap:6px;margin-bottom:6px">
@@ -19631,7 +19664,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v514</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v515</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19685,7 +19718,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v514</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v515</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19731,7 +19764,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v514</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v515</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
