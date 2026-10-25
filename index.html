@@ -2052,9 +2052,9 @@ window.switchModule = function(mod) {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-thietlap-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
-    if (mod === 'thanhtoan') renderThietLapThanhToan();
-    else if (mod === 'nhatky') renderNhatKy();
-    else if (mod === 'congthucthuong') renderCongThucThuong();
+    if (mod === 'nhatky') renderNhatKy();
+    else if (mod === 'congthucthuong') { moNVTab('thietlapluong'); return; }
+    else if (mod === 'chamcongcd') { moNVTab('calamviec'); return; }
     else renderHeThong(mod);
     return;
   }
@@ -10854,8 +10854,13 @@ async function renderHeThong(man = 'hethong') {
       <p class="info-note">Đổi nội dung QR thì phải in lại mã QR dán ở quầy (nút In mã QR ở trên).</p>
       <button class="btn-g" style="width:100%" onclick="htLuuChamCong()">Lưu</button>`)
     ];
-  } else if (man === 'inhoadon') {
-    the = [htThe('Thông tin in trên bill', `
+  } else if (man === 'inhoadon' || man === 'ketnoi' || man === 'thanhtoan' || man === 'hethong') {
+    // Hệ thống gom: In hóa đơn, Thanh toán, Kết nối, Công cụ — có mục lục nhảy nhanh ở đầu
+    const muc = (id, ten) => `<h3 id="ht-muc-${id}" style="font-size:15px;font-weight:700;margin:18px 2px 8px;scroll-margin-top:120px">${ten}</h3>`;
+    the = [
+      `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">${[['inhoadon', 'In hóa đơn'], ['thanhtoan', 'Thanh toán'], ['ketnoi', 'Kết nối'], ['congcu', 'Công cụ']]
+        .map(([id, t]) => `<button class="btn-xs" onclick="document.getElementById('ht-muc-${id}')?.scrollIntoView({behavior:'smooth'})">${t}</button>`).join('')}</div>`,
+      muc('inhoadon', 'In hóa đơn'), htThe('Thông tin in trên bill', `
       <div class="field"><label>Tên cửa hàng</label><input id="ht-ten" value="${v(ch.ten, 'CUA AQUARIUM')}"></div>
       <div class="field"><label>Địa chỉ</label><input id="ht-diachi" value="${v(ch.diaChi, '451A-451B Vườn Lài, TP.HCM')}"></div>
       <div class="field"><label>Số điện thoại</label><input id="ht-sdt" inputmode="tel" value="${v(ch.soDienThoai)}"></div>
@@ -10867,9 +10872,9 @@ async function renderHeThong(man = 'hethong') {
         <button class="btn-g" style="flex:1" onclick="htLuuCuaHang()">Lưu</button>
         <button class="btn-outline" onclick="htInThuBill()">🖨 In thử bill</button>
       </div>`),
-      htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`)];
-  } else if (man === 'ketnoi') {
-    the = [htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
+      htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
+      muc('thanhtoan', 'Thanh toán'), '<div id="ht-thanhtoan"><div class="loading">Đang tải...</div></div>',
+      muc('ketnoi', 'Kết nối'), htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
       htThe('Chi nhánh bán tại quầy', `
       <p style="font-size:13px;margin-bottom:8px">Hóa đơn bán tại quầy đang tạo vào chi nhánh
         <b>${v(cn.tenBanLe || '')} ${v(chiNhanhBanLe())}</b>${cn.banLe ? '' : ' (mặc định trong code)'}.</p>
@@ -10882,9 +10887,8 @@ async function renderHeThong(man = 'hethong') {
         <button class="btn-outline" onclick="htXemWebhook()">Kiểm tra</button>
         <button class="btn-outline" onclick="htDangKyWebhook('product.update')">Đăng ký webhook giá</button>
         <button class="btn-outline" onclick="htDangKyWebhook('invoice.update')">Đăng ký webhook hóa đơn</button>
-      </div>`)];
-  } else {
-    the = [htThe('Hàng cùng loại', `
+      </div>`),
+      muc('congcu', 'Công cụ'), htThe('Hàng cùng loại', `
       <p style="font-size:13px;margin-bottom:8px">Lấy nhóm hàng cùng loại (cùng mã cha, khác thuộc tính) để Hàng hóa gom vào một khung. Hàng sửa giá sau này tự cập nhật nhóm.</p>
       <button class="btn-outline" style="width:100%" id="ht-nut-cl" onclick="htDongBoCungLoai()">Đồng bộ hàng cùng loại</button>
       <div id="ht-cl-kq" style="font-size:13px;margin-top:8px"></div>`),
@@ -10911,13 +10915,16 @@ async function renderHeThong(man = 'hethong') {
         <button class="btn-g" id="ht-ap-dung-rules" disabled onclick="htApDungRules()">④ Áp dụng quy tắc bảo mật</button>
         <button class="btn-outline" onclick="htQuayLaiRules()">↩ Quay lại quy tắc trước</button>
       </div>
-      <div id="ht-baomat" style="font-size:13px;margin-top:10px"></div>`) : ''];
+      <div id="ht-baomat" style="font-size:13px;margin-top:10px"></div>`) : ''
+    ];
   }
   el.innerHTML = the.filter(Boolean).join('');
   if (man === 'phanquyen') renderVaiTroList();
   if (man === 'chamcongcd') generateQRCode();
-  if (man === 'inhoadon') htVeTramIn();
-  if (man === 'ketnoi') htVeKetNoiKol();
+  if (['inhoadon', 'ketnoi', 'thanhtoan', 'hethong'].includes(man)) {
+    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan');
+    if (man !== 'hethong') setTimeout(() => document.getElementById('ht-muc-' + man)?.scrollIntoView(), 50);
+  }
 }
 
 window.htLuuTinhNang = async function() {
@@ -11268,8 +11275,8 @@ window.htDatTon = async function() {
   htXemTon();
 };
 
-async function renderThietLapThanhToan() {
-  const el = document.getElementById('thietlap-content');
+async function renderThietLapThanhToan(elId = 'thietlap-content') {
+  const el = document.getElementById(elId);
   if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   await napCauHinhThanhToan();
@@ -12396,11 +12403,6 @@ const NHOM_MENU = [
     { key: 'phanquyen',  ten: 'Phân quyền',        chiAdmin: true, moGi: () => switchModule('phanquyen') },
     { key: 'calamviec',  ten: 'Ca làm việc',       chiAdmin: true, moGi: () => moNVTab('calamviec') },
     { key: 'thietlapluong', ten: 'Thiết lập lương', chiAdmin: true, moGi: () => moNVTab('thietlapluong') },
-    { key: 'congthucthuong', ten: 'Công thức thưởng', chiAdmin: true, moGi: () => switchModule('congthucthuong') },
-    { key: 'chamcongcd', ten: 'Chấm công',         chiAdmin: true, moGi: () => switchModule('chamcongcd') },
-    { key: 'inhoadon',   ten: 'In hóa đơn',        chiAdmin: true, moGi: () => switchModule('inhoadon') },
-    { key: 'thanhtoan',  ten: 'Thanh toán',        chiAdmin: true, moGi: () => switchModule('thanhtoan') },
-    { key: 'ketnoi',     ten: 'Kết nối',           chiAdmin: true, moGi: () => switchModule('ketnoi') },
     { key: 'hethong',    ten: 'Hệ thống',          chiAdmin: true, moGi: () => switchModule('hethong') },
     { key: 'nhatky',     ten: 'Lịch sử thao tác',  chiAdmin: true, moGi: () => switchModule('nhatky') }
   ]}
@@ -16019,7 +16021,35 @@ function veDanhSachCa() {
         </div>`;
       }).join('')}
 
-    <button class="btn-g" style="width:100%;margin-top:8px" onclick="moSuaCa()">+ Thêm ca mới</button>`;
+    <button class="btn-g" style="width:100%;margin-top:8px" onclick="moSuaCa()">+ Thêm ca mới</button>
+    <h3 style="font-size:15px;font-weight:700;margin:22px 2px 8px">Chấm công</h3>
+    <div id="cc-caidat"><div class="loading">Đang tải...</div></div>`;
+  veCaiDatChamCong('cc-caidat');
+}
+// Mã QR + vị trí, bán kính chấm công (trước ở mục riêng, giờ nằm cuối màn Ca làm việc)
+async function veCaiDatChamCong(elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  let cc = {};
+  try { const sn = await getDoc(doc(db, 'cau_hinh', 'cham_cong')); cc = sn.exists() ? sn.data() : {}; } catch(e) {}
+  const v = (x, md = '') => escHtml(x === undefined || x === null ? md : String(x));
+  el.innerHTML = htThe('Mã QR chấm công', `
+      <div style="text-align:center">
+        <div id="qr-display" style="margin:0 auto 10px;width:200px;height:200px;display:flex;align-items:center;justify-content:center;background:#f5f5f5;border-radius:8px"></div>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:10px">In mã này dán tại quầy để nhân viên quét vào ca / kết thúc ca.</p>
+        <button class="btn-g" onclick="printQR()">In mã QR</button>
+      </div>`)
+    + htThe('Vị trí & nội dung QR', `
+      <div style="display:flex;gap:8px">
+        <div class="field" style="flex:1"><label>Vĩ độ cửa hàng</label><input id="ht-lat" inputmode="decimal" value="${v(cc.viDo ?? STORE_LAT)}"></div>
+        <div class="field" style="flex:1"><label>Kinh độ</label><input id="ht-lng" inputmode="decimal" value="${v(cc.kinhDo ?? STORE_LNG)}"></div>
+      </div>
+      <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="htLayViTri()">📍 Lấy vị trí hiện tại (đứng tại cửa hàng rồi bấm)</button>
+      <div class="field"><label>Bán kính cho phép chấm công (mét)</label><input id="ht-bankinh" type="number" value="${v(cc.banKinh ?? GPS_RADIUS)}"></div>
+      <div class="field"><label>Nội dung mã QR chấm công</label><input id="ht-qr" value="${v(cc.maQR ?? CHECKIN_QR_SECRET)}"></div>
+      <p class="info-note">Đổi nội dung QR thì phải in lại mã QR dán ở quầy.</p>
+      <button class="btn-g" style="width:100%" onclick="htLuuChamCong()">Lưu</button>`);
+  generateQRCode();
 }
 
 window.donCaHong = async function() {
@@ -17594,7 +17624,28 @@ async function renderThietLapLuong() {
     ? allVaiTro.map(v => ({ key: v.id, label: v.ten || v.id }))
     : LUONG_ROLES;
 
-  el.innerHTML = cacVaiTro.map(r => {
+  // Cấu hình còn sót của vai trò đã xóa (hoặc khóa vai trò cũ) — cho xóa hẳn
+  const conVT = new Set(allVaiTro.map(v => v.id));
+  const moCoi = [...new Set([...Object.keys(cfg), ...Object.keys(CONG_THUC_THEO_VAI_TRO)])].filter(k => !conVT.has(k));
+  const khoiMoCoi = !allVaiTro.length || !moCoi.length ? '' : `
+    <div class="admin-block" style="margin-bottom:1rem;border:1.5px dashed #F59E0B">
+      <h3 style="color:#92400E">Cấu hình cũ của vai trò đã xóa (${moCoi.length})</h3>
+      <p class="info-note">Không còn vai trò nào dùng, nhưng người còn giữ mã vai trò cũ vẫn bị tính lương / thưởng theo cấu hình này. Nên xóa.</p>
+      ${moCoi.map(k => {
+        const c = CONG_THUC_THEO_VAI_TRO[k], l = cfg[k];
+        const mucBat = c ? CAC_MUC_THUONG.filter(m => c.bat?.[m.key]).map(m => m.ten) : [];
+        const nguoi = (allUsersCache || []).filter(u => u.vaiTroId === k || (!u.vaiTroId && u.role === k)).map(u => u.hoTen || u.ten || u.email);
+        return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:center">
+          <div style="flex:1;min-width:0;font-size:12.5px">
+            <b>${escHtml(k === 'nhan_vien' ? 'Nhân viên (kiểu cũ)' : k === 'quan_ly' ? 'Quản lý (kiểu cũ)' : 'Vai trò đã xóa')}</b> <span style="color:var(--text2)">${escHtml(k)}</span>
+            <div style="color:var(--text2)">${l ? `Đơn giá: ${Object.entries(l.rates || {}).filter(([, x]) => x).map(([t, x]) => `${t === 'mac_dinh' ? 'Mặc định' : t} ${fmt(x)}đ`).join(', ') || '—'}` : ''}${mucBat.length ? ` · Thưởng: ${mucBat.join(', ')}` : ''}</div>
+            ${nguoi.length ? `<div style="color:#B45309">Còn áp cho: ${nguoi.map(escHtml).join(', ')}</div>` : ''}
+          </div>
+          <button class="btn-xs danger" onclick="xoaCauHinhCu('${escHtml(k)}')">Xóa</button></div>`;
+      }).join('')}
+    </div>`;
+
+  el.innerHTML = khoiMoCoi + cacVaiTro.map(r => {
     const roleCfg = cfg[r.key] || { tiers: [], rates: {} };
     const tiers = roleCfg.tiers || [];
     const rates = roleCfg.rates || {};
@@ -17619,7 +17670,10 @@ async function renderThietLapLuong() {
         </div>
         <button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="themCapBac('${r.key}')">+ Thêm cấp bậc</button>
         <button class="btn-g" style="width:100%" onclick="luuBangLuong('${r.key}')">Lưu đơn giá công</button>
-        <div style="font-size:12px;color:var(--text2);margin-top:8px">Thưởng / trừ của vai trò này: <a href="#" onclick="event.preventDefault();switchModule('congthucthuong')" style="color:#1D4ED8">mở Công thức thưởng</a></div>
+        <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px">CÔNG THỨC THƯỞNG / TRỪ</div>
+          ${veKhoiCongThucThuong(r.key)}
+        </div>
       </div>`;
   }).join('');
 
@@ -17945,7 +17999,22 @@ window.ctBatTatMuc = async function(vaiTroId, mucKey, bat) {
   }
 };
 
-const ctVeLai = () => activeModule === 'congthucthuong' ? renderCongThucThuong() : renderThietLapLuong();
+const ctVeLai = () => renderThietLapLuong();
+// Xóa cấu hình lương + công thức thưởng của một vai trò không còn tồn tại
+async function xoaCauHinhVaiTro(k) {
+  const cfg = await getLuongConfig();
+  if (cfg[k]) { delete cfg[k]; await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg); }
+  if (CONG_THUC_THEO_VAI_TRO[k]) {
+    const ct = { ...CONG_THUC_THEO_VAI_TRO }; delete ct[k];
+    await setDoc(doc(db, 'settings', 'cong_thuc_luong'), ct);
+    CONG_THUC_THEO_VAI_TRO = ct;
+  }
+}
+window.xoaCauHinhCu = async function(k) {
+  if (!await hoiXacNhan('Xóa hẳn cấu hình lương / thưởng cũ này?\n\nNgười còn giữ mã vai trò cũ sẽ không bị tính theo nó nữa.', { nguy: true, nutDongY: 'Xóa' })) return;
+  try { await xoaCauHinhVaiTro(k); showToast('Đã xóa cấu hình cũ'); renderThietLapLuong(); }
+  catch(e) { showToast('Không xóa được: ' + e.message, true); }
+};
 // Màn riêng: Thiết lập › Công thức thưởng — mỗi vai trò một khung
 async function renderCongThucThuong() {
   const el = document.getElementById('thietlap-content');
@@ -18265,6 +18334,7 @@ window.xoaVaiTro = async function(id) {
   if (dangDung && !await hoiXacNhan(`Vai trò "${v?.ten}" đang được gán cho ít nhất 1 người dùng. Xóa vẫn được, nhưng người đó sẽ không thấy module nào cho tới khi bạn gán vai trò khác. Vẫn xóa?`)) return;
   if (!dangDung && !await hoiXacNhan(`Xóa vai trò "${v?.ten}"?`)) return;
   await deleteDoc(doc(db, 'vai_tro', id));
+  try { await napCongThucLuong(); await xoaCauHinhVaiTro(id); } catch(e) { console.warn('Chưa xóa được cấu hình lương của vai trò:', e.message); }
   // Người đang giữ vai trò này phải mất quyền ngay trên máy chủ, không đợi lần ghi quyền sau
   const kq = dangDung ? await dongBoQuyen({ vaiTroId: id }) : { success: true };
   showToast('Đã xóa vai trò' + (kq.success ? '' : ' · chưa ghi được quyền lên máy chủ: ' + (kq.error || '')), !kq.success);
@@ -19420,7 +19490,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v511</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v512</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -19474,7 +19544,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v511</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v512</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -19520,7 +19590,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v511</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v512</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
