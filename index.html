@@ -12863,12 +12863,22 @@ window.dongSuaHangHoa = function() {
 };
 
 window.xoaHangHoa = async function(id) {
-  if (!await hoiXacNhan('Xóa hàng hóa này?')) return;
+  const s = allSKUs.find(x => x.id === id);
+  const ma = s?.sku || id;
+  if (!await hoiXacNhan(`Xóa hàng hóa ${ma}${s?.ten ? ' — ' + s.ten : ''}?\n\nXóa luôn bên KiotViet (xóa hẳn, không lấy lại được). Hóa đơn, phiếu cũ vẫn giữ và ghi "đã xóa".`, { nutDongY: 'Xóa' })) return;
+  showToast('Đang xóa bên KiotViet...');
+  try {
+    const r = await goiWorkerAdmin('kv-xoa-hang-hoa', { sku: ma });
+    if (!r.success) throw new Error(r.error || 'KiotViet lỗi');
+    if (r.khongCo) showToast(`${ma} không có bên KiotViet — chỉ xóa trong app`);
+  } catch(e) {
+    if (!await hoiXacNhan(`Không xóa được ${ma} bên KiotViet:\n\n${e.message}\n\nVẫn xóa trong app?`, { nutDongY: 'Vẫn xóa trong app' })) return;
+  }
   await updateDoc(doc(db,'skus', id), {
     deleted: true, deletedAt: serverTimestamp(),
     deletedBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
-  showToast('Đã xóa hàng hóa');
+  showToast(`Đã xóa ${ma}`);
   await loadSKUs();
   renderHangHoaList();
 };
@@ -20669,7 +20679,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v530</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v531</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -20723,7 +20733,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v530</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v531</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -20769,7 +20779,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v530</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v531</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
