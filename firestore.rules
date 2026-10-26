@@ -235,33 +235,23 @@ service cloud.firestore {
     }
 
     // ===== SỔ QUỸ (phiếu chi / thu) — nền cho quản lý dòng tiền =====
-    // Không sửa, không xóa: chỉ được hủy (chuyển trạng thái, ghi lý do). Người ghi phải là chính mình.
-    // Phiếu tự động (bán hàng, trả hàng, đặt cọc), phiếu tay, duyệt, hủy, kết ca: CHỈ máy chủ ghi.
-    // Riêng phiếu chi trả nhà cung cấp vẫn ghi từ màn Đặt hàng (quyền dh_thanhtoan), giờ ghi phải là giờ máy chủ.
-    // Đọc: sq_xemtatca / sq_ketca / sq_duyet xem tất cả; soquy chỉ phiếu của mình; dh_thanhtoan chỉ phiếu trả NCC.
+    // Không sửa, không xóa: chỉ được hủy (chuyển trạng thái, ghi lý do).
+    // Mọi phiếu (bán hàng, trả hàng, đặt cọc, trả nhà cung cấp, phiếu tay), duyệt, hủy, kết ca: CHỈ máy chủ ghi
+    // (máy chủ cộng/trừ số dư quỹ cùng lần ghi). Đọc: sq_xemtatca / sq_ketca / sq_duyet xem tất cả;
+    // soquy chỉ phiếu mình tạo hoặc tiền mình đang giữ; dh_thanhtoan chỉ phiếu trả nhà cung cấp.
     function laPhieuNCC(d) { return d.get('thamChieu', {}).get('loai', '') == 'don_dat_hang'; }
     match /so_quy/{id} {
       allow read: if qMot(['sq_xemtatca', 'sq_ketca', 'sq_duyet'])
-        || (q('soquy') && resource.data.nguoi.uid == toi())
+        || (q('soquy') && (resource.data.nguoi.uid == toi() || resource.data.get('giu', '') == toi()))
         || (q('dh_thanhtoan') && laPhieuNCC(resource.data));
-      allow create: if q('dh_thanhtoan')
-        && request.resource.data.loai == 'chi'
-        && request.resource.data.soTien is number && request.resource.data.soTien > 0
-        && request.resource.data.trangThai == 'hieu_luc'
-        && request.resource.data.nguoi.uid == request.auth.uid
-        && request.resource.data.luc == request.time
-        && laPhieuNCC(request.resource.data)
-        && request.resource.data.cach in ['tienmat', 'chuyenkhoan'];
-      allow update: if q('dh_thanhtoan') && laPhieuNCC(resource.data) && resource.data.trangThai == 'hieu_luc'
-        && request.resource.data.trangThai == 'huy' && chiDoi(['trangThai', 'lyDoHuy', 'huyLuc', 'huyBoi']);
-      allow delete: if false;
+      allow write: if false;
     }
     // Lịch sử kết ca: người kết ca / Admin xem; ghi chỉ qua máy chủ
     match /ket_ca/{id} {
       allow read: if q('sq_ketca');
       allow write: if false;
     }
-    // Mốc ca đang chạy + tiền đầu ca: chỉ máy chủ
+    // Số dư 2 quỹ: chỉ máy chủ (Admin xem qua máy chủ)
     match /so_quy_cfg/{id} {
       allow read, write: if false;
     }

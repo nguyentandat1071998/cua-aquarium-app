@@ -133,8 +133,9 @@ const NK_TRUONG = { gia: 'giá bán', giaVon: 'giá vốn', tonCuaHang: 'tồn c
 const NK_API = {
   'sq-tao-phieu': ['Sổ quỹ: tạo phiếu thu/chi', 'Sổ quỹ'], 'sq-sua-phieu': ['Sổ quỹ: sửa phiếu', 'Sổ quỹ'],
   'sq-huy-phieu': ['Sổ quỹ: hủy phiếu', 'Sổ quỹ'], 'sq-duyet-phieu': ['Sổ quỹ: duyệt / từ chối phiếu chi', 'Sổ quỹ'],
-  'sq-thu-hoan-ung': ['Sổ quỹ: thu tiền nhân viên hoàn', 'Sổ quỹ'], 'sq-khoi-tao': ['Sổ quỹ: khởi tạo tiền đầu ca', 'Sổ quỹ'],
-  'sq-ket-ca': ['Kết ca', 'Sổ quỹ'], 'sq-nhan-tien': ['Kết ca: xác nhận nhận tiền nộp', 'Sổ quỹ'],
+  'sq-thu-hoan-ung': ['Sổ quỹ: thu tiền nhân viên hoàn', 'Sổ quỹ'], 'sq-khoi-tao': ['Sổ quỹ: nhập số dư quỹ', 'Sổ quỹ'],
+  'sq-ket-ca': ['Kết ca nhân viên', 'Sổ quỹ'], 'sq-giao-tien': ['Sổ quỹ: giao tiền lẻ', 'Sổ quỹ'],
+  'sq-chi-ncc': ['Thanh toán nhà cung cấp', 'Đặt hàng'], 'sq-huy-chi-ncc': ['Hủy phiếu chi nhà cung cấp', 'Đặt hàng'], 'sq-chuyen-doi': ['Sổ quỹ: chuyển đổi phiếu cũ', 'Sổ quỹ'],
   'dc-luu': ['Đặt cọc: tạo / sửa phiếu', 'Đặt cọc'], 'dc-yeu-cau-huy': ['Đặt cọc: yêu cầu hủy', 'Đặt cọc'],
   'dc-duyet-huy': ['Đặt cọc: duyệt hủy', 'Đặt cọc'], 'dc-thanh-toan': ['Đặt cọc: thanh toán', 'Đặt cọc'],
   'kv-luu-hang-hoa': ['Hàng hóa: đồng bộ KiotViet', 'Kho'], 'kv-xoa-hang-hoa': ['Hàng hóa: xóa bên KiotViet', 'Kho'],
@@ -6933,22 +6934,9 @@ async function dhGhiChi(donId, ncc, { soTien, hangMuc, cach, ghiChu }) {
   if (!dhCoTT()) throw new Error('Bạn không có quyền thanh toán');
   soTien = Math.round(Number(soTien) || 0);
   if (soTien <= 0) throw new Error('Số tiền không hợp lệ');
-  const ma = await layMaPhieuMoi('PC', 'pc');
-  const nay = new Date();
-  const nguoi = { uid: currentUser.uid, ten: currentUserData.ten || currentUser.email || '' };
-  const b = writeBatch(db);
-  b.set(doc(db, 'so_quy', ma), {
-    maPhieu: ma, loai: 'chi', hangMuc: SQ_HANG_MUC[hangMuc] ? hangMuc : 'tien_hang', soTien, cach: SQ_CACH[cach] ? cach : 'chuyenkhoan',
-    doiTac: { loai: 'ncc', id: ncc?.id || '', ten: ncc?.ten || '' }, thamChieu: { loai: 'don_dat_hang', id: donId },
-    ghiChu: String(ghiChu || '').trim().slice(0, 200), ngay: ngayLocal(nay), luc: serverTimestamp(), nguoi, trangThai: 'hieu_luc'
-  });
-  b.set(doc(db, 'don_dat_hang_gia', donId), {
-    thanhToan: arrayUnion({ maPC: ma, soTien, hangMuc: SQ_HANG_MUC[hangMuc] ? hangMuc : 'tien_hang', cach: SQ_CACH[cach] ? cach : 'chuyenkhoan',
-      ghiChu: String(ghiChu || '').trim().slice(0, 200), luc: nay.toISOString(), lucChu: sqLucChu(nay), nguoi }),
-    daThanhToan: increment(soTien), suaLuc: serverTimestamp()
-  }, { merge: true });
-  await b.commit();
-  return ma;
+  // Ghi qua máy chủ: phiếu chi vào sổ quỹ + cộng số đã trả của đơn + trừ số dư quỹ (cùng một lần ghi)
+  const kq = await sqGoi('sq-chi-ncc', { donId, soTien, hangMuc, cach, ghiChu: String(ghiChu || '').trim().slice(0, 200) });
+  return kq.ma;
 }
 let dhCachTT = 'chuyenkhoan', dhHangMucTT = 'tien_hang';
 window.dhMoThanhToan = function(id, conLai) {
@@ -7019,15 +7007,7 @@ window.dhXacNhanHuyChi = async function(donId, maPC) {
   if (!lyDo) { showToast('Nhập lý do hủy', true); return; }
   document.getElementById('dh-huychi-modal').style.display = 'none';
   try {
-    await runTransaction(db, async (tx) => {
-      const gRef = doc(db, 'don_dat_hang_gia', donId), qRef = doc(db, 'so_quy', maPC);
-      const [gS, qS] = [await tx.get(gRef), await tx.get(qRef)];
-      if (!qS.exists() || qS.data().trangThai !== 'hieu_luc') throw new Error('Phiếu chi không còn hiệu lực');
-      const ds = (gS.data()?.thanhToan || []).map(x => x.maPC === maPC ? { ...x, huy: true, lyDoHuy: String(lyDo).trim().slice(0, 200) } : x);
-      const soTien = Number(qS.data().soTien) || 0;
-      tx.update(qRef, { trangThai: 'huy', lyDoHuy: String(lyDo).trim().slice(0, 200), huyLuc: serverTimestamp(), huyBoi: { uid: currentUser.uid, ten: currentUserData.ten || '' } });
-      tx.update(gRef, { thanhToan: ds, daThanhToan: increment(-soTien), suaLuc: serverTimestamp() });
-    });
+    await sqGoi('sq-huy-chi-ncc', { donId, maPC, lyDo });
     showToast('Đã hủy phiếu chi ' + maPC);
     dhXem(donId);
     if (activeModule === 'dathang' && activeSubTab === 'ds') plTai('dathang');
@@ -7044,7 +7024,7 @@ window.dhXacNhanHuyChi = async function(donId, maPC) {
 // Quyền: soquy · sq_xemtatca · sq_ketca · sq_duyet (Admin có tất cả + xác nhận đã nhận tiền nộp).
 // ==========================================================================
 const SQ_HM = { ...SQ_HANG_MUC, ban_hang: 'Bán hàng', tra_hang: 'Trả hàng', coc: 'Tiền cọc', hoan_coc: 'Hoàn cọc',
-  thu_khac: 'Thu khác', chi_khac: 'Chi khác', hoan_ung: 'Nhân viên hoàn tiền' };
+  thu_khac: 'Thu khác', chi_khac: 'Chi khác', hoan_ung: 'Nhân viên hoàn tiền', noi_bo: 'Giao / nhận tiền nội bộ' };
 const SQ_DM_GOI_Y = ['Phí ship', 'Mua đồ dùng cửa hàng', 'Mua thức ăn cá', 'Mua vật tư', 'Điện nước', 'Ăn uống', 'Tiền thối khách', 'Khác'];
 const sqXemHet = () => coQuyenMuc(['sq_xemtatca', 'sq_ketca', 'sq_duyet']);
 const sqTien = (s) => Number(String(s || '').replace(/[^0-9]/g, '')) || 0;
@@ -7070,7 +7050,7 @@ function sqGhiBanHang(ma) {
 }
 
 // ----- PHIẾU THU-CHI -----
-let sqNgay = ngayLocal(), sqLoc = 'tat', sqDs = [], sqChoThu = [], sqHuyNghe = null, sqHuyNgheCT = null;
+let sqNgay = ngayLocal(), sqLoc = 'tat', sqDs = [], sqChoThu = [], sqHuyNghe = null, sqHuyNgheCT = null, sqHuyNgheGiu = null, sqQuy = null;
 async function renderThuChi() {
   const el = document.getElementById('thuchi-content');
   if (!el) return;
@@ -7085,16 +7065,29 @@ async function renderThuChi() {
       <div class="sq-chips">
         ${[['tat', 'Tất cả'], ['thu', 'Thu'], ['chi', 'Chi'], ['cho', 'Chờ duyệt']].map(([k, t]) => `<button class="sq-chip${sqLoc === k ? ' on' : ''}" onclick="sqDatLoc('${k}')">${t}</button>`).join('')}
       </div>
+      <div id="sq-quy"></div>
       ${sqXemHet() ? '' : '<div class="sq-ghi">Bạn đang xem phiếu do mình tạo.</div>'}
       <div id="sq-cho-thu"></div>
       <div id="sq-tong"></div>
       <div id="sq-ds"><div class="loading">Đang tải...</div></div>
     </div>`;
   sqNghe();
+  sqTaiQuy();
 }
 function sqNghe() {
   if (sqHuyNghe) { sqHuyNghe(); sqHuyNghe = null; }
   if (sqHuyNgheCT) { sqHuyNgheCT(); sqHuyNgheCT = null; }
+  if (sqHuyNgheGiu) { sqHuyNgheGiu(); sqHuyNgheGiu = null; }
+  // Nhân viên: tiền mặt mình đang giữ (chưa kết ca)
+  if (currentUserData?.role !== 'admin') {
+    sqHuyNgheGiu = onSnapshot(query(collection(db, 'so_quy'), where('giu', '==', currentUser.uid), where('ketCa', '==', ''), limit(3000)), (s) => {
+      const ds = s.docs.map(d => d.data()).filter(p => p.trangThai === 'hieu_luc' && p.cach === 'tienmat');
+      const tien = ds.reduce((a, p) => a + (p.loai === 'thu' ? 1 : -1) * (Number(p.soTien) || 0), 0);
+      const o = document.getElementById('sq-quy'); if (!o) return;
+      o.innerHTML = `<div class="sq-the sq-giu"><span>Tiền mặt bạn đang giữ (chưa kết ca)</span><b class="${tien < 0 ? 'do' : ''}">${fmt(tien)}đ</b>
+        <div class="sq-ghi" style="margin:2px 0 0">${ds.length} phiếu · ${tien < 0 ? 'cửa hàng sẽ trả lại bạn khi kết ca' : 'nộp đủ số này khi kết ca'}</div></div>`;
+    }, () => {});
+  }
   const minh = sqXemHet() ? [] : [where('nguoi.uid', '==', currentUser.uid)];
   sqHuyNghe = onSnapshot(query(collection(db, 'so_quy'), where('ngay', '==', sqNgay), ...minh, limit(1500)), (s) => {
     sqDs = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => (sqGio(b.luc)?.getTime() || Date.now()) - (sqGio(a.luc)?.getTime() || Date.now()));
@@ -7121,20 +7114,20 @@ function sqVeDs() {
   const o = document.getElementById('sq-ds'); if (!o) return;
   const ds = sqDs.filter(p => sqLoc === 'tat' || (sqLoc === 'cho' ? p.duyet?.trangThai === 'cho_duyet' && p.trangThai === 'hieu_luc' : p.loai === sqLoc));
   const t = { thuTM: 0, thuCK: 0, chiTM: 0, chiCK: 0 };
-  sqDs.filter(p => p.trangThai === 'hieu_luc').forEach(p => { t[(p.loai === 'thu' ? 'thu' : 'chi') + (p.cach === 'tienmat' ? 'TM' : 'CK')] += Number(p.soTien) || 0; });
+  sqDs.filter(p => p.trangThai === 'hieu_luc' && p.hangMuc !== 'noi_bo').forEach(p => { t[(p.loai === 'thu' ? 'thu' : 'chi') + (p.cach === 'tienmat' ? 'TM' : 'CK')] += Number(p.soTien) || 0; });
   const ot = document.getElementById('sq-tong');
   if (ot) ot.innerHTML = `<div class="sq-tong">
     <div><span>Thu tiền mặt</span><b class="xanh">${fmt(t.thuTM)}</b></div><div><span>Chi tiền mặt</span><b class="do">${fmt(t.chiTM)}</b></div>
     <div><span>Thu chuyển khoản</span><b class="xanh">${fmt(t.thuCK)}</b></div><div><span>Chi chuyển khoản</span><b class="do">${fmt(t.chiCK)}</b></div></div>`;
   o.innerHTML = ds.length ? ds.map(p => {
-    const thu = p.loai === 'thu', huy = p.trangThai === 'huy';
+    const thu = p.loai === 'thu', huy = p.trangThai === 'huy', noiBo = p.hangMuc === 'noi_bo';
     const nhan = [];
     if (huy) nhan.push('<span class="sq-nhan xam">Đã hủy</span>');
     if (p.trangThai === 'cho_thu') nhan.push('<span class="sq-nhan vang">Chờ thu</span>');
     if (p.duyet?.trangThai === 'cho_duyet' && !huy) nhan.push('<span class="sq-nhan vang">Chờ duyệt</span>');
     if (p.duyet?.trangThai === 'tu_choi') nhan.push('<span class="sq-nhan do">Từ chối</span>');
     return `<div class="sq-dong${huy ? ' huy' : ''}" onclick="sqXem('${p.id}')">
-      <div class="sq-bieu ${thu ? 'thu' : 'chi'}">${thu ? '+' : '−'}</div>
+      <div class="sq-bieu ${noiBo ? 'nb' : thu ? 'thu' : 'chi'}">${noiBo ? '⇄' : thu ? '+' : '−'}</div>
       <div style="flex:1;min-width:0">
         <div class="sq-ten">${escHtml(sqNhan(p))} ${nhan.join(' ')}${(p.anh || []).length ? ' <span title="Có ảnh">📎</span>' : ''}</div>
         <div class="sq-phu">${sqGioChu(p.luc)} · ${escHtml(p.maPhieu || p.id)} · ${escHtml(p.nguoi?.ten || '')}${p.ghiChu ? ' · ' + escHtml(p.ghiChu) : ''}</div>
@@ -7204,8 +7197,8 @@ window.sqHuy = async function(id) {
 };
 window.sqThuHoan = async function(id) {
   const p = sqChoThu.find(x => x.id === id) || sqDs.find(x => x.id === id);
-  if (!await hoiXacNhan(`Đã nhận lại ${fmt(p?.soTien || 0)}đ tiền mặt từ ${p?.doiTac?.ten || 'nhân viên'}?\n\nKhoản này sẽ cộng vào ca đang chạy.`)) return;
-  try { await sqGoi('sq-thu-hoan-ung', { id }); sqDongXem(); showToast('Đã thu — cộng vào ca hiện tại'); if (activeModule === 'ketca') sqTaiCa(); }
+  if (!await hoiXacNhan(`Đã nhận lại ${fmt(p?.soTien || 0)}đ tiền mặt từ ${p?.doiTac?.ten || 'nhân viên'}?\n\nBạn sẽ là người giữ số tiền này.`)) return;
+  try { await sqGoi('sq-thu-hoan-ung', { id }); sqDongXem(); showToast('Đã thu — tiền về quỹ'); if (activeModule === 'ketca') sqTaiKC(); }
   catch(e) { showToast(e.message, true); }
 };
 
@@ -7298,8 +7291,48 @@ window.sqLuu = async function() {
   }
 };
 
-// ----- KẾT CA -----
-let sqKcTab = 'hientai', sqCa = null, sqHuyNgheKC = null, sqDsKC = [], sqXemPhieuCa = false;
+// ----- SỐ DƯ QUỸ (chỉ Admin) -----
+async function sqTaiQuy() {
+  if (currentUserData?.role !== 'admin') return;
+  const o = document.getElementById('sq-quy'); if (!o) return;
+  try { sqQuy = await sqGoi('sq-tong-quan', {}); } catch(e) { o.innerHTML = `<div class="sq-ghi vang">Không tải được số dư quỹ: ${escHtml(e.message)}</div>`; return; }
+  const q = sqQuy;
+  if (!q.khoiTao) {
+    o.innerHTML = `<div class="sq-the"><b>Nhập số dư quỹ ban đầu</b>
+      <p style="font-size:12px;color:var(--text2);margin:4px 0 8px">Chỉ Admin thấy số dư. Từ lúc nhập, mọi phiếu thu/chi tự cộng trừ vào quỹ.</p>
+      <button class="btn-g" onclick="sqMoSoDu()">Nhập số dư</button></div>`;
+    return;
+  }
+  o.innerHTML = `<div class="sq-quy-hai">
+    <div class="sq-the"><span>Quỹ tiền mặt</span><b>${fmt(q.tm)}đ</b>
+      ${q.chuaKetCa ? `<div class="sq-ghi vang" style="margin:4px 0 0">Chưa kết ca: ${fmt(q.chuaKetCa)}đ</div>
+        <div class="sq-ghi" style="margin:0">${q.dsGiu.map(x => `${escHtml(x.ten)} ${fmt(x.tien)}`).join(' · ')}</div>` : '<div class="sq-ghi" style="margin:4px 0 0">Đã kết ca hết</div>'}</div>
+    <div class="sq-the"><span>Quỹ chuyển khoản</span><b>${fmt(q.ck)}đ</b>
+      <button class="btn-xs" style="margin-top:6px" onclick="sqMoSoDu()">Điều chỉnh số dư</button></div></div>`;
+}
+window.sqMoSoDu = function() {
+  const q = sqQuy || {};
+  ddbMoKhung('sq-sodu', q.khoiTao ? 'Điều chỉnh số dư quỹ' : 'Số dư quỹ ban đầu', 'Nhập đúng số tiền thực có lúc này', `
+    <div class="field"><label>Tiền mặt bạn (Admin) đang giữ</label>
+      <input id="sq-sd-tm" type="text" inputmode="numeric" value="${q.khoiTao ? fmt(Math.max(0, (q.tm || 0) - (q.chuaKetCa || 0))) : ''}" oninput="dhDinhDangTien(this)" style="font-size:18px;font-weight:700;text-align:right"></div>
+    <div class="sq-ghi">Không tính tiền nhân viên đang giữ chưa kết ca${q.chuaKetCa ? ` (${fmt(q.chuaKetCa)}đ — app tự cộng)` : ''}.</div>
+    <div class="field"><label>Số dư tài khoản ngân hàng</label>
+      <input id="sq-sd-ck" type="text" inputmode="numeric" value="${q.khoiTao ? fmt(q.ck || 0) : ''}" oninput="dhDinhDangTien(this)" style="font-size:18px;font-weight:700;text-align:right"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('sq-sodu').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0" onclick="sqLuuSoDu()">Lưu</button>`);
+  ddbCanhGiua('sq-sodu');
+};
+window.sqLuuSoDu = async function() {
+  const vTm = document.getElementById('sq-sd-tm')?.value || '', vCk = document.getElementById('sq-sd-ck')?.value || '';
+  if (!vTm.trim() || !vCk.trim()) { showToast('Nhập cả 2 số (0 nếu không có)', true); return; }
+  try { await sqGoi('sq-khoi-tao', { tm: sqTien(vTm), ck: sqTien(vCk) }); document.getElementById('sq-sodu').style.display = 'none'; showToast('Đã lưu số dư quỹ'); sqTaiQuy(); }
+  catch(e) { showToast(e.message, true); }
+};
+
+// ----- KẾT CA THEO TỪNG NHÂN VIÊN -----
+// Mỗi nhân viên tự giữ tiền mặt mình bán. Kết ca = người có quyền nhận đúng số tiền nhân viên đang giữ.
+// Lệch là không kết ca được: thiếu thì nhân viên bù đủ, quên ghi khoản nào thì bổ sung phiếu trước.
+let sqKcTab = 'hientai', sqKC = null, sqHuyNgheKC = null, sqDsKC = [];
 function renderKetCa() {
   const el = document.getElementById('ketca-content');
   if (!el) return;
@@ -7307,156 +7340,138 @@ function renderKetCa() {
     <div class="sq-tab"><button class="${sqKcTab === 'hientai' ? 'on' : ''}" onclick="sqDoiTabKC('hientai')">Kết ca</button>
       <button class="${sqKcTab === 'lichsu' ? 'on' : ''}" onclick="sqDoiTabKC('lichsu')">Lịch sử kết ca</button></div>
     <div id="sq-kc"><div class="loading">Đang tải...</div></div></div>`;
-  if (sqKcTab === 'hientai') sqTaiCa(); else sqNgheLichSu();
+  if (sqKcTab === 'hientai') sqTaiKC(); else sqNgheLichSu();
 }
 window.sqDoiTabKC = (t) => { sqKcTab = t; renderKetCa(); };
-async function sqTaiCa() {
+async function sqTaiKC() {
   const o = document.getElementById('sq-kc'); if (!o) return;
-  o.innerHTML = '<div class="loading">Đang tính tiền trong ca (đối soát đơn bán)...</div>';
-  try { sqCa = await sqGoi('sq-ca-hien-tai', {}); sqVeCa(); }
-  catch(e) { o.innerHTML = `<p class="info-note">Không tải được: ${escHtml(e.message)}</p><button class="btn-outline" onclick="sqTaiCa()">Thử lại</button>`; }
+  o.innerHTML = '<div class="loading">Đang tính tiền từng nhân viên...</div>';
+  try { sqKC = await sqGoi('sq-ds-giu', {}); sqVeKC(); }
+  catch(e) { o.innerHTML = `<p class="info-note">Không tải được: ${escHtml(e.message)}</p><button class="btn-outline" onclick="sqTaiKC()">Thử lại</button>`; }
 }
-window.sqTaiCa = sqTaiCa;
-function sqVeCa() {
-  const o = document.getElementById('sq-kc'); if (!o || !sqCa) return;
-  const ca = sqCa;
-  if (ca.chuaKhoiTao) {
-    o.innerHTML = `<div class="sq-the">
-      <b>Bắt đầu dùng Sổ quỹ</b>
-      <p style="font-size:13px;color:var(--text2);margin:6px 0 10px">Đếm tiền mặt đang có trong két và nhập vào đây. Từ lúc này mọi khoản thu/chi được tính vào ca, tới lần kết ca đầu tiên.</p>
-      <div class="field"><label>Tiền mặt đang có trong két</label>
-        <input id="sq-dau-ca" type="text" inputmode="numeric" oninput="dhDinhDangTien(this)" style="font-size:20px;font-weight:700;text-align:right"></div>
-      <button class="btn-g" onclick="sqKhoiTao()">Bắt đầu</button></div>`;
-    return;
-  }
-  const kcDuoc = coQuyen('sq_ketca');
-  const hmTM = (loai) => (ca.theoHangMuc || []).filter(x => x.loai === loai && x.cach === 'tienmat');
-  const dongHM = (x, dau) => `<div class="sq-ct nho"><span>${dau} ${escHtml(SQ_HM[x.hangMuc] || x.hangMuc || '')} (${x.so})</span><span>${fmt(x.soTien)}</span></div>`;
+window.sqTaiKC = sqTaiKC;
+function sqVeKC() {
+  const o = document.getElementById('sq-kc'); if (!o || !sqKC) return;
+  const k = sqKC;
   o.innerHTML = `
-    <div class="sq-the">
-      <div style="font-size:12px;color:var(--text2)">Ca từ <b>${sqGioChu(ca.batDau, true)}</b>${ca.cfg?.caTruoc?.nguoi ? ` · lần trước: ${escHtml(ca.cfg.caTruoc.nguoi)}` : ''} · ${ca.soPhieu} phiếu</div>
-      <div class="sq-ct"><span>Tiền đầu ca</span><b>${fmt(ca.dauCa)}</b></div>
-      <div class="sq-ct"><span>+ Thu tiền mặt</span><b class="xanh">${fmt(ca.thuTM)}</b></div>
-      ${hmTM('thu').map(x => dongHM(x, '·')).join('')}
-      <div class="sq-ct"><span>− Chi tiền mặt</span><b class="do">${fmt(ca.chiTM)}</b></div>
-      ${hmTM('chi').map(x => dongHM(x, '·')).join('')}
-      <div class="sq-ct lon"><span>Tiền mặt phải có trong két</span><b>${fmt(ca.phaiCo)}đ</b></div>
-      <div class="sq-ct nho" style="margin-top:6px"><span>Chuyển khoản (chỉ đối chiếu): thu ${fmt(ca.thuCK)} · chi ${fmt(ca.chiCK)}</span></div>
-      ${ca.choDuyet ? `<div class="sq-ghi vang">${ca.choDuyet} phiếu chi chưa duyệt — vẫn tính vào ca (tiền đã ra khỏi két).</div>` : ''}
-      ${ca.doiSoat?.them ? `<div class="sq-ghi">Đã ghi bù ${ca.doiSoat.them} phiếu thu bán hàng bị sót.</div>` : ''}
-      ${ca.doiSoat?.conThieu ? `<div class="sq-ghi vang">Còn ${ca.doiSoat.conThieu} đơn chưa ghi phiếu thu — bấm Tải lại.</div>` : ''}
-      <button class="btn-xs" style="margin-top:8px" onclick="sqBatPhieuCa()">${sqXemPhieuCa ? 'Ẩn' : 'Xem'} phiếu trong ca</button>
-      <button class="btn-xs" style="margin-top:8px" onclick="sqTaiCa()">Tải lại</button>
-      <div id="sq-phieu-ca">${sqXemPhieuCa ? sqVePhieuCa() : ''}</div>
-    </div>
-    ${(ca.choThu || []).length ? `<div class="sq-canh"><b>Khoản nhân viên phải hoàn (chưa tính vào ca)</b>
-      ${ca.choThu.map(p => `<div class="sq-canh-dong"><span style="flex:1">${escHtml(p.doiTac)} · <b>${fmt(p.soTien || 0)}đ</b></span><button class="btn-xs" onclick="sqThuHoanCa('${p.id}',${Number(p.soTien) || 0},'${escHtml(p.doiTac).replace(/'/g, '')}')">Đã thu</button></div>`).join('')}</div>` : ''}
-    ${kcDuoc ? `<div class="sq-the">
-      <b>Kết ca</b>
-      <div class="field" style="margin-top:8px"><label>Tiền mặt đếm được trong két</label>
-        <input id="sq-dem" type="text" inputmode="numeric" oninput="dhDinhDangTien(this);sqTinhKC()" style="font-size:20px;font-weight:700;text-align:right"></div>
-      <div id="sq-lech" class="sq-lech"></div>
-      <div class="field"><label>Để lại két cho ca sau</label>
-        <input id="sq-de-lai" type="text" inputmode="numeric" value="${fmt(ca.dauCa)}" oninput="dhDinhDangTien(this);sqTinhKC()" style="font-size:16px;font-weight:600;text-align:right"></div>
-      <div class="sq-ct"><span>Nộp lại quản lý / chủ</span><b id="sq-nop">0</b></div>
-      <div class="field"><label>Ghi chú <span id="sq-gc-bb" style="color:#DC2626;display:none">(bắt buộc khi lệch)</span></label><input id="sq-gc-kc" maxlength="300"></div>
-      <button class="btn-g" id="sq-nut-kc" onclick="sqKetCa()">Kết ca</button>
-    </div>` : '<p class="info-note">Bạn xem được số liệu ca, chỉ người có quyền Kết ca mới kết ca.</p>'}`;
-  sqTinhKC();
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <button class="btn-outline" style="flex:1" onclick="sqMoGiaoTien()">Giao tiền lẻ cho nhân viên</button>
+      <button class="btn-outline" style="flex:0 0 auto" onclick="sqTaiKC()">Tải lại</button></div>
+    ${k.doiSoat?.them ? `<div class="sq-ghi">Đã ghi bù ${k.doiSoat.them} phiếu thu bán hàng bị sót.</div>` : ''}
+    ${k.doiSoat?.conThieu ? `<div class="sq-ghi vang">Còn ${k.doiSoat.conThieu} đơn chưa ghi phiếu thu — bấm Tải lại.</div>` : ''}
+    ${(k.choThu || []).length ? `<div class="sq-canh"><b>Khoản nhân viên phải hoàn lại (phiếu chi bị từ chối)</b>
+      ${k.choThu.map(p => `<div class="sq-canh-dong"><span style="flex:1">${escHtml(p.doiTac)} · <b>${fmt(p.soTien || 0)}đ</b><div style="font-size:11px;color:var(--text2)">${escHtml(p.ghiChu)}</div></span>
+        ${p.uid !== k.toi ? `<button class="btn-xs" onclick="sqThuHoanKC('${p.id}')">Đã thu</button>` : ''}</div>`).join('')}</div>` : ''}
+    ${k.nguoi.length ? k.nguoi.map(n => `
+      <div class="sq-the sq-nv">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="flex:1;min-width:0"><b style="font-size:15px">${escHtml(n.ten || '?')}</b>
+            <div class="sq-ghi" style="margin:2px 0 0">${n.soPhieu} phiếu tiền mặt${n.choDuyet ? ` · <span style="color:#B45309">${n.choDuyet} phiếu chi chờ duyệt</span>` : ''}</div></div>
+          <div style="text-align:right"><div class="sq-ghi" style="margin:0">${n.phaiNop >= 0 ? 'Phải nộp' : 'Cửa hàng trả lại'}</div>
+            <b style="font-size:18px" class="${n.phaiNop < 0 ? 'do' : ''}">${fmt(Math.abs(n.phaiNop))}đ</b></div>
+        </div>
+        ${n.uid !== k.toi ? `<button class="btn-g" style="margin-top:8px" onclick="sqMoKetCa('${n.uid}')">Kết ca ${escHtml(n.ten || '')}</button>`
+          : '<div class="sq-ghi">Tiền bạn đang giữ — nhờ Admin hoặc quản lý khác kết ca cho bạn.</div>'}
+      </div>`).join('') : '<p class="info-note">Không nhân viên nào đang giữ tiền chưa kết ca.</p>'}`;
 }
-function sqVePhieuCa() {
-  const ds = (sqCa?.phieu || []).slice().reverse();
-  return ds.length ? ds.map(p => `<div class="sq-ct nho${p.trangThai !== 'hieu_luc' ? ' gach' : ''}"><span>${sqGioChu(p.luc)} · ${escHtml(p.danhMuc || SQ_HM[p.hangMuc] || '')} · ${escHtml(p.nguoi)}${p.cach === 'tienmat' ? '' : ' · CK'}${p.duyet === 'cho_duyet' ? ' · chờ duyệt' : ''}</span>
-    <span class="${p.loai === 'thu' ? 'xanh' : 'do'}">${p.loai === 'thu' ? '+' : '−'}${fmt(p.soTien)}</span></div>`).join('') : '<div class="sq-ghi">Chưa có phiếu.</div>';
-}
-window.sqBatPhieuCa = () => { sqXemPhieuCa = !sqXemPhieuCa; sqVeCa(); };
-window.sqThuHoanCa = async (id, soTien, ten) => {
-  if (!await hoiXacNhan(`Đã nhận lại ${fmt(soTien)}đ tiền mặt từ ${ten || 'nhân viên'}?`)) return;
-  try { await sqGoi('sq-thu-hoan-ung', { id }); showToast('Đã thu — cộng vào ca'); sqTaiCa(); } catch(e) { showToast(e.message, true); }
+window.sqThuHoanKC = async (id) => {
+  const p = (sqKC?.choThu || []).find(x => x.id === id);
+  if (!await hoiXacNhan(`Đã nhận lại ${fmt(p?.soTien || 0)}đ tiền mặt từ ${p?.doiTac || 'nhân viên'}?`)) return;
+  try { await sqGoi('sq-thu-hoan-ung', { id }); showToast('Đã thu'); sqTaiKC(); } catch(e) { showToast(e.message, true); }
 };
-window.sqTinhKC = function() {
-  if (!sqCa || sqCa.chuaKhoiTao) return;
-  const oDem = document.getElementById('sq-dem'); if (!oDem) return;
-  const coSo = oDem.value.trim() !== '';
-  const dem = sqTien(oDem.value), deLai = sqTien(document.getElementById('sq-de-lai')?.value);
-  const lech = dem - sqCa.phaiCo;
-  const oL = document.getElementById('sq-lech');
-  if (oL) oL.innerHTML = !coSo ? '' : lech === 0 ? '<span class="xanh">✓ Khớp sổ</span>'
-    : `<span class="do">${lech > 0 ? 'Thừa' : 'Thiếu'} ${fmt(Math.abs(lech))}đ so với sổ</span>`;
-  const oN = document.getElementById('sq-nop'); if (oN) oN.textContent = fmt(Math.max(0, dem - deLai));
-  const bb = document.getElementById('sq-gc-bb'); if (bb) bb.style.display = coSo && lech !== 0 ? '' : 'none';
+window.sqMoKetCa = function(uid) {
+  const n = (sqKC?.nguoi || []).find(x => x.uid === uid); if (!n) return;
+  const tra = n.phaiNop < 0;
+  const ds = n.phieu.map(p => `<div class="sq-ct nho${p.trangThai !== 'hieu_luc' ? ' gach' : ''}"><span>${sqGioChu(p.luc, true)} · ${escHtml(p.danhMuc || SQ_HM[p.hangMuc] || '')}${p.cach === 'tienmat' ? '' : ' · CK (không tính)'}${p.duyet === 'cho_duyet' ? ' · chờ duyệt' : ''}${p.ghiChu ? ' · ' + escHtml(p.ghiChu) : ''}</span>
+    <span class="${p.loai === 'thu' ? 'xanh' : 'do'}">${p.loai === 'thu' ? '+' : '−'}${fmt(p.soTien)}</span></div>`).join('');
+  ddbMoKhung('sq-kc-nv', `Kết ca · ${escHtml(n.ten)}`, `${n.soPhieu} phiếu tiền mặt chưa kết ca`, `
+    <div class="sq-so">${tra ? 'Trả lại nhân viên ' : ''}${fmt(Math.abs(n.phaiNop))}đ</div>
+    <div class="field"><label>${tra ? 'Số tiền bạn trả lại nhân viên' : 'Số tiền bạn nhận được (đếm thực tế)'}</label>
+      <input id="sq-kc-nhan" type="text" inputmode="numeric" oninput="dhDinhDangTien(this);sqKiemKC('${uid}')" style="font-size:20px;font-weight:700;text-align:right"></div>
+    <div id="sq-kc-lech" class="sq-lech"></div>
+    <div class="field"><label>Ghi chú (không bắt buộc)</label><input id="sq-kc-gc" maxlength="300"></div>
+    <details style="margin-top:6px"><summary style="font-size:13px;cursor:pointer">Xem ${n.phieu.length} phiếu</summary>${ds}</details>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('sq-kc-nv').style.display='none'">Đóng</button>
+     <button class="btn-g" id="sq-kc-nut" style="flex:1;margin:0" disabled onclick="sqKetCa('${uid}')">Kết ca</button>`);
+  ddbCanhGiua('sq-kc-nv');
+  setTimeout(() => document.getElementById('sq-kc-nhan')?.focus(), 60);
 };
-window.sqKhoiTao = async function() {
-  const v = document.getElementById('sq-dau-ca')?.value || '';
-  if (!v.trim()) { showToast('Nhập số tiền đang có (0 nếu két trống)', true); return; }
-  const dauCa = sqTien(v);
-  if (!await hoiXacNhan(`Bắt đầu Sổ quỹ với ${fmt(dauCa)}đ tiền mặt trong két?`)) return;
-  try { await sqGoi('sq-khoi-tao', { dauCa }); showToast('Đã bắt đầu Sổ quỹ'); sqTaiCa(); } catch(e) { showToast(e.message, true); }
+window.sqKiemKC = function(uid) {
+  const n = (sqKC?.nguoi || []).find(x => x.uid === uid); if (!n) return;
+  const o = document.getElementById('sq-kc-nhan'), coSo = (o?.value || '').trim() !== '';
+  const lech = sqTien(o?.value) - Math.abs(n.phaiNop);
+  const oL = document.getElementById('sq-kc-lech'), nut = document.getElementById('sq-kc-nut');
+  if (oL) oL.innerHTML = !coSo ? '' : lech === 0 ? '<span class="xanh">✓ Đủ tiền</span>'
+    : `<span class="do">${lech < 0 ? 'Thiếu' : 'Thừa'} ${fmt(Math.abs(lech))}đ — chưa kết ca được.</span>
+       <div class="sq-ghi">${lech < 0 ? 'Nhân viên bù đủ tiền, hoặc tạo phiếu chi còn thiếu (VD: tiền ship đã trả).' : 'Đếm lại, hoặc tạo phiếu thu cho khoản chưa ghi.'}</div>`;
+  if (nut) nut.disabled = !coSo || lech !== 0;
 };
-window.sqKetCa = async function() {
-  const ca = sqCa; if (!ca) return;
-  const oDem = document.getElementById('sq-dem');
-  if (!oDem?.value.trim()) { showToast('Nhập số tiền mặt đếm được', true); oDem?.focus(); return; }
-  const thucDem = sqTien(oDem.value), deLai = sqTien(document.getElementById('sq-de-lai')?.value);
-  const ghiChu = String(document.getElementById('sq-gc-kc')?.value || '').trim();
-  const lech = thucDem - ca.phaiCo;
-  if (deLai > thucDem) { showToast('Tiền để lại két lớn hơn số đếm được', true); return; }
-  if (lech !== 0 && !ghiChu) { showToast('Tiền lệch sổ — nhập ghi chú lý do', true); document.getElementById('sq-gc-kc')?.focus(); return; }
-  if (!await hoiXacNhan(`Kết ca?\n\nPhải có: ${fmt(ca.phaiCo)}đ\nĐếm được: ${fmt(thucDem)}đ${lech ? `\n${lech > 0 ? 'Thừa' : 'Thiếu'}: ${fmt(Math.abs(lech))}đ` : '\nKhớp sổ'}\nĐể lại két: ${fmt(deLai)}đ\nNộp lại: ${fmt(thucDem - deLai)}đ`, { nutDongY: 'Kết ca' })) return;
-  const nut = document.getElementById('sq-nut-kc'); if (nut) { nut.disabled = true; nut.textContent = 'Đang kết ca...'; }
+window.sqKetCa = async function(uid) {
+  const n = (sqKC?.nguoi || []).find(x => x.uid === uid); if (!n) return;
+  const nhan = sqTien(document.getElementById('sq-kc-nhan')?.value);
+  if (nhan !== Math.abs(n.phaiNop)) return;
+  if (!await hoiXacNhan(n.phaiNop >= 0 ? `Xác nhận đã nhận ${fmt(nhan)}đ từ ${n.ten}?` : `Xác nhận đã trả ${fmt(nhan)}đ cho ${n.ten}?`, { nutDongY: 'Kết ca' })) return;
+  const nut = document.getElementById('sq-kc-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang kết ca...'; }
   try {
-    const kq = await sqGoi('sq-ket-ca', { thucDem, deLai, ghiChu, phaiCoDaXem: ca.phaiCo });
-    showToast(`Đã kết ca ${kq.ketCa.ma}`);
-    sqKcTab = 'lichsu'; renderKetCa();
+    const kq = await sqGoi('sq-ket-ca', { uid, nhan, phaiNopDaXem: n.phaiNop, ghiChu: document.getElementById('sq-kc-gc')?.value || '' });
+    document.getElementById('sq-kc-nv').style.display = 'none';
+    showToast(`Đã kết ca ${n.ten} · ${kq.ketCa.ma}`);
+    sqTaiKC();
   } catch(e) {
-    if (e.duLieu?.ca) { sqCa = e.duLieu.ca; sqVeCa(); const o = document.getElementById('sq-dem'); if (o) { o.value = fmt(thucDem); sqTinhKC(); } }
-    else if (nut) { nut.disabled = false; nut.textContent = 'Kết ca'; }
     alert(e.message);
+    if (e.duLieu?.phaiNop !== undefined) { document.getElementById('sq-kc-nv').style.display = 'none'; sqTaiKC(); }
+    else if (nut) { nut.disabled = false; nut.textContent = 'Kết ca'; }
   }
+};
+window.sqMoGiaoTien = function() {
+  const ds = sqKC?.nhanVien || [];
+  if (!ds.length) { showToast('Không có nhân viên nào', true); return; }
+  ddbMoKhung('sq-giao', 'Giao tiền lẻ cho nhân viên', 'Nhân viên giữ số tiền này và nộp lại khi kết ca', `
+    <div class="field"><label>Nhân viên</label><select id="sq-gt-nv" style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-size:15px">
+      ${ds.map(x => `<option value="${x.uid}">${escHtml(x.ten)}</option>`).join('')}</select></div>
+    <div class="field"><label>Số tiền</label><input id="sq-gt-tien" type="text" inputmode="numeric" oninput="dhDinhDangTien(this)" style="font-size:20px;font-weight:700;text-align:right"></div>
+    <div class="field"><label>Ghi chú</label><input id="sq-gt-gc" maxlength="200" value="Tiền lẻ đầu ca"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('sq-giao').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0" onclick="sqGiaoTien()">Giao tiền</button>`);
+  ddbCanhGiua('sq-giao');
+};
+window.sqGiaoTien = async function() {
+  const uid = document.getElementById('sq-gt-nv')?.value, soTien = sqTien(document.getElementById('sq-gt-tien')?.value);
+  if (soTien < 1000) { showToast('Nhập số tiền', true); return; }
+  const ten = (sqKC?.nhanVien || []).find(x => x.uid === uid)?.ten || '';
+  if (!await hoiXacNhan(`Giao ${fmt(soTien)}đ tiền mặt cho ${ten}?`)) return;
+  try { await sqGoi('sq-giao-tien', { uid, soTien, ghiChu: document.getElementById('sq-gt-gc')?.value || '' }); document.getElementById('sq-giao').style.display = 'none'; showToast('Đã giao tiền'); sqTaiKC(); }
+  catch(e) { showToast(e.message, true); }
 };
 function sqNgheLichSu() {
   if (sqHuyNgheKC) { sqHuyNgheKC(); sqHuyNgheKC = null; }
-  sqHuyNgheKC = onSnapshot(query(collection(db, 'ket_ca'), orderBy('taoLuc', 'desc'), limit(60)), (s) => {
-    sqDsKC = s.docs.map(d => ({ id: d.id, ...d.data() }));
+  sqHuyNgheKC = onSnapshot(query(collection(db, 'ket_ca'), orderBy('taoLuc', 'desc'), limit(100)), (s) => {
+    sqDsKC = s.docs.map(d => ({ id: d.id, ...d.data() })).filter(k => k.nhanVien);
     const o = document.getElementById('sq-kc'); if (!o || sqKcTab !== 'lichsu') return;
-    const TT = { cho_nhan: ['Chờ Admin nhận tiền', '#D97706'], da_nhan: ['Đã nhận tiền', '#16A34A'], khong_nop: ['Không nộp', '#6B7280'] };
-    o.innerHTML = sqDsKC.length ? sqDsKC.map(k => {
-      const [tt, mau] = TT[k.trangThai] || ['', '#999'];
-      return `<div class="sq-dong" onclick="sqXemKC('${k.id}')">
+    o.innerHTML = sqDsKC.length ? sqDsKC.map(k => `<div class="sq-dong" onclick="sqXemKC('${k.id}')">
         <div style="flex:1;min-width:0">
-          <div class="sq-ten">${sqGioChu(k.ketThuc, true)} · ${escHtml(k.nguoi?.ten || '')}</div>
-          <div class="sq-phu">${escHtml(k.ma || k.id)} · phải có ${fmt(k.phaiCo || 0)} · đếm ${fmt(k.thucDem || 0)}${k.chenhLech ? ` · <b class="${k.chenhLech > 0 ? 'xanh' : 'do'}">${k.chenhLech > 0 ? 'thừa' : 'thiếu'} ${fmt(Math.abs(k.chenhLech))}</b>` : ' · khớp'}</div>
+          <div class="sq-ten">${escHtml(k.nhanVien?.ten || '')}</div>
+          <div class="sq-phu">${sqGioChu(k.taoLuc, true)} · ${escHtml(k.ma || k.id)} · ${k.soPhieu || 0} phiếu · nhận bởi ${escHtml(k.nguoiKet?.ten || '')}</div>
         </div>
-        <div style="text-align:right;flex-shrink:0"><div class="sq-tien">${fmt(k.nop || 0)}</div><div class="sq-cach" style="color:${mau}">${tt}</div></div></div>`;
-    }).join('') : '<p class="info-note">Chưa có lần kết ca nào.</p>';
+        <div style="text-align:right;flex-shrink:0"><div class="sq-tien ${k.phaiNop < 0 ? 'do' : ''}">${fmt(Math.abs(k.phaiNop || 0))}</div>
+          <div class="sq-cach">${(k.phaiNop || 0) < 0 ? 'trả lại NV' : 'đã nộp'}</div></div></div>`).join('')
+      : '<p class="info-note">Chưa có lần kết ca nào.</p>';
   }, (e) => { const o = document.getElementById('sq-kc'); if (o) o.innerHTML = `<p class="info-note">Không tải được: ${escHtml(e.message)}</p>`; });
 }
 window.sqXemKC = function(id) {
   const k = sqDsKC.find(x => x.id === id); if (!k) return;
   const dong = (a, b, cls = '') => `<div class="sq-ct ${cls}"><span>${a}</span><b>${b}</b></div>`;
-  const hm = (k.theoHangMuc || []).map(x => `<div class="sq-ct nho"><span>${x.loai === 'thu' ? '+' : '−'} ${escHtml(SQ_HM[x.hangMuc] || x.hangMuc)} · ${x.cach === 'tienmat' ? 'TM' : 'CK'} (${x.so})</span><span>${fmt(x.soTien)}</span></div>`).join('');
-  const nut = k.trangThai === 'cho_nhan' && currentUserData?.role === 'admin'
-    ? `<button class="btn-g" style="flex:1;margin:0" onclick="sqNhanTien('${k.id}',${Number(k.nop) || 0})">Xác nhận đã nhận ${fmt(k.nop || 0)}đ</button>` : '';
-  ddbMoKhung('sq-kc-xem', `Kết ca ${escHtml(k.ma || k.id)}`, `${sqGioChu(k.batDau, true)} → ${sqGioChu(k.ketThuc, true)} · ${escHtml(k.nguoi?.ten || '')}`, `
-    ${dong('Tiền đầu ca', fmt(k.dauCa || 0))}
+  const hm = (k.theoHangMuc || []).map(x => `<div class="sq-ct nho"><span>${x.loai === 'thu' ? '+' : '−'} ${escHtml(SQ_HM[x.hangMuc] || x.hangMuc)} (${x.so})</span><span>${fmt(x.soTien)}</span></div>`).join('');
+  ddbMoKhung('sq-kc-xem', `Kết ca ${escHtml(k.ma || k.id)}`, `${escHtml(k.nhanVien?.ten || '')} · ${sqGioChu(k.taoLuc, true)}`, `
     ${dong('+ Thu tiền mặt', fmt(k.thuTM || 0), 'xanh')}
     ${dong('− Chi tiền mặt', fmt(k.chiTM || 0), 'do')}
-    ${dong('Phải có', fmt(k.phaiCo || 0) + 'đ', 'lon')}
-    ${dong('Đếm được', fmt(k.thucDem || 0) + 'đ')}
-    ${dong('Chênh lệch', (k.chenhLech > 0 ? '+' : '') + fmt(k.chenhLech || 0), k.chenhLech ? (k.chenhLech > 0 ? 'xanh' : 'do') : '')}
-    ${dong('Để lại két', fmt(k.deLai || 0))}
-    ${dong('Nộp lại', fmt(k.nop || 0) + 'đ')}
+    ${dong((k.phaiNop || 0) >= 0 ? 'Đã nộp' : 'Cửa hàng trả lại', fmt(Math.abs(k.phaiNop || 0)) + 'đ', 'lon')}
+    ${dong('Người nhận tiền', escHtml(k.nguoiKet?.ten || '') + (k.nguoiKetLaChu ? ' (Admin)' : ''))}
+    ${dong('Chuyển khoản (không tính)', `thu ${fmt(k.thuCK || 0)} · chi ${fmt(k.chiCK || 0)}`)}
     ${k.ghiChu ? dong('Ghi chú', escHtml(k.ghiChu)) : ''}
-    ${k.nhan ? dong('Admin nhận', `${escHtml(k.nhan.nguoi?.ten || '')} · ${sqGioChu(k.nhan.luc, true)}`) : ''}
-    ${dong('Chuyển khoản', `thu ${fmt(k.thuCK || 0)} · chi ${fmt(k.chiCK || 0)}`)}
     ${k.choDuyet ? `<div class="sq-ghi vang">Lúc kết ca còn ${k.choDuyet} phiếu chi chờ duyệt.</div>` : ''}
-    <div style="margin-top:10px;font-size:12px;font-weight:700">Theo hạng mục (${k.soPhieu || 0} phiếu)</div>${hm}`, nut);
+    <div style="margin-top:10px;font-size:12px;font-weight:700">Theo hạng mục (${k.soPhieu || 0} phiếu)</div>${hm}`, '');
   ddbCanhGiua('sq-kc-xem');
-};
-window.sqNhanTien = async function(id, nop) {
-  if (!await hoiXacNhan(`Xác nhận đã nhận ${fmt(nop)}đ tiền nộp?`)) return;
-  try { await sqGoi('sq-nhan-tien', { id }); document.getElementById('sq-kc-xem').style.display = 'none'; showToast('Đã xác nhận nhận tiền'); }
-  catch(e) { showToast(e.message, true); }
 };
 
 // ===== GẮN PHIẾU NHẬP KHO TẠM VÀO ĐƠN =====
@@ -14022,9 +14037,9 @@ const DANH_SACH_MODULE = [
   { key: 'khachhang', ten: 'Khách hàng', con: [
     { key: 'kh_sua', ten: 'Thêm / sửa khách hàng' }
   ]},
-  { key: 'soquy', ten: 'Sổ quỹ (tạo phiếu thu/chi, xem phiếu của mình)', con: [
+  { key: 'soquy', ten: 'Sổ quỹ (tạo phiếu thu/chi, xem phiếu của mình và tiền mình đang giữ)', con: [
     { key: 'sq_xemtatca', ten: 'Xem phiếu thu-chi của mọi người' },
-    { key: 'sq_ketca', ten: 'Kết ca: đếm tiền két, nộp tiền, xem lịch sử kết ca, thu tiền nhân viên hoàn' },
+    { key: 'sq_ketca', ten: 'Kết ca nhân viên (nhận tiền), giao tiền lẻ, lịch sử kết ca, thu tiền nhân viên hoàn' },
     { key: 'sq_duyet', ten: 'Duyệt / từ chối / sửa / hủy phiếu thu-chi' }
   ]},
   { key: 'checklist', ten: 'Checklist', con: [] },
@@ -21501,6 +21516,10 @@ a.muc-btn{display:inline-flex;align-items:center}
 .sq-tab button.on{border-bottom-color:#0F766E;color:#0F766E;font-weight:700;background:#F0FDFA}
 .sq-the{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px}
 .sq-lech{font-size:14px;font-weight:700;margin:-4px 0 8px;min-height:4px}
+.sq-bieu.nb{background:#E0E7FF;color:#4338CA;font-size:15px}
+.sq-quy-hai{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sq-quy-hai .sq-the{margin-bottom:10px}
+.sq-quy-hai span,.sq-giu span{font-size:12px;color:var(--text2);display:block}.sq-quy-hai b,.sq-giu b{font-size:20px}
+@media(max-width:480px){.sq-quy-hai{grid-template-columns:1fr}}
 .sub-tab-bar[data-mod="datcoc"] .stab.active{color:#0E7490;border-bottom-color:#0E7490;background:#ECFEFF;font-weight:700}
 .sub-tab-bar[data-mod="dungnb"] .stab.active{color:#B45309;border-bottom-color:#D97706;background:#FFFBEB;font-weight:700}
 
@@ -21810,7 +21829,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v536</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v537</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -21864,7 +21883,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v536</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v537</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -21910,7 +21929,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v536</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v537</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
