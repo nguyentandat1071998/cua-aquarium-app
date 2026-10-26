@@ -12088,6 +12088,18 @@ window.dcGui = async function() {
   const tienMat = p.cachTra === 'tienmat' ? coc : p.cachTra === 'ketHop' ? Math.min(coc, Math.round(p.tienMat || 0)) : 0;
   const canCK = coc - tienMat;
   if (p.cachTra === 'tienmat' && p.khachDua != null && p.khachDua < tienMat) { showToast('Khách đưa chưa đủ tiền cọc', true); return; }
+  // Có chuyển khoản: giống Bán hàng — hiện mã QR, khách chuyển xong mới tạo phiếu. Khách đổi ý thì đóng mã, đổi sang tiền mặt.
+  if (canCK > 0) {
+    khoa(true);
+    dcVeKhungQR({ dangTao: true });
+    try {
+      const kq = await dcGoi('dc-luu', { items, khach: p.khach, ghiChu: p.ghiChu, tienMat, canCK, khachDua: 0 });
+      if (!kq.nhap || !kq.qr?.anhQR) throw new Error('Không tạo được mã QR');
+      dcMoQRNhap(kq.nhap, kq.qr.anhQR, canCK);
+    } catch(e) { dcVeKhungQR({ loi: e.message || 'Không tạo được mã QR' }); }
+    khoa(false);
+    return;
+  }
   if (!await hoiXacNhan(`Tạo phiếu đặt cọc cho ${ten}?\n\nTổng ${fmt(tong)}đ · cọc ${fmt(coc)}đ${tienMat ? `\nTiền mặt: ${fmt(tienMat)}đ` : ''}${canCK ? `\nChuyển khoản: ${fmt(canCK)}đ (hiện mã QR)` : ''}\nCòn thanh toán khi lấy: ${fmt(tong - coc)}đ`, { nutDongY: 'Tạo phiếu' })) return;
   khoa(true);
   try {
@@ -12149,7 +12161,41 @@ function dcMoQR(ma, qr, soTien, muc, phieu) {
   dcSoLanHoi = 0;
   dcHenDau = setTimeout(() => { dcKiemTien(ma, muc, false); dcHuyNghe = setInterval(() => dcKiemTien(ma, muc, false), 8000); }, 8000);
 }
-window.dcDongQR = function() { dcThoiNgheQR(); dcQRDangMo = null; const m = document.getElementById('dc-khung-qr'); if (m) m.style.display = 'none'; };
+// Mã QR tiền cọc của phiếu CHƯA tạo: hỏi máy chủ mỗi 8 giây; tiền về thì máy chủ tạo phiếu, app báo + in
+let dcNhapDangMo = null;
+function dcMoQRNhap(nhap, anhQR, soTien) {
+  dcThoiNgheQR();
+  dcNhapDangMo = { nhap, soTien };
+  dcQRDangMo = null;
+  dcVeKhungQR({ anhQR, soTien, ma: '', muc: 'coc' });
+  dcSoLanHoi = 0;
+  dcHenDau = setTimeout(() => { dcKiemNhap(nhap, false); dcHuyNghe = setInterval(() => dcKiemNhap(nhap, false), 8000); }, 8000);
+}
+window.dcKiemNhap = async function(nhap, bamTay) {
+  const tt = document.getElementById('dc-qr-tt');
+  if (!bamTay && ++dcSoLanHoi > 45) {
+    dcThoiNgheQR();
+    if (tt) { tt.innerHTML = '⏱ Đã chờ 6 phút — chạm để kiểm tra lại'; tt.style.cursor = 'pointer'; tt.onclick = () => { dcSoLanHoi = 0; dcKiemNhap(nhap, true); dcHuyNghe = setInterval(() => dcKiemNhap(nhap, false), 8000); }; }
+    return;
+  }
+  try {
+    const kq = await dcGoi('dc-kiem-qr-moi', { nhap });
+    if (!kq.xong) { if (tt) tt.innerHTML = '<span class="bh-cham-nhap-nhay"></span> Chờ thanh toán...'; return; }
+    if (dcNhapDangMo?.nhap !== nhap) return;
+    dcThoiNgheQR();
+    bip(1800, 160);
+    if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+    dcVeKhungQR({ daTra: true, soTien: dcNhapDangMo?.soTien || 0, ma: kq.ma });
+    dcNhapDangMo = null;
+    try { localStorage.removeItem(dcKhoaNhap()); } catch(e) {}
+    dcPhieu = dcMoi(); dcVe();
+    loadSKUs();
+    showToast(`Đã tạo phiếu ${kq.ma}`);
+    setTimeout(() => { dcDongQR(); if (kq.phieu) dcInHoacXem(billTuPhieuCoc({ ...kq.phieu, maPhieu: kq.ma })); }, 1300);
+  } catch(e) { console.warn('[kiểm tra tiền cọc]', e.message); }
+};
+window.dcDongQR = function() {
+  dcNhapDangMo = null; dcThoiNgheQR(); dcQRDangMo = null; const m = document.getElementById('dc-khung-qr'); if (m) m.style.display = 'none'; };
 window.dcTaoLaiQR = async function(ma, soTien, muc) {
   dcThoiNgheQR();
   dcVeKhungQR({ dangTao: true });
@@ -21931,7 +21977,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v545</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v546</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -21985,7 +22031,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v545</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v546</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22031,7 +22077,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v545</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v546</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
