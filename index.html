@@ -2326,7 +2326,7 @@ window.switchSub = function(sub) {
   }
   activeSubTab = sub;
   // Tạo phiếu chuyển kho: khung vừa màn hình như Bán hàng, chỉ danh sách hàng cuộn
-  const khungVua = ['nhap', 'xuat', 'nhaphang', 'dathang'].includes(activeModule) && sub === 'tao';
+  const khungVua = ['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc'].includes(activeModule) && sub === 'tao';
   document.documentElement.classList.toggle('khoa-cuon', khungVua);
   if (khungVua) requestAnimationFrame(bhVuaManHinh);
   document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
@@ -7543,7 +7543,7 @@ function ddbTheDon(d) {
             ${d.daHuy ? '<span style="font-size:11px;color:#DC2626;font-weight:600">Đã trả hết</span>'
               : d.lanTra?.length ? `<span style="font-size:11px;color:#D97706;font-weight:600">Đã trả ${d.lanTra.length} lần</span>` : ''}
           </div>
-          <div style="font-size:12px;color:var(--text2);margin-top:3px">Nhân viên: ${escHtml(d.nguoiBan?.ten || '')}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px">Người tạo: ${escHtml(d.nguoiBan?.ten || '')}</div>
           ${kh ? `<div style="font-size:12px;margin-top:2px">Khách: ${escHtml(kh.ten || 'Khách lẻ')}${kh.sdt ? ` · ${escHtml(coQuyen('khachhang') ? kh.sdt : cheSdt(kh.sdt))}` : ''}</div>` : ''}
           <div style="font-size:13px;margin-top:3px">${ddbDongThanhToan(d)}</div>
         </div>
@@ -7704,7 +7704,7 @@ window.ddbXemChiTiet = function(id) {
   const noiDung = `
     <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px">
       <div>Thời gian: <b>${ddbThoiGian(t) || '—'}</b></div>
-      <div>Nhân viên: <b>${escHtml(d.nguoiBan?.ten || '')}</b></div>
+      <div>Người tạo: <b>${escHtml(d.nguoiBan?.ten || '')}</b></div>
       ${d.daHuy ? '<div style="color:#DC2626;font-weight:600">Đã trả toàn bộ — hóa đơn đã hủy</div>' : ''}
     </div>
     <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:10px">
@@ -9604,7 +9604,7 @@ async function veBill(b) {
   if (b.khachHang && (b.khachHang.ten || b.khachHang.sdt)) trai(`Khách hàng: ${[b.khachHang.ten, b.khachHang.sdt].filter(Boolean).join(' - ')}`);
   trai(`Thời gian: ${ngayGio(luc)}`);
   if (b.ngayHen) { const nh = new Date(b.ngayHen); if (!isNaN(nh.getTime())) trai(`Hẹn lấy hàng: ${hai(nh.getDate())}/${hai(nh.getMonth() + 1)}/${nh.getFullYear()}`); }
-  if (b.nguoiBan) trai(`Nhân viên: ${b.nguoiBan}`);
+  if (b.nguoiBan) trai(`Người tạo: ${b.nguoiBan}`);
   ke();
 
   // --- Bảng hàng: tên một dòng riêng, dưới là Đơn giá | SL | Thành tiền ---
@@ -10217,7 +10217,7 @@ function bhVuaManHinh() {
   const day = parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14;
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
 }
-window.addEventListener('resize', () => { if (activeModule === 'banhang' || (['nhap', 'xuat', 'nhaphang', 'dathang'].includes(activeModule) && activeSubTab === 'tao')) bhVuaManHinh(); });
+window.addEventListener('resize', () => { if (activeModule === 'banhang' || (['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc'].includes(activeModule) && activeSubTab === 'tao')) bhVuaManHinh(); });
 
 function veTabPhieu() {
   const el = document.getElementById('bh-tab-phieu');
@@ -11407,7 +11407,7 @@ const DC_MAU_TT = { cho_ck: '#D97706', dang_giu: '#0E7490', cho_huy: '#DC2626', 
 let dcPhieu = null, dcDs = [], dcLocTT = 'dang_giu', dcTimDs = '', dcHuyNghe = null, dcKhHen = null;
 const tonKhaDungCH = (s) => layTon(s, 'cuahang') - (Number(s?.datCocCH) || 0);
 const dcKhoaNhap = () => `dat_coc_soan_${currentUser?.uid || 'chung'}`;
-function dcMoi() { return { gio: [], khach: { ten: '', sdt: '' }, ngayHen: '', ghiChu: '', tienCoc: 0, cachTra: 'tienmat', tienMat: 0 }; }
+function dcMoi() { return { gio: [], khach: { ten: '', sdt: '' }, ghiChu: '', tienCoc: 0, cachTra: 'tienmat', tienMat: 0, khachDua: null }; }
 function dcLuuNhap() { try { if (dcPhieu && !dcPhieu.ma) localStorage.setItem(dcKhoaNhap(), JSON.stringify({ ...dcPhieu, luc: Date.now() })); } catch(e) {} }
 function dcDocNhap() { try { const d = JSON.parse(localStorage.getItem(dcKhoaNhap()) || 'null'); return d && Date.now() - (d.luc || 0) < 3 * 86400000 ? d : null; } catch(e) { return null; } }
 const dcTong = (p) => (p?.gio || []).reduce((a, d) => a + (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (Number(d.giamGia) || 0), 0);
@@ -11425,85 +11425,119 @@ async function dcVaoTao() {
   if (!dcPhieu) dcPhieu = dcDocNhap() || dcMoi();
   dcVe();
 }
+// Bố cục giống Bán hàng: khách ở đầu, ô tìm, danh sách hàng cuộn, khối thanh toán dính đáy
 function dcVe() {
   const el = document.getElementById('dc-tao');
   if (!el || !dcPhieu) return;
   const p = dcPhieu, laSua = !!p.ma;
-  const tong = dcTong(p);
-  const duocGiam = coQuyen('bh_giamgia');
-  const oTien = (id, gt, onchange) => `<input type="text" inputmode="numeric" id="${id}" value="${gt ? Number(gt).toLocaleString('vi-VN') : ''}" placeholder="0" oninput="dinhDangTien(this)" onchange="${onchange}" style="width:140px;text-align:right;font-weight:600">`;
-  const chip = (gt, nhan) => `<button class="btn-xs" style="flex:1;padding:8px;${p.cachTra === gt ? `background:${DC_MAU};color:#fff;font-weight:700` : ''}" onclick="dcDat('cachTra','${gt}')">${nhan}</button>`;
   el.innerHTML = `
-    ${laSua ? `<div style="background:#ECFEFF;border:1px solid ${DC_MAU};border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:8px">
-      <span style="flex:1">Đang sửa phiếu <b>${escHtml(p.ma)}</b> · đã cọc <b>${fmt(p.daCoc || 0)}đ</b></span>
-      <button class="btn-xs" onclick="dcBoSua()">Hủy sửa</button></div>` : ''}
-    <div class="field sku-wrap" style="margin-bottom:8px"><input type="text" id="dc-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="border-color:#67E8F9"><div class="sku-drop" id="dc-drop"></div></div>
-    <div id="dc-gio">${p.gio.length ? p.gio.map((d, i) => {
-      const s = allSKUs.find(x => x.sku === d.sku);
-      const giuCu = laSua ? ((p.giuGoc || {})[d.sku] || 0) : 0;
-      const kd = s ? tonKhaDungCH(s) + giuCu : 0;
-      const tt = (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (Number(d.giamGia) || 0);
-      return `<div style="border:1px solid #CFFAFE;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#F5FEFF">
-        <div style="display:flex;gap:8px;align-items:center">
-          ${s?.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId, 120)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
-          <div style="flex:1;min-width:0"><b style="font-size:14px">${escHtml(d.ten)}</b>
-            <div style="font-size:11px;color:${d.soLuong > kd ? 'var(--red)' : 'var(--text2)'}">${escHtml(d.sku)} · ${fmt(d.gia)}đ · còn bán được ${kd}</div></div>
-          <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="dcXoaDong(${i})">✕</button>
-        </div>
-        <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
-          <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},-1)">−</button>
-          <input type="number" min="1" value="${d.soLuong}" onchange="dcDatSL(${i},this.value)" style="width:52px;padding:6px;text-align:center;font-size:15px;font-weight:600">
-          <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},1)">+</button>
-          ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá" oninput="dinhDangTien(this)" onchange="dcDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
-          <div style="font-weight:700;font-size:14px;min-width:80px;text-align:right">${fmt(tt)}đ</div>
-        </div></div>`;
-    }).join('') : '<div style="text-align:center;color:var(--text2);font-size:13px;padding:18px 0">Chưa có hàng. Gõ tên hàng ở ô trên để thêm.</div>'}</div>
-    <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin:8px 0">
-      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">KHÁCH HÀNG (bắt buộc)</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input id="dc-sdt" type="tel" inputmode="tel" placeholder="Số điện thoại" value="${escHtml(p.khach.sdt || '')}" oninput="dcGoSdt(this.value)" style="flex:1;min-width:140px">
-        <input id="dc-ten" placeholder="Tên khách" value="${escHtml(p.khach.ten || '')}" oninput="dcDatKhach('ten',this.value)" style="flex:1;min-width:140px">
+    <div class="bh-khung">
+      ${laSua ? `<div style="background:#ECFEFF;border:1px solid ${DC_MAU};border-radius:8px;padding:5px 10px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <span style="flex:1">Đang sửa phiếu <b>${escHtml(p.ma)}</b></span><button class="btn-xs" onclick="dcBoSua()">Hủy sửa</button></div>` : ''}
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <input id="dc-sdt" type="tel" inputmode="tel" placeholder="SĐT khách *" value="${escHtml(p.khach.sdt || '')}" oninput="dcGoSdt(this.value)" style="flex:1;min-width:0;padding:7px 10px;font-size:14px">
+        <input id="dc-ten" placeholder="Tên khách *" value="${escHtml(p.khach.ten || '')}" oninput="dcDatKhach('ten',this.value)" style="flex:1;min-width:0;padding:7px 10px;font-size:14px">
       </div>
-      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center">
-        <label style="font-size:12px;color:var(--text2)">Hẹn lấy hàng</label>
-        <input type="date" value="${escHtml(p.ngayHen || '')}" onchange="dcDat('ngayHen',this.value)" style="flex:1;min-width:140px">
+      <div class="field sku-wrap" style="margin:6px 0;flex-shrink:0">
+        <input type="text" id="dc-tim" placeholder="Gõ tên hoặc mã hàng để thêm..." autocomplete="off" style="padding:7px 10px;font-size:14px;border-color:#67E8F9">
+        <div class="sku-drop" id="dc-drop"></div>
       </div>
-      <input placeholder="Ghi chú (VD: giữ bể đến cuối tuần)" value="${escHtml(p.ghiChu || '')}" oninput="dcDatGhiChu(this.value)" style="width:100%;margin-top:8px">
-    </div>
-    <div class="bh-o-tt">
-      <div class="bh-dong-tt"><span>Tổng tiền hàng <span class="bh-tron-sl">${p.gio.reduce((a, d) => a + (Number(d.soLuong) || 0), 0)}</span></span><b>${fmt(tong)}đ</b></div>
-      ${laSua ? `<div class="bh-dong-tt"><span>Đã cọc</span><b>${fmt(p.daCoc || 0)}đ</b></div>
-        <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px"><span>Còn thanh toán</span><b style="font-size:17px">${fmt(Math.max(0, tong - (p.daCoc || 0)))}đ</b></div>` : `
-      <div class="bh-dong-tt"><span>Tiền cọc</span>${oTien('dc-coc', p.tienCoc, "dcDat('tienCoc',docTien(this))")}</div>
-      <div style="display:flex;gap:6px;margin:6px 0">${chip('tienmat', 'Tiền mặt')}${chip('chuyenkhoan', 'Chuyển khoản')}${chip('ketHop', 'Kết hợp')}</div>
-      ${p.cachTra === 'ketHop' ? `<div class="bh-dong-tt"><span>Tiền mặt</span>${oTien('dc-tm', p.tienMat, "dcDat('tienMat',docTien(this))")}</div>
-        <div class="bh-dong-tt"><span>Chuyển khoản</span><b style="color:#2563EB">${fmt(Math.max(0, (p.tienCoc || 0) - (p.tienMat || 0)))}</b></div>` : ''}
-      <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px"><span>Còn thanh toán khi lấy hàng</span><b style="font-size:17px">${fmt(Math.max(0, tong - (p.tienCoc || 0)))}đ</b></div>`}
-    </div>
-    <button class="btn-g" id="dc-nut" style="width:100%;padding:12px;font-size:16px;background:${DC_MAU};margin-top:8px" onclick="dcGui()" ${p.gio.length ? '' : 'disabled'}>
-      ${laSua ? 'Lưu thay đổi phiếu' : 'Tạo phiếu & thu cọc'}</button>`;
+      <div class="bh-o-hang-trong" id="dc-gio"></div>
+      <div class="bh-day-duoi" id="dc-duoi"></div>
+    </div>`;
   makeSKUSearch('dc-tim', 'dc-drop', null, false, s => !s.laCombo);
+  dcVeGio(); dcVeDuoi();
+  requestAnimationFrame(bhVuaManHinh);
 }
+function dcVeGio() {
+  const el = document.getElementById('dc-gio'); const p = dcPhieu;
+  if (!el || !p) return;
+  if (!p.gio.length) { el.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">Chưa có hàng nào.<br>Gõ tên hàng ở ô trên để thêm.</div>'; return; }
+  const duocGiam = coQuyen('bh_giamgia');
+  el.innerHTML = p.gio.map((d, i) => {
+    const s = allSKUs.find(x => x.sku === d.sku);
+    const kd = s ? tonKhaDungCH(s) + (p.ma ? ((p.giuGoc || {})[d.sku] || 0) : 0) : 0;
+    const tt = (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (Number(d.giamGia) || 0);
+    return `<div style="border:1px solid #CFFAFE;border-radius:8px;padding:8px 10px;margin-bottom:6px;background:#F5FEFF">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${s?.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId, 120)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+        <div style="flex:1;min-width:0"><b style="font-size:14px">${escHtml(d.ten)}</b>
+          <div style="font-size:11px;color:var(--text2)">${escHtml(d.sku)} · ${fmt(d.gia)}đ · tồn ${kd}${d.soLuong > kd ? ' <span style="color:#B45309">(sẽ âm kho)</span>' : ''}</div></div>
+        <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="dcXoaDong(${i})">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
+        <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},-1)">−</button>
+        <input type="number" min="1" value="${d.soLuong}" onchange="dcDatSL(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:600">
+        <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},1)">+</button>
+        ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá" oninput="dinhDangTien(this)" onchange="dcDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
+        <div style="font-weight:700;font-size:14px;min-width:76px;text-align:right;color:${Number(d.giamGia) > 0 ? '#DC2626' : 'var(--text)'}">${fmt(tt)}đ</div>
+      </div></div>`;
+  }).join('');
+}
+const DC_CACH_TRA = { tienmat: 'Tiền mặt', chuyenkhoan: 'Chuyển khoản', ketHop: 'Kết hợp' };
+function dcVeDuoi() {
+  const el = document.getElementById('dc-duoi'); const p = dcPhieu;
+  if (!el || !p) return;
+  const laSua = !!p.ma, coHang = p.gio.length > 0, tong = dcTong(p);
+  const soMon = p.gio.reduce((a, d) => a + (Number(d.soLuong) || 0), 0);
+  const coc = Math.round(p.tienCoc || 0);
+  const tienMat = p.cachTra === 'tienmat' ? coc : p.cachTra === 'ketHop' ? Math.min(coc, Math.round(p.tienMat || 0)) : 0;
+  const canCK = Math.max(0, coc - tienMat);
+  const khachDua = Number(p.khachDua ?? tienMat) || 0;
+  const oTien = (id, gt, onchange, mau = '') => `<input type="text" inputmode="numeric" id="${id}" value="${gt ? Number(gt).toLocaleString('vi-VN') : ''}" placeholder="0"
+    oninput="dinhDangTien(this)" onchange="${onchange}" ${coHang ? '' : 'disabled'} style="width:130px;padding:5px 7px;text-align:right;font-size:15px;font-weight:600;${mau}">`;
+  el.innerHTML = laSua ? `
+    <div class="bh-o-tt">
+      <div class="bh-dong-tt"><span style="display:flex;align-items:center;gap:7px">Tổng tiền hàng <span class="bh-tron-sl" style="background:${DC_MAU}">${soMon}</span></span><b>${fmt(tong)}đ</b></div>
+      <div class="bh-dong-tt"><span>Đã cọc</span><b style="color:${DC_MAU}">${fmt(p.daCoc || 0)}đ</b></div>
+      <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px"><span>Còn thanh toán</span><b style="font-size:17px">${fmt(Math.max(0, tong - (p.daCoc || 0)))}đ</b></div>
+    </div>
+    <input placeholder="Ghi chú phiếu" value="${escHtml(p.ghiChu || '')}" oninput="dcDatGhiChu(this.value)" style="width:100%;margin-bottom:8px;padding:7px 10px">
+    <button class="btn-g" id="dc-nut" ${coHang ? '' : 'disabled'} style="width:100%;padding:12px;font-size:16px;background:${coHang ? DC_MAU : '#D1D5DB'}" onclick="dcGui()">Lưu thay đổi phiếu</button>` : `
+    <div class="bh-o-tt">
+      <div class="bh-dong-tt"><span style="display:flex;align-items:center;gap:7px">Tổng tiền hàng <span class="bh-tron-sl" style="background:${DC_MAU}">${soMon}</span></span><b>${fmt(tong)}đ</b></div>
+      <div class="bh-dong-tt"><span>Tiền cọc</span>${oTien('dc-coc', coc, "dcDat('tienCoc',docTien(this))", `color:${DC_MAU}`)}</div>
+      ${p.cachTra === 'tienmat' ? `
+        <div class="bh-dong-tt"><span>Khách thanh toán</span>${oTien('dc-dua', coHang ? khachDua : 0, "dcDat('khachDua',docTien(this))")}</div>
+        <div class="bh-dong-tt"><span>Tiền thừa trả khách</span><b style="color:${khachDua - tienMat < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(coHang ? khachDua - tienMat : 0)}đ</b></div>` : ''}
+      ${p.cachTra === 'ketHop' ? `
+        <div class="bh-dong-tt"><span>Tiền mặt</span>${oTien('dc-tm', p.tienMat, "dcDat('tienMat',docTien(this))")}</div>
+        <div class="bh-dong-tt"><span>Chuyển khoản</span><b style="color:#2563EB">${fmt(canCK)}</b></div>` : ''}
+      <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px"><span>Còn thanh toán khi lấy hàng</span><b style="font-size:17px">${fmt(Math.max(0, tong - coc))}đ</b></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:stretch">
+      <input placeholder="Ghi chú phiếu" value="${escHtml(p.ghiChu || '')}" oninput="dcDatGhiChu(this.value)" style="flex:1;min-width:0;padding:7px 10px;border:1.5px solid var(--border);border-radius:8px">
+      <button class="bh-chon-tt" aria-label="Cách trả cọc" style="font-weight:600" onclick="dcMoChonCachTra()">${DC_CACH_TRA[p.cachTra] || 'Tiền mặt'}</button>
+    </div>
+    <button class="btn-g" id="dc-nut" ${coHang ? '' : 'disabled'}
+      style="width:100%;padding:12px;font-size:16px;${coHang ? `background:${DC_MAU}` : 'background:#D1D5DB;color:#6B7280;cursor:not-allowed'}" onclick="dcGui()">
+      ${canCK > 0 ? 'Mã QR thanh toán · ' + fmt(canCK) + 'đ' : 'Thu cọc' + (coc ? ' · ' + fmt(coc) + 'đ' : '')}</button>`;
+}
+window.dcMoChonCachTra = function() {
+  if (!dcPhieu) return;
+  moBangChon('Cách trả cọc', Object.entries(DC_CACH_TRA).map(([gt, nhan]) => ({ gt, nhan })), dcPhieu.cachTra || 'tienmat', (ma) => { dcPhieu.cachTra = ma; dcPhieu.khachDua = null; dcLuuNhap(); dcVeDuoi(); });
+};
 window.dcThem = function(ma) {
   const s = allSKUs.find(x => x.sku === ma); if (!s || !dcPhieu) return;
   if (s.laCombo) { showToast('Combo — thêm từng món', true); return; }
   const d = dcPhieu.gio.find(x => x.sku === ma);
   if (d) d.soLuong++; else dcPhieu.gio.push({ sku: ma, ten: s.ten || ma, gia: Number(s.gia) || 0, soLuong: 1, giamGia: 0 });
-  dcLuuNhap(); dcVe();
+  dcLuuNhap(); dcVeGio(); dcVeDuoi();
   setTimeout(() => document.getElementById('dc-tim')?.focus(), 30);
 };
-window.dcDoiSL = (i, d) => { const x = dcPhieu.gio[i]; x.soLuong = Math.max(1, (Number(x.soLuong) || 1) + d); dcLuuNhap(); dcVe(); };
-window.dcDatSL = (i, v) => { dcPhieu.gio[i].soLuong = Math.max(1, parseInt(v) || 1); dcLuuNhap(); dcVe(); };
-window.dcDatGiam = (i, v) => { const x = dcPhieu.gio[i]; x.giamGia = Math.min(x.gia * x.soLuong, Math.max(0, Number(v) || 0)); dcLuuNhap(); dcVe(); };
-window.dcXoaDong = (i) => { dcPhieu.gio.splice(i, 1); dcLuuNhap(); dcVe(); };
+window.dcDoiSL = (i, d) => { const x = dcPhieu.gio[i]; x.soLuong = Math.max(1, (Number(x.soLuong) || 1) + d); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
+window.dcDatSL = (i, v) => { dcPhieu.gio[i].soLuong = Math.max(1, parseInt(v) || 1); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
+window.dcDatGiam = (i, v) => { const x = dcPhieu.gio[i]; x.giamGia = Math.min(x.gia * x.soLuong, Math.max(0, Number(v) || 0)); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
+window.dcXoaDong = (i) => { dcPhieu.gio.splice(i, 1); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
 window.dcDatGhiChu = (v) => { dcPhieu.ghiChu = String(v || '').slice(0, 300); dcLuuNhap(); };
 window.dcDatKhach = (k, v) => { dcPhieu.khach = { ...dcPhieu.khach, [k]: String(v || '').slice(0, 80) }; dcLuuNhap(); };
 window.dcDat = function(k, v) {
   const p = dcPhieu; if (!p) return;
-  if (k === 'tienCoc') p.tienCoc = Math.max(0, Number(v) || 0);
+  if (k === 'tienCoc') { p.tienCoc = Math.max(0, Number(v) || 0); p.khachDua = null; }
   else if (k === 'tienMat') p.tienMat = Math.min(p.tienCoc || 0, Math.max(0, Number(v) || 0));
+  else if (k === 'khachDua') p.khachDua = Math.max(0, Number(v) || 0);
   else p[k] = v;
-  dcLuuNhap(); dcVe();
+  dcLuuNhap(); dcVeDuoi();
 };
 window.dcGoSdt = function(v) {
   clearTimeout(dcKhHen);
@@ -11531,17 +11565,15 @@ window.dcGui = async function() {
   p.khach = { ...p.khach, ten, sdt };
   if (!ten || sdt.length < 10) { showToast('Nhập tên và số điện thoại khách', true); return; }
   const tong = dcTong(p);
-  const thieu = p.gio.filter(d => { const s = allSKUs.find(x => x.sku === d.sku); return s && d.soLuong > tonKhaDungCH(s) + (p.ma ? ((p.giuGoc || {})[d.sku] || 0) : 0); });
-  if (thieu.length && !coQuyen('bh_vuotton')) { alert(`Không đủ hàng để giữ:\n\n${thieu.map(d => '· ' + d.ten).join('\n')}`); return; }
-  if (thieu.length && !await hoiXacNhan(`${thieu.length} mã giữ quá số còn bán được:\n\n${thieu.map(d => '· ' + d.ten).join('\n')}\n\nVẫn giữ?`)) return;
+  // Đặt cọc cho phép âm kho (hàng đặt về sau)
   const items = p.gio.map(d => ({ sku: d.sku, soLuong: d.soLuong, gia: d.gia, giamGia: d.giamGia || 0 }));
   const nut = document.getElementById('dc-nut');
-  const khoa = (b) => { if (nut) { nut.disabled = b; nut.textContent = b ? 'Đang xử lý...' : (p.ma ? 'Lưu thay đổi phiếu' : 'Tạo phiếu & thu cọc'); } };
+  const khoa = (b) => { if (nut) nut.disabled = b; if (b && nut) nut.textContent = 'Đang xử lý...'; if (!b) dcVeDuoi(); };
   if (p.ma) {
     if (!await hoiXacNhan(`Lưu thay đổi phiếu ${p.ma}?\n\nTổng mới ${fmt(tong)}đ · đã cọc ${fmt(p.daCoc || 0)}đ`, { nutDongY: 'Lưu' })) return;
     khoa(true);
     try {
-      await dcGoi('dc-luu', { ma: p.ma, items, khach: p.khach, ngayHen: p.ngayHen, ghiChu: p.ghiChu });
+      await dcGoi('dc-luu', { ma: p.ma, items, khach: p.khach, ghiChu: p.ghiChu });
       showToast(`Đã sửa phiếu ${p.ma}`);
       dcPhieu = dcDocNhap() || dcMoi();
       switchSub('ds');
@@ -11553,10 +11585,11 @@ window.dcGui = async function() {
   if (coc > tong) { showToast('Tiền cọc lớn hơn tổng tiền hàng', true); return; }
   const tienMat = p.cachTra === 'tienmat' ? coc : p.cachTra === 'ketHop' ? Math.min(coc, Math.round(p.tienMat || 0)) : 0;
   const canCK = coc - tienMat;
+  if (p.cachTra === 'tienmat' && p.khachDua != null && p.khachDua < tienMat) { showToast('Khách đưa chưa đủ tiền cọc', true); return; }
   if (!await hoiXacNhan(`Tạo phiếu đặt cọc cho ${ten}?\n\nTổng ${fmt(tong)}đ · cọc ${fmt(coc)}đ${tienMat ? `\nTiền mặt: ${fmt(tienMat)}đ` : ''}${canCK ? `\nChuyển khoản: ${fmt(canCK)}đ (hiện mã QR)` : ''}\nCòn thanh toán khi lấy: ${fmt(tong - coc)}đ`, { nutDongY: 'Tạo phiếu' })) return;
   khoa(true);
   try {
-    const kq = await dcGoi('dc-luu', { items, khach: p.khach, ngayHen: p.ngayHen, ghiChu: p.ghiChu, tienMat, canCK });
+    const kq = await dcGoi('dc-luu', { items, khach: p.khach, ghiChu: p.ghiChu, tienMat, canCK, khachDua: p.cachTra === 'tienmat' ? Math.max(tienMat, Number(p.khachDua ?? tienMat) || 0) : 0 });
     try { localStorage.removeItem(dcKhoaNhap()); } catch(e) {}
     dcPhieu = dcMoi(); dcVe();
     await loadSKUs();
@@ -11619,7 +11652,7 @@ function billTuPhieuCoc(p) {
     nguoiBan: p.nguoiTao?.ten || '', khachHang: p.khachHang || null, ngayHen: p.ngayHen || '',
     dongHang: (p.dongHang || []).map(d => ({ ten: d.ten, sku: d.sku, soLuong: d.soLuong, gia: d.gia, giamGia: d.giamGia || 0 })),
     phaiTra: p.tongTien, daCoc: p.daCoc || 0, cachThanhToan: tm && ck ? 'ketHop' : ck ? 'chuyenkhoan' : 'tienmat',
-    tienMat: tm, tienChuyenKhoan: ck, ghiChu: p.ghiChu || '' };
+    tienMat: tm, tienChuyenKhoan: ck, khachDua: Number(p.khachDua) || 0, ghiChu: p.ghiChu || '' };
 }
 
 // ----- Danh sách phiếu -----
@@ -11691,7 +11724,7 @@ window.dcMoSua = function(id) {
   const p = dcDs.find(x => x.id === id); if (!p) return;
   const giuGoc = {}; (p.dongHang || []).forEach(d => { giuGoc[d.sku] = (giuGoc[d.sku] || 0) + d.soLuong; });
   dcPhieu = { ma: p.id, daCoc: p.daCoc || 0, giuGoc, gio: (p.dongHang || []).map(d => ({ sku: d.sku, ten: d.ten, gia: d.gia, soLuong: d.soLuong, giamGia: d.giamGia || 0 })),
-    khach: { ...(p.khachHang || {}) }, ngayHen: p.ngayHen || '', ghiChu: p.ghiChu || '' };
+    khach: { ...(p.khachHang || {}) }, ghiChu: p.ghiChu || '' };
   switchSub('tao');
 };
 window.dcYeuCauHuy = async function(id) {
@@ -13708,21 +13741,10 @@ function coQuyen(k) {
 const NHOM_MENU = [
   { key: 'cuahang', ten: 'Cửa hàng', muc: [
     { key: 'banhang',   ten: 'Bán hàng',       quyen: 'banhang',   moGi: () => switchModule('banhang') },
-    { key: 'datcoc',    ten: 'Đặt cọc',        quyen: 'datcoc',    moGi: () => switchModule('datcoc') },
     { key: 'donbanle',  ten: 'Đơn đã bán',     quyen: 'donbanle',  moGi: () => switchModule('donbanle') },
+    { key: 'datcoc',    ten: 'Đặt cọc',        quyen: 'datcoc',    moGi: () => switchModule('datcoc') },
     { key: 'khuyenmai', ten: 'Khuyến mãi',     chiAdmin: true,     moGi: () => switchModule('khuyenmai') },
     { key: 'checklist', ten: 'Checklist',      quyen: 'checklist', moGi: () => switchModule('checklist') }
-  ]},
-  { key: 'khachhang', ten: 'Khách hàng', moTrucTiep: true, quyen: 'khachhang',
-    muc: [], moGi: () => switchModule('khachhang') },
-  // Hàng hóa: tồn kho và mọi phiếu làm thay đổi tồn (chuyển, hủy, nhập) — chọn kho ngay trong từng màn
-  { key: 'hanghoa', ten: 'Hàng hóa', muc: [
-    { key: 'tonkho',    ten: 'Tồn kho',        quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
-    { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
-    { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
-    { key: 'dungnb',    ten: 'Xuất dùng nội bộ', quyen: 'dungnb',  moGi: () => switchModule('dungnb') },
-    { key: 'dathang',   ten: 'Đặt hàng',       quyen: 'dathang',   moGi: () => switchModule('dathang') },
-    { key: 'nhaphang',  ten: 'Nhập kho',       quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') }
   ]},
   { key: 'santmdt', ten: 'Sàn TMĐT', muc: [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
@@ -13735,6 +13757,14 @@ const NHOM_MENU = [
     { key: 'ketnoisan', ten: 'Kết nối sàn',    chiAdmin: true,
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('ketnoi', true); } }
   ]},
+  { key: 'hanghoa', ten: 'Hàng hóa', muc: [
+    { key: 'tonkho',    ten: 'Tồn kho',        quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
+    { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
+    { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
+    { key: 'dungnb',    ten: 'Xuất dùng nội bộ', quyen: 'dungnb',  moGi: () => switchModule('dungnb') },
+    { key: 'dathang',   ten: 'Đặt hàng',       quyen: 'dathang',   moGi: () => switchModule('dathang') },
+    { key: 'nhaphang',  ten: 'Nhập kho',       quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') }
+  ]},
   { key: 'nhansu', ten: 'Nhân sự', muc: [
     { key: 'danhsachnv', ten: 'Danh sách nhân viên', chiAdmin: true,       moGi: () => moNVTab('danhsachnv') },
     // Lịch làm việc là mục phụ: nhân viên xem ca của mình ngay ở hàng mục con,
@@ -13743,6 +13773,8 @@ const NHOM_MENU = [
     { key: 'chamcong',   ten: 'Chấm công',           quyen: 'chamcong',    moGi: () => moNVTab('chamcong') },
     { key: 'luong',      ten: 'Bảng lương',          quyen: 'luong', phu: true, moGi: () => moNVTab('luongnv') }
   ]},
+  { key: 'khachhang', ten: 'Khách hàng', moTrucTiep: true, quyen: 'khachhang',
+    muc: [], moGi: () => switchModule('khachhang') },
   { key: 'baocao', ten: 'Báo cáo', muc: [
     { key: 'bcngay',    ten: 'Báo cáo ngày',       quyen: 'bc_ngay',    moGi: () => switchModule('baocao') },
     { key: 'tknhap',    ten: 'Thống kê chuyển kho', quyen: 'bc_tk_nhap', moGi: () => switchModule('tknhap') },
@@ -16520,7 +16552,7 @@ function plThe(mod, p) {
               : p.versions?.length ? `<span style="font-size:11px;color:#D97706;font-weight:600">Đã sửa ${p.versions.length} lần</span>` : ''}
             ${C.nhan ? C.nhan(p) : ''}
           </div>
-          <div style="font-size:12px;color:var(--text2);margin-top:3px">Nhân viên: ${escHtml(p.nguoiTao?.ten || '')}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px">Người tạo: ${escHtml(p.nguoiTao?.ten || '')}</div>
           ${C.dongPhu ? C.dongPhu(p) : ''}
           <div style="font-size:13px;margin-top:3px"><b style="color:${C.mau}">${C.tenLoai(p)}</b> · SL <b>${tongSL}</b>${plCoGia(C) ? ` · <b>${fmt(p.tongGia)}đ</b>` : ''}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(ten)}</div>
@@ -16868,7 +16900,7 @@ window.plXem = function(mod, id) {
   ddbMoKhung('pl-ct-modal', escHtml(p.maPhieu || p.id), C.tenLoai(p), `
     <div style="background:var(--bg);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px">
       <div>Thời gian: <b>${ddbThoiGian(t) || '—'}</b></div>
-      <div>Nhân viên: <b>${escHtml(p.nguoiTao?.ten || '')}</b></div>
+      <div>Người tạo: <b>${escHtml(p.nguoiTao?.ten || '')}</b></div>
       <div>${mod === 'nhap' ? 'Chiều chuyển' : 'Kho'}: <b style="color:${C.mau}">${C.tenLoai(p)}</b></div>
       ${C.nhan ? `<div>Trạng thái: ${C.nhan(p)}</div>` : ''}
       ${p.deleted ? `<div style="color:#DC2626;font-weight:600">Đã xóa${p.deletedBy?.ten ? ' bởi ' + escHtml(p.deletedBy.ten) : ''}</div>` : ''}
@@ -20979,6 +21011,8 @@ a.muc-btn{display:inline-flex;align-items:center}
 @keyframes bcLen{from{transform:translateY(100%)}to{transform:none}}
 @keyframes bcNen{from{opacity:0}to{opacity:1}}
 .sub-tab-bar[data-mod="xuat"] .stab.active{color:var(--red);border-bottom-color:var(--red);background:#FDECEC;font-weight:700}
+.sub-tab-bar[data-mod="datcoc"] .stab.active{color:#0E7490;border-bottom-color:#0E7490;background:#ECFEFF;font-weight:700}
+.sub-tab-bar[data-mod="dungnb"] .stab.active{color:#B45309;border-bottom-color:#D97706;background:#FFFBEB;font-weight:700}
 
 /* CONTENT */
 .app-body{flex:1;padding:14px;max-width:680px;width:100%;margin:0 auto}
@@ -21286,7 +21320,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v534</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v535</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -21340,7 +21374,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v534</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v535</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -21386,7 +21420,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v534</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v535</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
