@@ -10150,16 +10150,18 @@ async function veBill(b) {
 
   // --- Thanh toán ---
   const tenCach = b.cachThanhToan === 'tienmat' ? 'Tiền mặt' : b.cachThanhToan === 'ketHop' ? 'Tiền mặt + Chuyển khoản' : b.cachThanhToan ? 'Chuyển khoản' : '';
-  if (tenCach) trai(`${b.loai === 'datcoc' ? 'Trả cọc' : 'Thanh toán'}: ${tenCach}`);
-  if (Number(b.tienMat)) haiCot('   Tiền mặt', billTien(b.tienMat));
-  if (Number(b.tienChuyenKhoan)) haiCot('   Chuyển khoản', billTien(b.tienChuyenKhoan));
-  const khachDua = Number(b.khachDua) || 0, canTM = Number(b.tienMat) || 0;
-  if (khachDua > canTM && canTM > 0) { haiCot('   Khách đưa', billTien(khachDua)); haiCot('   Trả lại', billTien(khachDua - canTM)); }
+  if (b.loai !== 'datcoc') {
+    if (tenCach) trai(`Thanh toán: ${tenCach}`);
+    if (Number(b.tienMat)) haiCot('   Tiền mặt', billTien(b.tienMat));
+    if (Number(b.tienChuyenKhoan)) haiCot('   Chuyển khoản', billTien(b.tienChuyenKhoan));
+    const khachDua = Number(b.khachDua) || 0, canTM = Number(b.tienMat) || 0;
+    if (khachDua > canTM && canTM > 0) { haiCot('   Khách đưa', billTien(khachDua)); haiCot('   Trả lại', billTien(khachDua - canTM)); }
+  }
   if (b.ghiChu) trai(`Ghi chú: ${b.ghiChu}`, 22);
 
   // --- Chân ---
   y += 14;
-  const loiCam = b.loai === 'datcoc' ? 'Vui lòng giữ phiếu này khi đến nhận hàng.\nCảm ơn quý khách!' : v('loiCam', 'Cảm ơn quý khách!\nHẹn gặp lại');
+  const loiCam = v('loiCam', 'Cảm ơn quý khách!\nHẹn gặp lại');
   for (const d of loiCam.split('\n')) if (d.trim()) giua(d.trim(), 22);
   y += 24;
 
@@ -12095,7 +12097,7 @@ window.dcGui = async function() {
     await loadSKUs();
     showToast(`Đã tạo phiếu ${kq.ma}`);
     if (canCK > 0) dcMoQR(kq.ma, kq.qr, canCK, 'coc', kq.phieu);
-    else moXemBill(billTuPhieuCoc(kq.phieu));
+    else dcInHoacXem(billTuPhieuCoc(kq.phieu));
   } catch(e) { alert('Không tạo được phiếu: ' + e.message); khoa(false); }
 };
 
@@ -12176,7 +12178,7 @@ window.dcKiemTien = async function(ma, muc, bamTay) {
         dcDongQR();
         if (muc === 'coc') {
           const sn = await getDoc(doc(db, 'phieu_dat_coc', ma));
-          if (sn.exists()) moXemBill(billTuPhieuCoc({ ...sn.data(), maPhieu: ma }));
+          if (sn.exists()) dcInHoacXem(billTuPhieuCoc({ ...sn.data(), maPhieu: sn.data().maPhieu || ma }));
         }
       }, 1300);
       return;
@@ -12185,6 +12187,13 @@ window.dcKiemTien = async function(ma, muc, bamTay) {
   } catch(e) { console.warn('[kiểm tra tiền]', e.message); if (tt && bamTay) tt.innerHTML = '<span class="bh-cham-nhap-nhay"></span> Chờ thanh toán...'; }
 };
 
+// Có quyền tự in (và máy này đang bật tự in như Bán hàng) -> gửi thẳng Trạm in; không thì mở xem trước
+function dcInHoacXem(b) {
+  if (coQuyen('dc_tuinbill') && tuInBill) {
+    guiBillXuongTramIn(b).then(() => showToast(`Đã gửi lệnh in ${b.ma || ''}`))
+      .catch(e => { showToast('Chưa gửi được lệnh in — mở xem để in lại', true); moXemBill(b); });
+  } else moXemBill(b);
+}
 // ----- Bill phiếu cọc -----
 function billTuPhieuCoc(p) {
   const tm = Number(p.cocTienMat) || 0, ck = Number(p.cocChuyenKhoan) || 0;
@@ -12227,7 +12236,7 @@ function dcVeDs() {
       const quaHen = p.ngayHen && p.trangThai === 'dang_giu' && new Date(p.ngayHen + 'T23:59:59') < new Date();
       return `<div style="background:#fff;border:1px solid var(--border);border-left:4px solid ${DC_MAU_TT[p.trangThai]};border-radius:10px;padding:10px 12px;margin-bottom:8px">
         <div style="display:flex;gap:8px;align-items:center">
-          <b style="font-size:14px;flex:1">${escHtml(p.maPhieu)}${p.kiotvietCode ? ` <span style="font-weight:400;color:var(--text2);font-size:12px">· ${escHtml(p.kiotvietCode)}</span>` : ''}</b>
+          <b style="font-size:14px;flex:1">${escHtml(p.maPhieu)}${p.kiotvietCode && p.kiotvietCode !== p.maPhieu ? ` <span style="font-weight:400;color:var(--text2);font-size:12px">· ${escHtml(p.kiotvietCode)}</span>` : ''}</b>
           <span style="font-size:11px;color:var(--text2)">${ngay(p.taoLuc)}</span>
         </div>
         <div style="font-size:13px;margin-top:2px"><b>${escHtml(p.khachHang?.ten || '')}</b> · ${escHtml(p.khachHang?.sdt || '')}${hen ? ` · hẹn <b style="color:${quaHen ? 'var(--red)' : 'inherit'}">${hen}${quaHen ? ' (quá hẹn)' : ''}</b>` : ''}</div>
@@ -12360,8 +12369,7 @@ window.dcHoanTatTT = async function() {
     showToast(`Đã xuất hóa đơn ${kq.maHoaDon}`);
     await loadSKUs();
     const b = billTuDonBanLe({ ...kq.don, taoLuc: new Date() });
-    if (coQuyen('bh_tuinbill') && tuInBill) guiBillXuongTramIn(b).catch(e => showToast('Chưa gửi được lệnh in: ' + e.message, true));
-    moXemBill(b);
+    dcInHoacXem(b);
   } catch(e) { alert('Không thanh toán được: ' + e.message); if (nut) { nut.disabled = false; nut.textContent = 'Hoàn tất · xuất hóa đơn'; } }
 };
 
@@ -14123,7 +14131,8 @@ const DANH_SACH_MODULE = [
   ]},
   { key: 'datcoc', ten: 'Đặt cọc', con: [
     { key: 'dc_sua', ten: 'Sửa phiếu đặt cọc (đổi hàng, khách, ngày hẹn)' },
-    { key: 'dc_huy', ten: 'Gửi yêu cầu hủy phiếu (Admin duyệt)' }
+    { key: 'dc_huy', ten: 'Gửi yêu cầu hủy phiếu (Admin duyệt)' },
+    { key: 'dc_tuinbill', ten: 'Tự in phiếu cọc / hóa đơn khi thu tiền xong' }
   ]},
   { key: 'khachhang', ten: 'Khách hàng', con: [
     { key: 'kh_sua', ten: 'Thêm / sửa khách hàng' }
@@ -21922,7 +21931,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v542</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v543</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -21976,7 +21985,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v542</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v543</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22022,7 +22031,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v542</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v543</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
