@@ -7040,7 +7040,7 @@ async function sqGoi(action, body) {
   const idToken = await currentUser.getIdToken();
   const r = await fetch(WORKER_URL, { method: 'POST', headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({ success: false, error: `HTTP ${r.status}` }));
-  if (!j.success) { const e = new Error(j.error || 'Lỗi máy chủ'); e.duLieu = j; throw e; }
+  if (!j.success) { const e = new Error(loiDeHieu(j.error)); e.duLieu = j; throw e; }
   return j;
 }
 // Bán hàng xong -> ghi phiếu thu (không chặn việc bán; quên ghi thì Kết ca tự ghi bù)
@@ -11131,7 +11131,7 @@ function veKhungQR(tt) {
           <img src="${tt.anhQR}" style="width:100%;max-width:280px;border-radius:10px;background:#fff">
           <div style="font-size:11px;color:var(--text2);margin-top:8px">${escHtml(tt.maHoaDon || '')}</div>
           <div id="bh-qr-trang-thai" class="bh-tt-ck cho" style="margin-top:14px">
-            <span class="bh-cham-nhap-nhay"></span> Đang chờ khách chuyển khoản
+            <span class="bh-cham-nhap-nhay"></span> Chờ thanh toán...
           </div>
         </div>` : ''}
 
@@ -11908,8 +11908,15 @@ async function dcGoi(action, body) {
   const idToken = await currentUser.getIdToken();
   const r = await fetch(WORKER_URL, { method: 'POST', headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({ success: false, error: `HTTP ${r.status}` }));
-  if (!j.success) throw new Error(j.error || 'Lỗi máy chủ');
+  if (!j.success) throw new Error(loiDeHieu(j.error));
   return j;
+}
+// Lỗi kỹ thuật từ máy chủ bán hàng -> câu dễ hiểu cho nhân viên (Admin vẫn thấy chi tiết để xử lý)
+function loiDeHieu(msg) {
+  const m = String(msg || 'Lỗi máy chủ');
+  if (currentUserData?.role === 'admin') return m;
+  if (/KiotViet|HTTP \d|\(\d{3}\)|token|web|api/i.test(m)) { console.warn('[lỗi máy chủ]', m); return 'Hệ thống bán hàng đang bận, thử lại sau ít phút. Vẫn lỗi thì báo quản lý.'; }
+  return m;
 }
 
 // ----- Tạo / sửa phiếu -----
@@ -12098,9 +12105,9 @@ function dcMoQR(ma, qr, soTien, muc, phieu) {
   clearInterval(dcHuyNghe);
   ddbMoKhung('dc-qr', 'Chuyển khoản', `${escHtml(ma)} · ${fmt(soTien)}đ`, `
     <div style="text-align:center">
-      ${qr?.anhQR ? `<img src="${qr.anhQR}" style="width:260px;max-width:100%;image-rendering:pixelated">` : `<p class="info-note" style="color:var(--red)">Không tạo được mã QR${qr?.loi ? ': ' + escHtml(qr.loi) : ''}. Bấm "Tạo lại mã".</p>`}
+      ${qr?.anhQR ? `<img src="${qr.anhQR}" style="width:260px;max-width:100%;image-rendering:pixelated">` : `<p class="info-note" style="color:var(--red)">Không tạo được mã QR. Bấm "Tạo lại mã".</p>`}
       <div style="font-size:22px;font-weight:800;margin-top:6px">${fmt(soTien)}đ</div>
-      <div id="dc-qr-tt" style="font-size:13px;color:var(--text2);margin-top:6px">Đang chờ tiền về...</div>
+      <div id="dc-qr-tt" style="font-size:13px;color:var(--text2);margin-top:6px">Chờ thanh toán...</div>
     </div>`,
     `<button class="btn-outline" style="flex:1" onclick="dcTaoLaiQR('${ma}',${soTien},'${muc}')">Tạo lại mã</button>
      <button class="btn-outline" style="flex:1" onclick="dcKiemTien('${ma}','${muc}',true)">Kiểm tra tiền</button>
@@ -12133,9 +12140,9 @@ window.dcKiemTien = async function(ma, muc, bamTay) {
       dcVeThanhToan();
       return;
     }
-    if (tt) tt.innerHTML = kq.ckSoQuyChuaGan ? `<b style="color:#B45309">Sổ quỹ đã có ${fmt(kq.ckSoQuyChuaGan)}đ chuyển khoản cho phiếu này nhưng KiotViet chưa ghi vào phiếu đặt hàng — báo Admin kiểm tra.</b>`
-      : kq.them ? `Đã nhận thêm ${fmt(kq.them)}đ — chưa đủ` : (bamTay ? 'Chưa thấy tiền về (KiotViet có thể chậm vài chục giây)' : 'Đang chờ tiền về...');
-  } catch(e) { if (tt && bamTay) tt.textContent = 'Lỗi kiểm tra: ' + e.message; }
+    if (tt) tt.innerHTML = kq.ckSoQuyChuaGan ? `<b style="color:#B45309">Đã nhận ${fmt(kq.ckSoQuyChuaGan)}đ nhưng chưa khớp với phiếu — báo quản lý kiểm tra.</b>`
+      : kq.them ? `Đã nhận thêm ${fmt(kq.them)}đ — chưa đủ` : (bamTay ? 'Chưa nhận được tiền' : 'Chờ thanh toán...');
+  } catch(e) { console.warn('[kiểm tra tiền cọc]', e.message); if (tt && bamTay) tt.textContent = 'Chưa kiểm tra được, thử lại sau ít phút'; }
 };
 
 // ----- Bill phiếu cọc -----
@@ -12228,7 +12235,7 @@ window.dcYeuCauHuy = async function(id) {
     <label class="km-nhan">Tiền cọc ${fmt(p.daCoc || 0)}đ</label>
     <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin-bottom:6px;cursor:pointer"><input type="radio" name="dc-hoan" value="1" checked style="width:auto;margin:0"> Hoàn cọc cho khách</label>
     <label style="display:flex;gap:8px;align-items:center;font-size:14px;cursor:pointer"><input type="radio" name="dc-hoan" value="0" style="width:auto;margin:0"> Cửa hàng giữ cọc</label>
-    <p class="info-note" style="margin-top:10px">Phiếu chuyển sang "Chờ duyệt hủy" — Admin duyệt mới hủy bên KiotViet và trả hàng về tồn bán được. Khách muốn đổi hàng thì dùng Sửa phiếu, không cần hủy.</p>`,
+    <p class="info-note" style="margin-top:10px">Phiếu chuyển sang "Chờ duyệt hủy" — Admin duyệt mới hủy phiếu và trả hàng về tồn bán được. Khách muốn đổi hàng thì dùng Sửa phiếu, không cần hủy.</p>`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('dc-huy').style.display='none'">Đóng</button>
      <button class="btn-g" style="flex:1;margin:0;background:#DC2626" onclick="dcGuiHuy('${id}')">Gửi yêu cầu hủy</button>`);
   ddbCanhGiua?.('dc-huy');
@@ -12248,7 +12255,7 @@ window.dcDuyetHuy = async function(id, dongY) {
       [{ gt: '1', nhan: 'Hoàn cọc cho khách' }, { gt: '0', nhan: 'Cửa hàng giữ cọc' }], hoanCoc ? '1' : '0', (g) => ok(g)));
     if (chon == null) return;
     hoanCoc = chon === '1';
-    if (!await hoiXacNhan(`Hủy phiếu ${p.maPhieu} bên KiotViet (${p.kiotvietCode})?\n\n${hoanCoc ? `Hoàn ${fmt(p.daCoc || 0)}đ cho khách` : `Cửa hàng giữ ${fmt(p.daCoc || 0)}đ tiền cọc`} · hàng trả về tồn bán được.`, { nutDongY: 'Duyệt hủy' })) return;
+    if (!await hoiXacNhan(`Hủy phiếu ${p.maPhieu}?\n\n${hoanCoc ? `Hoàn ${fmt(p.daCoc || 0)}đ cho khách` : `Cửa hàng giữ ${fmt(p.daCoc || 0)}đ tiền cọc`} · hàng trả về tồn bán được.`, { nutDongY: 'Duyệt hủy' })) return;
   } else if (!await hoiXacNhan(`Từ chối hủy phiếu ${p.maPhieu}? Phiếu tiếp tục giữ hàng.`, { nutDongY: 'Từ chối' })) return;
   try {
     const kq = await dcGoi('dc-duyet-huy', { ma: id, dongY, hoanCoc });
@@ -21875,7 +21882,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v540</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v541</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -21929,7 +21936,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v540</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v541</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -21975,7 +21982,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v540</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v541</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
