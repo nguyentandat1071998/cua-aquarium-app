@@ -2329,7 +2329,7 @@ window.switchModule = function(mod) {
 };
 
 // Nhập hàng: ai vào được Nhập hàng thì xem được danh sách (máy chủ chỉ trả phiếu kho mình được nhập)
-function coQuyenDsPhieu(mod) { return mod === 'baoca' || ((mod === 'nhaphang' || mod === 'dathang' || mod === 'dungnb' || mod === 'datcoc') ? coQuyen(mod) : coQuyen(mod + '_xemds')); }
+function coQuyenDsPhieu(mod) { return mod === 'baoca' || (mod === 'xuat' && coQuyen('xh_duyet')) || ((mod === 'nhaphang' || mod === 'dathang' || mod === 'dungnb' || mod === 'datcoc') ? coQuyen(mod) : coQuyen(mod + '_xemds')); }
 window.switchSub = function(sub) {
   if (sub === 'thongke' && activeModule !== 'baoca') sub = 'tao';
   if (sub === 'ds' && !coQuyenDsPhieu(activeModule)) {
@@ -7218,7 +7218,7 @@ function sqFormPhieu(p) {
     <div class="field"><label>${sqSoan.loai === 'thu' ? 'Người nộp' : 'Người nhận'} (không bắt buộc)</label>
       <input id="sq-dt" maxlength="80" value="${escHtml(p.doiTac?.ten || '')}" placeholder="${sqSoan.loai === 'thu' ? 'VD: tên người nộp' : 'VD: shipper GHN, cửa hàng ABC'}"></div>
     <div class="field"><label>Ghi chú</label><input id="sq-gc" maxlength="300" value="${escHtml(p.ghiChu || '')}"></div>
-    <div class="field"><label>Ảnh hóa đơn / chứng từ ${sqSoan.loai === 'chi' ? '<span style="color:#DC2626">(bắt buộc)</span>' : '(không bắt buộc)'}</label>
+    <div class="field"><label>Ảnh hóa đơn / chứng từ ${sqSoan.loai === 'chi' && currentUserData?.role !== 'admin' ? '<span style="color:#DC2626">(bắt buộc)</span>' : '(không bắt buộc)'}</label>
       <div id="sq-anh-ds" style="display:flex;gap:8px;flex-wrap:wrap"></div>
       <label class="sq-nut-anh">📷 Chụp / chọn ảnh<input type="file" accept="image/*" multiple style="display:none" onchange="sqChonAnh(this)"></label></div>`;
 }
@@ -7262,7 +7262,7 @@ window.sqLuu = async function() {
   const danhMuc = String(document.getElementById('sq-dm')?.value || '').trim();
   if (soTien < 1000) { showToast('Nhập số tiền', true); return; }
   if (!danhMuc) { showToast('Nhập danh mục', true); return; }
-  if (s.loai === 'chi' && !s.anhCu.length && !s.anhMoi.length) { showToast('Phiếu chi cần ảnh hóa đơn / chứng từ', true); return; }
+  if (s.loai === 'chi' && !s.anhCu.length && !s.anhMoi.length && currentUserData?.role !== 'admin') { showToast('Phiếu chi cần ảnh hóa đơn / chứng từ', true); return; }
   const nut = document.getElementById('sq-nut-luu');
   const datNut = (t, khoa) => { if (nut) { nut.textContent = t; nut.disabled = khoa; } };
   try {
@@ -7375,11 +7375,15 @@ function sqVeKC() {
         ${p.uid !== k.toi ? `<button class="btn-xs" onclick="sqThuHoanKC('${p.id}')">Đã thu</button>` : ''}</div>`).join('')}</div>` : ''}
     ${dong.length ? dong.map(d => {
       const lanCuoi = d.ket[0];
+      // Chỉ còn giữ quỹ đầu ca (chưa bán/chi gì thêm) -> coi như xong ca, không cần nút Kết ca
+      const chiQuy = !!d.n && !d.n.laQuanLy && d.n.phieu.filter(p => p.trangThai === 'hieu_luc').every(p => p.hangMuc === 'noi_bo' && p.loai === 'thu' && p.cach === 'tienmat');
       const phu = d.n ? `${d.n.soPhieu} phiếu tiền mặt${d.n.choDuyet ? ` · <span style="color:#B45309">${d.n.choDuyet} chi chờ duyệt</span>` : ''}${lanCuoi ? ` · đã kết ca ${d.ket.length} lần` : ''}`
         : `${d.ket.length > 1 ? d.ket.length + ' lần · ' : ''}lần cuối ${sqGioChu(lanCuoi.luc)} · ${escHtml(lanCuoi.nguoiKet)} nhận ${fmt(Math.abs(lanCuoi.nhan))}đ`;
-      const phai = d.n ? `<div style="text-align:right"><div class="sq-ghi" style="margin:0">${d.n.phaiNop >= 0 ? 'Đang giữ' : 'Cửa hàng trả lại'}</div>
+      const phai = d.n && !chiQuy ? `<div style="text-align:right"><div class="sq-ghi" style="margin:0">${d.n.phaiNop >= 0 ? 'Đang giữ' : 'Cửa hàng trả lại'}</div>
           <b style="font-size:17px" class="${d.n.phaiNop < 0 ? 'do' : ''}">${fmt(Math.abs(d.n.phaiNop))}đ</b></div>` : '';
-      const nut = d.n ? (k.quanLy && d.uid !== k.toi ? `<button class="btn-g sq-nut-kc" onclick="event.stopPropagation();sqMoKetCa('${d.uid}')">${d.n.laQuanLy ? 'Nhận tiền' : 'Kết ca'}</button>` : '<span class="sq-nhan vang">Chưa kết ca</span>')
+      const nut = chiQuy ? `<div style="text-align:right">${lanCuoi ? '<span class="sq-nhan xanh-nen">✓ Đã kết ca</span>' : ''}<div class="sq-ghi" style="margin:3px 0 0">Giữ quỹ đầu ca <b>${fmt(d.n.phaiNop)}đ</b></div>
+          ${k.quanLy && d.uid !== k.toi ? `<button class="btn-xs" style="margin-top:3px" onclick="event.stopPropagation();sqMoKetCa('${d.uid}')">Thu lại quỹ</button>` : ''}</div>`
+        : d.n ? (k.quanLy && d.uid !== k.toi ? `<button class="btn-g sq-nut-kc" onclick="event.stopPropagation();sqMoKetCa('${d.uid}')">${d.n.laQuanLy ? 'Nhận tiền' : 'Kết ca'}</button>` : '<span class="sq-nhan vang">Chưa kết ca</span>')
         : '<span class="sq-nhan xanh-nen">✓ Đã kết ca</span>';
       const coChi = (d.n?.phieu || []).some(p => p.loai === 'chi' && p.cach === 'tienmat' && p.trangThai === 'hieu_luc' && p.hangMuc !== 'noi_bo') || (d.n?.chiCa || []).length > 0;
       const hang = `<div class="sq-dong sq-dong-kc"${k.quanLy ? ` onclick="sqChiTietKC('${d.uid}')"` : ''}>
@@ -14240,6 +14244,7 @@ const DANH_SACH_MODULE = [
   { key: 'xuat', ten: 'Xuất hủy', con: [
     { key: 'xh_kho_ch', ten: 'Xuất hủy kho Cửa hàng' },
     { key: 'xh_kho_san', ten: 'Xuất hủy Kho Online' },
+    { key: 'xh_duyet', ten: 'Duyệt phiếu xuất hủy có hàng ngoài danh mục hủy thẳng (VD: phụ kiện hư hỏng)' },
     { key: 'xuat_xemds', ten: 'Xem danh sách phiếu' },
     { key: 'xuat_sua', ten: 'Sửa / xóa phiếu' },
     { key: 'xuat_xuatfile', ten: 'Xuất file' }
@@ -16793,7 +16798,7 @@ window.xhChonHang = function(skuId) {
   if (!sp) return;
   if (!xhAnhCho.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
   if (sp.laCombo) { showToast('Combo không xuất hủy trực tiếp — hủy từng món', true); return; }
-  if (!skuDuocXuatHuy(sp)) { showToast('Hàng này ngoài danh mục bạn được xuất hủy', true); return; }
+  if (!skuDuocXuatHuy(sp) && !coQuyen('xh_duyet')) showToast('Hàng ngoài danh mục hủy thẳng — phiếu sẽ chờ duyệt');
   if (!currentPhieu.items.some(i => i.skuId === skuId)) {
     const gia = Number(sp.gia) || 0;
     currentPhieu.items.push({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia, tong: gia });
@@ -16853,7 +16858,7 @@ function veXuatHuyTao() {
       <div style="display:flex;gap:8px;align-items:center">
         ${sku?.anhFileId ? `<img src="${anhThumbUrl(sku.anhFileId,120)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
         <div style="flex:1;min-width:0">
-          <b style="font-size:14px">${escHtml(it.ten)}</b>
+          <b style="font-size:14px">${escHtml(it.ten)}</b>${sku && !skuDuocXuatHuy(sku) && !coQuyen('xh_duyet') ? ' <span style="font-size:10px;font-weight:700;color:#fff;background:#D97706;padding:1px 6px;border-radius:4px">Cần duyệt</span>' : ''}
           <div style="font-size:11px;color:var(--text2)">${escHtml(it.sku)} · ${fmt(it.gia)}đ${ton !== null ? ` · tồn <b style="color:${it.sl > ton ? 'var(--red)' : 'inherit'}">${ton}</b>` : ''}</div>
         </div>
         <button class="btn-xs" style="width:30px;padding:6px" onclick="adjXuatQty(${i},-1)">−</button>
@@ -16886,7 +16891,7 @@ function veXuatHuyTao() {
     ${laAdmin ? `<button class="btn-xs" style="margin-top:6px" onclick="chonAnhTuMay('xuat')">🖼 Chọn ảnh từ máy (Admin)</button>` : ''}` : `<p class="info-note">Đã đủ ${XH_TOI_DA_ANH} ảnh — lưu phiếu này rồi tạo phiếu mới.</p>`);
 
   el.innerHTML = theHang + khoiCho;
-  if (xhAnhCho.length) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, true);
+  if (xhAnhCho.length) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, false, s => !s.laCombo);
 }
 
 window.removeXuatItem = function(i) {
@@ -16917,7 +16922,10 @@ window.submitXuat = async function() {
   const kho = xhKho;
   if (!kho || !dsKhoHuyDuocPhep().includes(kho)) { showToast('Bạn không có quyền xuất hủy ở kho này', true); return; }
   const kh = KHO_HUY[kho];
-  if (!await hoiXacNhan(`Lưu phiếu xuất hủy ở ${kh.ten}?`, { nutDongY: 'Lưu phiếu', nguy: true })) return;
+  const canDuyet = coQuyen('xh_duyet') ? [] : currentPhieu.items.filter(i => { const s = allSKUs.find(x => x.id === i.skuId); return s && !skuDuocXuatHuy(s); });
+  if (!await hoiXacNhan(canDuyet.length
+    ? `Phiếu có hàng cần duyệt:\n${canDuyet.map(i => '· ' + i.ten).join('\n')}\n\nLưu phiếu ở ${kh.ten} và gửi chờ duyệt? (Duyệt xong mới trừ kho)`
+    : `Lưu phiếu xuất hủy ở ${kh.ten}?`, { nutDongY: canDuyet.length ? 'Gửi chờ duyệt' : 'Lưu phiếu', nguy: true })) return;
   const btn = document.getElementById('btn-xuat-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
   try {
@@ -16941,7 +16949,7 @@ window.submitXuat = async function() {
     currentPhieu = { items: [], photos: [] };
     xhAnhCho = [];
     renderXuatItems();
-    showToast('Tạo phiếu thành công');
+    showToast(kq.choDuyet ? 'Đã gửi phiếu — chờ duyệt' : 'Tạo phiếu thành công');
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
   veXuatHuyTao();
@@ -17095,7 +17103,15 @@ const PL = {
   xuat: { col: 'phieu_huy', ten: 'phiếu xuất hủy', mau: 'var(--red)', quyenSua: 'xuat_sua', quyenFile: 'xuat_xuatfile',
     loai: (p) => khoHuyCuaPhieu(p), tenLoai: (p) => KHO_HUY[khoHuyCuaPhieu(p)].ten, tieuDeLoai: 'KHO',
     dsLoai: [['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']], coGia: true,
-    loaiCuaToi: () => dsKhoHuyDuocPhep() },
+    loaiCuaToi: () => dsKhoHuyDuocPhep(),
+    trangThai: (p) => p.trangThai === 'cho_duyet' ? 'choduyet' : p.trangThai === 'tu_choi' ? 'tuchoi' : plTrangThai(p),
+    dsTrangThai: [['binhthuong', 'Bình thường'], ['dasua', 'Đã sửa'], ['daxoa', 'Đã xóa'], ['choduyet', 'Chờ duyệt'], ['tuchoi', 'Từ chối']],
+    nhan: (p) => p.trangThai === 'cho_duyet' ? '<span style="font-size:11px;color:#fff;background:#D97706;padding:1px 7px;border-radius:4px;font-weight:600">Chờ duyệt</span>'
+      : p.trangThai === 'tu_choi' ? '<span style="font-size:11px;color:#fff;background:#DC2626;padding:1px 7px;border-radius:4px;font-weight:600">Từ chối</span>'
+      : p.trangThai === 'da_duyet' ? `<span style="font-size:11px;color:#16A34A;font-weight:600">Đã duyệt${p.kiotvietCode ? ' · ' + escHtml(p.kiotvietCode) : ''}</span>` : '',
+    dongPhu: (p) => p.trangThai === 'cho_duyet' && coQuyen('xh_duyet')
+      ? `<div style="display:flex;gap:6px;margin-top:6px" onclick="event.stopPropagation()"><button class="btn-xs" style="background:#16A34A;color:#fff" onclick="xhDuyet('${p.id}',true)">Duyệt</button><button class="btn-xs" style="color:#DC2626" onclick="xhDuyet('${p.id}',false)">Từ chối</button></div>`
+      : p.trangThai === 'tu_choi' && p.lyDoTuChoi ? `<div style="font-size:12px;color:#DC2626;margin-top:3px">Lý do: ${escHtml(p.lyDoTuChoi)}</div>` : '' },
   // Nhập hàng: tải qua máy chủ (chỉ phiếu kho mình được nhập), trạng thái Phiếu tạm / Đã lưu
   nhaphang: { col: 'phieu_nhap_san', ten: 'phiếu nhập kho', mau: '#2563EB', quyenSua: null, quyenFile: null,
     loai: (p) => p.kho === 'ch' ? 'ch' : 'san', tenLoai: (p) => KHO_NHAP[p.kho === 'ch' ? 'ch' : 'san'].ten, tieuDeLoai: 'KHO',
@@ -17143,6 +17159,22 @@ async function plTai(mod) {
 }
 window.loadNhapList = () => plTai('nhap');
 window.loadXuatList = () => plTai('xuat');
+// Duyệt / từ chối phiếu xuất hủy có hàng ngoài danh mục (quyền xh_duyet)
+window.xhDuyet = async function(id, dongY) {
+  const p = plTimPhieu('xuat', id); if (!p) return;
+  let lyDo = '';
+  if (dongY) { if (!await hoiXacNhan(`Duyệt phiếu ${p.maPhieu}?\n\n${(p.items || []).map(i => `· ${i.ten} ×${i.sl}`).join('\n')}\n\nTạo phiếu xuất hủy bên KiotViet và trừ kho.`, { nutDongY: 'Duyệt' })) return; }
+  else { lyDo = await hoiNhap('Lý do từ chối:'); if (lyDo === null) return; if (!String(lyDo).trim()) { showToast('Nhập lý do', true); return; } }
+  try {
+    const idToken = await currentUser.getIdToken();
+    const r = await fetch(WORKER_URL, { method: 'POST', headers: { 'x-action': 'duyet-phieu-huy', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ maPhieu: id, dongY, lyDo }) });
+    const kq = await r.json();
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    showToast(dongY ? `Đã duyệt${kq.kiotvietCode ? ' · ' + kq.kiotvietCode : ''}` : 'Đã từ chối phiếu');
+    if (dongY) loadSKUs();
+    plTai('xuat');
+  } catch(e) { alert('Không xử lý được: ' + loiDeHieu(e.message)); }
+};
 
 function plTrangThai(p) { return p.deleted ? 'daxoa' : (p.versions?.length ? 'dasua' : 'binhthuong'); }
 function plQuaLoc(mod, p) {
@@ -17216,7 +17248,7 @@ function plVe(mod) {
   const tim = plTimChu[mod];
   const ds = plDsLoc(mod);
   const soLoc = plSoBoLoc(mod);
-  const conHieuLuc = ds.filter(p => !p.deleted);
+  const conHieuLuc = ds.filter(p => !p.deleted && !(mod === 'xuat' && ['cho_duyet', 'tu_choi'].includes(p.trangThai)));
   const tongSL = conHieuLuc.reduce((s, p) => s + (Number(p.tongSL) || 0), 0);
   const tongGia = conHieuLuc.reduce((s, p) => s + (Number(p.tongGia) || 0), 0);
   const coGia = plCoGia(C);
@@ -17533,8 +17565,11 @@ window.plXem = function(mod, id) {
   }).join('');
   // Ảnh chung (phiếu cũ / chuyển kho — chưa gắn theo mã hàng)
   const anhCT = (p.photos || []).filter(a => !a.skuId).map(a => `<img src="${a.thumb || a.dataUrl}" onclick="${plMoAnh(a)}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer">`).join('');
-  const suaDuoc = !!C.quyenSua && coQuyen(C.quyenSua);
-  const chan = mod === 'nhaphang'
+  const suaDuoc = !!C.quyenSua && coQuyen(C.quyenSua) && !['cho_duyet', 'tu_choi'].includes(p.trangThai);
+  const chan = mod === 'xuat' && p.trangThai === 'cho_duyet' ? (coQuyen('xh_duyet')
+      ? `<button class="btn-outline" style="flex:1;color:#DC2626" onclick="document.getElementById('pl-ct-modal').style.display='none';xhDuyet('${p.id}',false)">Từ chối</button>
+         <button class="btn-g" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';xhDuyet('${p.id}',true)">Duyệt · trừ kho</button>` : '')
+    : mod === 'nhaphang'
     ? (p.trangThai === 'tam' && dsKhoNhapDuocPhep().includes(p.kho)
       ? `<button class="btn-g" style="flex:1;margin:0;background:#2563EB" onclick="nhMoPhieu('${p.id}')">${nhCoDuyet() ? 'Mở phiếu · điền giá & lưu' : 'Mở phiếu để sửa'}</button>` : '')
     : suaDuoc ? (p.deleted
@@ -20683,7 +20718,7 @@ function veChonNhomXuatHuy(prefix, v) {
     <input type="checkbox" class="${prefix}-xhnhom" value="${escHtml(t)}" ${ds.includes(t) ? 'checked' : ''} ${tatCa ? 'disabled' : ''}> ${escHtml(t)}</label>`;
   return `
     <div style="border:1px dashed var(--border);border-radius:8px;padding:8px 10px;margin-top:2px">
-      <div style="font-size:12px;font-weight:600;margin-bottom:4px">Danh mục được xuất hủy</div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:4px">Danh mục được xuất hủy thẳng <span style="font-weight:400;color:var(--text2)">(hàng ngoài danh mục: phiếu chờ duyệt)</span></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:4px">
         <input type="checkbox" id="${prefix}-xhnhom-tatca" ${tatCa ? 'checked' : ''}
           onchange="document.querySelectorAll('.${prefix}-xhnhom').forEach(x => x.disabled = this.checked)"> Tất cả danh mục</label>
@@ -22013,7 +22048,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v549</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v551</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22067,7 +22102,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v549</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v551</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22113,7 +22148,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v549</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v551</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
