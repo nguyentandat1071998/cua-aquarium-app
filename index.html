@@ -2145,7 +2145,7 @@ if (!LA_BAN_DEMO) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'bc_ngay', tknhap: 'bc_tk_nhap', tkxuat: 'bc_tk_xuat', nhaphang: 'nhaphang', dathang: 'dathang',
-  hanghoa: 'hanghoa', banhang: 'banhang', dungnb: 'dungnb', datcoc: 'datcoc', thuchi: 'soquy', ketca: 'ketca',
+  hanghoa: 'hanghoa', banhang: 'banhang', dungnb: 'dungnb', datcoc: 'datcoc', thuchi: 'soquy', ketca: 'ketca', hanghoan: 'hanghoan',
   donbanle: 'donbanle', khachhang: 'khachhang', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
   chamcong: 'chamcong', luongnv: 'luong'
 };
@@ -2228,6 +2228,13 @@ window.switchModule = function(mod) {
     document.getElementById('panel-donbanle-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderDonDaBan();
+    return;
+  }
+  if (mod === 'hanghoan') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-hanghoan-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderHangHoan();
     return;
   }
   if (mod === 'thuchi' || mod === 'ketca') {
@@ -14316,6 +14323,7 @@ const DANH_SACH_MODULE = [
     { key: 'dn_duyet', ten: 'Duyệt / từ chối phiếu xuất dùng nội bộ' },
     { key: 'dn_xemds', ten: 'Xem phiếu của mọi người (không tick: chỉ phiếu của mình)' }
   ]},
+  { key: 'hanghoan', ten: 'Xác nhận hàng hoàn (đơn sàn giao thất bại / khách trả về)', con: [] },
   { key: 'dathang', ten: 'Đặt hàng (nhà cung cấp)', con: [
     { key: 'dh_giavon', ten: 'Nhập / xem giá vốn, tổng tiền đơn' },
     { key: 'dh_thanhtoan', ten: 'Ghi thanh toán cho nhà cung cấp' }
@@ -14468,6 +14476,7 @@ const NHOM_MENU = [
     { key: 'nhap',      ten: 'Chuyển kho',     quyen: 'nhap',      moGi: () => switchModule('nhap') },
     { key: 'xuat',      ten: 'Xuất hủy',       quyen: 'xuat',      moGi: () => switchModule('xuat') },
     { key: 'dungnb',    ten: 'Xuất dùng nội bộ', quyen: 'dungnb',  moGi: () => switchModule('dungnb') },
+    { key: 'hanghoan',  ten: 'Hàng hoàn',      quyen: 'hanghoan',  moGi: () => switchModule('hanghoan') },
     { key: 'dathang',   ten: 'Đặt hàng',       quyen: 'dathang',   moGi: () => switchModule('dathang') },
     { key: 'nhaphang',  ten: 'Nhập kho',       quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') }
   ]},
@@ -14933,7 +14942,7 @@ async function moModuleMacDinhTheoQuyen() {
   const oVt = document.getElementById('user-role'); if (oVt) oVt.textContent = nhanVaiTro(currentUserData);
   const thuTuUuTien = [
     ['banhang','banhang'], ['datcoc','datcoc'], ['ketca','ketca'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
-    ['xuat','xuat'], ['dungnb','dungnb'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['dathang','dathang'], ['lichca','lichca'], ['chamcong','chamcong'],
+    ['xuat','xuat'], ['dungnb','dungnb'], ['hanghoan','hanghoan'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['dathang','dathang'], ['lichca','lichca'], ['chamcong','chamcong'],
     ['luong','luongnv'], ['soquy','thuchi'], ['bc_ngay','baocao'], ['bc_tk_nhap','tknhap'], ['bc_tk_xuat','tkxuat']
   ];
   // Mở từ liên kết (tab mới) -> vào đúng mục đó
@@ -17589,6 +17598,147 @@ window.dnXuLy = async function(id, loai) {
     showToast(loai === 'duyet' ? `Đã duyệt — ${kq.kiotvietCode || ''}` : loai === 'tuchoi' ? (p.giuTon ? 'Đã từ chối — hàng trả lại kho' : 'Đã từ chối') : 'Đã hủy phiếu, hoàn tồn');
     dnTaiDs(); loadSKUs();
   } catch(e) { showToast('Không xử lý được: ' + e.message, true); }
+};
+
+
+// ==========================================================================
+// ===== HÀNG HOÀN (đơn sàn giao thất bại / khách trả về) =====
+// Giống màn "Đơn trả hàng" của KiotViet: kiện về tới cửa hàng thì quét mã vận đơn, kiểm hàng
+// (nguyên vẹn / hỏng / mất) rồi bấm Xác nhận đã nhận. Máy chủ gửi xác nhận sang KiotViet:
+// KiotViet tạo phiếu trả hàng, nhập kho phần nguyên vẹn, tự xuất hủy phần hỏng, báo lên sàn.
+// App cộng tồn Kho Online phần nguyên vẹn.
+// ==========================================================================
+let hhoDs = [], hhoDangVe = 0, hhoTab = 'gtb', hhoTim = '', hhoDangTai = false, hhoLoi = '', hhoSoNgay = 30;
+let hhoMoDon = null;   // { don, dong:[...], nhap:{} }
+const HHO_SAN = { ShopeeOrder: ['Shopee', '#EE4D2D'], ShopeeReturnRequest: ['Shopee', '#EE4D2D'], TiktokShopOrder: ['TikTok', '#111'], TiktokReturnRequest: ['TikTok', '#111'],
+  LazadaOrder: ['Lazada', '#0F146D'], LazadaReturnRequest: ['Lazada', '#0F146D'] };
+const hhoSan = (k) => HHO_SAN[k] || [String(k || '').replace(/Order|ReturnRequest|Shop/g, '') || 'Sàn', '#6B7280'];
+async function renderHangHoan() {
+  const el = document.getElementById('hanghoan-content'); if (!el) return;
+  hhoVe();
+  await hhoTai();
+}
+async function hhoTai() {
+  hhoDangTai = true; hhoLoi = ''; hhoVe();
+  try {
+    const kq = await goiWorkerAdmin('hh-hoan-ds', { soNgay: hhoSoNgay });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    hhoDs = kq.ds || []; hhoDangVe = kq.dangVe || 0;
+  } catch(e) { hhoLoi = e.message; }
+  hhoDangTai = false; hhoVe();
+}
+window.hhoTai = hhoTai;
+function hhoKhop(d) {
+  const t = hhoTim.trim().toLowerCase();
+  if (!t) return true;
+  return [d.vanDon, d.orderId, d.returnId, ...(d.hang || []).map(h => h.ten + ' ' + h.sku)].some(x => String(x || '').toLowerCase().includes(t));
+}
+function hhoVe() {
+  const el = document.getElementById('hanghoan-content'); if (!el) return;
+  const dem = (l) => hhoDs.filter(d => d.loai === l).length;
+  const ds = hhoDs.filter(d => d.loai === hhoTab && hhoKhop(d));
+  const tab = (k, t) => `<button onclick="hhoDoiTab('${k}')" style="flex:1;border:none;border-bottom:2.5px solid ${hhoTab === k ? '#EA580C' : 'transparent'};background:none;padding:10px 6px;font-size:13.5px;cursor:pointer;color:${hhoTab === k ? '#EA580C' : 'var(--text2)'};font-weight:${hhoTab === k ? 700 : 500}">${t}${dem(k) ? ` <span style="background:${hhoTab === k ? '#EA580C' : 'var(--text2)'};color:#fff;border-radius:9px;padding:1px 7px;font-size:11px">${dem(k)}</span>` : ''}</button>`;
+  const ngay = (s) => s ? new Date(s * 1000).toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : '';
+  el.innerHTML = `<div style="max-width:720px;margin:0 auto">
+    <div class="field sku-wrap" style="margin-bottom:8px">
+      <input type="text" id="hho-tim" placeholder="Quét / nhập mã vận đơn hoặc mã đơn..." autocomplete="off" value="${escHtml(hhoTim)}"
+        oninput="hhoDatTim(this.value)" onkeydown="if(event.key==='Enter'){hhoQuet()}" style="min-height:46px;padding:11px 12px 11px 40px;font-size:15px;border-color:#FDBA74;
+        background:#fff url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E&quot;) no-repeat 12px center / 18px 18px">
+    </div>
+    <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:10px">${tab('gtb', 'Giao thất bại')}${tab('tra', 'Khách trả hàng')}</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;color:var(--text2);margin-bottom:8px">
+      <span>${hhoDangVe ? `Còn ${hhoDangVe} đơn đang trên đường hoàn về` : 'Đơn sàn đã báo hoàn về kho, chờ xác nhận'}</span>
+      <button class="btn-xs" onclick="hhoTai()">↻ Tải lại</button></div>
+    ${hhoDangTai && !hhoDs.length ? '<div class="loading">Đang tải hàng hoàn...</div>'
+      : hhoLoi ? `<p class="info-note" style="color:#B91C1C">Không tải được: ${escHtml(loiDeHieu(hhoLoi))}</p>`
+      : !ds.length ? `<p class="info-note">${hhoTim ? 'Không thấy đơn khớp mã vừa nhập.' : `Không có đơn nào chờ xác nhận trong ${hhoSoNgay} ngày qua.`}</p>`
+      : ds.map(d => { const [san, mau] = hhoSan(d.kind); const k = escHtml(d.returnId || d.orderId);
+        return `<div style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${mau};border-radius:10px;padding:10px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+            <div style="min-width:0"><span style="font-size:11px;font-weight:700;color:#fff;background:${mau};padding:1px 7px;border-radius:4px">${escHtml(san)}</span>
+              <b style="font-size:14px;margin-left:4px">${escHtml(d.orderId)}</b></div>
+            <span style="font-size:12px;color:var(--text2);white-space:nowrap">${ngay(d.luc)}</span></div>
+          <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${d.vanDon ? `Vận đơn <b style="color:var(--text)">${escHtml(d.vanDon)}</b>` : ''}${d.donVi ? ' · ' + escHtml(d.donVi) : ''}${d.lyDo ? ' · ' + escHtml(d.lyDo) : ''}</div>
+          <div style="margin-top:6px">${(d.hang || []).map(h => `<div style="display:flex;gap:8px;align-items:center;padding:3px 0">
+            ${h.anh ? `<img src="${escHtml(h.anh)}" loading="lazy" style="width:40px;height:40px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--bg)">` : '<div style="width:40px;height:40px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>'}
+            <div style="flex:1;min-width:0;font-size:13px">${escHtml(h.ten)}<div style="font-size:11px;color:var(--text2)">${escHtml(h.bienThe || h.sku || '')}</div></div>
+            <b style="font-size:13px">×${h.sl}</b></div>`).join('')}</div>
+          <button class="btn-g" style="width:100%;margin:8px 0 0;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>
+        </div>`; }).join('')}
+    ${!hhoDangTai && !hhoLoi && hhoSoNgay < 90 ? `<button class="btn-outline" style="width:100%;margin-top:4px" onclick="hhoXemCu()">Xem cả đơn cũ hơn (90 ngày)</button>` : ''}
+  </div>`;
+}
+window.hhoDoiTab = (t) => { hhoTab = t; hhoVe(); };
+window.hhoXemCu = () => { hhoSoNgay = 90; hhoTai(); };
+window.hhoDatTim = (v) => { hhoTim = v || ''; const o = document.getElementById('hho-tim'); const vt = o?.selectionStart; hhoVe(); const o2 = document.getElementById('hho-tim'); if (o2) { o2.focus(); try { o2.setSelectionRange(vt, vt); } catch(e) {} } };
+// Quét mã vận đơn: khớp đúng một đơn thì mở luôn cửa sổ xác nhận
+window.hhoQuet = function() {
+  const ds = hhoDs.filter(hhoKhop);
+  if (ds.length === 1) { hhoTab = ds[0].loai; hhoMo(ds[0].returnId || ds[0].orderId); }
+  else if (!ds.length) showToast('Không thấy đơn chờ xác nhận khớp mã này', true);
+  else { const l = ds[0].loai; if (ds.every(d => d.loai === l)) hhoTab = l; hhoVe(); }
+};
+window.hhoMo = async function(khoa) {
+  const don = hhoDs.find(d => (d.returnId || d.orderId) === khoa); if (!don) return;
+  hhoMoDon = { don, dong: null, nhap: {}, dangTai: true };
+  hhoVeKhung();
+  try {
+    const kq = await goiWorkerAdmin('hh-hoan-chi-tiet', { orderId: don.orderId, returnId: don.returnId });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    if (hhoMoDon?.don !== don) return;
+    hhoMoDon.dong = kq.dong; hhoMoDon.maHoaDon = kq.maHoaDon;
+    kq.dong.forEach((d, i) => { hhoMoDon.nhap[i] = { nhan: d.sl, hong: 0, mat: 0 }; });
+  } catch(e) { if (hhoMoDon) hhoMoDon.loi = e.message; }
+  if (hhoMoDon) { hhoMoDon.dangTai = false; hhoVeKhung(); }
+};
+function hhoVeKhung() {
+  const M = hhoMoDon; if (!M) return;
+  const d = M.don, [san] = hhoSan(d.kind);
+  const tongHong = M.dong ? M.dong.reduce((a, x, i) => a + (M.nhap[i]?.hong || 0), 0) : 0;
+  const tongMat = M.dong ? M.dong.reduce((a, x, i) => a + (M.nhap[i]?.mat || 0), 0) : 0;
+  const o = (i, k, v, max) => `<input type="number" inputmode="numeric" min="0" max="${max}" value="${v}" onchange="hhoDat(${i},'${k}',this.value)" style="width:58px;padding:6px;text-align:center;font-size:15px;font-weight:600">`;
+  ddbMoKhung('hho-modal', 'Xác nhận đã nhận hàng hoàn', `${escHtml(san)} · ${escHtml(d.orderId)}${d.vanDon ? ' · VĐ ' + escHtml(d.vanDon) : ''}`,
+    M.dangTai ? '<div class="loading">Đang lấy hàng trong đơn...</div>'
+    : M.loi ? `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(M.loi))}</p>`
+    : `${M.dong.map((x, i) => { const n = M.nhap[i]; const lech = n.nhan + n.hong + n.mat !== x.sl;
+        return `<div style="border:1px solid ${n.hong || n.mat ? '#F59E0B' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:8px;background:${n.hong || n.mat ? '#FFFBEB' : 'var(--surface)'}">
+          <div style="font-weight:600;font-size:13.5px">${escHtml(x.ten)}</div>
+          <div style="font-size:11.5px;color:var(--text2)">${escHtml(x.ma)} · số lượng trả về <b>${x.sl}</b></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:7px;font-size:12px;color:var(--text2)">
+            <label style="display:flex;flex-direction:column;gap:3px">Nguyên vẹn${o(i, 'nhan', n.nhan, x.sl)}</label>
+            <label style="display:flex;flex-direction:column;gap:3px">Hỏng${o(i, 'hong', n.hong, x.sl)}</label>
+            <label style="display:flex;flex-direction:column;gap:3px">Mất${o(i, 'mat', n.mat, x.sl)}</label>
+          </div>${lech ? `<div style="font-size:11.5px;color:#DC2626;margin-top:4px">Nguyên vẹn + hỏng + mất phải bằng ${x.sl}</div>` : ''}</div>`; }).join('')}
+      <div class="info-note" style="font-size:12px">Nguyên vẹn: nhập lại kho bán tiếp.${tongHong ? ' Hỏng: tự tạo phiếu xuất hủy.' : ''}${tongMat ? ' Mất: không nhập kho — khiếu nại với sàn / đơn vị vận chuyển.' : ''}<br>Xác nhận xong sẽ báo lên sàn, không hoàn tác được.</div>`,
+    `<button class="btn-outline" style="flex:1" onclick="hhoDong()">Thoát</button>
+     ${M.dong ? `<button class="btn-g" id="hho-nut" style="flex:2;margin:0;background:#EA580C" onclick="hhoXacNhan()">Xác nhận đã nhận</button>` : ''}`);
+  ddbCanhGiua?.('hho-modal');
+}
+window.hhoDong = function() { const m = document.getElementById('hho-modal'); if (m) m.style.display = 'none'; hhoMoDon = null; };
+// Sửa hỏng / mất thì phần nguyên vẹn tự trừ theo cho đủ số trả về
+window.hhoDat = function(i, k, v) {
+  const M = hhoMoDon; if (!M?.dong) return;
+  const sl = M.dong[i].sl, n = M.nhap[i];
+  n[k] = Math.max(0, Math.min(sl, parseInt(v) || 0));
+  if (k !== 'nhan') n.nhan = Math.max(0, sl - n.hong - n.mat);
+  hhoVeKhung();
+};
+window.hhoXacNhan = async function() {
+  const M = hhoMoDon; if (!M?.dong) return;
+  if (M.dong.some((x, i) => M.nhap[i].nhan + M.nhap[i].hong + M.nhap[i].mat !== x.sl)) { showToast('Số lượng chưa khớp', true); return; }
+  const nhan = M.dong.reduce((a, x, i) => a + M.nhap[i].nhan, 0), hong = M.dong.reduce((a, x, i) => a + M.nhap[i].hong, 0), mat = M.dong.reduce((a, x, i) => a + M.nhap[i].mat, 0);
+  if (!await hoiXacNhan(`Xác nhận đã nhận hàng hoàn đơn ${M.don.orderId}?\n\nNguyên vẹn ${nhan}${hong ? ` · hỏng ${hong}` : ''}${mat ? ` · mất ${mat}` : ''}\n\nKhông hoàn tác được.`, { nutDongY: 'Xác nhận' })) return;
+  const nut = document.getElementById('hho-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang xác nhận...'; }
+  try {
+    const d = M.don;
+    const kq = await goiWorkerAdmin('hh-hoan-xac-nhan', { orderId: d.orderId, returnId: d.returnId, kind: d.kind, shopId: d.shopId, shopName: d.shopName, loai: d.loai, vanDon: d.vanDon,
+      dong: M.dong.map((x, i) => ({ productId: x.productId, invoiceDetailId: x.invoiceDetailId, ...M.nhap[i] })) });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    hhoDs = hhoDs.filter(x => x !== d);
+    hhoDong(); hhoTim = ''; hhoVe();
+    showToast(`Đã xác nhận đơn ${d.orderId} · nhập lại kho ${kq.nhan}${kq.hong ? ` · hỏng ${kq.hong}` : ''}`);
+    loadSKUs();
+  } catch(e) { alert('Chưa xác nhận được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = 'Xác nhận đã nhận'; } }
 };
 
 window.xemAnhPhieu = async function(id) {
@@ -22325,7 +22475,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v560</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v561</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22379,7 +22529,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v560</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v561</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22425,7 +22575,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v560</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v561</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -22702,6 +22852,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
       <div class="panel" id="panel-thuchi-main" style="display:none"><div id="thuchi-content"></div></div>
       <div class="panel" id="panel-ketca-main" style="display:none"><div id="ketca-content"></div></div>
+      <div class="panel" id="panel-hanghoan-main" style="display:none"><div id="hanghoan-content"></div></div>
       <div class="panel" id="panel-khuyenmai-main" style="display:none">
         <div id="khuyenmai-content"></div>
       </div>
