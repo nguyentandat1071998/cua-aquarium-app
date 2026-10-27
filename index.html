@@ -12427,30 +12427,36 @@ function dcVeThanhToan() {
   t.tienMat = Math.min(con, Math.max(0, t.tienMat || 0));
   const canCK = Math.max(0, con - t.tienMat);
   const khachDua = t.khachDua ?? t.tienMat;
-  const chip = (gt, nhan) => `<button class="btn-xs" style="flex:1;padding:8px;${t.cachTra === gt ? `background:${DC_MAU};color:#fff;font-weight:700` : ''}" onclick="dcTTDat('cachTra','${gt}')">${nhan}</button>`;
-  const oTien = (gt, k) => `<input type="text" inputmode="numeric" value="${gt ? Number(gt).toLocaleString('vi-VN') : ''}" placeholder="0" oninput="dinhDangTien(this)" onchange="dcTTDat('${k}',docTien(this))" style="width:140px;text-align:right;font-weight:600">`;
+  const oTien = (gt, k) => `<input type="text" inputmode="numeric" value="${gt ? Number(gt).toLocaleString('vi-VN') : ''}" placeholder="0" oninput="dinhDangTien(this)" onchange="dcTTDat('${k}',docTien(this))" style="width:130px;padding:5px 7px;text-align:right;font-size:15px;font-weight:600">`;
+  // Giống Bán hàng: các dòng tiền theo cách trả, nút chọn cách trả dạng thả xuống, nút chính đổi theo số cần chuyển khoản
   ddbMoKhung('dc-tt', 'Thanh toán phiếu cọc', `${escHtml(t.p.maPhieu)} · ${escHtml(t.p.khachHang?.ten || '')}`, `
     <div style="font-size:13px;margin-bottom:8px">${(t.p.dongHang || []).map(d => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border)"><span>${escHtml(d.ten)} ×${d.soLuong}</span><b>${fmt(d.gia * d.soLuong - (d.giamGia || 0))}</b></div>`).join('')}</div>
     <div class="bh-o-tt">
       <div class="bh-dong-tt"><span>Tổng cộng</span><b>${fmt(t.tong)}đ</b></div>
       <div class="bh-dong-tt"><span>Đã cọc / đã trả</span><b style="color:${DC_MAU}">${fmt(t.daCoc)}đ</b></div>
-      <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px"><span>Còn thanh toán</span><b style="font-size:18px">${fmt(con)}đ</b></div>
+      <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px"><span>Còn thanh toán</span><b style="font-size:17px">${fmt(con)}đ</b></div>
+      ${con > 0 && t.cachTra === 'tienmat' ? `
+        <div class="bh-dong-tt"><span>Khách thanh toán</span>${oTien(khachDua, 'khachDua')}</div>
+        <div class="bh-dong-tt"><span>Tiền thừa trả khách</span><b style="color:${khachDua - t.tienMat < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(khachDua - t.tienMat)}đ</b></div>` : ''}
+      ${con > 0 && t.cachTra === 'ketHop' ? `
+        <div class="bh-dong-tt"><span>Tiền mặt</span>${oTien(t.tienMat, 'tienMat')}</div>
+        <div class="bh-dong-tt"><span>Chuyển khoản</span><b style="color:#2563EB">${fmt(canCK)}đ</b></div>` : ''}
     </div>
-    ${con > 0 ? `<div style="display:flex;gap:6px;margin:8px 0">${chip('tienmat', 'Tiền mặt')}${chip('chuyenkhoan', 'Chuyển khoản')}${chip('ketHop', 'Kết hợp')}</div>
-      ${t.cachTra !== 'chuyenkhoan' ? `<div class="bh-dong-tt"><span>Tiền mặt</span>${t.cachTra === 'ketHop' ? oTien(t.tienMat, 'tienMat') : `<b>${fmt(t.tienMat)}đ</b>`}</div>
-        <div class="bh-dong-tt"><span>Khách đưa</span>${oTien(khachDua, 'khachDua')}</div>
-        <div class="bh-dong-tt"><span>Tiền thừa</span><b style="color:${khachDua - t.tienMat < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(khachDua - t.tienMat)}đ</b></div>` : ''}
-      ${canCK > 0 ? `<div class="bh-dong-tt"><span>Chuyển khoản</span><b style="color:#2563EB">${fmt(canCK)}đ</b></div>
-        <button class="btn-outline" style="width:100%;margin-top:6px" onclick="dcTaoLaiQR('${t.ma}',${canCK},'tt')">Hiện mã QR ${fmt(canCK)}đ</button>` : ''}` : '<p class="info-note" style="margin-top:8px">Khách đã trả đủ — bấm Hoàn tất để xuất hóa đơn.</p>'}`,
+    ${con > 0 ? `<button class="bh-chon-tt" aria-label="Cách thanh toán" style="width:100%;font-weight:600;margin-top:8px" onclick="dcTTMoChonCach()">${DC_CACH_TRA[t.cachTra] || 'Tiền mặt'}</button>`
+      : '<p class="info-note" style="margin-top:8px">Khách đã trả đủ — bấm Hoàn tất.</p>'}`,
     `<button class="btn-outline" style="flex:1" onclick="dcDongTT()">Đóng</button>
-     <button class="btn-g" id="dc-tt-nut" style="flex:2;margin:0;background:${DC_MAU}" onclick="dcHoanTatTT()" ${canCK > 0 ? 'disabled title="Chờ nhận chuyển khoản"' : ''}>${canCK > 0 ? 'Chờ chuyển khoản...' : 'Hoàn tất · xuất hóa đơn'}</button>`);
+     <button class="btn-g" id="dc-tt-nut" style="flex:2;margin:0;background:${DC_MAU}" onclick="${canCK > 0 ? `dcTaoLaiQR('${t.ma}',${canCK},'tt')` : 'dcHoanTatTT()'}">${canCK > 0 ? 'Mã QR thanh toán · ' + fmt(canCK) + 'đ' : 'Hoàn tất'}</button>`);
   ddbCanhGiua?.('dc-tt');
 }
+window.dcTTMoChonCach = function() {
+  const t = dcTTDangMo; if (!t) return;
+  moBangChon('Cách thanh toán', Object.entries(DC_CACH_TRA).map(([gt, nhan]) => ({ gt, nhan })), t.cachTra || 'tienmat', (ma) => dcTTDat('cachTra', ma));
+};
 window.dcDongTT = function() { const m = document.getElementById('dc-tt'); if (m) m.style.display = 'none'; dcTTDangMo = null; };
 window.dcTTDat = function(k, v) {
   const t = dcTTDangMo; if (!t) return;
   const con = Math.max(0, t.tong - t.daCoc);
-  if (k === 'cachTra') { t.cachTra = v; t.tienMat = v === 'tienmat' ? con : v === 'chuyenkhoan' ? 0 : Math.min(con, t.tienMat || 0); t.khachDua = null; }
+  if (k === 'cachTra') { t.cachTra = v; t.tienMat = v === 'tienmat' ? con : 0; t.khachDua = null; }
   else if (k === 'tienMat') { t.tienMat = Math.min(con, Math.max(0, Number(v) || 0)); t.khachDua = null; }
   else if (k === 'khachDua') t.khachDua = Math.max(0, Number(v) || 0);
   dcVeThanhToan();
@@ -12460,7 +12466,7 @@ window.dcHoanTatTT = async function() {
   const con = Math.max(0, t.tong - t.daCoc);
   if (t.daCoc + t.tienMat < t.tong) { showToast('Chưa nhận đủ tiền', true); return; }
   if ((t.khachDua ?? t.tienMat) < t.tienMat) { showToast('Khách đưa chưa đủ tiền mặt', true); return; }
-  if (!await hoiXacNhan(`Xuất hóa đơn cho phiếu ${t.p.maPhieu}?\n\nTổng ${fmt(t.tong)}đ · đã cọc ${fmt(t.daCoc)}đ${t.tienMat ? `\nThu tiền mặt ${fmt(t.tienMat)}đ` : ''}`, { nutDongY: 'Xuất hóa đơn' })) return;
+  if (!await hoiXacNhan(`Hoàn tất phiếu ${t.p.maPhieu}?\n\nTổng ${fmt(t.tong)}đ · đã cọc ${fmt(t.daCoc)}đ${t.tienMat ? `\nThu tiền mặt ${fmt(t.tienMat)}đ` : ''}`, { nutDongY: 'Hoàn tất' })) return;
   const nut = document.getElementById('dc-tt-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang xử lý...'; }
   try {
     const kq = await dcGoi('dc-thanh-toan', { ma: t.ma, tienMat: t.tienMat, khachDua: t.khachDua ?? t.tienMat });
@@ -12469,7 +12475,7 @@ window.dcHoanTatTT = async function() {
     await loadSKUs();
     const b = billTuDonBanLe({ ...kq.don, taoLuc: new Date() });
     dcInHoacXem(b);
-  } catch(e) { alert('Không thanh toán được: ' + e.message); if (nut) { nut.disabled = false; nut.textContent = 'Hoàn tất · xuất hóa đơn'; } }
+  } catch(e) { alert('Không thanh toán được: ' + e.message); if (nut) { nut.disabled = false; nut.textContent = 'Hoàn tất'; } }
 };
 
 // ==========================================================================
@@ -22197,7 +22203,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v556</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v557</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22251,7 +22257,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v556</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v557</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22297,7 +22303,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v556</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v557</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
