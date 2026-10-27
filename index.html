@@ -18055,7 +18055,7 @@ window.kkTaoPhieu = async function() {
 };
 async function kkTaoTuDs(ids, kho, nhom, tieuDe) {
   if (!ids.length) { showToast('Chưa có mã nào', true); return; }
-  if (ids.length > 1500) { showToast('Tối đa 1500 mã một phiếu — chọn bớt nhóm', true); return; }
+  if (ids.length > 1000) { showToast('Tối đa 1000 mã một phiếu — chọn bớt nhóm', true); return; }
   const nut = document.getElementById('kk-nut-tao'); if (nut) { nut.disabled = true; nut.textContent = 'Đang tạo...'; }
   try {
     const kq = await goiWorkerAdmin('kk-tao', { kho, branchId: branchKhoTheoMa(kho === 'san' ? 'san' : 'ch'), nhom, tieuDe, skuIds: ids });
@@ -18152,7 +18152,7 @@ function kkVeChiTiet() {
   const nutDuoi = [];
   if (p.trangThai === 'dang_kiem') {
     if (p.uidTao === currentUser?.uid || kkDuocDuyet()) nutDuoi.push(`<button class="btn-outline" style="flex:1;margin:0" onclick="kkHuy()">Hủy phiếu</button>`);
-    nutDuoi.push(`<button class="btn-g" style="flex:2;margin:0" onclick="kkLuuTam()">Lưu tạm</button>`);
+    nutDuoi.push(`<button class="btn-g" style="flex:2;margin:0;background:#2563EB" onclick="kkLuuTam()">Lưu tạm</button>`);
     if (kkDuocDuyet()) nutDuoi.push(`<button class="btn-g" style="flex:2;margin:0;background:#15803D" onclick="kkDuyet()">Duyệt</button>`);
   } else if (p.trangThai === 'cho_duyet' && kkDuocDuyet()) {
     nutDuoi.push(`<button class="btn-outline" style="flex:1;margin:0" onclick="kkHuy()">Hủy</button>`,
@@ -18166,7 +18166,7 @@ function kkVeChiTiet() {
       <span style="font-size:11.5px;font-weight:700;color:${mau};background:${nen};padding:2px 9px;border-radius:10px">${tt}</span></div>
     ${p.trangThai === 'dang_kiem' && p.lyDoTraLai ? `<div class="info-note" style="background:#FEF2F2;color:#991B1B;border-color:#FCA5A5">Phiếu bị trả lại${p.nguoiTraLai?.ten ? ' bởi ' + escHtml(p.nguoiTraLai.ten) : ''}: ${escHtml(p.lyDoTraLai)}</div>` : ''}
     ${p.trangThai === 'cho_duyet' ? `<div class="info-note">Đã lưu tạm bởi ${escHtml(p.nguoiGui?.ten || '')} ${kkNgay(p.guiLuc)}${p.ghiChu ? ` · Ghi chú: ${escHtml(p.ghiChu)}` : ''}${kkDuocDuyet() ? '' : ' — đang chờ duyệt.'}</div>` : ''}
-    ${p.trangThai === 'da_duyet' ? `<div class="info-note" style="background:#F0FDF4;border-color:#86EFAC;color:#166534">Đã duyệt bởi ${escHtml(p.duyet?.nguoi?.ten || '')} ${kkNgay(p.lucDuyet)} · kiểm ${p.duyet?.soKiem || 0} mã, lệch ${p.duyet?.soLech || 0}${p.duyet?.tang ? ` · tăng ${p.duyet.tang}` : ''}${p.duyet?.giam ? ` · giảm ${p.duyet.giam}` : ''}${p.duyet?.kvCode ? ` · KiotViet ${escHtml(p.duyet.kvCode)}` : ''}${p.duyet?.chuaKiem ? ` · ${p.duyet.chuaKiem} mã không kiểm (giữ nguyên)` : ''}</div>` : ''}
+    ${p.trangThai === 'da_duyet' ? `<div class="info-note" style="background:#F0FDF4;border-color:#86EFAC;color:#166534">Đã duyệt bởi ${escHtml(p.duyet?.nguoi?.ten || '')} ${kkNgay(p.lucDuyet)} · kiểm ${p.duyet?.soKiem || 0} mã, lệch ${p.duyet?.soLech || 0}${p.duyet?.tang ? ` · tăng ${p.duyet.tang}` : ''}${p.duyet?.giam ? ` · giảm ${p.duyet.giam}` : ''}${p.duyet?.kvCode ? ` · KiotViet ${escHtml(p.duyet.kvCode)} (${p.duyet.kvSoDong || 0} mã)` : ' · KiotViet đã khớp sẵn'}${p.duyet?.chuaKiem ? ` · ${p.duyet.chuaKiem} mã không kiểm (giữ nguyên)` : ''}</div>` : ''}
     <div style="display:flex;align-items:center;gap:8px;margin:6px 0 8px">
       <div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden"><div style="height:100%;width:${dong.length ? Math.round(da.length * 100 / dong.length) : 0}%;background:#2563EB"></div></div>
       <span style="font-size:13px;white-space:nowrap">Đã kiểm <b>${da.length}/${dong.length}</b></span></div>
@@ -18251,7 +18251,7 @@ window.kkDuyet = async function() {
   const skuMap = new Map(allSKUs.map(s => [s.id, s]));
   const tien = lech.reduce((a, d) => a + d.lech * (Number(skuMap.get(d.id)?.gia) || 0), 0);
   const ct = lech.slice(0, 12).map(d => `· ${d.ten}: ${d.lech > 0 ? '+' : ''}${d.lech}`).join('\n') + (lech.length > 12 ? `\n… và ${lech.length - 12} mã khác` : '');
-  if (!await hoiXacNhan(`Duyệt phiếu ${p.ma} (${kkTenKho(p.kho)})?\n\nĐã kiểm ${ds.length} mã · lệch ${lech.length} mã${tang ? ` · tăng ${tang}` : ''}${giam ? ` · giảm ${giam}` : ''}${lech.length ? `\nGiá trị lệch (giá bán): ${tien > 0 ? '+' : ''}${fmt(tien)}đ` : ''}${lech.length ? '\n\n' + ct : ''}${chua ? `\n\n⚠️ ${chua} mã chưa kiểm — giữ nguyên tồn.` : ''}\n\nTồn được cộng/trừ theo chênh lệch lúc đếm (hàng bán sau lúc đếm vẫn tính đúng)${lech.length ? ', KiotViet tạo phiếu kiểm kho cân bằng' : ''}. Không hoàn tác được.`, { nutDongY: 'Duyệt' })) return;
+  if (!await hoiXacNhan(`Duyệt phiếu ${p.ma} (${kkTenKho(p.kho)})?\n\nĐã kiểm ${ds.length} mã · lệch ${lech.length} mã${tang ? ` · tăng ${tang}` : ''}${giam ? ` · giảm ${giam}` : ''}${lech.length ? `\nGiá trị lệch (giá bán): ${tien > 0 ? '+' : ''}${fmt(tien)}đ` : ''}${lech.length ? '\n\n' + ct : ''}${chua ? `\n\n⚠️ ${chua} mã chưa kiểm — giữ nguyên tồn.` : ''}\n\nTồn mới = số đếm được, cộng/trừ hàng bán/nhập sau lúc đếm. KiotViet được đặt khớp đúng số này (phiếu kiểm kho cân bằng). Không hoàn tác được.`, { nutDongY: 'Duyệt' })) return;
   try {
     showToast('Đang duyệt...');
     const kq = await goiWorkerAdmin('kk-duyet', { id: p.id });
@@ -18334,7 +18334,7 @@ function kkHtmlChuaKiem() {
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
       <span style="font-size:13.5px"><b>${ds.length}</b> mã${ds.length - chuaPhieu.length ? ` · ${ds.length - chuaPhieu.length} mã đang nằm trong phiếu kiểm` : ''}</span>
-      ${chuaPhieu.length ? `<button class="btn-g" id="kk-nut-tao" style="width:auto!important;margin:0;padding:8px 14px" onclick="kkTaoTuChuaKiem()">Tạo phiếu kiểm ${Math.min(chuaPhieu.length, 1500)} mã</button>` : ''}
+      ${chuaPhieu.length ? `<button class="btn-g" id="kk-nut-tao" style="width:auto!important;margin:0;padding:8px 14px" onclick="kkTaoTuChuaKiem()">Tạo phiếu kiểm ${Math.min(chuaPhieu.length, 1000)} mã</button>` : ''}
     </div>
     ${ds.slice(0, 400).map(({ s, luc }) => `<div style="display:flex;gap:8px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;margin-bottom:5px">
         <div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">${escHtml(s.ten)}</div>
@@ -18352,7 +18352,7 @@ window.kkTaoTuChuaKiem = async function() {
     .filter(s => !C.nhom || nhomCuoiCuaSku(s) === C.nhom || nhomCuoiCuaSku(s).startsWith(C.nhom + ' > '))
     .filter(s => !C.chiCoTon || layTon(s, kkMaKho(C.kho)) !== 0)
     .filter(s => { const l = kkThoiDiem(s[truong]); return C.moc === 'chua' ? !l : (!l || bayGio - l > ngayMoc * 86400000); })
-    .slice(0, 1500);
+    .slice(0, 1000);
   if (!await hoiXacNhan(`Tạo phiếu kiểm ${kkTenKho(C.kho)} gồm ${ds.length} mã chưa kiểm?`)) return;
   await kkTaoTuDs(ds.map(s => s.id), C.kho, C.nhom ? [C.nhom] : [], C.moc === 'chua' ? 'Mã chưa kiểm bao giờ' : `Mã quá ${C.moc} ngày chưa kiểm`);
 };
@@ -23183,7 +23183,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v568</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v569</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23237,7 +23237,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v568</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v569</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23283,7 +23283,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v568</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v569</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
