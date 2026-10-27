@@ -14331,6 +14331,7 @@ const DANH_SACH_MODULE = [
   { key: 'tmdt', nhom: true, ten: 'Sàn TMĐT', con: [
     { key: 'tmdt_donhang', ten: 'Đơn hàng sàn' },
     { key: 'tmdt_hoantra', ten: 'Đơn hoàn trả (xem, xác nhận đã nhận hàng hoàn)' },
+    { key: 'tmdt_hoantra_duyet', ten: 'Duyệt đơn hoàn trả nhập kho không đủ (có hàng hỏng / mất)' },
     { key: 'quetdonggoi', ten: 'Đóng gói' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
@@ -14767,7 +14768,7 @@ let unsubscribeVaiTroDoc = null;
 // ===== CÔNG TẮC TÍNH NĂNG (cau_hinh/tinh_nang, Admin bật/tắt ở Thiết lập › Hệ thống) =====
 // Sàn TMĐT: nhân viên thấy mục nào là theo quyền tick trong Vai trò.
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -17585,7 +17586,8 @@ const HHO_TABS = {
   tra: [['choxuly', 'Chờ xử lý'], ['dangve', 'Đang hoàn về'], ['cho', 'Chờ xác nhận hoàn'], ['thatlac', 'Thất lạc'], ['khieunai', 'Khiếu nại'], ['xong', 'Đã xử lý']]
 };
 let hhoNhom = 'gtb', hhoTab = 'cho', hhoSoNgay = 30, hhoTim = '', hhoDangTai = false, hhoLoi = '';
-let hhoDs = [], hhoDem = { gtb: {}, tra: {} }, hhoChiHoan = 0, hhoTong = 0, hhoLuot = 0;
+let hhoDs = [], hhoDem = { gtb: {}, tra: {} }, hhoChiHoan = 0, hhoTong = 0, hhoLuot = 0, hhoSoChoDuyet = 0, hhoChiChoDuyet = false;
+const hhoDuocDuyet = () => coQuyen('tmdt_hoantra_duyet');
 let hhoMoDon = null;   // cửa sổ xác nhận: { don, dong, nhap }
 const HHO_SAN = { ShopeeOrder: ['Shopee', '#EE4D2D'], ShopeeReturnRequest: ['Shopee', '#EE4D2D'], TiktokShopOrder: ['TikTok', '#111'], TiktokReturnRequest: ['TikTok', '#111'],
   TiktokShopReturnRequest: ['TikTok', '#111'], LazadaOrder: ['Lazada', '#0F146D'], LazadaReturnRequest: ['Lazada', '#0F146D'] };
@@ -17605,12 +17607,13 @@ async function hhoTai() {
     const kq = await goiWorkerAdmin('hh-hoan-ds', { nhom: hhoNhom, tab: hhoTab, soNgay: hhoSoNgay });
     if (luot !== hhoLuot) return;
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
-    hhoDs = kq.ds || []; hhoDem = kq.dem || hhoDem; hhoChiHoan = kq.chiHoanTien || 0; hhoTong = kq.tong || hhoDs.length;
+    hhoDs = kq.ds || []; hhoDem = kq.dem || hhoDem; hhoChiHoan = kq.chiHoanTien || 0; hhoTong = kq.tong || hhoDs.length; hhoSoChoDuyet = kq.soChoDuyet || 0;
   } catch(e) { if (luot === hhoLuot) { hhoLoi = e.message; hhoDs = []; } }
   if (luot === hhoLuot) { hhoDangTai = false; hhoVe(); }
 }
 window.hhoTai = hhoTai;
 function hhoKhop(d) {
+  if (hhoChiChoDuyet && !d.choDuyet) return false;
   const t = hhoTim.trim().toLowerCase();
   if (!t) return true;
   return [d.vanDon, d.vanDonHoan, d.orderId, d.returnId, ...(d.hang || []).map(h => h.ten + ' ' + h.sku)].some(x => String(x || '').toLowerCase().includes(t));
@@ -17628,6 +17631,9 @@ function hhoVe() {
     ${hhoChiHoan ? `<div onclick="hhoXemChiHoan()" style="cursor:pointer;background:#FEF2F2;border:1.5px solid #FCA5A5;border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;gap:10px;align-items:center">
       <span style="font-size:20px">⚠️</span><div style="flex:1;font-size:13.5px;color:#991B1B"><b>${hhoChiHoan} yêu cầu "Chỉ hoàn tiền"</b> đang chờ xử lý — khách không gửi trả hàng, cần xem và khiếu nại trên sàn nếu không đồng ý.</div>
       <span style="font-size:12.5px;color:#B91C1C;font-weight:700;white-space:nowrap">Xem ›</span></div>` : ''}
+    ${hhoTab === 'cho' && hhoSoChoDuyet && hhoDuocDuyet() ? `<div onclick="hhoLocChoDuyet()" style="cursor:pointer;background:#FFFBEB;border:1.5px solid #FCD34D;border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;gap:10px;align-items:center">
+      <span style="font-size:20px">⏳</span><div style="flex:1;font-size:13.5px;color:#92400E"><b>${hhoSoChoDuyet} đơn hoàn chờ duyệt</b> — nhân viên báo có hàng hỏng / mất, chưa nhập kho.</div>
+      <span style="font-size:12.5px;color:#B45309;font-weight:700;white-space:nowrap">${hhoChiChoDuyet ? 'Xem tất cả ›' : 'Xem ›'}</span></div>` : ''}
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:stretch">
       <input type="text" id="hho-tim" placeholder="Quét / nhập mã vận đơn, mã đơn hoặc mã yêu cầu..." autocomplete="off" value="${escHtml(hhoTim)}"
         oninput="hhoDatTim(this.value)" onkeydown="if(event.key==='Enter'){hhoQuetMa(this.value)}" style="flex:1;min-width:0;min-height:46px;padding:11px 12px 11px 40px;font-size:15px;border:1.5px solid #FDBA74;border-radius:8px;
@@ -17664,15 +17670,46 @@ function hhoVe() {
             <b style="font-size:13px">×${h.sl}</b></div>`).join('')}</div>
           ${(d.anhBC || []).length ? `<div style="font-size:11.5px;color:var(--text2);margin-top:5px">Bằng chứng từ người mua</div>
             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${d.anhBC.map(u => `<img src="${escHtml(u)}" loading="lazy" onclick="viewPhoto('${escHtml(u)}')" style="width:58px;height:58px;object-fit:cover;border-radius:6px;cursor:pointer;background:var(--bg)">`).join('')}</div>` : ''}
+          ${hhoTab === 'cho' ? hhoVeTrangThaiDuyet(d) : ''}
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
             <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px" onclick="hhoXem('${k}')">Xem chi tiết</button>
-            ${hhoTab === 'cho' ? `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>` : ''}
+            ${hhoTab !== 'cho' ? '' : d.choDuyet ? (hhoDuocDuyet()
+                ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#B91C1C;border-color:#FCA5A5" onclick="hhoTuChoi('${k}')">Từ chối</button>
+                   <button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#D97706" onclick="hhoMo('${k}', true)">Duyệt</button>`
+                : `<span style="align-self:center;font-size:12.5px;font-weight:700;color:#B45309">⏳ Đang chờ duyệt</span>`)
+              : `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>`}
           </div>
         </div>`; }).join('')}
     ${!hhoDangTai && !hhoLoi && hhoSoNgay < 90 ? `<button class="btn-outline" style="width:100%;margin-top:4px" onclick="hhoXemCu()">Xem cả đơn cũ hơn (90 ngày)</button>` : ''}
   </div>`;
 }
-window.hhoDoiNhom = (n) => { if (hhoNhom === n) return; hhoNhom = n; hhoTab = 'cho'; hhoDs = []; hhoTai(); };
+// Đơn chờ duyệt / bị từ chối: hiện số lượng nhân viên đã khai + ghi chú
+function hhoVeTrangThaiDuyet(d) {
+  const x = d.choDuyet || d.tuChoi; if (!x) return '';
+  const gio = x.luc ? new Date(x.luc).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+  const dong = (x.dong || []).map(l => `<div style="font-size:12px">· ${escHtml(l.ten)}: nguyên vẹn <b>${l.nhan}</b>${l.hong ? ` · <b style="color:#B91C1C">hỏng ${l.hong}</b>` : ''}${l.mat ? ` · <b style="color:#B91C1C">mất ${l.mat}</b>` : ''}</div>`).join('');
+  return d.choDuyet
+    ? `<div style="margin-top:7px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;padding:7px 9px">
+        <div style="font-size:12.5px;font-weight:700;color:#92400E;margin-bottom:2px">⏳ Chờ duyệt — ${escHtml(x.nguoi || '')}${gio ? ' · ' + gio : ''}</div>${dong}
+        ${x.ghiChu ? `<div style="font-size:12px;margin-top:3px;color:var(--text2)">Ghi chú: ${escHtml(x.ghiChu)}</div>` : ''}</div>`
+    : `<div style="margin-top:7px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:7px 9px;font-size:12.5px;color:#991B1B">
+        <b>Bị từ chối</b>${x.nguoiDuyet ? ' bởi ' + escHtml(x.nguoiDuyet) : ''}${x.lyDo ? ': ' + escHtml(x.lyDo) : ''} — kiểm tra lại và xác nhận lại.</div>`;
+}
+window.hhoLocChoDuyet = () => { hhoChiChoDuyet = !hhoChiChoDuyet; hhoVe(); };
+window.hhoTuChoi = async function(khoa) {
+  const d = hhoDs.find(x => hhoKhoa(x) === khoa); if (!d) return;
+  const lyDo = await hoiNhap(`Từ chối đơn ${d.orderId}?\nNhân viên sẽ phải kiểm tra và xác nhận lại.\n\nLý do:`);
+  if (lyDo === null) return;
+  if (!String(lyDo).trim()) { showToast('Nhập lý do', true); return; }
+  try {
+    const kq = await goiWorkerAdmin('hh-hoan-duyet', { khoa, dongY: false, lyDo });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    d.tuChoi = { ...d.choDuyet, lyDo, nguoiDuyet: currentUserData?.ten || '' }; delete d.choDuyet;
+    hhoSoChoDuyet = Math.max(0, hhoSoChoDuyet - 1); if (!hhoSoChoDuyet) hhoChiChoDuyet = false;
+    hhoVe(); showToast('Đã từ chối — đơn về lại chờ xác nhận');
+  } catch(e) { alert('Không xử lý được: ' + loiDeHieu(e.message)); }
+};
+window.hhoDoiNhom = (n) => { if (hhoNhom === n) return; hhoNhom = n; hhoTab = 'cho'; hhoDs = []; hhoChiChoDuyet = false; hhoTai(); };
 window.hhoDoiTab = (t) => { if (hhoTab === t) return; hhoTab = t; hhoDs = []; hhoTai(); };
 window.hhoXemCu = () => { hhoSoNgay = 90; hhoTai(); };
 window.hhoXemChiHoan = () => { hhoNhom = 'tra'; hhoTab = 'choxuly'; hhoDs = []; hhoTai(); };
@@ -17884,16 +17921,21 @@ window.hhoXem = async function(khoa) {
 };
 
 // ----- Xác nhận đã nhận hàng hoàn -----
-window.hhoMo = async function(khoa) {
+window.hhoMo = async function(khoa, duyet) {
   const don = hhoDs.find(d => hhoKhoa(d) === khoa); if (!don) return;
-  hhoMoDon = { don, dong: null, nhap: {}, dangTai: true };
+  if (don.choDuyet && !duyet) { if (hhoDuocDuyet()) duyet = true; else { showToast('Đơn này đang chờ duyệt', true); return; } }
+  hhoMoDon = { don, dong: null, nhap: {}, dangTai: true, duyet: !!(duyet && don.choDuyet), ghiChu: '' };
   hhoVeKhung();
   try {
     const kq = await goiWorkerAdmin('hh-hoan-chi-tiet', { orderId: don.orderId, returnId: don.returnId });
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
     if (hhoMoDon?.don !== don) return;
     hhoMoDon.dong = kq.dong; hhoMoDon.maHoaDon = kq.maHoaDon;
-    kq.dong.forEach((d, i) => { hhoMoDon.nhap[i] = { nhan: d.sl, hong: 0, mat: 0 }; });
+    kq.dong.forEach((d, i) => {
+      // Duyệt: điền sẵn số nhân viên đã khai (người duyệt sửa được)
+      const c = hhoMoDon.duyet ? (don.choDuyet.dong || []).find(l => String(l.invoiceDetailId) === String(d.invoiceDetailId) && String(l.productId) === String(d.productId)) || don.choDuyet.dong?.[i] : null;
+      hhoMoDon.nhap[i] = c && c.nhan + c.hong + c.mat === d.sl ? { nhan: c.nhan, hong: c.hong, mat: c.mat } : { nhan: d.sl, hong: 0, mat: 0 };
+    });
   } catch(e) { if (hhoMoDon) hhoMoDon.loi = e.message; }
   if (hhoMoDon) { hhoMoDon.dangTai = false; hhoVeKhung(); }
 };
@@ -17903,7 +17945,8 @@ function hhoVeKhung() {
   const tongHong = M.dong ? M.dong.reduce((a, x, i) => a + (M.nhap[i]?.hong || 0), 0) : 0;
   const tongMat = M.dong ? M.dong.reduce((a, x, i) => a + (M.nhap[i]?.mat || 0), 0) : 0;
   const o = (i, k, v, max) => `<input type="number" inputmode="numeric" min="0" max="${max}" value="${v}" onchange="hhoDat(${i},'${k}',this.value)" style="width:58px;padding:6px;text-align:center;font-size:15px;font-weight:600">`;
-  ddbMoKhung('hho-modal', 'Xác nhận đã nhận hàng hoàn', `${escHtml(san)} · ${escHtml(d.orderId)}${d.vanDonHoan || d.vanDon ? ' · VĐ ' + escHtml(d.vanDonHoan || d.vanDon) : ''}`,
+  const canGuiDuyet = !M.duyet && (tongHong || tongMat) && !hhoDuocDuyet();
+  ddbMoKhung('hho-modal', M.duyet ? 'Duyệt đơn hoàn trả' : 'Xác nhận đã nhận hàng hoàn', `${escHtml(san)} · ${escHtml(d.orderId)}${d.vanDonHoan || d.vanDon ? ' · VĐ ' + escHtml(d.vanDonHoan || d.vanDon) : ''}`,
     M.dangTai ? '<div class="loading">Đang lấy hàng trong đơn...</div>'
     : M.loi ? `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(M.loi))}</p>`
     : `${M.dong.map((x, i) => { const n = M.nhap[i]; const lech = n.nhan + n.hong + n.mat !== x.sl;
@@ -17915,9 +17958,12 @@ function hhoVeKhung() {
             <label style="display:flex;flex-direction:column;gap:3px">Hỏng${o(i, 'hong', n.hong, x.sl)}</label>
             <label style="display:flex;flex-direction:column;gap:3px">Mất${o(i, 'mat', n.mat, x.sl)}</label>
           </div>${lech ? `<div style="font-size:11.5px;color:#DC2626;margin-top:4px">Nguyên vẹn + hỏng + mất phải bằng ${x.sl}</div>` : ''}</div>`; }).join('')}
-      <div class="info-note" style="font-size:12px">Nguyên vẹn: nhập lại kho bán tiếp.${tongHong ? ' Hỏng: tự tạo phiếu xuất hủy.' : ''}${tongMat ? ' Mất: không nhập kho.' : ''}</div>`,
+      ${M.duyet ? `<div style="font-size:12.5px;margin-bottom:6px;color:var(--text2)">Nhân viên <b>${escHtml(d.choDuyet.nguoi || '')}</b> đã khai số lượng trên${d.choDuyet.ghiChu ? ` · ghi chú: <i>${escHtml(d.choDuyet.ghiChu)}</i>` : ''}. Sửa lại nếu cần rồi duyệt.</div>`
+        : `<textarea id="hho-ghichu" rows="2" placeholder="Ghi chú (VD: cá chết 2 con, hộp móp...)" oninput="if(hhoMoDon)hhoMoDon.ghiChu=this.value" style="width:100%;box-sizing:border-box;padding:8px;font-size:13.5px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">${escHtml(M.ghiChu || '')}</textarea>`}
+      <div class="info-note" style="font-size:12px">Nguyên vẹn: nhập lại kho bán tiếp.${tongHong ? ' Hỏng: tự tạo phiếu xuất hủy.' : ''}${tongMat ? ' Mất: không nhập kho.' : ''}
+        ${canGuiDuyet ? '<br><b style="color:#B45309">Có hàng hỏng / mất nên đơn cần được duyệt — chưa nhập kho cho tới khi duyệt.</b>' : ''}</div>`,
     `<button class="btn-outline" style="flex:1" onclick="hhoDong()">Thoát</button>
-     ${M.dong ? `<button class="btn-g" id="hho-nut" style="flex:2;margin:0;background:#EA580C" onclick="hhoXacNhan()">Xác nhận đã nhận</button>` : ''}`);
+     ${M.dong ? `<button class="btn-g" id="hho-nut" style="flex:2;margin:0;background:${M.duyet ? '#D97706' : '#EA580C'}" onclick="hhoXacNhan()">${M.duyet ? 'Duyệt & nhập kho' : canGuiDuyet ? 'Gửi duyệt' : 'Xác nhận đã nhận'}</button>` : ''}`);
   ddbCanhGiua?.('hho-modal');
 }
 window.hhoDong = function() { const m = document.getElementById('hho-modal'); if (m) m.style.display = 'none'; hhoMoDon = null; };
@@ -17933,19 +17979,37 @@ window.hhoXacNhan = async function() {
   const M = hhoMoDon; if (!M?.dong) return;
   if (M.dong.some((x, i) => M.nhap[i].nhan + M.nhap[i].hong + M.nhap[i].mat !== x.sl)) { showToast('Số lượng chưa khớp', true); return; }
   const nhan = M.dong.reduce((a, x, i) => a + M.nhap[i].nhan, 0), hong = M.dong.reduce((a, x, i) => a + M.nhap[i].hong, 0), mat = M.dong.reduce((a, x, i) => a + M.nhap[i].mat, 0);
-  if (!await hoiXacNhan(`Xác nhận đã nhận hàng hoàn đơn ${M.don.orderId}?\n\nNguyên vẹn ${nhan}${hong ? ` · hỏng ${hong}` : ''}${mat ? ` · mất ${mat}` : ''}\n\nKhông hoàn tác được.`, { nutDongY: 'Xác nhận' })) return;
-  const nut = document.getElementById('hho-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang xác nhận...'; }
+  const guiDuyet = !M.duyet && (hong || mat) && !hhoDuocDuyet();
+  const soLuong = `Nguyên vẹn ${nhan}${hong ? ` · hỏng ${hong}` : ''}${mat ? ` · mất ${mat}` : ''}`;
+  if (guiDuyet && !String(M.ghiChu || '').trim()) { showToast('Có hàng hỏng / mất — ghi chú lý do để người duyệt nắm', true); document.getElementById('hho-ghichu')?.focus(); return; }
+  const cauHoi = M.duyet ? `Duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nGửi xác nhận sang KiotViet, nhập kho phần nguyên vẹn. Không hoàn tác được.`
+    : guiDuyet ? `Gửi duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nĐơn chưa nhập kho cho tới khi được duyệt.`
+    : `Xác nhận đã nhận hàng hoàn đơn ${M.don.orderId}?\n\n${soLuong}\n\nKhông hoàn tác được.`;
+  if (!await hoiXacNhan(cauHoi, { nutDongY: M.duyet ? 'Duyệt' : guiDuyet ? 'Gửi duyệt' : 'Xác nhận' })) return;
+  const nut = document.getElementById('hho-nut'), chuNut = nut?.textContent; if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
   try {
     const d = M.don;
-    const kq = await goiWorkerAdmin('hh-hoan-xac-nhan', { orderId: d.orderId, returnId: d.returnId, kind: d.kind, shopId: d.shopId, shopName: d.shopName, loai: d.loai, vanDon: d.vanDonHoan || d.vanDon,
-      dong: M.dong.map((x, i) => ({ productId: x.productId, invoiceDetailId: x.invoiceDetailId, ...M.nhap[i] })) });
+    const dong = M.dong.map((x, i) => ({ productId: x.productId, invoiceDetailId: x.invoiceDetailId, ...M.nhap[i] }));
+    const kq = M.duyet
+      ? await goiWorkerAdmin('hh-hoan-duyet', { khoa: hhoKhoa(d), dongY: true, dong })
+      : await goiWorkerAdmin('hh-hoan-xac-nhan', { orderId: d.orderId, returnId: d.returnId, kind: d.kind, shopId: d.shopId, shopName: d.shopName, loai: d.loai, vanDon: d.vanDonHoan || d.vanDon,
+          ghiChu: String(M.ghiChu || '').trim(), dong });
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    hhoDong(); hhoTim = '';
+    if (kq.choDuyet) {
+      d.choDuyet = { nguoi: currentUserData?.ten || '', luc: new Date().toISOString(), ghiChu: String(M.ghiChu || '').trim(),
+        dong: M.dong.map((x, i) => ({ ten: x.ten, sl: x.sl, productId: x.productId, invoiceDetailId: x.invoiceDetailId, ...M.nhap[i] })) };
+      delete d.tuChoi; hhoVe();
+      showToast(`Đã gửi duyệt đơn ${d.orderId}`);
+      return;
+    }
+    if (M.duyet) { hhoSoChoDuyet = Math.max(0, hhoSoChoDuyet - 1); if (!hhoSoChoDuyet) hhoChiChoDuyet = false; }
     hhoDs = hhoDs.filter(x => x !== d);
     if (hhoDem[hhoNhom]?.cho) hhoDem[hhoNhom].cho--;
-    hhoDong(); hhoTim = ''; hhoVe();
-    showToast(`Đã xác nhận đơn ${d.orderId} · nhập lại kho ${kq.nhan}${kq.hong ? ` · hỏng ${kq.hong}` : ''}`);
+    hhoVe();
+    showToast(`${M.duyet ? 'Đã duyệt' : 'Đã xác nhận'} đơn ${d.orderId} · nhập lại kho ${kq.nhan}${kq.hong ? ` · hỏng ${kq.hong}` : ''}`);
     loadSKUs();
-  } catch(e) { alert('Chưa xác nhận được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = 'Xác nhận đã nhận'; } }
+  } catch(e) { alert((M.duyet ? 'Chưa duyệt được: ' : 'Chưa gửi được: ') + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = chuNut; } }
 };
 
 window.xemAnhPhieu = async function(id) {
@@ -22682,7 +22746,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v566</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v567</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22736,7 +22800,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v566</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v567</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22782,7 +22846,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v566</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v567</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
