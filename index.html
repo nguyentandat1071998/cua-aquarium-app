@@ -18861,7 +18861,7 @@ async function qtDuLieuCuaHang(thang, donBanCoSan) {
   const [nam, th] = thang.split('-').map(Number);
   const cuoiThang = `${thang}-${String(new Date(nam, th, 0).getDate()).padStart(2, '0')}`;
   const dau = new Date(dauThang + 'T00:00:00'), cuoi = new Date(cuoiThang + 'T23:59:59');
-  const kq = { donBanCH: donBanCoSan, phieuHuy: undefined, mocHong: 0, dtSan: undefined };
+  const kq = { donBanCH: donBanCoSan, phieuHuy: undefined, mocHong: { chung: 0, theoLoc: {} }, dtSan: undefined };
   if (!kq.donBanCH) {
     try {
       const s = await getDocs(query(collection(db, 'don_ban_le'), where('taoLuc', '>=', dau), where('taoLuc', '<=', cuoi), limit(3000)));
@@ -18876,7 +18876,7 @@ async function qtDuLieuCuaHang(thang, donBanCoSan) {
   } catch(e) {}
   try {
     const mc = await getDoc(doc(db, 'moc_hang_hong', thang));
-    kq.mocHong = mc.exists() ? (Number(mc.data().soTien) || 0) : 0;
+    if (mc.exists()) kq.mocHong = { chung: Number(mc.data().soTien) || 0, theoLoc: mc.data().theoLoc || {} };
   } catch(e) {}
   if (coQuyen('luong_xemtatca') || currentUserData?.role === 'admin') {
     kq.dtSan = allDonHangSan.reduce((t, d) => {
@@ -18994,7 +18994,7 @@ async function tinhLuongTatCa(thang) {
   blDanhSachHienTai = ds;
   const tongHong = qtTienHuy(chung.phieuHuy, {});
   const hongTheoKho = { ch: qtTienHuy(chung.phieuHuy, { khoHuy: ['ch'] }), san: qtTienHuy(chung.phieuHuy, { khoHuy: ['san'] }) };
-  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, hongTheoKho, mocHong: chung.mocHong };
+  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, hongTheoKho, mocHong: chung.mocHong, phieuHuy: chung.phieuHuy || [] };
 }
 
 function veDanhSachLuong(dl) {
@@ -19064,16 +19064,27 @@ function veDanhSachLuong(dl) {
         <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">
           MỐC HÀNG HỎNG THÁNG ${th}/${nam}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-          <input type="text" inputmode="numeric" id="bl-moc-hong"
-            value="${dl.mocHong ? Number(dl.mocHong).toLocaleString('vi-VN') : ''}" placeholder="0"
-            oninput="dinhDangTien(this)" style="flex:1;text-align:right;padding:8px">
-          <span style="font-size:13px;color:var(--text2)">đ</span>
-          <button class="btn-xs" onclick="blLuuMocHong()">Lưu mốc</button>
-        </div>
-        <div style="font-size:12px;color:${dl.mocHong && dl.tongHong > dl.mocHong ? 'var(--red)' : 'var(--text2)'}">
-          Đã hủy trong tháng: <b>${fmt(dl.tongHong || 0)}đ</b>${dl.hongTheoKho ? ` <span style="font-size:11px">(Kho Cửa hàng ${fmt(dl.hongTheoKho.ch)}đ · Kho Online ${fmt(dl.hongTheoKho.san)}đ)</span>` : ''}
-          ${dl.mocHong ? ` · ${Math.round((dl.tongHong || 0) / dl.mocHong * 100)}% mốc` : ''}
+        ${(() => {
+          const ds = qtDsLocCanMoc();
+          if (!ds.length) return '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Chưa có công thức nào tính theo "Hàng hỏng so với mốc".</div>';
+          return ds.map(g => {
+            const moc = qtMocCua(dl, g.q), da = qtTienHuy(dl.phieuHuy, g.q);
+            return `<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-bottom:8px">
+              <div style="font-size:12.5px;font-weight:600">${escHtml(qtMoTaLocHuy(g.q))}</div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Dùng cho: ${escHtml(g.ten.join(', '))}</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <input type="text" inputmode="numeric" id="bl-moc-${g.khoa}" value="${moc ? Number(moc).toLocaleString('vi-VN') : ''}" placeholder="0"
+                  oninput="dinhDangTien(this)" style="flex:1;text-align:right;padding:8px">
+                <span style="font-size:13px;color:var(--text2)">đ</span>
+                <button class="btn-xs" onclick="blLuuMocHong('${g.khoa}')">Lưu mốc</button>
+              </div>
+              <div style="font-size:12px;color:${moc && da > moc ? 'var(--red)' : 'var(--text2)'}">
+                Đã hủy (đúng bộ lọc này): <b>${fmt(da)}đ</b>${moc ? ` · ${Math.round(da / moc * 100)}% mốc` : ' · <span style="color:#B45309">chưa đặt mốc</span>'}</div>
+            </div>`;
+          }).join('');
+        })()}
+        <div style="font-size:11.5px;color:var(--text2)">
+          Tổng đã hủy trong tháng: ${fmt(dl.tongHong || 0)}đ${dl.hongTheoKho ? ` (Kho Cửa hàng ${fmt(dl.hongTheoKho.ch)}đ · Kho Online ${fmt(dl.hongTheoKho.san)}đ)` : ''}
         </div>
       </div>` : ''}
 
@@ -19135,15 +19146,16 @@ window.blTinhLaiDong = function(uid) {
 // Phụ cấp lưu theo TỪNG NGƯỜI và TỪNG THÁNG — mỗi người mỗi khác, và tháng này
 // khác tháng kia, nên không để trong thiết lập chung được.
 // Mốc hàng hỏng đặt riêng từng tháng — tháng cao điểm cho phép hao hụt nhiều hơn
-window.blLuuMocHong = async function() {
+window.blLuuMocHong = async function(khoa) {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
-  const tien = docTien(document.getElementById('bl-moc-hong'));
+  if (!/^[a-z0-9_]{1,20}$/.test(String(khoa || ''))) return;
+  const tien = docTien(document.getElementById('bl-moc-' + khoa));
   try {
     await setDoc(doc(db, 'moc_hang_hong', blThang), {
-      thang: blThang, soTien: tien,
+      thang: blThang, theoLoc: { [khoa]: tien }, ...(khoa === QT_KHOA_TAT_CA ? { soTien: tien } : {}),
       datBoi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
       datLuc: serverTimestamp()
-    });
+    }, { merge: true });
     showToast(`Đã đặt mốc ${fmt(tien)}đ cho tháng này`);
     renderBangLuong();
   } catch(e) {
@@ -19841,6 +19853,37 @@ function qtLocHuy(it, q) {
   return qtLocHang(allSKUs.find(x => x.sku === it.sku || x.id === it.skuId), q?.nhomHang);
 }
 function qtTienHuy(ds, q) { return (ds || []).reduce((s, it) => qtLocHuy(it, q) ? s + (Number(it.tong) || 0) : s, 0); }
+// Mốc hàng hỏng đặt theo TỪNG BỘ LỌC (kho + nhóm hàng): công thức nào cùng bộ lọc thì dùng chung một mốc.
+// Khóa = chuỗi gọn của bộ lọc; bộ lọc "cả 2 kho, mọi nhóm" dùng luôn mốc cũ (soTien).
+const QT_KHOA_TAT_CA = 'tat_ca';
+function qtKhoaLocHuy(q) {
+  const kho = [...qtKhoHuy(q)].sort().join('+'), k = q?.nhomHang?.kieu || 'tat_ca', ds = [...(q?.nhomHang?.ds || [])].sort();
+  if (kho === 'ch+san' && (k === 'tat_ca' || !ds.length)) return QT_KHOA_TAT_CA;
+  const chuoi = kho + '|' + (k === 'tat_ca' || !ds.length ? 'tat_ca' : k + ':' + ds.join('|'));
+  let h = 5381; for (let i = 0; i < chuoi.length; i++) h = ((h << 5) + h + chuoi.charCodeAt(i)) >>> 0;
+  return 'l' + h.toString(36);
+}
+function qtMocCua(du, q) {
+  const m = du?.mocHong || {}, khoa = qtKhoaLocHuy(q);
+  const v = m.theoLoc?.[khoa] ?? (khoa === QT_KHOA_TAT_CA ? m.chung : 0);
+  return Number(v) || 0;
+}
+function qtMoTaLocHuy(q) {
+  const k = qtKhoHuy(q), n = q?.nhomHang;
+  const kho = k.length === 2 ? 'Cả 2 kho' : (k[0] === 'san' ? 'Kho Online' : 'Kho Cửa hàng');
+  return kho + ' · ' + (n?.kieu && n.kieu !== 'tat_ca' && (n.ds || []).length ? `${n.kieu === 'chi' ? 'chỉ' : 'trừ'} ${n.ds.map(x => x.split(' > ').pop()).join(', ')}` : 'mọi nhóm hàng');
+}
+// Các bộ lọc đang cần mốc (từ công thức "Hàng hỏng so với mốc" đang bật)
+function qtDsLocCanMoc() {
+  const m = new Map();
+  for (const q of QUY_TAC_THUONG) {
+    if (q.bat === false || q.coSo !== 'ty_le_hang_hong') continue;
+    const k = qtKhoaLocHuy(q);
+    if (!m.has(k)) m.set(k, { khoa: k, q, ten: [] });
+    m.get(k).ten.push(q.ten || '(chưa đặt tên)');
+  }
+  return [...m.values()];
+}
 async function napQuyTacThuong() {
   try {
     const d = await getDoc(doc(db, 'settings', 'quy_tac_thuong'));
@@ -19900,8 +19943,9 @@ function qtChiSo(coSo, q, du) {
     }
     case 'tien_hang_hong': return du.phieuHuy ? qtTienHuy(du.phieuHuy, q) : undefined;
     case 'ty_le_hang_hong': {
-      if (!du.phieuHuy || !(du.mocHong > 0)) return undefined;
-      return qtTienHuy(du.phieuHuy, q) / du.mocHong * 100;
+      const moc = qtMocCua(du, q);
+      if (!du.phieuHuy || !(moc > 0)) return undefined;
+      return qtTienHuy(du.phieuHuy, q) / moc * 100;
     }
   }
   return undefined;
@@ -19909,7 +19953,7 @@ function qtChiSo(coSo, q, du) {
 function qtTinh(q, du) {
   const v = qtChiSo(q.coSo, q, du);
   if (v === undefined) return { coSo: undefined, tien: 0, khongCo: true,
-    lyDo: q.coSo === 'ty_le_hang_hong' && du.phieuHuy && !(du.mocHong > 0) ? 'Chưa đặt mốc hàng hỏng tháng này' : '' };
+    lyDo: q.coSo === 'ty_le_hang_hong' && du.phieuHuy && !(qtMocCua(du, q) > 0) ? `Chưa đặt mốc hàng hỏng tháng này (${qtMoTaLocHuy(q)})` : '' };
   let tien = 0, ghiChu = '';
   const g = Number(q.giaTri) || 0;
   if (q.cachTinh === 'phan_tram') tien = v * g / 100;
@@ -20143,7 +20187,8 @@ function qtVeForm(moi) {
     <div class="field"><label>Áp dụng cho</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonVaiTro()">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || '?')).join(', ') : 'Mọi vai trò'}</button></div>
     <div class="field"><label>Tính theo</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCoSo('coSo')">${escHtml(cs.ten || '')}</button></div>
     ${cs.kho ? `<div class="field"><label>Kho</label><div style="display:flex;gap:14px;flex-wrap:wrap">
-      ${[['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']].map(([k, t]) => `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${(Array.isArray(q.khoHuy) ? q.khoHuy : ['ch', 'san']).includes(k) ? 'checked' : ''} onchange="qtDatKho('${k}',this.checked)" style="width:18px;height:18px;margin:0"> ${t}</label>`).join('')}</div></div>` : ''}
+      ${[['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']].map(([k, t]) => `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${(Array.isArray(q.khoHuy) ? q.khoHuy : ['ch', 'san']).includes(k) ? 'checked' : ''} onchange="qtDatKho('${k}',this.checked)" style="width:18px;height:18px;margin:0"> ${t}</label>`).join('')}</div>
+      ${q.coSo === 'ty_le_hang_hong' ? '<div style="font-size:11.5px;color:var(--text2);margin-top:4px">Mốc đặt hàng tháng ở Bảng lương, riêng cho đúng kho + nhóm hàng chọn ở đây. Công thức nào chọn giống nhau thì dùng chung một mốc.</div>' : ''}</div>` : ''}
     ${cs.nhom ? `<div class="field"><label>Nhóm hàng</label><div style="display:flex;gap:6px;margin-bottom:6px">
         ${chip((q.nhomHang?.kieu || 'tat_ca') === 'tat_ca', 'Tất cả', "qtDatNhom('tat_ca')")}${chip(q.nhomHang?.kieu === 'chi', 'Chỉ nhóm tick', "qtDatNhom('chi')")}${chip(q.nhomHang?.kieu === 'tru', 'Trừ nhóm tick', "qtDatNhom('tru')")}</div>
         ${(q.nhomHang?.kieu || 'tat_ca') !== 'tat_ca' ? qtCayNhom(q.nhomHang.ds || []) : ''}</div>` : ''}
@@ -22139,7 +22184,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v554</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v555</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22193,7 +22238,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v554</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v555</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22239,7 +22284,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v554</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v555</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
