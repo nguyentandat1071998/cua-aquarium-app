@@ -12145,16 +12145,24 @@ window.dcGui = async function() {
   if (p.cachTra === 'tienmat' && p.khachDua != null && p.khachDua < tienMat) { showToast('Khách đưa chưa đủ tiền cọc', true); return; }
   // Có chuyển khoản: giống Bán hàng — hiện mã QR, khách chuyển xong mới tạo phiếu. Khách đổi ý thì đóng mã, đổi sang tiền mặt.
   if (canCK > 0) {
+    // Mở lại mã cũ (cùng giỏ hàng, cùng số tiền, chưa quá 10 phút) thay vì tạo mã mới — khách có thể đã quét mã cũ
+    const vanTay = JSON.stringify([items, p.khach?.sdt || '', p.ghiChu || '', tienMat, canCK]);
+    if (dcNhapGanNhat && dcNhapGanNhat.vanTay === vanTay && Date.now() - dcNhapGanNhat.luc < 600000) {
+      dcMoQRNhap(dcNhapGanNhat.nhap, dcNhapGanNhat.anhQR, canCK, true);
+      return;
+    }
     khoa(true);
     dcVeKhungQR({ dangTao: true });
     try {
       const kq = await dcGoi('dc-luu', { items, khach: p.khach, ghiChu: p.ghiChu, tienMat, canCK, khachDua: 0 });
       if (!kq.nhap || !kq.qr?.anhQR) throw new Error('Không tạo được mã QR');
+      dcNhapGanNhat = { vanTay, nhap: kq.nhap, anhQR: kq.qr.anhQR, luc: Date.now() };
       dcMoQRNhap(kq.nhap, kq.qr.anhQR, canCK);
     } catch(e) { dcVeKhungQR({ loi: e.message || 'Không tạo được mã QR' }); }
     khoa(false);
     return;
   }
+  if (dcNhapDangMo) { dcThoiNgheQR(); dcNhapDangMo = null; }
   if (!await hoiXacNhan(`Tạo phiếu đặt cọc cho ${ten}?\n\nTổng ${fmt(tong)}đ · cọc ${fmt(coc)}đ${tienMat ? `\nTiền mặt: ${fmt(tienMat)}đ` : ''}${canCK ? `\nChuyển khoản: ${fmt(canCK)}đ (hiện mã QR)` : ''}\nCòn thanh toán khi lấy: ${fmt(tong - coc)}đ`, { nutDongY: 'Tạo phiếu' })) return;
   khoa(true);
   try {
@@ -12171,6 +12179,9 @@ window.dcGui = async function() {
 // ----- Mã QR chuyển khoản (tiền cọc / phần còn lại khi lấy hàng) -----
 // Giống màn Bán hàng: khung QR, tự hỏi máy chủ mỗi 8 giây (tối đa 6 phút), tiền về là tự báo và đóng.
 let dcQRDangMo = null, dcSoLanHoi = 0, dcHenDau = null;
+// Đóng khung QR chỉ ẩn đi — app vẫn hỏi tiền ngầm (khách có thể đã quét). Tiền về là tự báo và làm tiếp.
+let dcNhapGanNhat = null;          // mã QR tiền cọc gần nhất của phiếu chưa tạo (để mở lại đúng mã)
+const dcQRDaTao = {};              // `${ma}|${muc}|${soTien}` -> { qr, luc }: mở lại đúng mã đã tạo
 function dcThoiNgheQR() { clearInterval(dcHuyNghe); dcHuyNghe = null; clearTimeout(dcHenDau); dcHenDau = null; }
 function dcVeKhungQR(tt) {
   let m = document.getElementById('dc-khung-qr');
@@ -12208,23 +12219,24 @@ function dcVeKhungQR(tt) {
     </div>`;
   m.style.display = 'flex';
 }
-function dcMoQR(ma, qr, soTien, muc, phieu) {
+function dcMoQR(ma, qr, soTien, muc, phieu, moLai) {
   dcThoiNgheQR();
   dcQRDangMo = { ma, soTien, muc, phieu };
   if (!qr?.anhQR) { dcVeKhungQR({ loi: 'Không tạo được mã QR', ma, soTien, muc }); return; }
+  dcQRDaTao[`${ma}|${muc}|${soTien}`] = dcQRDaTao[`${ma}|${muc}|${soTien}`] || { qr, luc: Date.now() };
   dcVeKhungQR({ anhQR: qr.anhQR, soTien, ma, muc });
   dcSoLanHoi = 0;
-  dcHenDau = setTimeout(() => { dcKiemTien(ma, muc, false); dcHuyNghe = setInterval(() => dcKiemTien(ma, muc, false), 8000); }, 8000);
+  dcHenDau = setTimeout(() => { dcKiemTien(ma, muc, false); dcHuyNghe = setInterval(() => dcKiemTien(ma, muc, false), 8000); }, moLai ? 300 : 8000);
 }
 // Mã QR tiền cọc của phiếu CHƯA tạo: hỏi máy chủ mỗi 8 giây; tiền về thì máy chủ tạo phiếu, app báo + in
 let dcNhapDangMo = null;
-function dcMoQRNhap(nhap, anhQR, soTien) {
+function dcMoQRNhap(nhap, anhQR, soTien, moLai) {
   dcThoiNgheQR();
   dcNhapDangMo = { nhap, soTien };
   dcQRDangMo = null;
   dcVeKhungQR({ anhQR, soTien, ma: '', muc: 'coc' });
   dcSoLanHoi = 0;
-  dcHenDau = setTimeout(() => { dcKiemNhap(nhap, false); dcHuyNghe = setInterval(() => dcKiemNhap(nhap, false), 8000); }, 8000);
+  dcHenDau = setTimeout(() => { dcKiemNhap(nhap, false); dcHuyNghe = setInterval(() => dcKiemNhap(nhap, false), 8000); }, moLai ? 300 : 8000);
 }
 window.dcKiemNhap = async function(nhap, bamTay) {
   const tt = document.getElementById('dc-qr-tt');
@@ -12241,7 +12253,7 @@ window.dcKiemNhap = async function(nhap, bamTay) {
     bip(1800, 160);
     if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
     dcVeKhungQR({ daTra: true, soTien: dcNhapDangMo?.soTien || 0, ma: kq.ma });
-    dcNhapDangMo = null;
+    dcNhapDangMo = null; dcNhapGanNhat = null;
     try { localStorage.removeItem(dcKhoaNhap()); } catch(e) {}
     dcPhieu = dcMoi(); dcVe();
     loadSKUs();
@@ -12249,10 +12261,12 @@ window.dcKiemNhap = async function(nhap, bamTay) {
     setTimeout(() => { dcDongQR(); if (kq.phieu) dcInHoacXem(billTuPhieuCoc({ ...kq.phieu, maPhieu: kq.ma })); }, 1300);
   } catch(e) { console.warn('[kiểm tra tiền cọc]', e.message); }
 };
-window.dcDongQR = function() {
-  dcNhapDangMo = null; dcThoiNgheQR(); dcQRDangMo = null; const m = document.getElementById('dc-khung-qr'); if (m) m.style.display = 'none'; };
+window.dcDongQR = function() { const m = document.getElementById('dc-khung-qr'); if (m) m.style.display = 'none'; };
+function dcDungNgheQR() { dcThoiNgheQR(); dcNhapDangMo = null; dcQRDangMo = null; const m = document.getElementById('dc-khung-qr'); if (m) m.style.display = 'none'; }
 window.dcTaoLaiQR = async function(ma, soTien, muc) {
   dcThoiNgheQR();
+  const cu = dcQRDaTao[`${ma}|${muc}|${soTien}`];
+  if (cu && Date.now() - cu.luc < 600000) { dcMoQR(ma, cu.qr, soTien, muc, dcQRDangMo?.phieu, true); return; }
   dcVeKhungQR({ dangTao: true });
   try { const kq = await dcGoi('dc-qr', { ma, soTien, muc }); dcMoQR(ma, kq.qr, soTien, muc, dcQRDangMo?.phieu); }
   catch(e) { dcVeKhungQR({ loi: e.message, ma, soTien, muc }); }
@@ -12274,6 +12288,7 @@ window.dcKiemTien = async function(ma, muc, bamTay) {
       bip(1800, 160);
       if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
       const soTien = dcQRDangMo?.soTien || kq.them || 0;
+      Object.keys(dcQRDaTao).filter(k => k.startsWith(ma + '|')).forEach(k => delete dcQRDaTao[k]);
       dcVeKhungQR({ daTra: true, soTien, ma });
       setTimeout(async () => {
         dcDongQR();
@@ -12422,7 +12437,14 @@ window.dcMoThanhToan = async function(id) {
   const p = dcDs.find(x => x.id === id); if (!p) return;
   dcTTDangMo = { ma: id, p, tong: p.tongTien || 0, daCoc: p.daCoc || 0, cachTra: 'tienmat', tienMat: 0, khachDua: null };
   dcVeThanhToan();
-  try { const kq = await dcGoi('dc-kiem-tien', { ma: id }); if (dcTTDangMo?.ma === id) { dcTTDangMo.daCoc = kq.daCoc; dcVeThanhToan(); } } catch(e) {}
+  try {
+    const kq = await dcGoi('dc-kiem-tien', { ma: id });
+    if (dcTTDangMo?.ma === id) {
+      dcTTDangMo.daCoc = kq.daCoc; dcVeThanhToan();
+      // Vừa nhận được chuyển khoản (khách quét mã lúc trước) và đã đủ tiền -> hoàn tất luôn
+      if (kq.them > 0 && kq.daCoc >= dcTTDangMo.tong) dcHoanTatTT(true);
+    }
+  } catch(e) {}
 };
 function dcVeThanhToan() {
   const t = dcTTDangMo; if (!t) return;
@@ -12456,7 +12478,7 @@ window.dcTTMoChonCach = function() {
   const t = dcTTDangMo; if (!t) return;
   moBangChon('Cách thanh toán', Object.entries(DC_CACH_TRA).map(([gt, nhan]) => ({ gt, nhan })), t.cachTra || 'tienmat', (ma) => dcTTDat('cachTra', ma));
 };
-window.dcDongTT = function() { const m = document.getElementById('dc-tt'); if (m) m.style.display = 'none'; dcTTDangMo = null; };
+window.dcDongTT = function() { const m = document.getElementById('dc-tt'); if (m) m.style.display = 'none'; if (dcQRDangMo?.muc === 'tt') dcDungNgheQR(); dcTTDangMo = null; };
 window.dcTTDat = function(k, v) {
   const t = dcTTDangMo; if (!t) return;
   const con = Math.max(0, t.tong - t.daCoc);
@@ -13219,6 +13241,13 @@ window.htDongBoCungLoai = async function() {
   if (nut) { nut.disabled = false; nut.textContent = 'Đồng bộ hàng cùng loại'; }
 };
 
+// Đặt tồn một mã ở một kho bên KiotViet bằng phiếu kiểm kho (kho: 'ch' | 'san')
+async function datTonKV(sku, kho, sl) {
+  try {
+    const kq = await goiWorkerAdmin('kv-kiem-kho', { sku, branchId: branchKhoTheoMa(kho), sl: Math.max(0, Number(sl) || 0), moTa: `Sửa tồn từ app nội bộ (${currentUserData?.ten || ''})` });
+    return kq.success ? { ok: true, code: kq.code } : { ok: false, loi: kq.error || 'Lỗi' };
+  } catch(e) { return { ok: false, loi: e.message }; }
+}
 window.htDatTon = async function() {
   const ma = document.getElementById('ht-sku').value.trim();
   const sl = document.getElementById('ht-ton-moi').value;
@@ -13231,7 +13260,9 @@ window.htDatTon = async function() {
   if (!await hoiXacNhan(`Đặt tồn ${tenKho} của ${sku.sku} = ${sl}?`)) return;
   if (kho === 'cuahang') await updateDoc(doc(db, 'skus', sku.id), { tonCuaHang: Number(sl) || 0 });
   else await setDoc(doc(db, 'ton_san', sku.id), { soLuongTon: Number(sl) || 0 }, { merge: true });
-  showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0}`);
+  const kv = await datTonKV(sku.sku, kho === 'cuahang' ? 'ch' : 'san', sl);
+  if (kv.ok) showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0} (cả KiotViet${kv.code ? ' · ' + kv.code : ''})`);
+  else alert(`Đã đặt tồn trong app nhưng CHƯA đổi được bên KiotViet:\n\n${kv.loi}`);
   htXemTon();
 };
 
@@ -14121,7 +14152,12 @@ window.luuSuaHangHoa = async function(id) {
   } catch(e) {
     alert(`Đã lưu ${sku} trong app nhưng CHƯA cập nhật được bên KiotViet:\n\n${e.message}`);
   }
-  if (lechCH || lechSan) showToast('Lưu ý: số tồn sửa ở đây chỉ đổi trong app, không đổi bên KiotViet', true);
+  // Số tồn sửa ở đây -> phiếu kiểm kho bên KiotViet (đặt đúng số mới cho kho đó)
+  const loiTonKV = [];
+  if (lechCH) { const kq = await datTonKV(sku, 'ch', parseInt(oTonCH.value) || 0); if (!kq.ok) loiTonKV.push('Kho Cửa hàng: ' + kq.loi); }
+  if (lechSan) { const kq = await datTonKV(sku, 'san', parseInt(oTonSan.value) || 0); if (!kq.ok) loiTonKV.push('Kho Online: ' + kq.loi); }
+  if (loiTonKV.length) alert(`Đã sửa tồn trong app nhưng CHƯA đổi được bên KiotViet:\n\n${loiTonKV.join('\n')}`);
+  else if (lechCH || lechSan) showToast('Đã cập nhật tồn kho cả bên KiotViet');
   hangHoaSuaAnhBlob = null;
   comboThanhPhan = [];
   dongSuaHangHoa();
@@ -22289,7 +22325,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v559</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v560</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22343,7 +22379,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v559</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v560</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22389,7 +22425,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v559</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v560</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
