@@ -18720,8 +18720,7 @@ async function tinhLuongThang(thang) {
 
   // Đơn giá theo vai trò và cấp bậc của chính người đang xem
   const nguoi = allUsersCache.find(u => u.id === uidXem) || {};
-  const rates = (cfg[nguoi.vaiTroId] || cfg[nguoi.role || 'nhan_vien'])?.rates || {};
-  const donGia = Number(rates[nguoi.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
+  const donGia = donGiaCong(cfg, nguoi);
 
   // Người này làm việc gì — lấy từ vai trò, quyết định hiện cột thưởng nào
   const vtNguoi = allVaiTro.find(v => v.id === nguoi.vaiTroId);
@@ -18924,7 +18923,7 @@ async function tinhLuongTatCa(thang) {
         uid, ten: u.ten || u.email || '(không rõ)',
         vaiTroId: u.vaiTroId || '',
         tenVaiTro: vt?.ten || 'Chưa gán vai trò',
-        vaiTro: u.role || 'nhan_vien', capBac: u.capBac || '',
+        vaiTro: u.role || 'nhan_vien', capBac: capBacHieuLuc(cfg, u),
         soCa: 0, phut: 0, tongCong: 0, luong: 0, lamThem: 0,
         thuongCT: 0, truCT: 0, ctChiTiet: [], thuongThem: 0,
         khauTru: 0, soTre: 0,
@@ -18941,8 +18940,7 @@ async function tinhLuongTatCa(thang) {
     if (!n) continue;
     n._ca.push(ca);
     const u = allUsersCache.find(x => x.id === ca.uid) || {};
-    const rates = (cfg[u.vaiTroId] || cfg[u.role || 'nhan_vien'])?.rates || {};
-    const donGia = Number(rates[u.capBac] ?? rates[MUC_LUONG_MAC_DINH] ?? rates[''] ?? 0);
+    const donGia = donGiaCong(cfg, u);
     const caLV = ca.caId ? layCa(ca.caId) : null;
     const gioCa = caLV || CA_GIO[ca.loaiCa] || CA_GIO.full;
     const soCong = tinhCongThucTe(ca, caLV, gioCa).soCong;
@@ -18994,8 +18992,9 @@ async function tinhLuongTatCa(thang) {
   }).sort((a, b) => b.tong - a.tong);
 
   blDanhSachHienTai = ds;
-  const tongHong = hhTongTien(chung.phieuHuy);
-  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, mocHong: chung.mocHong };
+  const tongHong = qtTienHuy(chung.phieuHuy, {});
+  const hongTheoKho = { ch: qtTienHuy(chung.phieuHuy, { khoHuy: ['ch'] }), san: qtTienHuy(chung.phieuHuy, { khoHuy: ['san'] }) };
+  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, hongTheoKho, mocHong: chung.mocHong };
 }
 
 function veDanhSachLuong(dl) {
@@ -19073,7 +19072,7 @@ function veDanhSachLuong(dl) {
           <button class="btn-xs" onclick="blLuuMocHong()">Lưu mốc</button>
         </div>
         <div style="font-size:12px;color:${dl.mocHong && dl.tongHong > dl.mocHong ? 'var(--red)' : 'var(--text2)'}">
-          Hàng hỏng tính lương: <b>${fmt(dl.tongHong || 0)}đ</b> <span style="font-size:11px">(${escHtml(hhMoTaLoc())})</span>
+          Đã hủy trong tháng: <b>${fmt(dl.tongHong || 0)}đ</b>${dl.hongTheoKho ? ` <span style="font-size:11px">(Kho Cửa hàng ${fmt(dl.hongTheoKho.ch)}đ · Kho Online ${fmt(dl.hongTheoKho.san)}đ)</span>` : ''}
           ${dl.mocHong ? ` · ${Math.round((dl.tongHong || 0) / dl.mocHong * 100)}% mốc` : ''}
         </div>
       </div>` : ''}
@@ -19519,6 +19518,32 @@ window.luuDieuChinh = async function(ngay) {
 // Khóa cho mức lương mặc định (khi nhân viên chưa gán cấp bậc).
 // Firestore không nhận tên trường rỗng nên không dùng '' được.
 const MUC_LUONG_MAC_DINH = 'mac_dinh';
+// Có cấp bậc thì không còn "Mặc định": người chưa gán / gán cấp đã xóa tính theo cấp đầu tiên
+// (cấp đầu tiên vai trò đó có đơn giá). Chưa có cấp bậc nào thì dùng đơn giá Mặc định.
+function cfgVaiTroLuong(cfg, u) { return cfg[u?.vaiTroId] || cfg[u?.role || 'nhan_vien'] || {}; }
+function capBacHieuLuc(cfg, u) {
+  const c = cfgVaiTroLuong(cfg, u), tiers = c.tiers || [], r = c.rates || {};
+  if (!tiers.length) return '';
+  if (u?.capBac && tiers.includes(u.capBac)) return u.capBac;
+  return tiers.find(t => Number(r[t]) > 0) || tiers[0];
+}
+function donGiaCong(cfg, u) {
+  const r = cfgVaiTroLuong(cfg, u).rates || {}, cb = capBacHieuLuc(cfg, u);
+  return Number((cb ? r[cb] : undefined) ?? r[MUC_LUONG_MAC_DINH] ?? r[''] ?? 0) || 0;
+}
+// Ghi lại cấp bậc cho người đang để trống / cấp không còn -> cấp hiệu lực. Trả về số người đã đổi.
+async function capBacDongBo(cfg) {
+  let ds = allUsersCache;
+  if (!ds.length) { try { ds = (await getDocs(collection(db, 'users'))).docs.map(d => ({ id: d.id, ...d.data() })); } catch(e) { return 0; } }
+  let n = 0;
+  for (const u of ds) {
+    if (u.role === 'admin' || u.disabled) continue;
+    const cb = capBacHieuLuc(cfg, u);
+    if ((u.capBac || '') === cb) continue;
+    try { await updateDoc(doc(db, 'users', u.id), { capBac: cb }); u.capBac = cb; n++; } catch(e) { console.warn('Không đổi được cấp bậc', u.id, e.message); }
+  }
+  return n;
+}
 
 // Một công = 8 giờ làm. Thời gian check-in/out có thể dài hơn vì có nghỉ giữa ca,
 // nên lương công tính theo GIỜ CA quy định, không theo thời gian có mặt.
@@ -19666,7 +19691,7 @@ function nvVeForm(u) {
     <div class="field"><label>Mật khẩu (tối thiểu 6 ký tự)</label><input id="nvf-mk" type="password" autocomplete="new-password"></div>` : ''}
     <div style="display:flex;gap:8px">
       <div class="field" style="flex:1"><label>Vai trò</label><button class="bh-chon-tt" id="nvf-vt" style="width:100%;font-weight:600" onclick="nvChonVaiTro()">${escHtml(nvForm.vaiTroId === '__admin' ? 'Admin' : (allVaiTro.find(x => x.id === nvForm.vaiTroId)?.ten || 'Chưa gán vai trò'))}</button></div>
-      <div class="field" style="flex:1" id="nvf-cb-wrap"><label>Cấp bậc lương</label><button class="bh-chon-tt" id="nvf-cb" style="width:100%;font-weight:600" onclick="nvChonCapBac()">${escHtml(nvForm.capBac || 'Mặc định')}</button></div>
+      <div class="field" style="flex:1" id="nvf-cb-wrap"><label>Cấp bậc lương</label><button class="bh-chon-tt" id="nvf-cb" style="width:100%;font-weight:600" onclick="nvChonCapBac()">${escHtml(capBacHieuLuc(nvForm.luongCfg || {}, { vaiTroId: nvForm.vaiTroId, capBac: nvForm.capBac }) || 'Mặc định')}</button></div>
     </div>
     ${moi ? '' : `<div style="display:flex;gap:8px;margin-top:4px">
       <button class="btn-xs" onclick="capLaiMatKhau('${u.id}','${v(u.ten || u.email)}')">Cấp lại mật khẩu</button>
@@ -19696,16 +19721,18 @@ window.nvChonVaiTro = function() {
   if (!nvForm.uid) ds.push({ gt: '__admin', nhan: 'Admin (toàn quyền)' });
   else ds.unshift({ gt: '', nhan: 'Chưa gán vai trò', phu: 'Chỉ chấm công được' });
   moBangChon('Vai trò', ds, nvForm.vaiTroId, (v) => {
-    nvForm.vaiTroId = v; nvForm.capBac = '';
+    nvForm.vaiTroId = v; nvForm.capBac = capBacHieuLuc(nvForm.luongCfg || {}, { vaiTroId: v });
     const b = document.getElementById('nvf-vt'); if (b) b.textContent = v === '__admin' ? 'Admin' : (allVaiTro.find(x => x.id === v)?.ten || 'Chưa gán vai trò');
-    const cb = document.getElementById('nvf-cb'); if (cb) cb.textContent = 'Mặc định';
+    const cb = document.getElementById('nvf-cb'); if (cb) cb.textContent = nvForm.capBac || 'Mặc định';
     const t = (nvForm.luongCfg?.[v] || {}).tiers || [];
     const w = document.getElementById('nvf-cb-wrap'); if (w) w.style.visibility = t.length ? '' : 'hidden';
   });
 };
 window.nvChonCapBac = function() {
   const t = (nvForm.luongCfg?.[nvForm.vaiTroId] || {}).tiers || [];
-  moBangChon('Cấp bậc lương', [{ gt: '', nhan: 'Mặc định' }, ...t.map(x => ({ gt: x, nhan: x }))], nvForm.capBac, (v) => {
+  const r = (nvForm.luongCfg?.[nvForm.vaiTroId] || {}).rates || {};
+  moBangChon('Cấp bậc lương', t.map(x => ({ gt: x, nhan: x, phu: Number(r[x]) > 0 ? fmt(Number(r[x])) + 'đ / công' : 'Vai trò này chưa có đơn giá cấp này' })),
+    capBacHieuLuc(nvForm.luongCfg || {}, { vaiTroId: nvForm.vaiTroId, capBac: nvForm.capBac }), (v) => {
     nvForm.capBac = v; const b = document.getElementById('nvf-cb'); if (b) b.textContent = v || 'Mặc định';
   });
 };
@@ -19713,7 +19740,8 @@ window.nvLuu = async function() {
   const g = (id) => String(document.getElementById(id)?.value || '').trim();
   const hoTen = g('nvf-hoten'), tenGoi = g('nvf-ten');
   if (!hoTen) { showToast('Nhập họ tên', true); return; }
-  const hoSo = { hoTen, ten: tenGoi || hoTen, ngaySinh: g('nvf-ns'), ngayVaoLam: g('nvf-nvl'), sdt: g('nvf-sdt'), capBac: nvForm.capBac || '' };
+  const hoSo = { hoTen, ten: tenGoi || hoTen, ngaySinh: g('nvf-ns'), ngayVaoLam: g('nvf-nvl'), sdt: g('nvf-sdt'),
+    capBac: nvForm.vaiTroId === '__admin' ? '' : capBacHieuLuc(nvForm.luongCfg || {}, { vaiTroId: nvForm.vaiTroId, capBac: nvForm.capBac }) };
   const cccd = g('nvf-cccd').replace(/\s/g, '');
   if (cccd && !/^\d{9}$|^\d{12}$/.test(cccd)) { showToast('Số CCCD phải có 12 số (CMND cũ 9 số)', true); return; }
   const hoSoRieng = { cccd, diaChiThuongTru: g('nvf-dctt'), choOHienNay: g('nvf-choo'), suaLuc: serverTimestamp() };
@@ -19795,8 +19823,8 @@ const QT_CO_SO = {
   so_cong:         { ten: 'Số công trong tháng', donVi: 'công' },
   so_lan_tre:      { ten: 'Số lần đi trễ', donVi: 'lần', tre: true },
   phut_tre:        { ten: 'Tổng số phút đi trễ', donVi: 'phút', tre: true },
-  tien_hang_hong:  { ten: 'Tiền hàng hỏng (giá bán) — cả cửa hàng', donVi: 'đ', nhom: true, chung: true },
-  ty_le_hang_hong: { ten: 'Hàng hỏng so với mốc tháng', donVi: '%', chung: true }
+  tien_hang_hong:  { ten: 'Tiền hàng hỏng (giá bán) — cả cửa hàng', donVi: 'đ', nhom: true, kho: true, chung: true },
+  ty_le_hang_hong: { ten: 'Hàng hỏng so với mốc tháng', donVi: '%', nhom: true, kho: true, chung: true }
 };
 const QT_CACH = {
   phan_tram:   { ten: 'Phần trăm', moTa: 'VD 2% doanh thu' },
@@ -19806,26 +19834,17 @@ const QT_CACH = {
 };
 const QT_SO_SANH = { '>=': '≥', '>': '>', '<=': '≤', '<': '<' };
 let QUY_TAC_THUONG = [];
-// Hàng hỏng nào được tính vào lương (mốc, % mốc, tiền hàng hỏng): chọn kho + nhóm hàng.
-// Lưu chung trong settings/quy_tac_thuong (trường hangHong). Chưa chọn = tính hết như trước.
-let HH_LOC = null;   // { kho: ['ch','san'], nhom: { kieu: 'tat_ca'|'chi'|'tru', ds: [...] } }
-function hhKhoChon() { return Array.isArray(HH_LOC?.kho) && HH_LOC.kho.length ? HH_LOC.kho : ['ch', 'san']; }
-function hhTinhVaoLuong(it) {
-  if (!hhKhoChon().includes(it.kho === 'san' ? 'san' : 'ch')) return false;
-  return qtLocHang(allSKUs.find(x => x.sku === it.sku || x.id === it.skuId), HH_LOC?.nhom);
+// Lọc dòng hàng hủy theo công thức: kho (q.khoHuy, mặc định cả 2 kho) + nhóm hàng (q.nhomHang)
+function qtKhoHuy(q) { return Array.isArray(q?.khoHuy) && q.khoHuy.length ? q.khoHuy : ['ch', 'san']; }
+function qtLocHuy(it, q) {
+  if (!qtKhoHuy(q).includes(it.kho === 'san' ? 'san' : 'ch')) return false;
+  return qtLocHang(allSKUs.find(x => x.sku === it.sku || x.id === it.skuId), q?.nhomHang);
 }
-function hhTongTien(ds, them) { return (ds || []).reduce((s, it) => hhTinhVaoLuong(it) && (!them || them(it)) ? s + (Number(it.tong) || 0) : s, 0); }
-function hhMoTaLoc() {
-  const k = hhKhoChon(), n = HH_LOC?.nhom;
-  const kho = k.length === 2 ? 'cả 2 kho' : (k[0] === 'san' ? 'Kho Online' : 'Kho Cửa hàng');
-  const nh = n?.kieu && n.kieu !== 'tat_ca' && (n.ds || []).length ? `${n.kieu === 'chi' ? 'chỉ' : 'trừ'} nhóm ${n.ds.join(', ')}` : 'mọi nhóm hàng';
-  return `${kho} · ${nh}`;
-}
+function qtTienHuy(ds, q) { return (ds || []).reduce((s, it) => qtLocHuy(it, q) ? s + (Number(it.tong) || 0) : s, 0); }
 async function napQuyTacThuong() {
   try {
     const d = await getDoc(doc(db, 'settings', 'quy_tac_thuong'));
     QUY_TAC_THUONG = d.exists() && Array.isArray(d.data().ds) ? d.data().ds : [];
-    HH_LOC = d.exists() ? (d.data().hangHong || null) : null;
   } catch(e) { console.warn('Không nạp được công thức thưởng:', e.message); }
   return QUY_TAC_THUONG;
 }
@@ -19879,10 +19898,10 @@ function qtChiSo(coSo, q, du) {
       }
       return coSo === 'so_lan_tre' ? lan : phut;
     }
-    case 'tien_hang_hong': return du.phieuHuy ? hhTongTien(du.phieuHuy, it => qtLocHang(allSKUs.find(x => x.sku === it.sku), q.nhomHang)) : undefined;
+    case 'tien_hang_hong': return du.phieuHuy ? qtTienHuy(du.phieuHuy, q) : undefined;
     case 'ty_le_hang_hong': {
       if (!du.phieuHuy || !(du.mocHong > 0)) return undefined;
-      return hhTongTien(du.phieuHuy) / du.mocHong * 100;
+      return qtTienHuy(du.phieuHuy, q) / du.mocHong * 100;
     }
   }
   return undefined;
@@ -19940,7 +19959,8 @@ function qtMoTa(q) {
   const cs = QT_CO_SO[q.coSo]?.ten || q.coSo;
   const nh = QT_CO_SO[q.coSo]?.nhom && q.nhomHang?.kieu && q.nhomHang.kieu !== 'tat_ca' && (q.nhomHang.ds || []).length
     ? ` (${q.nhomHang.kieu === 'chi' ? 'chỉ' : 'trừ'} nhóm ${q.nhomHang.ds.join(', ')})` : '';
-  const tr = QT_CO_SO[q.coSo]?.tre ? ` (trễ quá ${Number(q.nguongPhut) || 0} phút)` : '';
+  const tr = (QT_CO_SO[q.coSo]?.tre ? ` (trễ quá ${Number(q.nguongPhut) || 0} phút)` : '')
+    + (QT_CO_SO[q.coSo]?.kho && qtKhoHuy(q).length === 1 ? ` (${qtKhoHuy(q)[0] === 'san' ? 'Kho Online' : 'Kho Cửa hàng'})` : '');
   const g = Number(q.giaTri) || 0;
   if (q.cachTinh === 'phan_tram') return `${String(g).replace('.', ',')}% × ${cs}${nh}${tr}`;
   if (q.cachTinh === 'moi_don_vi') return `${fmt(g)}đ × ${cs}${nh}${tr}`;
@@ -19960,8 +19980,8 @@ async function renderThietLapLuong() {
   if (!allVaiTro.length) await loadVaiTro();
   await napQuyTacThuong();
   await napCongThucLuong();
-  hhNhap = null;
   const vts = allVaiTro.filter(v => !v.deleted);
+  capBacDongBo(cfg).then(n => { if (n) showToast(`Đã chuyển ${n} nhân viên chưa gán cấp vào cấp đầu tiên`); });
   // Cấp bậc dùng chung cho mọi vai trò -> mỗi cấp bậc là một CỘT
   const capBac = [...new Set(vts.flatMap(v => cfg[v.id]?.tiers || []))];
   const giaO = (vt, tier) => {
@@ -19975,11 +19995,11 @@ async function renderThietLapLuong() {
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:1rem">
       <h3 style="margin-bottom:4px">Bảng đơn giá công</h3>
-      <p class="info-note">Đơn giá cho 1 công theo vai trò (hàng) và cấp bậc (cột). Ô trống ở một cấp bậc = vai trò đó không dùng cấp này.</p>
+      <p class="info-note">Đơn giá cho 1 công theo vai trò (hàng) và cấp bậc (cột). Ô trống ở một cấp bậc = vai trò đó không dùng cấp này.${capBac.length ? ' Nhân viên chưa gán cấp tự tính theo cấp đầu tiên.' : ''}</p>
       ${vts.length ? `<div class="lb-khung"><table class="lich-bang" id="dg-bang">
-        <thead><tr><th class="lb-dau">Vai trò</th><th>Mặc định</th>${capBac.map(t => `<th>${escHtml(t)} <button class="btn-xs" style="padding:0 5px;margin-left:2px" title="Xóa cấp bậc" onclick="dgXoaCapBac('${escHtml(t)}')">✕</button></th>`).join('')}</tr></thead>
+        <thead><tr><th class="lb-dau">Vai trò</th>${capBac.length ? '' : '<th>Mặc định</th>'}${capBac.map(t => `<th>${escHtml(t)} <button class="btn-xs" style="padding:0 5px;margin-left:2px" title="Xóa cấp bậc" onclick="dgXoaCapBac('${escHtml(t)}')">✕</button></th>`).join('')}</tr></thead>
         <tbody>${vts.map(v => `<tr><th class="lb-dau">${escHtml(v.ten || v.id)}</th>
-          <td><input class="dg-o" data-vt="${v.id}" data-tier="" type="text" inputmode="numeric" value="${giaO(v.id, '')}" placeholder="0" oninput="dinhDangTien(this)" style="width:100%;min-width:84px;text-align:right;padding:6px"></td>
+          ${capBac.length ? '' : `<td><input class="dg-o" data-vt="${v.id}" data-tier="" type="text" inputmode="numeric" value="${giaO(v.id, '')}" placeholder="0" oninput="dinhDangTien(this)" style="width:100%;min-width:84px;text-align:right;padding:6px"></td>`}
           ${capBac.map(t => `<td><input class="dg-o" data-vt="${v.id}" data-tier="${escHtml(t)}" type="text" inputmode="numeric" value="${giaO(v.id, t)}" placeholder="—" oninput="dinhDangTien(this)" style="width:100%;min-width:84px;text-align:right;padding:6px"></td>`).join('')}
         </tr>`).join('')}</tbody></table></div>
       <div style="display:flex;gap:8px;margin-top:10px">
@@ -20004,8 +20024,6 @@ async function renderThietLapLuong() {
       <button class="btn-g" style="width:100%;margin-top:10px" onclick="qtMoSua()">+ Thêm công thức</button>
     </div>
 
-    <div class="admin-block" style="margin-bottom:1rem" id="hh-khoi">${hhVeKhoi()}</div>
-
     ${moCoi.length ? `<div class="admin-block" style="margin-bottom:1rem;border:1.5px dashed #F59E0B">
       <h3 style="color:#92400E">Cấu hình cũ của vai trò đã xóa (${moCoi.length})</h3>
       <p class="info-note">Còn sót từ vai trò đã xóa / công thức kiểu cũ. Không còn được dùng để tính lương — có thể xóa cho gọn.</p>
@@ -20016,50 +20034,6 @@ async function renderThietLapLuong() {
     </div>` : ''}`;
 }
 
-// --- Hàng hỏng tính lương: tick kho + nhóm hàng ---
-let hhNhap = null;   // bản đang chỉnh
-function hhTatCaNhom() {
-  return [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean).flatMap(p => { const ph = p.split(' > '); return ph.map((_, i) => ph.slice(0, i + 1).join(' > ')); }))].sort((a, b) => a.localeCompare(b, 'vi'));
-}
-function hhVeKhoi() {
-  if (!hhNhap) hhNhap = { kho: [...hhKhoChon()], nhom: { kieu: HH_LOC?.nhom?.kieu || 'tat_ca', ds: [...(HH_LOC?.nhom?.ds || [])] } };
-  const h = hhNhap, chon = new Set(h.nhom.ds);
-  const chaDaChon = (n) => [...chon].some(c => n !== c && n.startsWith(c + ' > '));
-  const chip = (on, nhan, kieu) => `<button class="${on ? 'btn-g' : 'btn-outline'}" style="flex:1;margin:0;padding:8px" onclick="hhDatKieu('${kieu}')">${nhan}</button>`;
-  const ds = hhTatCaNhom();
-  return `<h3 style="margin-bottom:4px">Hàng hỏng tính lương</h3>
-    <p class="info-note">Chọn hàng hủy nào được tính vào mốc hàng hỏng, % so với mốc và tiền hàng hỏng ở các công thức. Phiếu chờ duyệt / bị từ chối không bao giờ tính.</p>
-    <div class="field"><label>Kho</label><div style="display:flex;gap:14px;flex-wrap:wrap">
-      ${[['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']].map(([k, t]) => `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${h.kho.includes(k) ? 'checked' : ''} onchange="hhDatKho('${k}',this.checked)" style="width:18px;height:18px;margin:0"> ${t}</label>`).join('')}</div></div>
-    <div class="field"><label>Nhóm hàng</label><div style="display:flex;gap:6px;margin-bottom:8px">
-      ${chip(h.nhom.kieu === 'tat_ca', 'Tất cả', 'tat_ca')}${chip(h.nhom.kieu === 'chi', 'Chỉ nhóm tick', 'chi')}${chip(h.nhom.kieu === 'tru', 'Trừ nhóm tick', 'tru')}</div>
-      ${h.nhom.kieu !== 'tat_ca' ? `<div style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 8px">
-        ${ds.map(n => { const cap = n.split(' > ').length - 1, cha = chaDaChon(n);
-          return `<label style="display:flex;gap:8px;align-items:center;padding:4px 0 4px ${cap * 18}px;cursor:pointer;font-size:13px;${cap ? '' : 'font-weight:600'};${cha ? 'opacity:.55' : ''}">
-            <input type="checkbox" ${chon.has(n) || cha ? 'checked' : ''} ${cha ? 'disabled' : ''} data-n="${escHtml(n)}" onchange="hhTickNhom(this)" style="width:17px;height:17px;margin:0"> ${escHtml(n.split(' > ').pop())}</label>`; }).join('') || '<span style="font-size:12px;color:var(--text2)">Chưa có nhóm hàng</span>'}
-      </div><div style="font-size:11.5px;color:var(--text2);margin-top:4px">Tick nhóm cha là gồm luôn các nhóm con.</div>` : ''}</div>
-    <div style="background:var(--bg);border-radius:8px;padding:8px 10px;font-size:12.5px;margin-bottom:8px"><b>Đang tính:</b> ${escHtml((() => { const cu = HH_LOC; HH_LOC = h; const t = hhMoTaLoc(); HH_LOC = cu; return t; })())}</div>
-    <button class="btn-g" style="width:100%;margin:0" onclick="hhLuu()">Lưu</button>`;
-}
-function hhVeLai() { const el = document.getElementById('hh-khoi'); if (el) el.innerHTML = hhVeKhoi(); }
-window.hhDatKho = function(k, on) { const s = new Set(hhNhap.kho); on ? s.add(k) : s.delete(k); hhNhap.kho = ['ch', 'san'].filter(x => s.has(x)); hhVeLai(); };
-window.hhDatKieu = function(kieu) { hhNhap.nhom.kieu = kieu; hhVeLai(); };
-window.hhTickNhom = function(o) {
-  const n = o.dataset.n; let ds = hhNhap.nhom.ds.filter(x => x !== n);
-  if (o.checked) ds = [...ds.filter(x => !x.startsWith(n + ' > ')), n];   // tick cha thì bỏ các con đã tick riêng
-  hhNhap.nhom.ds = ds; hhVeLai();
-};
-window.hhLuu = async function() {
-  const h = hhNhap;
-  if (!h.kho.length) { showToast('Chọn ít nhất 1 kho', true); return; }
-  if (h.nhom.kieu !== 'tat_ca' && !h.nhom.ds.length) { showToast('Tick ít nhất 1 nhóm hàng', true); return; }
-  const luu = { kho: h.kho, nhom: h.nhom.kieu === 'tat_ca' ? { kieu: 'tat_ca', ds: [] } : { kieu: h.nhom.kieu, ds: h.nhom.ds } };
-  try {
-    await setDoc(doc(db, 'settings', 'quy_tac_thuong'), { hangHong: luu, suaLuc: serverTimestamp(), suaBoi: currentUserData?.ten || '' }, { merge: true });
-    HH_LOC = luu; hhNhap = null; hhVeLai(); showToast('Đã lưu cách tính hàng hỏng');
-  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
-};
-
 // --- Bảng đơn giá ---
 window.dgThemCapBac = async function() {
   const ten = String(await hoiNhap('Tên cấp bậc mới (VD: Cấp 1, Thử việc...)') || '').trim();
@@ -20067,19 +20041,30 @@ window.dgThemCapBac = async function() {
   const cfg = await getLuongConfig();
   for (const v of allVaiTro) {
     if (!cfg[v.id]) cfg[v.id] = { tiers: [], rates: {} };
+    if (!cfg[v.id].rates) cfg[v.id].rates = {};
+    // Cấp đầu tiên: mang đơn giá Mặc định sang (cột Mặc định ẩn đi từ đây)
+    if (!(cfg[v.id].tiers || []).length) {
+      const md = cfg[v.id].rates[MUC_LUONG_MAC_DINH] ?? cfg[v.id].rates[''];
+      if (Number(md) > 0) cfg[v.id].rates[ten] = Number(md);
+    }
     cfg[v.id].tiers = [...new Set([...(cfg[v.id].tiers || []), ten])];
   }
   await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg);
+  const n = await capBacDongBo(cfg);
+  if (n) showToast(`${n} nhân viên chưa gán cấp đã chuyển vào cấp đầu tiên`);
   renderThietLapLuong();
 };
 window.dgXoaCapBac = async function(ten) {
-  if (!await hoiXacNhan(`Xóa cấp bậc "${ten}" ở mọi vai trò?\n\nNgười đang gán cấp này sẽ tính theo đơn giá Mặc định.`)) return;
+  if (!await hoiXacNhan(`Xóa cấp bậc "${ten}" ở mọi vai trò?\n\nNgười đang gán cấp này sẽ chuyển sang cấp đầu tiên còn lại.`)) return;
   const cfg = await getLuongConfig();
   for (const k of Object.keys(cfg)) {
     if (cfg[k]?.tiers) cfg[k].tiers = cfg[k].tiers.filter(t => t !== ten);
+    // Xóa hết cấp bậc -> quay lại một đơn giá Mặc định (lấy từ cấp vừa xóa nếu chưa có)
+    if (cfg[k]?.rates && !(cfg[k].tiers || []).length && !(Number(cfg[k].rates[MUC_LUONG_MAC_DINH]) > 0) && Number(cfg[k].rates[ten]) > 0) cfg[k].rates[MUC_LUONG_MAC_DINH] = Number(cfg[k].rates[ten]);
     if (cfg[k]?.rates) delete cfg[k].rates[ten];
   }
   await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg);
+  await capBacDongBo(cfg);
   renderThietLapLuong();
 };
 window.dgLuu = async function() {
@@ -20092,7 +20077,7 @@ window.dgLuu = async function() {
     if (tier === '') cfg[vt].rates[MUC_LUONG_MAC_DINH] = v;
     else if (v) cfg[vt].rates[tier] = v; else delete cfg[vt].rates[tier];
   });
-  try { await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg); showToast('Đã lưu bảng đơn giá'); }
+  try { await setDoc(doc(db, 'settings', 'luong_theo_gio'), cfg); await capBacDongBo(cfg); showToast('Đã lưu bảng đơn giá'); }
   catch(e) { showToast('Không lưu được: ' + e.message, true); }
 };
 window.xoaCauHinhCuTatCa = async function() {
@@ -20154,10 +20139,11 @@ function qtVeForm(moi) {
       <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${q.truVao === 'luong' ? 'Trừ thẳng vào tổng lương.' : 'Trừ vào thưởng, thưởng về 0 thì dừng — lương cơ bản giữ nguyên.'}</div></div>` : ''}
     <div class="field"><label>Áp dụng cho</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonVaiTro()">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || '?')).join(', ') : 'Mọi vai trò'}</button></div>
     <div class="field"><label>Tính theo</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCoSo('coSo')">${escHtml(cs.ten || '')}</button></div>
+    ${cs.kho ? `<div class="field"><label>Kho</label><div style="display:flex;gap:14px;flex-wrap:wrap">
+      ${[['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']].map(([k, t]) => `<label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" ${(Array.isArray(q.khoHuy) ? q.khoHuy : ['ch', 'san']).includes(k) ? 'checked' : ''} onchange="qtDatKho('${k}',this.checked)" style="width:18px;height:18px;margin:0"> ${t}</label>`).join('')}</div></div>` : ''}
     ${cs.nhom ? `<div class="field"><label>Nhóm hàng</label><div style="display:flex;gap:6px;margin-bottom:6px">
-        ${chip((q.nhomHang?.kieu || 'tat_ca') === 'tat_ca', 'Tất cả', "qtDatNhom('tat_ca')")}${chip(q.nhomHang?.kieu === 'chi', 'Chỉ nhóm…', "qtDatNhom('chi')")}${chip(q.nhomHang?.kieu === 'tru', 'Trừ nhóm…', "qtDatNhom('tru')")}</div>
-        ${(q.nhomHang?.kieu || 'tat_ca') !== 'tat_ca' ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">${(q.nhomHang.ds || []).map((n, i) => `<span style="display:inline-flex;gap:4px;align-items:center;padding:3px 8px;border-radius:12px;background:#F0FDF4;border:1px solid var(--green);font-size:12px">${escHtml(n)}<button onclick="qtBoNhom(${i})" style="border:none;background:none;cursor:pointer;padding:0">✕</button></span>`).join('') || '<span style="font-size:12px;color:var(--text2)">Chưa chọn nhóm</span>'}</div>
-        <button class="btn-xs" onclick="qtThemNhom()">+ Chọn nhóm hàng</button>` : ''}</div>` : ''}
+        ${chip((q.nhomHang?.kieu || 'tat_ca') === 'tat_ca', 'Tất cả', "qtDatNhom('tat_ca')")}${chip(q.nhomHang?.kieu === 'chi', 'Chỉ nhóm tick', "qtDatNhom('chi')")}${chip(q.nhomHang?.kieu === 'tru', 'Trừ nhóm tick', "qtDatNhom('tru')")}</div>
+        ${(q.nhomHang?.kieu || 'tat_ca') !== 'tat_ca' ? qtCayNhom(q.nhomHang.ds || []) : ''}</div>` : ''}
     ${cs.tre ? `<div class="field"><label>Chỉ tính khi trễ quá (phút)</label>${so('qtf-nguongphut', q.nguongPhut)}</div>` : ''}
     <div class="field"><label>Cách tính</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCach()">${escHtml(QT_CACH[q.cachTinh]?.ten || '')}</button></div>
     ${cach}
@@ -20182,6 +20168,32 @@ function qtDocForm() {
   if (den.length) q.bac = den.map((o, i) => ({ den: so(o), giaTri: dv[i]?.dataset.dv === '%' ? so(g2[i]) : (Number(String(g2[i]?.value || '').replace(/[^\d]/g, '')) || 0), donVi: dv[i]?.dataset.dv || 'đ' }));
 }
 window.qtDat = function(k, v) { qtDocForm(); qtDang[k] = v; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
+// Cây nhóm hàng có ô tick; tick nhóm cha là gồm luôn nhóm con
+function qtCayNhom(dsChon) {
+  const chon = new Set(dsChon);
+  const chaDaChon = (n) => [...chon].some(c => n !== c && n.startsWith(c + ' > '));
+  const ds = [...new Set(allSKUs.map(nhomCuoiCuaSku).filter(Boolean).flatMap(p => { const ph = p.split(' > '); return ph.map((_, i) => ph.slice(0, i + 1).join(' > ')); }))].sort((a, b) => a.localeCompare(b, 'vi'));
+  return `<div style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 8px">
+    ${ds.map(n => { const cap = n.split(' > ').length - 1, cha = chaDaChon(n);
+      return `<label style="display:flex;gap:8px;align-items:center;padding:4px 0 4px ${cap * 18}px;cursor:pointer;font-size:13px;${cap ? '' : 'font-weight:600;'}${cha ? 'opacity:.55' : ''}">
+        <input type="checkbox" ${chon.has(n) || cha ? 'checked' : ''} ${cha ? 'disabled' : ''} data-n="${escHtml(n)}" onchange="qtTickNhom(this)" style="width:17px;height:17px;margin:0"> ${escHtml(n.split(' > ').pop())}</label>`; }).join('') || '<span style="font-size:12px;color:var(--text2)">Chưa có nhóm hàng</span>'}
+  </div><div style="font-size:11.5px;color:var(--text2);margin-top:4px">Tick nhóm cha là gồm luôn các nhóm con.</div>`;
+}
+window.qtTickNhom = function(o) {
+  qtDocForm();
+  const n = o.dataset.n; let ds = (qtDang.nhomHang.ds || []).filter(x => x !== n);
+  if (o.checked) ds = [...ds.filter(x => !x.startsWith(n + ' > ')), n];
+  qtDang.nhomHang.ds = ds;
+  const cuon = o.closest('div')?.scrollTop || 0;
+  qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id));
+  const khung = document.querySelector('#qt-modal input[data-n]')?.closest('div'); if (khung) khung.scrollTop = cuon;
+};
+window.qtDatKho = function(k, on) {
+  qtDocForm();
+  const s = new Set(Array.isArray(qtDang.khoHuy) ? qtDang.khoHuy : ['ch', 'san']); on ? s.add(k) : s.delete(k);
+  qtDang.khoHuy = ['ch', 'san'].filter(x => s.has(x));
+  qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id));
+};
 window.qtDatNhom = function(kieu) { qtDocForm(); qtDang.nhomHang = { kieu, ds: qtDang.nhomHang?.ds || [] }; qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
 window.qtBoNhom = function(i) { qtDocForm(); qtDang.nhomHang.ds.splice(i, 1); qtVeForm(!QUY_TAC_THUONG.some(x => x.id === qtDang.id)); };
 window.qtThemNhom = function() {
@@ -20233,6 +20245,9 @@ window.qtLuu = async function() {
   if (q.cachTinh === 'bac_thang' && !(q.bac || []).length) { showToast('Thêm ít nhất 1 bậc', true); return; }
   if (q.cachTinh !== 'bac_thang' && !(Number(q.giaTri) > 0)) { showToast('Nhập giá trị lớn hơn 0', true); return; }
   if (!QT_CO_SO[q.coSo]?.nhom) q.nhomHang = { kieu: 'tat_ca', ds: [] };
+  else if (q.nhomHang?.kieu && q.nhomHang.kieu !== 'tat_ca' && !(q.nhomHang.ds || []).length) { showToast('Tick ít nhất 1 nhóm hàng', true); return; }
+  if (QT_CO_SO[q.coSo]?.kho) { if (Array.isArray(q.khoHuy) && !q.khoHuy.length) { showToast('Chọn ít nhất 1 kho', true); return; } q.khoHuy = qtKhoHuy(q); }
+  else delete q.khoHuy;
   const ds = QUY_TAC_THUONG.some(x => x.id === q.id) ? QUY_TAC_THUONG.map(x => x.id === q.id ? q : x) : [...QUY_TAC_THUONG, q];
   try {
     await luuQuyTacThuong(ds);
@@ -22121,7 +22136,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v552</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v553</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22175,7 +22190,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v552</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v553</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22221,7 +22236,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v552</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v553</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
