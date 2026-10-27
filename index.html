@@ -17653,7 +17653,7 @@ function hhoVe() {
       <span style="font-size:20px">⚠️</span><div style="flex:1;font-size:13.5px;color:#991B1B"><b>${hhoChiHoan} yêu cầu "Chỉ hoàn tiền"</b> đang chờ xử lý — khách không gửi trả hàng, cần xem và khiếu nại trên sàn nếu không đồng ý.</div>
       <span style="font-size:12.5px;color:#B91C1C;font-weight:700;white-space:nowrap">Xem ›</span></div>` : ''}
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:stretch">
-      <input type="text" id="hho-tim" placeholder="Quét / nhập mã vận đơn hoặc mã đơn..." autocomplete="off" value="${escHtml(hhoTim)}"
+      <input type="text" id="hho-tim" placeholder="Quét / nhập mã vận đơn, mã đơn hoặc mã yêu cầu..." autocomplete="off" value="${escHtml(hhoTim)}"
         oninput="hhoDatTim(this.value)" onkeydown="if(event.key==='Enter'){hhoQuetMa(this.value)}" style="flex:1;min-width:0;min-height:46px;padding:11px 12px 11px 40px;font-size:15px;border:1.5px solid #FDBA74;border-radius:8px;
         background:#fff url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E&quot;) no-repeat 12px center / 18px 18px">
       <button onclick="hhoMoCamera()" title="Mở camera quét mã vận đơn" style="flex:0 0 auto;border:none;border-radius:8px;background:#EA580C;color:#fff;font-weight:700;padding:0 14px;font-size:14px;cursor:pointer">📷 Quét</button>
@@ -17708,13 +17708,30 @@ window.hhoQuetMa = async function(ma) {
   hhoTim = ma;
   const t = ma.toLowerCase();
   const khop = (d) => [d.vanDon, d.vanDonHoan, d.orderId, d.returnId].some(x => x && String(x).toLowerCase() === t)
-    || [d.vanDon, d.vanDonHoan, d.orderId].some(x => x && String(x).toLowerCase().includes(t));
+    || (t.length >= 8 && [d.vanDon, d.vanDonHoan, d.orderId, d.returnId].some(x => x && String(x).toLowerCase().includes(t)));
   if (hhoTab === 'cho') { const kq = hhoDs.filter(khop); if (kq.length === 1) { hhoVe(); hhoMo(hhoKhoa(kq[0])); return; } }
   showToast('Đang tìm đơn...');
   try {
     const [a, b] = await Promise.all([goiWorkerAdmin('hh-hoan-ds', { nhom: 'gtb', tab: 'cho', soNgay: 90 }), goiWorkerAdmin('hh-hoan-ds', { nhom: 'tra', tab: 'cho', soNgay: 90 })]);
     const tim = [...(a.ds || []).filter(khop).map(d => ['gtb', d, a]), ...(b.ds || []).filter(khop).map(d => ['tra', d, b])];
-    if (!tim.length) { hhoVe(); showToast('Không thấy đơn chờ xác nhận hoàn khớp mã này', true); return; }
+    if (!tim.length) {
+      // Không ở "Chờ xác nhận hoàn" -> tìm ở các tab còn lại để báo đơn đang ở đâu
+      const conLai = [['tra', 'dangve'], ['gtb', 'dangve'], ['tra', 'xong'], ['gtb', 'xong'], ['tra', 'khieunai'], ['gtb', 'khieunai'], ['tra', 'thatlac'], ['gtb', 'thatlac'], ['tra', 'choxuly']];
+      for (const [nhom, tab] of conLai) {
+        const kq = await goiWorkerAdmin('hh-hoan-ds', { nhom, tab, soNgay: 90 }).catch(() => null);
+        const don = (kq?.ds || []).find(khop);
+        if (!don) continue;
+        hhoNhom = nhom; hhoTab = tab; hhoSoNgay = 90; hhoDs = kq.ds || []; hhoDem = kq.dem || hhoDem; hhoTong = kq.tong || hhoDs.length;
+        hhoVe();
+        const tenTab = (HHO_TABS[nhom].find(x => x[0] === tab) || [])[1] || tab;
+        const loi = { dangve: 'sàn chưa báo hàng về kho nên chưa xác nhận được — chờ đơn chuyển sang "Chờ xác nhận hoàn"',
+          xong: 'đơn đã xử lý xong (đã xác nhận / đã hoàn tiền) — không cần xác nhận nữa', khieunai: 'đơn đang khiếu nại trên sàn',
+          thatlac: 'đơn đang báo thất lạc', choxuly: 'yêu cầu còn chờ xử lý trên sàn, hàng chưa gửi trả' }[tab] || '';
+        alert(`Đơn ${don.orderId}${don.returnId ? ` (mã yêu cầu ${don.returnId})` : ''} đang ở tab "${tenTab}": ${loi}.`);
+        return;
+      }
+      hhoVe(); showToast('Không thấy đơn hoàn trả nào khớp mã này (90 ngày qua)', true); return;
+    }
     const [nhom, don, kq] = tim[0];
     hhoNhom = nhom; hhoTab = 'cho'; hhoSoNgay = 90; hhoDs = kq.ds || []; hhoDem = kq.dem || hhoDem; hhoChiHoan = kq.chiHoanTien || hhoChiHoan; hhoTong = kq.tong || hhoDs.length;
     hhoVe();
@@ -22612,7 +22629,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v563</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v564</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -22666,7 +22683,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v563</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v564</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -22712,7 +22729,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v563</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v564</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
