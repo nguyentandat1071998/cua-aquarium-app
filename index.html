@@ -3198,7 +3198,15 @@ const khopLocGiao = (d) => donFilterGiao === 'all' || (donFilterGiao === 'hoatoc
 let donFilterTrangThai = 'cho_xu_ly';
 let donTimKiem = '';
 let donPage = 1;
-const DON_MOI_TRANG = 25;
+// Số đơn mỗi trang — người dùng chọn (30/50/100/200/300), nhớ theo máy
+const SO_DON_TRANG_CHON = [30, 50, 100, 200, 300];
+let DON_MOI_TRANG = (() => { try { const v = Number(localStorage.getItem('don_moi_trang')); return SO_DON_TRANG_CHON.includes(v) ? v : 30; } catch(e) { return 30; } })();
+window.doiSoDonTrang = function(v) {
+  v = Number(v); if (!SO_DON_TRANG_CHON.includes(v)) return;
+  DON_MOI_TRANG = v; donPage = 1;
+  try { localStorage.setItem('don_moi_trang', String(v)); } catch(e) {}
+  veDanhSachDon();
+};
 
 // Hai tab lớn của màn hình Đơn hàng:
 //   xuly    — tiến trình bình thường (mặc định, việc hằng ngày)
@@ -3616,9 +3624,9 @@ function veLocNgay() {
   return `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
     ${nut('all', 'Tất cả')}${nut('homnay', 'Hôm nay')}${nut('homqua', 'Hôm qua')}${nut('7', '7 ngày')}${nut('30', '30 ngày')}
     <span style="display:flex;gap:4px;align-items:center;font-size:12px;flex:1 1 260px;min-width:0">
-      <input type="date" value="${escHtml(donLocNgay.tu)}" onchange="doiLocNgayTuyChon('tu', this.value)" style="flex:1;min-width:0;padding:5px 6px;font-size:12px;border:1.5px solid ${donLocNgay.loai === 'tuychon' ? 'var(--green)' : 'var(--border)'};border-radius:6px">
+      <input type="date" value="${escHtml(donLocNgay.tu)}" onchange="doiLocNgayTuyChon('tu', this.value)" class="loc-ngay-o" style="border:1.5px solid ${donLocNgay.loai === 'tuychon' ? 'var(--green)' : 'var(--border)'};border-radius:6px">
       –
-      <input type="date" value="${escHtml(donLocNgay.den)}" onchange="doiLocNgayTuyChon('den', this.value)" style="flex:1;min-width:0;padding:5px 6px;font-size:12px;border:1.5px solid ${donLocNgay.loai === 'tuychon' ? 'var(--green)' : 'var(--border)'};border-radius:6px">
+      <input type="date" value="${escHtml(donLocNgay.den)}" onchange="doiLocNgayTuyChon('den', this.value)" class="loc-ngay-o" style="border:1.5px solid ${donLocNgay.loai === 'tuychon' ? 'var(--green)' : 'var(--border)'};border-radius:6px">
     </span>
     <span id="don-loc-ngay-nap" style="font-size:11px;color:var(--text2)"></span>
   </div>`;
@@ -4654,6 +4662,9 @@ function veDanhSachDon() {
       <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng, tên khách..."
         value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)"
         style="flex:1 1 220px;min-width:0;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
+      <select onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="padding:7px 6px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+        ${SO_DON_TRANG_CHON.map(n => `<option value="${n}" ${n === DON_MOI_TRANG ? 'selected' : ''}>${n}/Trang</option>`).join('')}
+      </select>
       <span style="font-size:11px;color:var(--text2);white-space:nowrap">${nhanLanDongBo()}</span>
       <button class="btn-xs" id="nut-dong-bo-san" style="white-space:nowrap"
         onclick="dongBoNgay()">🔄 Kiểm tra</button>
@@ -4717,7 +4728,7 @@ function veDanhSachDon() {
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
-            ${gio}${d.donViVanChuyen ? ` · ${escHtml(d.donViVanChuyen)}` : ''}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
+            ${gio}${(() => { const h = tenHangVanChuyen(d); return h ? ` · 🚚 ${escHtml(h)}` : ''; })()}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
             ${(() => { const t = veHanXacNhan(d); return t ? ' · ' + t : ''; })()}
           </div>
           ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
@@ -4731,12 +4742,12 @@ function veDanhSachDon() {
       </div>
       <div class="don-tien">
         <b style="font-size:14px">${(d.tongTien || 0).toLocaleString('vi-VN')}đ</b>
-        <div style="font-size:11px;margin-top:2px">${tien.phi != null
-          ? `<span style="color:${tien.duKien ? '#B45309' : '#DC2626'}" title="${tien.duKien ? 'Phí dự kiến theo cài đặt (Thiết lập › Hệ thống)' : 'Phí sàn thật'}">phí ${tien.duKien ? '~' : ''}${tien.phi.toLocaleString('vi-VN')}đ (${tien.tiLePhi}%)${tien.duKien ? ' dự kiến' : ''}</span>`
+        <div style="font-size:11.5px;margin-top:2px">${tien.phi != null
+          ? `<span style="color:${tien.duKien ? '#D97706' : '#DC2626'}" title="${tien.duKien ? 'Phí sàn dự kiến (cài trong Thiết lập › Hệ thống)' : 'Phí sàn chính xác'}">−${tien.phi.toLocaleString('vi-VN')}đ (${tien.tiLePhi}%)</span>`
           : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
-        ${tien.hienLai ? (tien.lai != null
-          ? `<div style="font-size:11.5px;margin-top:2px;font-weight:600;color:${tien.lai >= 0 ? '#15803D' : '#DC2626'}" title="Tiền đơn − phí sàn − giá vốn">lãi ~${tien.lai.toLocaleString('vi-VN')}đ${tien.phi == null ? ' <span style="font-weight:400;color:var(--text2)">(chưa trừ phí)</span>' : ''}</div>`
-          : `<div style="font-size:11px;margin-top:2px;color:var(--text2)" title="${escHtml(tien.thieuVon.join(', '))}">lãi: thiếu giá vốn</div>`) : ''}
+        ${tien.hienLai ? `<div onclick="event.stopPropagation();xemLaiDon('${escHtml(d.id)}')" title="Bấm để xem chi tiết phí, giá vốn"
+            style="font-size:12px;margin-top:2px;font-weight:700;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;color:${tien.lai == null ? 'var(--text2)' : (tien.lai >= 0 ? '#15803D' : '#DC2626')}">
+            ${tien.lai != null ? `${tien.lai.toLocaleString('vi-VN')}đ (${tien.tiLeLai}%)${tien.phi == null ? '*' : ''}` : 'thiếu giá vốn'}</div>` : ''}
       </div>
       <div class="don-nut">${veNutThaoTac(d, maTT)}</div>
       ${laHuySauDongGoi ? `
@@ -4789,8 +4800,60 @@ function tinhTienDon(d, skuTheoMa) {
     for (const c of (d.chiTiet || [])) { const g = giaVonDonVi(skuTheoMa.get(c.maHang)); if (g == null) thieuVon.push(c.tenHang || c.maHang); else von += g * (Number(c.soLuong) || 0); }
     if (!thieuVon.length && (d.chiTiet || []).length) lai = Math.round(tong - (phi || 0) - von);
   }
-  return { phi, duKien, tiLePhi, hienLai, lai, thieuVon };
+  const tiLeLai = lai != null && tong ? ((lai / tong) * 100).toFixed(1) : '0';
+  return { phi, duKien, tiLePhi, hienLai, lai, tiLeLai, thieuVon };
 }
+
+// Đơn vị vận chuyển hiện trên thẻ: hãng thật từ Bán Online (SPX Express, J&T...). KiotViet hay ghi tên sàn
+// (SHOPEE / TIKTOK / LAZADA) vào chỗ này — trùng nhãn sàn ở đầu thẻ nên bỏ.
+function tenHangVanChuyen(d) {
+  for (const h of [d.hangVanChuyen, d.donViVanChuyen]) {
+    const t = String(h || '').trim();
+    if (t && !/^(shopee|tiktok|tiktok shop|lazada)$/i.test(t)) return t;
+  }
+  return '';
+}
+const TEN_KHOAN_PHI = {
+  SellerTransactionFee: 'Phí thanh toán', ServiceFee: 'Phí dịch vụ', CommissionFee: 'Phí cố định (hoa hồng)', VAT: 'Thuế VAT',
+  TransactionFee: 'Phí giao dịch', TiktokPlatformCommission: 'Phí hoa hồng nền tảng', TiktokAffiliateCommission: 'Hoa hồng affiliate (KOC)',
+  TiktokOtherFee: 'Phí khác', TiktokTransactionFee: 'Phí giao dịch', TiktokShippingFee: 'Phí vận chuyển', TaxFee: 'Thuế'
+};
+window.xemLaiDon = function(id) {
+  const d = allDonHangSan.find(x => x.id === id); if (!d) return;
+  const skuTheoMa = new Map(allSKUs.map(s => [s.sku, s]));
+  const t = tinhTienDon(d, skuTheoMa);
+  const tong = Number(d.tongTien) || 0, f = (n) => Math.round(n).toLocaleString('vi-VN') + 'đ';
+  const dong = (ten, gt, mau = '', dam = false, phu = '') => `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;${dam ? 'font-weight:700;' : ''}">
+    <span>${ten}${phu ? `<div style="font-size:11.5px;color:var(--text2);font-weight:400">${phu}</div>` : ''}</span><span style="white-space:nowrap;${mau ? 'color:' + mau : ''}">${gt}</span></div>`;
+  let phiHtml = '';
+  if (d.phiSanTong != null) {
+    const ct = d.phiSanChiTiet || {};
+    phiHtml = Object.entries(ct).filter(([, v]) => Number(v)).map(([k, v]) => dong(TEN_KHOAN_PHI[k] || k, '−' + f(Number(v)), '#DC2626', false, `${tong ? ((Number(v) / tong) * 100).toFixed(1) : 0}% tiền đơn`)).join('')
+      || dong('Phí sàn', '−' + f(d.phiSanTong), '#DC2626');
+  } else if (t.duKien) {
+    const c = phiSanDuKien?.[d.san] || {};
+    phiHtml = (Number(c.phanTram) ? dong(`Phí % đơn (${c.phanTram}%)`, '−' + f(tong * Number(c.phanTram) / 100), '#D97706') : '')
+      + (Number(c.moiDon) ? dong('Phí cố định mỗi đơn', '−' + f(Number(c.moiDon)), '#D97706') : '');
+  } else phiHtml = `<div style="color:var(--text2);font-size:13px;padding:4px 0">Chưa có phí sàn — lãi bên dưới chưa trừ phí.</div>`;
+  const vonHtml = (d.chiTiet || []).map(c => { const g = giaVonDonVi(skuTheoMa.get(c.maHang)); const sl = Number(c.soLuong) || 0;
+    return dong(escHtml(c.tenHang || c.maHang), g == null ? '<span style="color:#B45309">chưa có giá vốn</span>' : '−' + f(g * sl), '', false, g == null ? '' : `${sl} × ${f(g)}`); }).join('');
+  const von = (d.chiTiet || []).reduce((a, c) => a + (giaVonDonVi(skuTheoMa.get(c.maHang)) || 0) * (Number(c.soLuong) || 0), 0);
+  ddbMoKhung('lai-don-modal', 'Lãi ước tính', `${escHtml(d.maDonSan || d.id)} · ${TEN_SAN[d.san] || d.san || ''}`, `
+    <div style="font-size:14px">
+      ${dong('Tiền đơn', f(tong), '', true)}
+      <div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:10px">PHÍ SÀN ${t.duKien ? '<span style="color:#D97706">(DỰ KIẾN)</span>' : d.phiSanTong != null ? '<span style="color:#DC2626">(CHÍNH XÁC)</span>' : ''}</div>
+      ${phiHtml}
+      ${t.phi != null ? dong('Tổng phí sàn', `−${f(t.phi)} (${t.tiLePhi}%)`, t.duKien ? '#D97706' : '#DC2626', true) : ''}
+      <div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:10px">GIÁ VỐN</div>
+      ${vonHtml}
+      ${dong('Tổng giá vốn', '−' + f(von), '', true)}
+      <div style="border-top:2px solid var(--border);margin-top:8px;padding-top:4px">
+        ${t.lai != null ? dong('Lãi ước tính', `${f(t.lai)} (${t.tiLeLai}%)`, t.lai >= 0 ? '#15803D' : '#DC2626', true) : dong('Lãi ước tính', 'thiếu giá vốn', 'var(--text2)', true)}
+      </div>
+      ${t.phi == null && t.lai != null ? '<div style="font-size:12px;color:var(--text2)">* Chưa trừ phí sàn.</div>' : ''}
+    </div>`);
+  ddbCanhGiua?.('lai-don-modal');
+};
 
 // ===== MỘT KHÁCH ĐẶT NHIỀU ĐƠN =====
 // KiotViet tạo khách theo mã người mua của sàn (KHSPE…/KHTTS…): cùng người mua -> cùng maKhachKV, dù tên bị che ***.
@@ -23430,16 +23493,18 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   .sub-tab-bar{position:sticky;top:0;z-index:50}
   .app-body{max-width:900px;padding:18px}
 }
-.don-the{display:grid;grid-template-columns:minmax(0,1fr) 200px 150px auto;grid-template-areas:"dau khach tien nut" "hang khach tien nut" "huy huy huy huy";
+.don-the{display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,280px) 130px auto;grid-template-areas:"dau khach tien nut" "hang khach tien nut" "huy huy huy huy";
   column-gap:12px;row-gap:6px;align-items:start;border-radius:8px;padding:10px 12px;margin-bottom:8px}
 .don-dau{grid-area:dau;min-width:0}.don-hang{grid-area:hang;min-width:0;display:flex;flex-direction:column;gap:5px}
 .don-khach{grid-area:khach;min-width:0;overflow-wrap:anywhere}.don-tien{grid-area:tien;text-align:right;min-width:0}.don-nut{grid-area:nut;align-self:center}.don-huy{grid-area:huy}
 .don-nut:empty,.don-khach:empty{display:none}
+.loc-ngay-o{-webkit-appearance:none;appearance:none;flex:1;min-width:0;min-height:36px;padding:6px 8px;font-size:13px;border-radius:6px;background:#fff}
 @media (max-width: 640px) {
   .don-the{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"dau dau" "hang hang" "khach tien" "nut nut" "huy huy";padding:10px}
   .don-khach{padding-top:6px;border-top:1px dashed var(--border)}
   .don-tien{padding-top:6px;border-top:1px dashed var(--border)}
   .don-nut{justify-self:stretch}.don-nut button{width:100%}
+  .loc-ngay-o{min-height:42px;font-size:15px}
 }
 @media (max-width: 767px) {
   .sidebar{display:none}
@@ -23453,7 +23518,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v586</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v587</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23507,7 +23572,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v586</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v587</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23553,7 +23618,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v586</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v587</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
