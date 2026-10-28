@@ -3290,7 +3290,7 @@ function mucDoHuy(d) {
   if (trangThaiHienThi(d) !== 'da_huy') return null;
   if (d.daTungRoiKho === true) return 'dang_giao';    // shipper đã cầm đi
   if (d.thoiGianDongGoi) return 'sau_dong_goi';       // đã đóng gói, còn trong kho
-  if (d.daInVanDon === true) return 'sau_in';         // đã in tem
+  if (d.daInVanDon === true || d.daInVanDonSan === true) return 'sau_in';         // đã in tem (app xác nhận hoặc sàn ghi)
   return null;
 }
 
@@ -3906,7 +3906,7 @@ function veThanhChon(trang) {
         <input type="checkbox" ${daChonHet ? 'checked' : ''} onchange="vdChonHetTrang()">
         Chọn tất cả trang này (${trang.length})
       </label>
-      <select onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+      <select onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="width:auto;flex:0 0 auto;min-width:0;height:28px;padding:2px 4px;margin:0;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
         ${SO_DON_TRANG_CHON.map(n => `<option value="${n}" ${n === DON_MOI_TRANG ? 'selected' : ''}>${n}/Trang</option>`).join('')}
       </select>
       ${vdDaChon.size ? `<span style="font-size:12px;color:var(--green);font-weight:600">
@@ -4717,7 +4717,8 @@ function veDanhSachDon() {
                 onchange="vdTick('${escHtml(d.maDonSan || d.maHoaDon)}',this.checked)">
             </label>
             <b style="font-size:13px;word-break:break-all">${escHtml(d.maDonSan || d.maHoaDon)}</b>
-            ${d.daInVanDon ? '<span style="font-size:10px;color:var(--green)" title="Đã in vận đơn">🖨</span>' : ''}
+            ${d.daInVanDon ? '<span style="font-size:10px;color:var(--green)" title="Đã in vận đơn">🖨</span>'
+              : d.daInVanDonSan ? '<span style="font-size:10px;color:#B45309" title="Sàn ghi nhận đã lấy vận đơn nhưng chưa xác nhận in thành công trong app">🖨?</span>' : ''}
             ${laHoaToc(d) ? `<span style="background:#DC2626;color:#fff;padding:2px 7px;
               border-radius:4px;font-size:10px;font-weight:700">HỎA TỐC</span>` : ''}
             ${loiHeThong(d) ? `<span style="background:var(--red);color:#fff;padding:2px 7px;
@@ -4851,6 +4852,7 @@ window.xemLaiDon = function(id) {
       <div style="border-top:2px solid var(--border);margin-top:8px;padding-top:4px">
         ${t.lai != null ? dong('Lợi nhuận ước tính', `${f(t.lai)} (${t.tiLeLai}%)`, t.lai >= 0 ? '#15803D' : '#DC2626', true) : dong('Lợi nhuận ước tính', 'thiếu giá vốn', 'var(--text2)', true)}
       </div>
+      ${t.lai != null && von > 0 ? `<div style="font-size:12px;color:var(--text2);margin-top:2px">% trên thẻ đơn = lợi nhuận ÷ tiền đơn (biên lợi nhuận). Tính trên giá vốn (lợi nhuận ÷ giá vốn): <b>${((t.lai / von) * 100).toFixed(1)}%</b></div>` : ''}
       ${t.phi == null && t.lai != null ? '<div style="font-size:12px;color:var(--text2)">* Chưa trừ phí sàn.</div>' : ''}
     </div>`);
   ddbCanhGiua?.('lai-don-modal');
@@ -10150,6 +10152,7 @@ window.inVanDonHangLoat = async function() {
     const donTheoSan = new Map();
     const cacLink = [];
     const loi = [];
+    const maLoi = new Set();   // đơn sàn báo không lấy được vận đơn -> không hỏi xác nhận, giữ ở Chờ in
 
     for (const ma of vdDaChon) {
       const d = allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma);
@@ -10186,6 +10189,7 @@ window.inVanDonHangLoat = async function() {
       if (kq.success) cacLink.push(...(kq.cacLink || []));
       else loi.push(kq.error || `${nenTang}: không lấy được`);
       // Liệt kê đơn lỗi kèm lý do, tối đa 5 dòng cho khỏi dài
+      (kq.donLoi || []).forEach(x => { const m = String(x?.maDon || x || ''); if (m) maLoi.add(m); });
       for (const x of (kq.donLoi || []).slice(0, 5)) {
         loi.push(`  · ${x.maDon || x}: ${x.lyDo || ''}`);
       }
@@ -10206,15 +10210,40 @@ window.inVanDonHangLoat = async function() {
       showToast(`Đã mở ${cacLink.length} file vận đơn — bấm in trên từng tab`);
     }
 
-    // Đánh dấu đã in để lần sau khỏi in trùng
-    await danhDauDaInVanDon([...vdDaChon]);
+    // KHÔNG tự đánh dấu đã in: file có thể mở lỗi / máy in kẹt. Hỏi lại — bấm "Đã in thành công" mới chuyển sang Chờ đóng gói.
+    const maIn = [...vdDaChon].filter(m => !maLoi.has(m) && !maLoi.has(String(m).split('.')[0]));
     vdDaChon.clear();
     veDanhSachDon();
+    if (maIn.length) hoiXacNhanDaIn(maIn, cacLink);
   } catch(e) {
     hienPopup({ loai: 'loi', tieuDe: 'Không in được vận đơn', noiDung: e.message });
   } finally {
     if (nut) { nut.disabled = false; nut.innerHTML = '🖨 In vận đơn (<span id="vd-so-don">0</span>)'; }
   }
+};
+
+// Hỏi "Đã in đơn thành công?" sau khi mở file vận đơn. Đóng khung / chưa in được -> đơn vẫn ở Chờ in.
+let vdChoXacNhan = null;
+function hoiXacNhanDaIn(cacMa, cacLink) {
+  vdChoXacNhan = { cacMa, cacLink };
+  ddbMoKhung('vd-xac-nhan-in', '🖨 Đã in đơn thành công?', `${cacMa.length} đơn · ${cacLink.length} file vận đơn`, `
+    <div style="font-size:14px;line-height:1.5">Kiểm tra tem đã in ra đủ và rõ chưa.<br>
+      <b>Đã in thành công</b> thì đơn chuyển sang <b>Chờ đóng gói</b>. File lỗi / chưa in được thì đơn vẫn ở <b>Chờ in</b> để in lại.</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:8px;max-height:120px;overflow:auto">${cacMa.map(escHtml).join(' · ')}</div>
+    <button class="btn-outline" style="margin-top:10px;width:100%" onclick="vdMoLaiFileIn()">↻ Mở lại file vận đơn</button>`,
+    `<button class="btn-outline" style="flex:1" onclick="vdXacNhanIn(false)">Chưa in được</button>
+     <button class="btn-g" style="flex:1" onclick="vdXacNhanIn(true)">✓ Đã in thành công</button>`);
+  ddbCanhGiua?.('vd-xac-nhan-in');
+}
+window.vdMoLaiFileIn = function() { (vdChoXacNhan?.cacLink || []).forEach((u, i) => setTimeout(() => window.open(u, '_blank'), i * 400)); };
+window.vdXacNhanIn = async function(daIn) {
+  const m = document.getElementById('vd-xac-nhan-in'); if (m) m.style.display = 'none';
+  const x = vdChoXacNhan; vdChoXacNhan = null;
+  if (!x) return;
+  if (!daIn) { showToast('Đơn vẫn ở Chờ in — in lại khi sẵn sàng'); return; }
+  await danhDauDaInVanDon(x.cacMa);
+  showToast(`Đã chuyển ${x.cacMa.length} đơn sang Chờ đóng gói`);
+  veDanhSachDon();
 };
 
 async function danhDauDaInVanDon(cacMa) {
@@ -23534,7 +23563,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v588</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v589</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23588,7 +23617,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v588</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v589</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23634,7 +23663,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v588</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v589</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
