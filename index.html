@@ -4748,7 +4748,8 @@ function veDanhSachDon() {
           : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
         ${tien.hienLai ? `<div onclick="event.stopPropagation();xemLaiDon('${escHtml(d.id)}')" title="Lợi nhuận — bấm để xem chi tiết phí, giá vốn"
             style="font-size:12px;margin-top:2px;font-weight:700;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;color:${tien.lai == null ? 'var(--text2)' : (tien.lai >= 0 ? '#15803D' : '#DC2626')}">
-            ${tien.lai != null ? `${tien.lai.toLocaleString('vi-VN')}đ (${tien.tiLeLai}%)${tien.phi == null ? '*' : ''}` : 'thiếu giá vốn'}</div>` : ''}
+            ${tien.lai != null ? `${tien.lai.toLocaleString('vi-VN')}đ (${tien.tiLeLai}%)${tien.phi == null ? '*' : ''}` : 'thiếu giá vốn'}</div>
+          ${tien.tiLeVon != null ? `<div style="font-size:11px;margin-top:1px;color:${Number(tien.tiLeVon) >= 0 ? '#15803D' : '#DC2626'}" title="Tỷ suất lợi nhuận trên giá vốn = lợi nhuận ÷ giá vốn">${tien.tiLeVon}% trên vốn</div>` : ''}` : ''}
       </div>
       <div class="don-nut">${veNutThaoTac(d, maTT)}</div>
       ${laHuySauDongGoi ? `
@@ -4795,14 +4796,15 @@ function tinhTienDon(d, skuTheoMa) {
   if (phi == null) { phi = phiDuKienCua(d); duKien = phi != null; }
   const tiLePhi = phi != null && tong ? ((phi / tong) * 100).toFixed(1) : '0';
   const hienLai = currentUserData?.role === 'admin';
-  let lai = null; const thieuVon = [];
+  let lai = null, von = 0; const thieuVon = [];
   if (hienLai) {
-    let von = 0;
     for (const c of (d.chiTiet || [])) { const g = giaVonDonVi(skuTheoMa.get(c.maHang)); if (g == null) thieuVon.push(c.tenHang || c.maHang); else von += g * (Number(c.soLuong) || 0); }
     if (!thieuVon.length && (d.chiTiet || []).length) lai = Math.round(tong - (phi || 0) - von);
   }
   const tiLeLai = lai != null && tong ? ((lai / tong) * 100).toFixed(1) : '0';
-  return { phi, duKien, tiLePhi, hienLai, lai, tiLeLai, thieuVon };
+  // Tỷ suất trên giá vốn (markup) = lợi nhuận ÷ giá vốn — dùng khi tính giá bán
+  const tiLeVon = lai != null && von > 0 ? ((lai / von) * 100).toFixed(1) : null;
+  return { phi, duKien, tiLePhi, hienLai, lai, tiLeLai, tiLeVon, thieuVon };
 }
 
 // Đơn vị vận chuyển hiện trên thẻ: hãng thật từ Bán Online (SPX Express, J&T...). KiotViet hay ghi tên sàn
@@ -4854,7 +4856,7 @@ window.xemLaiDon = function(id) {
       <div style="border-top:2px solid var(--border);margin-top:8px;padding-top:4px">
         ${t.lai != null ? dong('Lợi nhuận ước tính', `${f(t.lai)} (${t.tiLeLai}%)`, t.lai >= 0 ? '#15803D' : '#DC2626', true) : dong('Lợi nhuận ước tính', 'thiếu giá vốn', 'var(--text2)', true)}
       </div>
-      ${t.lai != null && von > 0 ? `<div style="font-size:12px;color:var(--text2);margin-top:2px">% trên thẻ đơn = lợi nhuận ÷ tiền đơn (biên lợi nhuận). Tính trên giá vốn (lợi nhuận ÷ giá vốn): <b>${((t.lai / von) * 100).toFixed(1)}%</b></div>` : ''}
+      ${t.lai != null && von > 0 ? `<div style="font-size:12px;color:var(--text2);margin-top:2px">Biên lợi nhuận (lợi nhuận ÷ tiền đơn): <b>${t.tiLeLai}%</b> · Tỷ suất trên giá vốn (lợi nhuận ÷ giá vốn): <b>${((t.lai / von) * 100).toFixed(1)}%</b></div>` : ''}
       ${t.phi == null && t.lai != null ? '<div style="font-size:12px;color:var(--text2)">* Chưa trừ phí sàn.</div>' : ''}
     </div>`);
   ddbCanhGiua?.('lai-don-modal');
@@ -23566,7 +23568,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v590</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v591</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23620,7 +23622,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v590</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v591</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23666,7 +23668,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v590</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v591</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
