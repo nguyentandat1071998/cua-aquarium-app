@@ -3249,12 +3249,12 @@ const TRANG_THAI_NOI_BO = {
   da_chuyen_hoan:    { ten: 'Đã chuyển hoàn',   mau: '#9333EA', nhom: 'kho' },
 
   // Chưa xử lý được, không phải việc của kho
-  cho_dieu_phoi:     { ten: 'Chờ điều phối',  mau: '#0EA5E9', nhom: 'cho' },
   chua_thanh_toan:   { ten: 'Chưa thanh toán', mau: '#94A3B8', nhom: 'cho' },
   // Sàn còn đang xét, chưa cho bấm Chuẩn bị hàng. Worker ghi đúng mã này vào
   // trường nhomCho, và trangThaiHienThi trả nó ra — thiếu ở bảng này thì thẻ đơn
   // không có tên lẫn màu, và cả danh sách vỡ ngay khi gặp một đơn như vậy.
-  san_chua_duyet:    { ten: 'Sàn chưa duyệt', mau: '#A855F7', nhom: 'cho' },
+  // Gộp cả "chờ điều phối" cũ (sàn chưa gán hãng) — với kho đều là: sàn chưa cho chuẩn bị hàng
+  san_chua_duyet:    { ten: 'Chờ sàn duyệt', mau: '#A855F7', nhom: 'cho' },
 
   // KiotViet đã chốt phiếu đặt (Đang giao / Hoàn thành) nhưng app chưa nhận được
   // hóa đơn — nghĩa là webhook invoice.update rơi mất. Đang giao thì CHẮC CHẮN
@@ -3592,7 +3592,7 @@ function nhomChoCuaDon(d) {
 
   // Bước 3: máy chủ (lịch 30 phút + lúc mở tab / bấm Kiểm tra) quét Bán Online và ghi kết luận vào
   // nhomCho + nhomChoLuc. Mọi máy đọc CÙNG một kết quả — không còn mỗi máy tự suy luận một kiểu.
-  if (d.nhomChoLuc) return d.nhomCho || '';
+  if (d.nhomChoLuc) return d.nhomCho === 'cho_dieu_phoi' ? 'san_chua_duyet' : (d.nhomCho || '');
 
   // Dự phòng: app tự ghi khi bấm Xác nhận mà sàn từ chối. Dữ liệu thật, giữ 6 tiếng.
   if (d.sanTuChoiLuc) {
@@ -4812,7 +4812,7 @@ function tinhTienDon(d, skuTheoMa) {
 // Khóa lọc theo đơn vị vận chuyển: tên hãng thật, chưa có hãng thì gom chung
 function khoaVanChuyen(d) { return tenHangVanChuyen(d) || 'Chưa có hãng'; }
 function tenHangVanChuyen(d) {
-  for (const h of [d.hangVanChuyen, d.donViVanChuyen]) {
+  for (const h of [d.hangVanChuyen, d.shipmentProvider, d.donViVanChuyen]) {
     const t = String(h || '').trim();
     if (t && !/^(shopee|tiktok|tiktok shop|lazada)$/i.test(t)) return t;
   }
@@ -4865,7 +4865,7 @@ window.xemLaiDon = function(id) {
 // ===== MỘT KHÁCH ĐẶT NHIỀU ĐƠN =====
 // KiotViet tạo khách theo mã người mua của sàn (KHSPE…/KHTTS…): cùng người mua -> cùng maKhachKV, dù tên bị che ***.
 // Chỉ đếm các đơn CHƯA đóng gói — đó là lúc còn gom chung một lần soạn / đóng gói được.
-const TT_CHUA_DONG_GOI = new Set(['cho_xu_ly', 'cho_in', 'cho_dong_goi', 'cho_dieu_phoi', 'chua_thanh_toan', 'san_chua_duyet']);
+const TT_CHUA_DONG_GOI = new Set(['cho_xu_ly', 'cho_in', 'cho_dong_goi', 'chua_thanh_toan', 'san_chua_duyet']);
 function demDonCungKhach() {
   const m = new Map();
   for (const d of allDonHangSan) if (d.maKhachKV && TT_CHUA_DONG_GOI.has(trangThaiHienThi(d))) m.set(d.maKhachKV, (m.get(d.maKhachKV) || 0) + 1);
@@ -10054,10 +10054,7 @@ async function phanLoaiSauKhiLoi(maDon, loiGoc) {
     thongBao = 'Sàn báo đơn này khách CHƯA THANH TOÁN nên chưa chuẩn bị hàng được.\n\nĐã chuyển sang nhóm "Chưa thanh toán". Khách trả tiền thì đơn tự quay lại.';
   } else if (nhom === 'san_chua_duyet') {
     tieuDe = 'Sàn chưa duyệt đơn'; loaiTB = 'cho';
-    thongBao = 'Sàn còn đang xét đơn này, chưa cho chuẩn bị hàng.\n\nĐã chuyển sang nhóm "Sàn chưa duyệt". Thử lại sau ít phút.';
-  } else if (nhom === 'cho_dieu_phoi') {
-    tieuDe = 'Sàn chưa điều phối vận chuyển'; loaiTB = 'cho';
-    thongBao = 'Sàn chưa gán đơn vị vận chuyển cho đơn này.\n\nĐã chuyển sang nhóm "Chờ điều phối". Thử lại sau ít phút.';
+    thongBao = 'Sàn còn đang xét đơn này (chưa cấp hạn xử lý hoặc chưa gán đơn vị vận chuyển), chưa cho chuẩn bị hàng.\n\nĐã chuyển sang nhóm "Chờ sàn duyệt". Thử lại sau ít phút.';
   } else if (nhom === 'da_huy' || phieuDatDaHuy(d)) {
     tieuDe = 'Đơn đã hủy'; thongBao = 'Đơn này đã bị hủy trên sàn — không cần chuẩn bị hàng.';
   } else if (d.coHoaDon === true || d.maVanDon || phieuDatDaXong(d)) {
@@ -23568,7 +23565,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v591</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v592</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23622,7 +23619,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v591</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v592</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23668,7 +23665,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v591</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v592</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
