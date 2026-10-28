@@ -3906,6 +3906,9 @@ function veThanhChon(trang) {
         <input type="checkbox" ${daChonHet ? 'checked' : ''} onchange="vdChonHetTrang()">
         Chọn tất cả trang này (${trang.length})
       </label>
+      <select onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+        ${SO_DON_TRANG_CHON.map(n => `<option value="${n}" ${n === DON_MOI_TRANG ? 'selected' : ''}>${n}/Trang</option>`).join('')}
+      </select>
       ${vdDaChon.size ? `<span style="font-size:12px;color:var(--green);font-weight:600">
         đã chọn ${vdDaChon.size}</span>` : ''}
       <span style="flex:1"></span>
@@ -4662,9 +4665,6 @@ function veDanhSachDon() {
       <input type="text" id="don-timkiem" placeholder="Tìm mã đơn, mã vận đơn, tên hàng, tên khách..."
         value="${escHtml(donTimKiem)}" oninput="timKiemDon(this.value)"
         style="flex:1 1 220px;min-width:0;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px">
-      <select onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="padding:7px 6px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
-        ${SO_DON_TRANG_CHON.map(n => `<option value="${n}" ${n === DON_MOI_TRANG ? 'selected' : ''}>${n}/Trang</option>`).join('')}
-      </select>
       <span style="font-size:11px;color:var(--text2);white-space:nowrap">${nhanLanDongBo()}</span>
       <button class="btn-xs" id="nut-dong-bo-san" style="white-space:nowrap"
         onclick="dongBoNgay()">🔄 Kiểm tra</button>
@@ -4728,7 +4728,7 @@ function veDanhSachDon() {
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
-            ${gio}${(() => { const h = tenHangVanChuyen(d); return h ? ` · 🚚 ${escHtml(h)}` : ''; })()}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
+            ${gio}${(() => { const h = tenHangVanChuyen(d); return h ? ` · <span style="color:#0EA5E9;font-weight:600">${escHtml(h)}</span>` : ''; })()}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
             ${(() => { const t = veHanXacNhan(d); return t ? ' · ' + t : ''; })()}
           </div>
           ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
@@ -4745,7 +4745,7 @@ function veDanhSachDon() {
         <div style="font-size:11.5px;margin-top:2px">${tien.phi != null
           ? `<span style="color:${tien.duKien ? '#D97706' : '#DC2626'}" title="${tien.duKien ? 'Phí sàn dự kiến (cài trong Thiết lập › Hệ thống)' : 'Phí sàn chính xác'}">−${tien.phi.toLocaleString('vi-VN')}đ (${tien.tiLePhi}%)</span>`
           : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
-        ${tien.hienLai ? `<div onclick="event.stopPropagation();xemLaiDon('${escHtml(d.id)}')" title="Bấm để xem chi tiết phí, giá vốn"
+        ${tien.hienLai ? `<div onclick="event.stopPropagation();xemLaiDon('${escHtml(d.id)}')" title="Lợi nhuận — bấm để xem chi tiết phí, giá vốn"
             style="font-size:12px;margin-top:2px;font-weight:700;cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;color:${tien.lai == null ? 'var(--text2)' : (tien.lai >= 0 ? '#15803D' : '#DC2626')}">
             ${tien.lai != null ? `${tien.lai.toLocaleString('vi-VN')}đ (${tien.tiLeLai}%)${tien.phi == null ? '*' : ''}` : 'thiếu giá vốn'}</div>` : ''}
       </div>
@@ -4816,7 +4816,7 @@ function tenHangVanChuyen(d) {
 const TEN_KHOAN_PHI = {
   SellerTransactionFee: 'Phí thanh toán', ServiceFee: 'Phí dịch vụ', CommissionFee: 'Phí cố định (hoa hồng)', VAT: 'Thuế VAT',
   TransactionFee: 'Phí giao dịch', TiktokPlatformCommission: 'Phí hoa hồng nền tảng', TiktokAffiliateCommission: 'Hoa hồng affiliate (KOC)',
-  TiktokOtherFee: 'Phí khác', TiktokTransactionFee: 'Phí giao dịch', TiktokShippingFee: 'Phí vận chuyển', TaxFee: 'Thuế'
+  TiktokOtherFee: 'Phí khác', PhiSanDoiSoat: 'Tổng phí trả sàn (Đối soát KiotViet)', TiktokTransactionFee: 'Phí giao dịch', TiktokShippingFee: 'Phí vận chuyển', TaxFee: 'Thuế'
 };
 window.xemLaiDon = function(id) {
   const d = allDonHangSan.find(x => x.id === id); if (!d) return;
@@ -4834,21 +4834,22 @@ window.xemLaiDon = function(id) {
     const c = phiSanDuKien?.[d.san] || {};
     phiHtml = (Number(c.phanTram) ? dong(`Phí % đơn (${c.phanTram}%)`, '−' + f(tong * Number(c.phanTram) / 100), '#D97706') : '')
       + (Number(c.moiDon) ? dong('Phí cố định mỗi đơn', '−' + f(Number(c.moiDon)), '#D97706') : '');
-  } else phiHtml = `<div style="color:var(--text2);font-size:13px;padding:4px 0">Chưa có phí sàn — lãi bên dưới chưa trừ phí.</div>`;
+  } else phiHtml = `<div style="color:var(--text2);font-size:13px;padding:4px 0">Chưa có phí sàn — lợi nhuận bên dưới chưa trừ phí.</div>`;
   const vonHtml = (d.chiTiet || []).map(c => { const g = giaVonDonVi(skuTheoMa.get(c.maHang)); const sl = Number(c.soLuong) || 0;
     return dong(escHtml(c.tenHang || c.maHang), g == null ? '<span style="color:#B45309">chưa có giá vốn</span>' : '−' + f(g * sl), '', false, g == null ? '' : `${sl} × ${f(g)}`); }).join('');
   const von = (d.chiTiet || []).reduce((a, c) => a + (giaVonDonVi(skuTheoMa.get(c.maHang)) || 0) * (Number(c.soLuong) || 0), 0);
-  ddbMoKhung('lai-don-modal', 'Lãi ước tính', `${escHtml(d.maDonSan || d.id)} · ${TEN_SAN[d.san] || d.san || ''}`, `
+  ddbMoKhung('lai-don-modal', 'Lợi nhuận ước tính', `${escHtml(d.maDonSan || d.id)} · ${TEN_SAN[d.san] || d.san || ''}`, `
     <div style="font-size:14px">
       ${dong('Tiền đơn', f(tong), '', true)}
       <div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:10px">PHÍ SÀN ${t.duKien ? '<span style="color:#D97706">(DỰ KIẾN)</span>' : d.phiSanTong != null ? '<span style="color:#DC2626">(CHÍNH XÁC)</span>' : ''}</div>
       ${phiHtml}
+      ${d.phiSanNguon === 'doi_soat' ? '<div style="font-size:12px;color:var(--text2);padding:2px 0 4px">KiotViet chỉ có tổng phí ở mục Đối soát, không có chi tiết từng loại phí cho TikTok / Lazada.</div>' : ''}
       ${t.phi != null ? dong('Tổng phí sàn', `−${f(t.phi)} (${t.tiLePhi}%)`, t.duKien ? '#D97706' : '#DC2626', true) : ''}
       <div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:10px">GIÁ VỐN</div>
       ${vonHtml}
       ${dong('Tổng giá vốn', '−' + f(von), '', true)}
       <div style="border-top:2px solid var(--border);margin-top:8px;padding-top:4px">
-        ${t.lai != null ? dong('Lãi ước tính', `${f(t.lai)} (${t.tiLeLai}%)`, t.lai >= 0 ? '#15803D' : '#DC2626', true) : dong('Lãi ước tính', 'thiếu giá vốn', 'var(--text2)', true)}
+        ${t.lai != null ? dong('Lợi nhuận ước tính', `${f(t.lai)} (${t.tiLeLai}%)`, t.lai >= 0 ? '#15803D' : '#DC2626', true) : dong('Lợi nhuận ước tính', 'thiếu giá vốn', 'var(--text2)', true)}
       </div>
       ${t.phi == null && t.lai != null ? '<div style="font-size:12px;color:var(--text2)">* Chưa trừ phí sàn.</div>' : ''}
     </div>`);
@@ -13195,8 +13196,23 @@ function htVePhiSan() {
     </div>`; };
   el.innerHTML = `<p style="font-size:13px;margin-bottom:8px">Shopee có phí thật ngay khi có đơn. TikTok và Lazada chỉ có phí sau khi đơn hoàn tất — trong lúc chờ, app tính phí dự kiến theo cài đặt dưới đây (hiện "~ … dự kiến" trên đơn).</p>
     ${o('tiktok', 'TikTok')}${o('lazada', 'Lazada')}
-    <button class="btn-g" onclick="htLuuPhiSan()">Lưu</button>`;
+    <button class="btn-g" onclick="htLuuPhiSan()">Lưu</button>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:13px">
+      <b>Phí thật TikTok / Lazada (Đối soát KiotViet)</b><br>
+      <span style="color:var(--text2)">Khi sàn thanh toán, KiotViet ghi tổng phí mỗi đơn ở mục Đối soát (không có từng loại phí). App tự lấy mỗi sáng 9h và thay cho phí dự kiến.</span>
+      <div id="ht-doisoat-kq" style="margin:6px 0;color:var(--text2)"></div>
+      <button class="btn-outline" onclick="htLayPhiDoiSoat()">Lấy phí từ Đối soát ngay (30 ngày)</button>
+    </div>`;
+  getDoc(doc(db, 'cau_hinh', 'phi_doi_soat')).then(sn => { const c = sn.exists() ? sn.data() : {}; const o = document.getElementById('ht-doisoat-kq'); if (!o) return;
+    const t = c.lanChayCuoi?.toDate ? c.lanChayCuoi.toDate().toLocaleString('vi-VN') : 'chưa chạy'; const k = c.ketQua || {};
+    o.innerHTML = `Lần gần nhất: <b>${t}</b>${k.loi ? ` · <span style="color:#B91C1C">lỗi: ${escHtml(k.loi)}</span>` : k.soDon != null ? ` · ${k.soDon} đơn đã thanh toán, cập nhật ${k.ghi}` : ''}`; }).catch(() => {});
 }
+window.htLayPhiDoiSoat = async function() {
+  showToast('Đang lấy phí từ Đối soát...');
+  try { const kq = await goiWorkerAdmin('keo-phi-doi-soat', { soNgay: 30 }); if (!kq.success) throw new Error(kq.error || 'Lỗi'); showToast(`Xong · ${kq.soDon} đơn đã thanh toán, cập nhật phí ${kq.ghi} đơn`); }
+  catch(e) { showToast('Lỗi: ' + e.message, true); }
+  htVePhiSan();
+};
 window.htLuuPhiSan = async function() {
   const doc1 = (san) => ({ phanTram: Math.max(0, Math.min(100, Number(document.getElementById(`ht-ps-${san}-pt`)?.value) || 0)), moiDon: Math.max(0, Math.round(Number(document.getElementById(`ht-ps-${san}-md`)?.value) || 0)) });
   try {
@@ -23518,7 +23534,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v587</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v588</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23572,7 +23588,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v587</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v588</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23618,7 +23634,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v587</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v588</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
