@@ -3333,7 +3333,7 @@ const NGAY_CANH_BAO_HOAN = 2;
 const MA_GIAO = { CHUA_GIAO: 1, DANG_GIAO: 2, DA_GIAO: 3, DANG_HOAN: 4, DA_HOAN: 5, DA_HUY: 6 };
 
 // ===== BA NHÓM CHỜ =====
-// Worker ghi thẳng trường nhomCho khi đồng bộ, dựa trên dữ liệu THẬT từ Bán Online:
+// Máy chủ ghi thẳng trường nhomCho (+ nhomChoLuc) theo lịch 30 phút và khi mở tab, dựa trên dữ liệu THẬT từ Bán Online:
 //   Status = UNPAID          -> chua_thanh_toan
 //   ShippingCarrier rỗng     -> cho_dieu_phoi
 //   RtsSla rỗng              -> san_chua_duyet
@@ -3424,11 +3424,24 @@ async function renderDonHangTab() {
 // Tải 300 đơn gần nhất thay vì 1000. Nhân viên chỉ nhìn vài chục đơn đầu, mà
 // số đơn thì chỉ tăng theo thời gian.
 const SO_DON_TAI_VE = 300;
+let daNapDonChoLuong = false;   // bảng lương đã nạp đủ 1000 đơn gần nhất chưa
 
+// Ngoài 300 đơn mới nhất, lấy thêm ĐỦ các đơn còn việc phải làm dù cũ hơn:
+//   - phiếu đặt còn sống chưa có hóa đơn (chờ xử lý / chưa thanh toán / chờ điều phối…)
+//   - đơn đã có hóa đơn mà sàn chưa giao (chờ in / chờ đóng gói / đã đóng gói)
+// Mỗi nhóm chỉ vài chục đơn nên tốn rất ít.
 async function loadDonHangSan() {
-  const snap = await getDocs(query(collection(db, 'don_hang_san'),
-    orderBy('ngayDat', 'desc'), limit(SO_DON_TAI_VE)));
-  allDonHangSan = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const c = collection(db, 'don_hang_san');
+  const [moi, phieuTam, chuaGiao] = await Promise.all([
+    getDocs(query(c, orderBy('ngayDat', 'desc'), limit(SO_DON_TAI_VE))),
+    getDocs(query(c, where('coHoaDon', '==', false), where('trangThaiDatHang', '==', 'Phiếu tạm'), limit(500))).catch(() => null),
+    getDocs(query(c, where('trangThaiGiaoMa', '==', 1), limit(1000))).catch(() => null)
+  ]);
+  const gop = new Map();
+  [moi, phieuTam, chuaGiao].forEach(sn => sn?.docs.forEach(d => gop.set(d.id, { id: d.id, ...d.data() })));
+  const t = (x) => x.ngayDat?.toDate ? x.ngayDat.toDate().getTime() : 0;
+  allDonHangSan = [...gop.values()].sort((a, b) => t(b) - t(a));
+  daNapDonChoLuong = false;   // danh sách vừa thay -> bảng lương nạp lại đủ 1000 đơn khi cần
   return allDonHangSan;
 }
 
@@ -3532,32 +3545,9 @@ function nhomChoCuaDon(d) {
   // Phiếu đặt đã Hoàn thành hoặc Đang giao cũng vậy, kể cả khi app chưa có hóa đơn.
   if (d.coHoaDon === true || d.maVanDon || phieuDatDaXong(d)) return '';
 
-  // nhomCho lưu trong Firestore nên có thể là kết luận CŨ — đơn giờ đã được sàn
-  // duyệt mà trường vẫn ghi "san_chua_duyet". Chỉ tin khi đơn có mặt trong lần
-  // quét vừa rồi; ngoài ra coi như chưa biết.
-  if (maDonBanOnline && maDonBanOnline.has(String(d.maDonSan))) {
-    return Object.prototype.hasOwnProperty.call(d, 'nhomCho') ? (d.nhomCho || '') : '';
-  }
-
-  // Bước 3: đơn còn sống, chưa có hóa đơn -> phải đang ở Chờ xử lý của Bán Online.
-  // Vắng mặt lúc này nghĩa là khách chưa trả tiền.
-  //
-  // Trước đây chỉ xét đơn app đã tự nhận là đang chờ, hoặc đơn đã bấm Chuẩn bị mà
-  // lỗi — nên đơn chưa thanh toán phải chờ có người bấm Chuẩn bị mới lộ ra. Giờ xét
-  // mọi đơn, nhưng phải đủ BA điều kiện dưới thì kết luận mới đứng vững:
-  //   1. Lần quét vừa rồi phải quét HẾT tab Chờ xử lý (daQuetDuBanOnline).
-  //      Quét thiếu mà kết luận thì đơn nằm ngoài phạm vi bị gán nhầm hàng loạt.
-  //   2. Ngày đặt phải NẰM TRONG khoảng đã quét. Đơn cũ hơn mốc quét thì vắng mặt
-  //      là chuyện đương nhiên, không nói lên điều gì.
-  //   3. Đơn phải đủ tuổi (PHUT_CHO_BAN_ONLINE). Bán Online lập chỉ mục có độ trễ;
-  //      đơn vừa đặt xong chưa kịp hiện, gán ngay là sai — mà gán nhầm đơn ĐÃ trả
-  //      tiền thì nhân viên bỏ qua và trễ hạn xử lý, đắt hơn nhiều so với để sót.
-  if (daQuetDuBanOnline && maDonBanOnline
-      && !maDonBanOnline.has(String(d.maDonSan))
-      && ngayDatTrongKhoangQuet(d)
-      && duTuoiKetLuanChuaTra(d)) {
-    return 'chua_thanh_toan';
-  }
+  // Bước 3: máy chủ (lịch 30 phút + lúc mở tab / bấm Kiểm tra) quét Bán Online và ghi kết luận vào
+  // nhomCho + nhomChoLuc. Mọi máy đọc CÙNG một kết quả — không còn mỗi máy tự suy luận một kiểu.
+  if (d.nhomChoLuc) return d.nhomCho || '';
 
   // Dự phòng: app tự ghi khi bấm Xác nhận mà sàn từ chối. Dữ liệu thật, giữ 6 tiếng.
   if (d.sanTuChoiLuc) {
@@ -8946,30 +8936,11 @@ async function tuDongBoNeuCu(phutToiThieu = PHUT_GIUA_HAI_LAN_DONG_BO) {
     // có nghĩa là khách chưa thanh toán. Cả hai bên đều chỉ vài chục đơn.
     await traLaiTrangThaiPhieuDat();
 
-    let n = 0;
-    const boMa = new Set();
-    let quetDu = false;
-
-    for (let trang = 1; trang <= 8; trang++) {
-      const kq = await layDonBanOnline('unprocessed', 50, true, trang, ngay(tu), ngay(den));
-      if (!kq?.success) break;
-      n += kq.ketQuaGhi?.daCapNhat || 0;
-      (kq.cacMaDaThay || []).forEach(m => boMa.add(m));
-      if (kq.quetDu || (kq.soLay || 0) < 50) { quetDu = true; break; }
-    }
+    // Nhóm chờ (Chưa thanh toán / Chờ điều phối / Sàn chưa duyệt) do MÁY CHỦ quét Bán Online và ghi vào
+    // đơn — mọi máy thấy giống nhau. Máy chủ tự bỏ qua nếu vừa quét trong 2 phút.
+    const kqNC = await goiWorkerAdmin('kiem-tra-nhom-cho', { ep: phutToiThieu === 0 }).catch(() => null);
+    const n = kqNC?.ghi || 0;
     mocDongBoGanNhat = Date.now();
-    maDonBanOnline = boMa;
-    daQuetDuBanOnline = quetDu;
-    // Ghi lại khoảng vừa phủ. kol lọc theo NGÀY nên lấy trọn ngày hai đầu, khỏi
-    // hụt đơn đặt lúc rạng sáng hay cuối ngày.
-    const dauNgay = new Date(tu); dauNgay.setHours(0, 0, 0, 0);
-    const cuoiNgay = new Date(den); cuoiNgay.setHours(23, 59, 59, 999);
-    khoangQuetBanOnline = quetDu ? { tu: dauNgay.getTime(), den: cuoiNgay.getTime() } : null;
-    if (!quetDu) {
-      console.warn('[Bán Online] Quét chưa hết tab Chờ xử lý — tạm không phân loại "Chưa thanh toán"');
-    } else {
-      console.log(`[Bán Online] Đã quét đủ ${boMa.size} mã, khoảng ${ngay(tu)} → ${ngay(den)}`);
-    }
     if (n) { await loadDonHangSan(); }
     veDanhSachDon();   // vẽ lại kể cả khi n=0, vì mốc đổi làm phân loại đổi theo
     // Vá nốt đơn KiotViet đã chốt mà app chưa có hóa đơn — chạy ngầm, không chặn
@@ -12707,6 +12678,8 @@ async function renderHeThong(man = 'hethong') {
       htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
       muc('thanhtoan', 'Thanh toán'), '<div id="ht-thanhtoan"><div class="loading">Đang tải...</div></div>',
       muc('ketnoi', 'Kết nối'), htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
+      htThe('Ghi dữ liệu gốc sang KiotViet', `<div id="ht-ghigoc"></div>`),
+      htThe('Kéo bù đơn sàn', `<div id="ht-keobu"><div class="loading">Đang tải...</div></div>`),
       htThe('Kho KiotViet', `<div id="ht-khokv"></div>`),
       htThe('Hàng hóa chưa có bên KiotViet', `
       <p style="font-size:13px;margin-bottom:8px">Tìm mã có trong app nhưng chưa có bên KiotViet (bán tại quầy sẽ báo lỗi với các mã này) rồi tạo bên KiotViet.</p>
@@ -12756,7 +12729,7 @@ async function renderHeThong(man = 'hethong') {
   if (man === 'phanquyen') renderVaiTroList();
   if (man === 'chamcongcd') generateQRCode();
   if (['inhoadon', 'ketnoi', 'thanhtoan', 'hethong'].includes(man)) {
-    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV();
+    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV(); htVeGhiGoc(); htVeKeoBu();
     if (man !== 'hethong') setTimeout(() => document.getElementById('ht-muc-' + man)?.scrollIntoView(), 50);
   }
 }
@@ -12975,6 +12948,39 @@ window.htGiaHanKol = async function() {
 
 // ---------- Chi nhánh ----------
 // ---------- Kho KiotViet: chế độ + đồng bộ tồn ----------
+function htVeGhiGoc() {
+  const el = document.getElementById('ht-ghigoc'); if (!el) return;
+  el.innerHTML = `<label style="display:flex;gap:10px;align-items:flex-start;font-size:14px;cursor:pointer">
+      <input type="checkbox" ${ghiGocKV ? 'checked' : ''} onchange="htLuuGhiGoc(this.checked)" style="width:20px;height:20px;margin-top:2px">
+      <span><b>${ghiGocKV ? 'Đang BẬT' : 'Đang TẮT'}</b> — ${ghiGocKV ? 'sửa trong app đổi luôn bên KiotViet' : 'sửa trong app chỉ đổi trong app'}<br>
+      <span style="font-size:12.5px;color:var(--text2)">Áp dụng cho: sửa tên / giá bán / nhóm hàng, sửa tồn & "Đặt tồn", xóa hàng hóa, tạo mã thiếu bên KiotViet, tự đẩy tồn lên sàn sau khi sửa.
+      Tắt thì duyệt kiểm kho chỉ cộng/trừ đúng phần chênh lệch bên KiotViet.<br>
+      Bán hàng, xuất hủy, xuất dùng, chuyển kho, nhập kho, hàng hoàn luôn ghi sang KiotViet như bình thường.</span></span></label>`;
+}
+window.htLuuGhiGoc = async function(bat) {
+  if (!await hoiXacNhan(bat ? 'BẬT ghi dữ liệu gốc sang KiotViet?\n\nTừ giờ sửa giá bán, sửa tồn, xóa hàng trong app sẽ đổi luôn bên KiotViet. Chỉ bật khi dữ liệu app đã chuẩn.' : 'TẮT ghi dữ liệu gốc sang KiotViet?\n\nSửa giá, sửa tồn, xóa hàng trong app sẽ chỉ đổi trong app.', { nutDongY: bat ? 'Bật' : 'Tắt' })) { htVeGhiGoc(); return; }
+  try { await setDoc(doc(db, 'cau_hinh', 'dong_bo_kv'), { ghiGoc: !!bat, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true }); ghiGocKV = !!bat; htVeGhiGoc(); showToast(bat ? 'Đã bật ghi dữ liệu gốc sang KiotViet' : 'Đã tắt — sửa trong app chỉ đổi trong app'); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); htVeGhiGoc(); }
+};
+async function htVeKeoBu() {
+  const el = document.getElementById('ht-keobu'); if (!el) return;
+  let c = {};
+  try { const s = await getDoc(doc(db, 'cau_hinh', 'keo_bu_don')); c = s.exists() ? s.data() : {}; } catch(e) {}
+  const t = (v) => { const d = v?.toDate ? v.toDate() : (v ? new Date(v) : null); return d && !isNaN(d) ? d.toLocaleString('vi-VN') : 'chưa chạy'; };
+  const kq = c.ketQua || {}, nc = c.nhomChoKetQua || {};
+  el.innerHTML = `<p style="font-size:13px;margin-bottom:6px">Tự chạy 30 phút/lần, 7h–20h: lấy mọi đơn sàn có thay đổi từ KiotViet (phòng khi thông báo bị rớt) và cập nhật nhóm Chưa thanh toán / Chờ điều phối / Sàn chưa duyệt.</p>
+    <div style="font-size:13px;background:var(--bg);border-radius:8px;padding:7px 10px">
+      Kéo bù gần nhất: <b>${t(c.lanChayCuoi)}</b>${c.loi ? ` · <span style="color:#B91C1C">lỗi: ${escHtml(c.loi)}</span>` : kq.hoaDon ? ` · ${kq.hoaDon.tongQuet || 0} hóa đơn, ${kq.datHang?.tongQuet || 0} phiếu đặt có thay đổi${kq.hoaDon.donMoi ? ` · <b style="color:#B45309">${kq.hoaDon.donMoi} đơn bị sót đã được bổ sung</b>` : ''}` : ''}<br>
+      Nhóm chờ gần nhất: <b>${t(c.nhomChoLuc)}</b>${nc.loi ? ` · <span style="color:#B91C1C">lỗi: ${escHtml(nc.loi)}</span>` : nc.soDon != null ? ` · ${nc.soDon} đơn chưa có hóa đơn, cập nhật ${nc.ghi || 0}` : ''}
+    </div>
+    <button class="btn-outline" style="margin-top:8px" onclick="htChayKeoBu()">Chạy kéo bù ngay</button>`;
+}
+window.htChayKeoBu = async function() {
+  showToast('Đang kéo bù...');
+  try { const kq = await goiWorkerAdmin('keo-bu-don', {}); if (!kq.success) throw new Error(kq.error || 'Lỗi'); showToast(`Xong · ${kq.hoaDon?.tongQuet || 0} hóa đơn, ${kq.datHang?.tongQuet || 0} phiếu đặt có thay đổi`); }
+  catch(e) { showToast('Kéo bù lỗi: ' + e.message, true); }
+  htVeKeoBu();
+};
 function htVeKhoKV() {
   const el = document.getElementById('ht-khokv');
   if (!el) return;
@@ -13121,6 +13127,7 @@ window.htDayHangThieuKV = async function() {
         { branchId: branchKhoTheoMa('ch'), sl: Number(s.tonCuaHang) || 0 },
         { branchId: branchKhoTheoMa('san'), sl: layTon(s, 'san') }] : [] });
       const nhap = (r.phieuNhap || []).map(x => `${x.ma} (${x.sl})`).join(', ');
+      if (r.boQua) { kq[s.sku] = { ok: false, tb: r.lyDo || 'Bỏ qua' }; continue; }
       kq[s.sku] = r.loiNhap?.length ? { ok: true, tb: `Đã tạo, nhưng phiếu nhập lỗi: ${r.loiNhap.join('; ')}` }
         : { ok: true, tb: `✓ Đã tạo${nhap ? ' · ' + nhap : ''}` };
       ok++;
@@ -13242,7 +13249,7 @@ window.htDongBoCungLoai = async function() {
 async function datTonKV(sku, kho, sl) {
   try {
     const kq = await goiWorkerAdmin('kv-kiem-kho', { sku, branchId: branchKhoTheoMa(kho), sl: Math.max(0, Number(sl) || 0), moTa: `Sửa tồn từ app nội bộ (${currentUserData?.ten || ''})` });
-    return kq.success ? { ok: true, code: kq.code } : { ok: false, loi: kq.error || 'Lỗi' };
+    return kq.success ? { ok: true, code: kq.code, boQua: !!kq.boQua } : { ok: false, loi: kq.error || 'Lỗi' };
   } catch(e) { return { ok: false, loi: e.message }; }
 }
 window.htDatTon = async function() {
@@ -13258,7 +13265,7 @@ window.htDatTon = async function() {
   if (kho === 'cuahang') await updateDoc(doc(db, 'skus', sku.id), { tonCuaHang: Number(sl) || 0 });
   else await setDoc(doc(db, 'ton_san', sku.id), { soLuongTon: Number(sl) || 0 }, { merge: true });
   const kv = await datTonKV(sku.sku, kho === 'cuahang' ? 'ch' : 'san', sl);
-  if (kv.ok) showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0} (cả KiotViet${kv.code ? ' · ' + kv.code : ''})`);
+  if (kv.ok) showToast(`Đã đặt tồn ${tenKho} ${sku.sku} = ${Number(sl) || 0} ${kv.boQua ? '(chỉ trong app)' : `(cả KiotViet${kv.code ? ' · ' + kv.code : ''})`}`);
   else alert(`Đã đặt tồn trong app nhưng CHƯA đổi được bên KiotViet:\n\n${kv.loi}`);
   htXemTon();
 };
@@ -13829,6 +13836,8 @@ const KHO = {
 //           Kho Cửa hàng = Kho Offline 650302 (đang bán tại cửa hàng)
 // Link demo luôn chạy chế độ mới để thử trước.
 let cauHinhKhoKV = null;
+// Công tắc "Ghi dữ liệu gốc sang KiotViet" (cau_hinh/dong_bo_kv.ghiGoc) — tắt: sửa giá, tồn, xóa/tạo mã chỉ đổi trong app
+let ghiGocKV = false;
 const khoKVMoi = () => LA_BAN_DEMO || cauHinhKhoKV?.cheDo === 'moi';
 function apDungCheDoKho() {
   const moi = khoKVMoi();
@@ -13916,6 +13925,7 @@ async function dayHangHoaKV(s, tc = {}) {
   return r;
 }
 function baoKetQuaDayKV(r, sku) {
+  if (r.tatGhiGoc) { showToast(`Đã lưu ${sku} (chỉ trong app)`); return; }
   if (r.boQua) { showToast(`${sku}: ${r.lyDo}`, true); return; }
   if (r.ghiChu?.length) showToast(`${sku}: ${r.ghiChu.join('; ')}`, true);
   if (r.khongDoi) return;
@@ -14143,7 +14153,7 @@ window.luuSuaHangHoa = async function(id) {
   if (lechCH) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechCH) }], Math.sign(lechCH), 'cuahang', ctSuaTon);
   if (lechSan) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechSan) }], Math.sign(lechSan), 'san', ctSuaTon);
   if (giaVonMoi !== null) await luuGiaVon(sku, giaVonMoi);
-  showToast('Đã cập nhật hàng hóa — đang cập nhật bên KiotViet...');
+  showToast(ghiGocKV ? 'Đã cập nhật hàng hóa — đang cập nhật bên KiotViet...' : 'Đã cập nhật hàng hóa');
   try {
     const kq = await dayHangHoaKV({ ...(s || {}), ...updateData }, { skuCu: id, giaVon: giaVonMoi ?? s?.giaVon });
     baoKetQuaDayKV(kq, sku);
@@ -14155,13 +14165,13 @@ window.luuSuaHangHoa = async function(id) {
   if (lechCH) { const kq = await datTonKV(sku, 'ch', parseInt(oTonCH.value) || 0); if (!kq.ok) loiTonKV.push('Kho Cửa hàng: ' + kq.loi); }
   if (lechSan) { const kq = await datTonKV(sku, 'san', parseInt(oTonSan.value) || 0); if (!kq.ok) loiTonKV.push('Kho Online: ' + kq.loi); }
   if (loiTonKV.length) alert(`Đã sửa tồn trong app nhưng CHƯA đổi được bên KiotViet:\n\n${loiTonKV.join('\n')}`);
-  else if (lechCH || lechSan) showToast('Đã cập nhật tồn kho cả bên KiotViet');
+  else if ((lechCH || lechSan) && ghiGocKV) showToast('Đã cập nhật tồn kho cả bên KiotViet');
   hangHoaSuaAnhBlob = null;
   comboThanhPhan = [];
   dongSuaHangHoa();
   await loadSKUs();
   // Tồn kho vừa đổi -> đẩy ngay lên sàn, nhưng CHỈ khi SKU nằm trong danh sách "Đẩy tồn kho"
-  tuDongDayTonKhoSauKhiSua(sku);
+  if (ghiGocKV) tuDongDayTonKhoSauKhiSua(sku);   // tắt ghi dữ liệu gốc thì không tự đẩy tồn lên sàn
   renderHangHoaNhomFilters();
   renderHangHoaList();
 };
@@ -14178,12 +14188,13 @@ window.dongSuaHangHoa = function() {
 window.xoaHangHoa = async function(id) {
   const s = allSKUs.find(x => x.id === id);
   const ma = s?.sku || id;
-  if (!await hoiXacNhan(`Xóa hàng hóa ${ma}${s?.ten ? ' — ' + s.ten : ''}?\n\nXóa luôn bên KiotViet (xóa hẳn, không lấy lại được). Hóa đơn, phiếu cũ vẫn giữ và ghi "đã xóa".`, { nutDongY: 'Xóa' })) return;
-  showToast('Đang xóa bên KiotViet...');
+  if (!await hoiXacNhan(`Xóa hàng hóa ${ma}${s?.ten ? ' — ' + s.ten : ''}?\n\n${ghiGocKV ? 'Xóa luôn bên KiotViet (xóa hẳn, không lấy lại được). ' : 'Chỉ xóa trong app, bên KiotViet giữ nguyên. '}Hóa đơn, phiếu cũ vẫn giữ và ghi "đã xóa".`, { nutDongY: 'Xóa' })) return;
+  if (ghiGocKV) showToast('Đang xóa bên KiotViet...');
   try {
     const r = await goiWorkerAdmin('kv-xoa-hang-hoa', { sku: ma });
     if (!r.success) throw new Error(r.error || 'KiotViet lỗi');
     if (r.khongCo) showToast(`${ma} không có bên KiotViet — chỉ xóa trong app`);
+    else if (r.boQua) showToast(`Đã xóa ${ma} trong app (KiotViet giữ nguyên)`);
   } catch(e) {
     if (!await hoiXacNhan(`Không xóa được ${ma} bên KiotViet:\n\n${e.message}\n\nVẫn xóa trong app?`, { nutDongY: 'Vẫn xóa trong app' })) return;
   }
@@ -14796,6 +14807,10 @@ function theoDoiTinhNang() {
     dsKhuyenMai = snap.exists() && Array.isArray(snap.data().ds) ? snap.data().ds : [];
     if (activeModule === 'banhang' && document.getElementById('bh-gio')) { veGioHang(); veDayDuoi(); }
     if (activeModule === 'khuyenmai') renderKhuyenMai();
+  }, () => {});
+  onSnapshot(doc(db, 'cau_hinh', 'dong_bo_kv'), (snap) => {
+    ghiGocKV = !!(snap.exists() && snap.data().ghiGoc === true);
+    if (document.getElementById('ht-ghigoc')) htVeGhiGoc();
   }, () => {});
   onSnapshot(doc(db, 'cau_hinh', 'kho_kv'), (snap) => {
     cauHinhKhoKV = snap.exists() ? snap.data() : null;
@@ -19567,11 +19582,16 @@ async function renderBangLuong() {
     if (!allVaiTro.length) await loadVaiTro();
     // Thưởng đóng gói tra trạng thái từ đơn sàn — chưa nạp thì phần trăm doanh thu
     // luôn ra 0 vì không biết đơn nào đã giao.
-    if (!allDonHangSan.length) {
+    // Bảng lương cần 1000 đơn gần nhất. Tab Đơn hàng có thể đã nạp ít hơn -> nạp đủ rồi gộp vào.
+    if (!daNapDonChoLuong) {
       try {
         const sD = await getDocs(query(collection(db, 'don_hang_san'),
           orderBy('ngayDat', 'desc'), limit(1000)));
-        allDonHangSan = sD.docs.map(d => ({ id: d.id, ...d.data() }));
+        const gop = new Map(allDonHangSan.map(d => [d.id, d]));
+        sD.docs.forEach(d => { if (!gop.has(d.id)) gop.set(d.id, { id: d.id, ...d.data() }); });
+        const t = (x) => x.ngayDat?.toDate ? x.ngayDat.toDate().getTime() : 0;
+        allDonHangSan = [...gop.values()].sort((a, b) => t(b) - t(a));
+        daNapDonChoLuong = true;
       } catch(e) { console.warn('Không nạp được đơn sàn:', e.message); }
     }
     // Quản lý mặc định thấy danh sách tổng; bấm vào một người mới xem chi tiết
@@ -23196,7 +23216,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v574</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v575</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23250,7 +23270,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v574</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v575</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23296,7 +23316,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v574</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v575</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
