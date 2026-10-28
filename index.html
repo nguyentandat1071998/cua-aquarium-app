@@ -9770,85 +9770,39 @@ async function chuanBiDonRiengLe(d) {
 //   có, thiếu hạn   -> sàn chưa duyệt
 //   có, đủ hạn      -> LỖI HỆ THỐNG (sàn ổn, đơn ổn, mà gọi vẫn hỏng)
 async function phanLoaiSauKhiLoi(maDon, loiGoc) {
-  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
   showToast('Đang kiểm tra vì sao...');
-
-  let nhom = null, thongBao = '', tieuDe = '', loaiTB = 'thuong';
-  try {
-    const idToken = await currentUser.getIdToken();
-    const den = new Date();
-    const tu = new Date(den.getTime() - 30 * 86400000);
-    const ngay = (x) => x.toISOString().split('T')[0];
-
-    let thay = null, quetXong = false;
-    for (let trang = 1; trang <= 8; trang++) {
-      const res = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'x-action': 'lay-don-ban-online', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab: 'unprocessed', soLuong: 50, trang, chiXem: true,
-          nguyenBan: true, tuNgay: ngay(tu), denNgay: ngay(den) })
-      });
-      const kq = await res.json();
-      if (!kq.success) break;
-      thay = (kq.nguyenBan || []).find(o => String(o.OrderId) === String(maDon));
-      if (thay) { quetXong = true; break; }
-      if (kq.quetDu || (kq.soLay || 0) < 50) { quetXong = true; break; }
-    }
-
-    if (!quetXong) {
-      tieuDe = 'Không kiểm tra được';
-      thongBao = 'Mạng hoặc máy chủ đang trục trặc. Thử lại sau ít phút.';
-      loaiTB = 'cho';
-    } else if (!thay) {
-      nhom = 'chua_thanh_toan';
-      loaiTB = 'thuong';
-      tieuDe = 'Khách chưa thanh toán';
-      thongBao = 'Đơn chưa có ở Bán Online vì khách chưa trả tiền.\n\n'
-        + 'Đã chuyển sang nhóm "Chưa thanh toán". Khách trả tiền thì đơn tự quay lại.';
-    } else if (!thay.RtsSla && !thay.ShipByDate) {
-      nhom = 'san_chua_duyet';
-      loaiTB = 'cho';
-      tieuDe = 'Sàn chưa duyệt đơn';
-      thongBao = 'Sàn còn đang xét đơn này, chưa cho chuẩn bị hàng.\n\n'
-        + 'Đã chuyển sang nhóm "Sàn chưa duyệt". Thử lại sau ít phút.';
-    } else {
-      // Sàn đã duyệt, đơn hợp lệ, mà gọi xác nhận vẫn hỏng
-      nhom = 'loi_he_thong';
-      loaiTB = 'loi';
-      tieuDe = 'LỖI HỆ THỐNG!!!';
-      thongBao = 'Sàn đã duyệt đơn này rồi nhưng không chuẩn bị hàng được.\n\n'
-        + 'BÁO QUẢN LÝ XỬ LÝ NGAY.';
-    }
-  } catch(e) {
-    tieuDe = 'Không kiểm tra được';
-    thongBao = e.message;
-    loaiTB = 'cho';
+  let tieuDe = '', thongBao = '', loaiTB = 'thuong';
+  // Hỏi MÁY CHỦ phân loại lại (quét cả tab "Chưa thanh toán" lẫn "Chờ xử lý" của Bán Online rồi ghi vào đơn)
+  // — cùng một cách với lịch 30 phút, nên đơn chuyển đúng nhóm trên mọi máy.
+  const kq = await goiWorkerAdmin('kiem-tra-nhom-cho', { ep: true }).catch(e => ({ success: false, error: e.message }));
+  if (kq?.success) await loadDonHangSan().catch(() => {});
+  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
+  const nhom = d ? nhomChoCuaDon(d) : null;
+  if (!kq?.success || !d) {
+    tieuDe = 'Không kiểm tra được'; loaiTB = 'cho';
+    thongBao = 'Mạng hoặc máy chủ đang trục trặc. Thử lại sau ít phút.' + (kq?.error ? `\n\n(${kq.error})` : '');
+  } else if (nhom === 'chua_thanh_toan') {
+    tieuDe = 'Khách chưa thanh toán';
+    thongBao = 'Sàn báo đơn này khách CHƯA THANH TOÁN nên chưa chuẩn bị hàng được.\n\nĐã chuyển sang nhóm "Chưa thanh toán". Khách trả tiền thì đơn tự quay lại.';
+  } else if (nhom === 'san_chua_duyet') {
+    tieuDe = 'Sàn chưa duyệt đơn'; loaiTB = 'cho';
+    thongBao = 'Sàn còn đang xét đơn này, chưa cho chuẩn bị hàng.\n\nĐã chuyển sang nhóm "Sàn chưa duyệt". Thử lại sau ít phút.';
+  } else if (nhom === 'cho_dieu_phoi') {
+    tieuDe = 'Sàn chưa điều phối vận chuyển'; loaiTB = 'cho';
+    thongBao = 'Sàn chưa gán đơn vị vận chuyển cho đơn này.\n\nĐã chuyển sang nhóm "Chờ điều phối". Thử lại sau ít phút.';
+  } else if (nhom === 'da_huy' || phieuDatDaHuy(d)) {
+    tieuDe = 'Đơn đã hủy'; thongBao = 'Đơn này đã bị hủy trên sàn — không cần chuẩn bị hàng.';
+  } else if (d.coHoaDon === true || d.maVanDon || phieuDatDaXong(d)) {
+    tieuDe = 'Đơn đã được chuẩn bị'; thongBao = 'Đơn này đã được chuẩn bị hàng rồi (có thể ai đó vừa bấm).';
+  } else {
+    // Sàn cho chuẩn bị (đơn ở Chờ xử lý, có hạn xác nhận) mà vẫn hỏng -> lỗi phần mềm
+    tieuDe = 'LỖI HỆ THỐNG!!!'; loaiTB = 'loi';
+    thongBao = 'Sàn đã duyệt đơn này rồi nhưng không chuẩn bị hàng được.\n\nBÁO QUẢN LÝ XỬ LÝ NGAY.';
+    try {
+      await updateDoc(doc(db, 'don_hang_san', d.id), { daThuChuanBi: true, thuChuanBiLuc: serverTimestamp(), loiHeThongLuc: serverTimestamp(), loiHeThongNoiDung: String(loiGoc || '').slice(0, 500) });
+      d.loiHeThongLuc = new Date(); d.loiHeThongNoiDung = loiGoc;
+    } catch(e) {}
   }
-
-  // Ghi lại để lần sau khỏi bấm lại, và để quản lý xem được lỗi gì
-  if (d?.id && nhom) {
-    const ghi = { daThuChuanBi: true, thuChuanBiLuc: serverTimestamp() };
-    if (nhom === 'loi_he_thong') {
-      ghi.loiHeThongLuc = serverTimestamp();
-      ghi.loiHeThongNoiDung = String(loiGoc || '').slice(0, 500);
-      d.loiHeThongLuc = new Date();
-      d.loiHeThongNoiDung = loiGoc;
-    } else {
-      ghi.nhomChoTruoc = nhom;
-      ghi.loiHeThongLuc = null;
-      d.nhomChoTruoc = nhom;
-      d.loiHeThongLuc = null;
-      // Đơn hóa ra chưa thanh toán mà app lại đang xếp ở Chờ in — nghĩa là cờ
-      // daInVanDon bị đặt nhầm (in hụt, hoặc đồng bộ sai). Gỡ ra cho đúng.
-      if (nhom === 'chua_thanh_toan' && d.daInVanDon && !d.maVanDon) {
-        ghi.daInVanDon = false;
-        d.daInVanDon = false;
-      }
-    }
-    d.daThuChuanBi = true;
-    try { await updateDoc(doc(db, 'don_hang_san', d.id), ghi); } catch(e) {}
-  }
-
   hienPopup({ loai: loaiTB, tieuDe, noiDung: thongBao, maDon });
   veDanhSachDon();
 }
@@ -23219,7 +23173,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v576</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v577</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23273,7 +23227,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v576</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v577</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23319,7 +23273,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v576</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v577</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
