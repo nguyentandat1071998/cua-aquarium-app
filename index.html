@@ -4598,6 +4598,7 @@ function veDanhSachDon() {
   }
   if (!ds.length) { listEl.innerHTML = '<p class="info-note">Không có đơn nào khớp bộ lọc.</p>'; return; }
 
+  const skuTheoMaDon = new Map(allSKUs.map(s => [s.sku, s]));
   listEl.innerHTML = trang.map(d => {
     const maTT = trangThaiHienThi(d);
     const tt = moTaTrangThai(maTT);
@@ -4644,9 +4645,8 @@ function veDanhSachDon() {
             ${(() => { const t = veHanXacNhan(d); return t ? ' · ' + t : ''; })()}
           </div>
           ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
-          <div style="font-size:12px;margin-top:4px">
-            ${(d.chiTiet || []).slice(0, 3).map(c => `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
-            ${(d.chiTiet || []).length > 3 ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 3} món</span>` : ''}
+          <div style="margin-top:6px;display:flex;flex-direction:column;gap:5px">
+            ${(d.chiTiet || []).map(c => veDongHangDon(c, skuTheoMaDon)).join('')}
           </div>
         </div>
         <div style="text-align:right;flex-shrink:0">
@@ -4673,6 +4673,22 @@ function veDanhSachDon() {
       <span style="font-size:13px;color:var(--text2)">Trang ${donPage}/${tongTrang} · ${ds.length} đơn</span>
       <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage>=tongTrang?'disabled':''} onclick="doiTrangDon(${donPage+1})">→</button>
     </div>` : '';
+}
+
+// Một dòng hàng trong thẻ đơn: Hình ảnh - Số lượng - Tên sản phẩm (xếp dọc)
+function veDongHangDon(c, skuTheoMa) {
+  const sk = skuTheoMa.get(c.maHang);
+  const sl = Number(c.soLuong) || 0;
+  const anh = sk?.anhFileId
+    ? `<img src="${anhThumbUrl(sk.anhFileId, 120)}" loading="lazy" onclick="event.stopPropagation();viewPhoto('${anhThumbUrl(sk.anhFileId, 900)}')"
+        onerror="this.style.visibility='hidden'" style="width:42px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--bg);cursor:zoom-in">`
+    : `<div style="width:42px;height:42px;border-radius:6px;flex-shrink:0;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:18px;opacity:.5">📦</div>`;
+  return `<div style="display:flex;gap:8px;align-items:center">
+    ${anh}
+    <span style="flex-shrink:0;min-width:34px;text-align:center;font-size:13px;font-weight:700;padding:3px 6px;border-radius:5px;
+      background:${sl > 1 ? '#FEF3C7' : 'var(--bg)'};color:${sl > 1 ? '#B45309' : 'var(--text)'}">×${sl}</span>
+    <span style="font-size:12.5px;line-height:1.35;min-width:0">${escHtml(c.tenHang || c.maHang || '')}</span>
+  </div>`;
 }
 
 // ==========================================================================
@@ -23254,7 +23270,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v582</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v583</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23308,7 +23324,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v582</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v583</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23354,7 +23370,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v582</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v583</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
