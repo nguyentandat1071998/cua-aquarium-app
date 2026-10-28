@@ -3165,6 +3165,9 @@ let allDonHangSan = [];
 let donFilterSan = 'all';
 // Lọc theo hãng vận chuyển — là nhánh con của sàn, đổi sàn thì đặt lại về 'all'
 let donFilterVanChuyen = 'all';
+// Lọc loại giao giống tab "Hỏa tốc" bên KiotViet: 'all' | 'hoatoc' | 'thuong'
+let donFilterGiao = 'all';
+const khopLocGiao = (d) => donFilterGiao === 'all' || (donFilterGiao === 'hoatoc') === laHoaToc(d);
 // Mặc định mở "Chờ xử lý" — việc cần làm ngay. Mở "Tất cả" mỗi lần vào tab
 // vừa tốn dữ liệu vừa không giúp gì.
 let donFilterTrangThai = 'cho_xu_ly';
@@ -3384,6 +3387,7 @@ function trangThaiHienThi(d) {
 
 function locDon() {
   let ds = allDonHangSan;
+  if (donFilterGiao !== 'all') ds = ds.filter(khopLocGiao);
   if (donFilterSan !== 'all') ds = ds.filter(d => d.san === donFilterSan);
   if (donFilterVanChuyen !== 'all') {
     ds = ds.filter(d => (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen);
@@ -3575,6 +3579,12 @@ window.doiFilterDonSan = function(san) {
   veDanhSachDon();
 };
 
+window.doiFilterGiao = function(ma) {
+  donFilterGiao = ['hoatoc', 'thuong'].includes(ma) ? ma : 'all';
+  donPage = 1;
+  veDanhSachDon();
+};
+
 window.doiFilterVanChuyen = function(ma) {
   donFilterVanChuyen = ma;
   donPage = 1;
@@ -3614,13 +3624,14 @@ window.timKiemDon = function(v) {
 // "TikTok + J&T" xong Shopee hiện 0 — trong khi Shopee vốn có đơn, chỉ là không
 // dùng J&T.
 function nenLocDon(bo) {
-  const capTren = { trangThai: 0, san: 1, vanChuyen: 2 };
-  const cap = capTren[bo] ?? 3;
+  const capTren = { trangThai: 0, giao: 1, san: 2, vanChuyen: 3 };
+  const cap = capTren[bo] ?? 4;
   return allDonHangSan.filter(d => {
     if (cap > 0 && donFilterTrangThai !== 'all'
         && trangThaiHienThi(d) !== donFilterTrangThai) return false;
-    if (cap > 1 && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
-    if (cap > 2 && donFilterVanChuyen !== 'all'
+    if (cap > 1 && !khopLocGiao(d)) return false;
+    if (cap > 2 && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
+    if (cap > 3 && donFilterVanChuyen !== 'all'
         && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
     return true;
   });
@@ -3655,6 +3666,25 @@ function nutLoc(ma, nhan, so, dangChon, hamGoi, icon = '') {
            opacity:${rong && !dangChon ? '.5' : '1'};
            font-weight:${dangChon ? '600' : '400'}">
     ${icon}${escHtml(nhan)} (${so})</button>`;
+}
+
+// Loại giao: Hỏa tốc / Thường — như tab "Hỏa tốc" của KiotViet. Có đơn hỏa tốc thì nút đỏ cho dễ thấy.
+function veLocGiao() {
+  const nen = nenLocDon('giao');
+  const soHT = nen.filter(laHoaToc).length;
+  const nutHT = (() => {
+    const chon = donFilterGiao === 'hoatoc';
+    return `<button onclick="doiFilterGiao('hoatoc')"
+      style="display:inline-flex;align-items:center;gap:5px;border:1.5px solid ${soHT || chon ? '#DC2626' : 'var(--border)'};
+             border-radius:6px;padding:6px 10px;font-size:12px;white-space:nowrap;
+             background:${chon ? '#DC2626' : (soHT ? '#FEF2F2' : '#fff')};color:${chon ? '#fff' : (soHT ? '#DC2626' : 'var(--text2)')};
+             opacity:${soHT || chon ? '1' : '.5'};font-weight:${soHT || chon ? '700' : '400'}">🔥 Hỏa tốc (${soHT})</button>`;
+  })();
+  return `<div style="display:flex;gap:5px;flex-wrap:wrap">
+    ${nutLoc('all', 'Tất cả', nen.length, donFilterGiao === 'all', 'doiFilterGiao')}
+    ${nutHT}
+    ${nutLoc('thuong', 'Giao thường', nen.length - soHT, donFilterGiao === 'thuong', 'doiFilterGiao')}
+  </div>`;
 }
 
 function veLocVanChuyen() {
@@ -4541,6 +4571,7 @@ function veDanhSachDon() {
         ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
       </div>`)}
 
+    ${khoiLoc('LOẠI GIAO', veLocGiao())}
     ${khoiLoc('SÀN', veLocSan())}
     ${khoiLoc('ĐƠN VỊ VẬN CHUYỂN', veLocVanChuyen())}
 
@@ -23223,7 +23254,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v581</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v582</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23277,7 +23308,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v581</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v582</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23323,7 +23354,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v581</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v582</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
