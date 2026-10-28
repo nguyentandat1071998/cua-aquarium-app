@@ -3297,15 +3297,58 @@ function mucDoHuy(d) {
 // Ba mức hủy, mỗi mức một việc phải làm khác nhau. Gom vào một bảng để ô cảnh
 // báo, cửa sổ chi tiết và nút thao tác dùng chung một cách gọi tên.
 const MUC_HUY = {
-  dang_giao:    { ten: 'Hủy khi đang giao',      mau: '#DC2626', nen: '#FEF2F2',
+  dang_giao:    { ten: 'Đơn hủy đang giao',      mau: '#DC2626', nen: '#FEF2F2',
                   viec: 'Liên hệ đơn vị vận chuyển lấy lại hàng',
                   nutXong: '✓ Đã nhận lại từ shipper' },
-  sau_dong_goi: { ten: 'Hủy sau khi đóng gói',   mau: '#EA580C', nen: '#FFFBEB',
+  sau_dong_goi: { ten: 'Đơn hủy đã đóng gói',    mau: '#EA580C', nen: '#FFFBEB',
                   viec: 'Kiện hàng còn trong kho — cần tháo ra nhập lại',
                   nutXong: '✓ Đã tháo kiện, nhập lại' },
-  sau_in:       { ten: 'Hủy sau khi in tem',     mau: '#D97706', nen: '#FFFBEB',
+  sau_in:       { ten: 'Đơn hủy đã in',          mau: '#D97706', nen: '#FFFBEB',
                   viec: 'Bỏ tem đã in, hàng chưa đóng gói',
                   nutXong: '✓ Đã bỏ tem' }
+};
+
+// ===== KHUNG ĐỎ "ĐƠN HỦY CẦN XỬ LÝ" (dưới ô tìm mã) + QUÉT MÃ XÁC NHẬN =====
+// Đơn hủy khi đã in tem / đã đóng gói / đang giao: kho phải bỏ tem, tháo kiện hoặc đòi lại hàng.
+// Xác nhận bằng nút trong danh sách, hoặc quét / gõ mã đơn, mã vận đơn vào ô bên dưới.
+function veKhungHuyCanXuLy(soIn, soDG, soGiao) {
+  const tong = soIn + soDG + soGiao;
+  if (!tong) return '';
+  const chip = (muc, so) => so ? `<button onclick="moKhungDonHuy('${muc}')" style="border:1.5px solid ${MUC_HUY[muc].mau};background:#fff;color:${MUC_HUY[muc].mau};border-radius:6px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">${MUC_HUY[muc].ten} (${so}) →</button>` : '';
+  return `<div style="border:2px solid #DC2626;background:#FEF2F2;border-radius:8px;padding:10px 12px;margin-bottom:8px">
+    <b style="font-size:13.5px;color:#DC2626">⚠ ${tong} đơn hủy cần xử lý</b>
+    <div style="font-size:11.5px;color:var(--text2);margin-top:2px">Bỏ tem / tháo kiện nhập lại / lấy lại hàng từ shipper, rồi xác nhận — bấm vào nhóm, hoặc quét mã đơn / mã vận đơn ngay dưới.</div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${chip('sau_in', soIn)}${chip('sau_dong_goi', soDG)}${chip('dang_giao', soGiao)}</div>
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <input id="huy-quet" type="text" placeholder="Quét / nhập mã đơn hoặc mã vận đơn để xác nhận" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();xacNhanHuyTheoMa(this.value);this.value='';}"
+        style="flex:1;min-width:0;padding:8px 10px;border:1.5px solid #DC2626;border-radius:8px;font-size:13px;background:#fff">
+      <button onclick="xacNhanHuyTheoMa(document.getElementById('huy-quet').value);document.getElementById('huy-quet').value=''" style="flex:0 0 auto;border:1.5px solid #DC2626;background:#fff;color:#DC2626;border-radius:8px;padding:0 12px;font-weight:700;cursor:pointer">✓</button>
+      <button onclick="hhoMoCamera(xacNhanHuyTheoMa)" title="Quét bằng camera" style="flex:0 0 auto;border:none;background:#DC2626;color:#fff;border-radius:8px;padding:0 12px;font-weight:700;cursor:pointer">📷</button>
+    </div>
+  </div>`;
+}
+const chuanMaQuet = (x) => String(x || '').toUpperCase().replace(/\s+/g, '').replace(/^(DH|HD)(TTS|SPE|LZD)_/, '').replace(/\.1$/, '');
+window.xacNhanHuyTheoMa = async function(ma) {
+  const m = chuanMaQuet(ma);
+  if (!m) return;
+  // Súng quét bắn liên tục: sau khi vẽ lại, đặt con trỏ về đúng ô quét đang dùng
+  const oDang = ['huy-quet', 'huy-quet-modal'].includes(document.activeElement?.id) ? document.activeElement.id : null;
+  setTimeout(() => { if (oDang) document.getElementById(oDang)?.focus(); }, 300);
+  const khop = (d) => [d.maDonSan, d.maHoaDon, d.maVanDon, d.id].some(x => x && chuanMaQuet(x) === m);
+  const d = allDonHangSan.find(khop);
+  if (!d) { bip(400, 250); showToast(`Không tìm thấy đơn ${ma} trong dữ liệu đã tải`, true); return; }
+  const muc = mucDoHuy(d);
+  if (!muc) {
+    bip(400, 250);
+    hienPopup({ loai: 'cho', maDon: d.maDonSan || d.id, tieuDe: 'Đơn này KHÔNG bị hủy',
+      noiDung: `Trạng thái hiện tại: ${moTaTrangThai(trangThaiHienThi(d)).ten}.\n\nĐừng bỏ tem / tháo kiện đơn này.` });
+    return;
+  }
+  if (daNhanLaiKien(d)) { showToast(`Đơn ${d.maDonSan || d.id} đã được xác nhận trước đó`); return; }
+  await doiNhanLaiKien(d.id, true);
+  if (daNhanLaiKien(d)) { bip(1800, 120); showToast(`✓ ${MUC_HUY[muc].ten}: ${d.maDonSan || d.id} — đã xác nhận`); }
+  if (oDang) document.getElementById(oDang)?.focus();
 };
 
 // ===== ĐƠN HOÀN TRẢ =====
@@ -4552,6 +4595,9 @@ function veDanhSachDon() {
   if (manHinhTMDTHienTai !== 'donhang' || activeModule !== 'tmdt') return;
   if (donTabChinh === 'hoantra') { veDanhSachHoanTra(el); return; }
   const dangGoTimKiem = document.activeElement?.id === 'don-timkiem';
+  // Ô quét xác nhận đơn hủy: vẽ lại danh sách (dữ liệu đổi liên tục) không được làm mất chữ đang gõ / con trỏ
+  const oQH = document.getElementById('huy-quet');
+  const giuQuetHuy = oQH ? { v: oQH.value, f: document.activeElement === oQH } : null;
   const ds = locDon();
   // Đếm trên tập ĐÃ LỌC sàn và vận chuyển, không phải toàn bộ đơn — chọn Shopee
   // mà số vẫn tính cả TikTok thì nhìn vào không biết còn bao nhiêu việc phải làm.
@@ -4639,9 +4685,6 @@ function veDanhSachDon() {
       </div>
       <span style="font-size:11px;color:#E11D48;font-weight:600;white-space:nowrap">Đồng bộ →</span>
     </div>` : ''}
-    ${huyDangGiao ? oCanhBao('dang_giao', huyDangGiao) : ''}
-    ${huySauDongGoi ? oCanhBao('sau_dong_goi', huySauDongGoi) : ''}
-    ${huySauIn ? oCanhBao('sau_in', huySauIn) : ''}
     ${veOKhachNhieuDon()}
 
     ${khoiLoc('XỬ LÝ ĐƠN HÀNG', `
@@ -4672,10 +4715,12 @@ function veDanhSachDon() {
         onclick="moKhungDongBoDon()" title="Kéo lại đơn theo khoảng ngày">⤓ Đồng bộ</button>
     </div>
 
+    ${veKhungHuyCanXuLy(huySauIn, huySauDongGoi, huyDangGiao)}
     ${trang.length ? veThanhChon(trang) : ''}
     <div id="don-list"></div>
     <div id="don-phantrang"></div>`;
   giuTieuDiemTimKiem(dangGoTimKiem);
+  if (giuQuetHuy) { const o = document.getElementById('huy-quet'); if (o) { o.value = giuQuetHuy.v; if (giuQuetHuy.f) { o.focus(); try { o.setSelectionRange(o.value.length, o.value.length); } catch(e) {} } } }
 
   const listEl = document.getElementById('don-list');
   if (!allDonHangSan.length) {
@@ -5386,6 +5431,12 @@ function veKhungDonHuy() {
         ${Object.keys(MUC_HUY).map(nutMuc).join('')}
       </div>
 
+      <div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;gap:6px">
+        <input id="huy-quet-modal" type="text" placeholder="Quét / nhập mã đơn, mã vận đơn để xác nhận" autocomplete="off"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();xacNhanHuyTheoMa(this.value);this.value='';}"
+          style="flex:1;min-width:0;padding:8px 10px;border:1.5px solid ${cfg.mau};border-radius:8px;font-size:13px">
+        <button onclick="hhoMoCamera(xacNhanHuyTheoMa)" title="Quét bằng camera" style="flex:0 0 auto;border:none;background:${cfg.mau};color:#fff;border-radius:8px;padding:0 12px;font-weight:700;cursor:pointer">📷</button>
+      </div>
       <div style="display:flex;gap:4px;border-bottom:1px solid var(--border)">
         ${nutTab('chua', `Chưa xử lý (${soChua})`)}
         ${nutTab('roi', 'Đã xử lý')}
@@ -18119,7 +18170,10 @@ window.hhoQuetMa = async function(ma) {
 
 // ----- Camera quét mã vận đơn -----
 let hhoCam = null;   // { luong, boDoc, kieu, chay }
-window.hhoMoCamera = async function() {
+// Quét xong gọi hhoGoiLaiQuet (nếu có, vd. xác nhận đơn hủy), không thì xử lý như hàng hoàn
+let hhoGoiLaiQuet = null;
+window.hhoMoCamera = async function(goiLai) {
+  hhoGoiLaiQuet = typeof goiLai === 'function' ? goiLai : null;
   if (!navigator.mediaDevices?.getUserMedia) { showToast('Máy này không mở được camera', true); return; }
   ddbMoKhung('hho-cam-modal', 'Quét mã vận đơn', 'Đưa mã vạch (hoặc QR) trên tem vào khung, giữ máy cách tem khoảng 10–15cm',
     `<div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:200px" onclick="if(hhoCam&&!hhoCam.luong)hhoBatLuong()">
@@ -18218,7 +18272,7 @@ async function hhoVongQuet() {
   } catch(e) {}
   if (hhoCam?.chay) setTimeout(hhoVongQuet, hhoCam.kieu === 'zxing' ? 300 : 150);
 }
-function hhoDaDocMa(ma) { bip(1800, 120); if (navigator.vibrate) navigator.vibrate(80); hhoDongCamera(); hhoQuetMa(ma); }
+function hhoDaDocMa(ma) { bip(1800, 120); if (navigator.vibrate) navigator.vibrate(80); hhoDongCamera(); const cb = hhoGoiLaiQuet; hhoGoiLaiQuet = null; if (cb) cb(ma); else hhoQuetMa(ma); }
 // Chụp ảnh tem (ảnh gốc của máy, nét hơn video) rồi đọc mã: cả ảnh, dải giữa, và xoay 90° nếu tem chụp dọc
 window.hhoDocAnh = async function(o) {
   const f = o.files?.[0]; o.value = ''; if (!f) { hhoBatLaiSau(); return; }
@@ -23565,7 +23619,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v592</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v593</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23619,7 +23673,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v592</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v593</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23665,7 +23719,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v592</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v593</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
