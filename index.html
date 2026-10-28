@@ -3398,6 +3398,8 @@ function locDon() {
     String(d.maHoaDon || '').toLowerCase().includes(tu) ||
     String(d.maDonSan || '').toLowerCase().includes(tu) ||
     String(d.maVanDon || '').toLowerCase().includes(tu) ||
+    String(d.maKhachKV || '').toLowerCase() === tu ||
+    String(d.khachHang || '').toLowerCase().includes(tu) ||
     (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu))
   );
   return ds;
@@ -4558,6 +4560,7 @@ function veDanhSachDon() {
     ${huyDangGiao ? oCanhBao('dang_giao', huyDangGiao) : ''}
     ${huySauDongGoi ? oCanhBao('sau_dong_goi', huySauDongGoi) : ''}
     ${huySauIn ? oCanhBao('sau_in', huySauIn) : ''}
+    ${veOKhachNhieuDon()}
 
     ${khoiLoc('XỬ LÝ ĐƠN HÀNG', `
       <div style="display:flex;gap:5px;flex-wrap:wrap">
@@ -4599,7 +4602,9 @@ function veDanhSachDon() {
   if (!ds.length) { listEl.innerHTML = '<p class="info-note">Không có đơn nào khớp bộ lọc.</p>'; return; }
 
   const skuTheoMaDon = new Map(allSKUs.map(s => [s.sku, s]));
+  const demCungKhach = demDonCungKhach();
   listEl.innerHTML = trang.map(d => {
+    const soCungKhach = d.maKhachKV && TT_CHUA_DONG_GOI.has(trangThaiHienThi(d)) ? (demCungKhach.get(d.maKhachKV) || 0) : 0;
     const maTT = trangThaiHienThi(d);
     const tt = moTaTrangThai(maTT);
     const ngay = d.ngayDat?.toDate ? d.ngayDat.toDate() : (d.ngayDat ? new Date(d.ngayDat) : null);
@@ -4638,6 +4643,8 @@ function veDanhSachDon() {
               border-radius:4px;font-size:10px;font-weight:700">LỖI!!!</span>` : ''}
 
             <span style="font-size:10px;color:var(--text2)">${tt.ten}</span>
+            ${soCungKhach > 1 ? `<span onclick="event.stopPropagation();locCungKhach('${escHtml(d.maKhachKV)}')" title="Xem các đơn của khách này"
+              style="cursor:pointer;background:#F59E0B;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">👥 KHÁCH ĐẶT ${soCungKhach} ĐƠN</span>` : ''}
             ${laHuySauDongGoi && daNhan ? `<span style="font-size:10px;color:#fff;background:#16A34A;padding:2px 7px;border-radius:4px">✓ Đã nhận lại</span>` : ''}
           </div>
           <div style="font-size:11px;color:var(--text2);margin-top:3px">
@@ -4649,11 +4656,13 @@ function veDanhSachDon() {
             ${(d.chiTiet || []).map(c => veDongHangDon(c, skuTheoMaDon)).join('')}
           </div>
         </div>
-        <div style="text-align:right;flex-shrink:0">
+        <div style="text-align:right;flex-shrink:0;max-width:230px">
           <b style="font-size:14px">${(d.tongTien || 0).toLocaleString('vi-VN')}đ</b>
           <div style="font-size:11px;margin-top:2px">${phi != null
             ? `<span style="color:#DC2626">phí ${phi.toLocaleString('vi-VN')}đ (${tiLePhi}%)</span>`
             : `<span style="color:var(--text2)">chưa có phí</span>`}</div>
+          ${d.khachHang ? `<div style="font-size:12px;font-weight:600;margin-top:5px">👤 ${escHtml(d.khachHang)}</div>` : ''}
+          ${d.diaChi ? `<div style="font-size:11px;color:var(--text2);margin-top:1px;line-height:1.35">📍 ${escHtml(d.diaChi)}</div>` : ''}
         </div>
         ${veNutThaoTac(d, maTT)}
       </div>
@@ -4674,6 +4683,36 @@ function veDanhSachDon() {
       <button class="btn-outline" style="width:auto;padding:6px 14px" ${donPage>=tongTrang?'disabled':''} onclick="doiTrangDon(${donPage+1})">→</button>
     </div>` : '';
 }
+
+// ===== MỘT KHÁCH ĐẶT NHIỀU ĐƠN =====
+// KiotViet tạo khách theo mã người mua của sàn (KHSPE…/KHTTS…): cùng người mua -> cùng maKhachKV, dù tên bị che ***.
+// Chỉ đếm các đơn CHƯA đóng gói — đó là lúc còn gom chung một lần soạn / đóng gói được.
+const TT_CHUA_DONG_GOI = new Set(['cho_xu_ly', 'cho_in', 'cho_dong_goi', 'cho_dieu_phoi', 'chua_thanh_toan', 'san_chua_duyet']);
+function demDonCungKhach() {
+  const m = new Map();
+  for (const d of allDonHangSan) if (d.maKhachKV && TT_CHUA_DONG_GOI.has(trangThaiHienThi(d))) m.set(d.maKhachKV, (m.get(d.maKhachKV) || 0) + 1);
+  return m;
+}
+// Ô báo đầu danh sách: các khách đang có từ 2 đơn chưa đóng gói — bấm tên để xem chung các đơn đó
+function veOKhachNhieuDon() {
+  const dem = demDonCungKhach();
+  const ds = [...dem].filter(([, n]) => n > 1).map(([ma, n]) => {
+    const d = allDonHangSan.find(x => x.maKhachKV === ma);
+    return { ma, n, ten: d?.khachHang || ma, san: d?.san || '' };
+  }).sort((a, b) => b.n - a.n);
+  if (!ds.length) return '';
+  return `<div style="background:#FFFBEB;border:1.5px solid #F59E0B;border-radius:8px;padding:9px 11px;margin-bottom:8px">
+    <b style="font-size:13px;color:#B45309">👥 ${ds.length} khách đang đặt nhiều đơn — soạn / đóng gói chung</b>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">
+      ${ds.map(k => `<button class="btn-xs" onclick="locCungKhach('${escHtml(k.ma)}')" style="background:#fff;border:1px solid #F59E0B">
+        ${veLogoSan(k.san, 13)} ${escHtml(k.ten)} · <b>${k.n} đơn</b></button>`).join('')}
+    </div></div>`;
+}
+window.locCungKhach = function(ma) {
+  donFilterTrangThai = 'all'; donFilterGiao = 'all'; donFilterSan = 'all'; donFilterVanChuyen = 'all';
+  donTimKiem = ma; donPage = 1;
+  veDanhSachDon();
+};
 
 // Một dòng hàng trong thẻ đơn: Hình ảnh - Số lượng - Tên sản phẩm (xếp dọc)
 function veDongHangDon(c, skuTheoMa) {
@@ -23270,7 +23309,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v583</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v584</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23324,7 +23363,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v583</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v584</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23370,7 +23409,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v583</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v584</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
