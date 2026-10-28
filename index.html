@@ -3424,7 +3424,7 @@ function locDon() {
   if (donFilterGiao !== 'all') ds = ds.filter(khopLocGiao);
   if (donFilterSan !== 'all') ds = ds.filter(d => d.san === donFilterSan);
   if (donFilterVanChuyen !== 'all') {
-    ds = ds.filter(d => (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen);
+    ds = ds.filter(d => khoaVanChuyen(d) === donFilterVanChuyen);
   }
   if (donFilterTrangThai !== 'all') ds = ds.filter(d => trangThaiHienThi(d) === donFilterTrangThai);
   const tu = donTimKiem.trim().toLowerCase();
@@ -3611,7 +3611,7 @@ window.doiFilterDonSan = function(san) {
   if (donFilterVanChuyen !== 'all') {
     const con = allDonHangSan.some(d =>
       (san === 'all' || d.san === san) &&
-      (d.hangVanChuyen || d.donViVanChuyen || '') === donFilterVanChuyen);
+      khoaVanChuyen(d) === donFilterVanChuyen);
     if (!con) donFilterVanChuyen = 'all';
   }
   veDanhSachDon();
@@ -3713,7 +3713,7 @@ function nenLocDon(bo) {
     if (cap > 1 && !khopLocGiao(d)) return false;
     if (cap > 2 && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
     if (cap > 3 && donFilterVanChuyen !== 'all'
-        && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
+        && khoaVanChuyen(d) !== donFilterVanChuyen) return false;
     return true;
   });
 }
@@ -3772,7 +3772,7 @@ function veLocVanChuyen() {
   const nen = nenLocDon('vanChuyen');
   const dem = new Map();
   for (const d of nen) {
-    const h = d.hangVanChuyen || d.donViVanChuyen || '';
+    const h = khoaVanChuyen(d);
     if (h) dem.set(h, (dem.get(h) || 0) + 1);
   }
   // Hãng không có đơn trong bộ lọc hiện tại thì bỏ hẳn — khác với sàn, vì danh
@@ -3906,7 +3906,7 @@ function veThanhChon(trang) {
         <input type="checkbox" ${daChonHet ? 'checked' : ''} onchange="vdChonHetTrang()">
         Chọn tất cả trang này (${trang.length})
       </label>
-      <select onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="width:auto;flex:0 0 auto;min-width:0;height:28px;padding:2px 4px;margin:0;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+      <select class="chon-so-trang" onchange="doiSoDonTrang(this.value)" title="Số đơn mỗi trang" style="width:auto !important;max-width:110px;flex:0 0 auto;min-width:0;height:28px;padding:2px 4px;margin:0;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
         ${SO_DON_TRANG_CHON.map(n => `<option value="${n}" ${n === DON_MOI_TRANG ? 'selected' : ''}>${n}/Trang</option>`).join('')}
       </select>
       ${vdDaChon.size ? `<span style="font-size:12px;color:var(--green);font-weight:600">
@@ -3998,7 +3998,7 @@ function locDonHoanTra() {
     }
     if (donFilterSan !== 'all' && d.san !== donFilterSan) return false;
     if (donFilterVanChuyen !== 'all'
-      && (d.hangVanChuyen || d.donViVanChuyen || '') !== donFilterVanChuyen) return false;
+      && khoaVanChuyen(d) !== donFilterVanChuyen) return false;
     if (tu && !(String(d.maHoaDon || '').toLowerCase().includes(tu)
       || String(d.maDonSan || '').toLowerCase().includes(tu)
       || String(d.maVanDon || '').toLowerCase().includes(tu)
@@ -4807,6 +4807,8 @@ function tinhTienDon(d, skuTheoMa) {
 
 // Đơn vị vận chuyển hiện trên thẻ: hãng thật từ Bán Online (SPX Express, J&T...). KiotViet hay ghi tên sàn
 // (SHOPEE / TIKTOK / LAZADA) vào chỗ này — trùng nhãn sàn ở đầu thẻ nên bỏ.
+// Khóa lọc theo đơn vị vận chuyển: tên hãng thật, chưa có hãng thì gom chung
+function khoaVanChuyen(d) { return tenHangVanChuyen(d) || 'Chưa có hãng'; }
 function tenHangVanChuyen(d) {
   for (const h of [d.hangVanChuyen, d.donViVanChuyen]) {
     const t = String(h || '').trim();
@@ -23543,6 +23545,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .don-dau{grid-area:dau;min-width:0}.don-hang{grid-area:hang;min-width:0;display:flex;flex-direction:column;gap:5px}
 .don-khach{grid-area:khach;min-width:0;overflow-wrap:anywhere}.don-tien{grid-area:tien;text-align:right;min-width:0}.don-nut{grid-area:nut;align-self:center}.don-huy{grid-area:huy}
 .don-nut:empty,.don-khach:empty{display:none}
+select.chon-so-trang{width:auto!important;max-width:110px!important;display:inline-block}
 .loc-ngay-o{-webkit-appearance:none;appearance:none;flex:1;min-width:0;min-height:36px;padding:6px 8px;font-size:13px;border-radius:6px;background:#fff}
 @media (max-width: 640px) {
   .don-the{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"dau dau" "hang hang" "khach tien" "nut nut" "huy huy";padding:10px}
@@ -23563,7 +23566,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v589</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v590</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23617,7 +23620,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v589</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v590</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23663,7 +23666,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v589</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v590</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
