@@ -11900,8 +11900,9 @@ const DC_TT = { cho_ck: 'Chờ tiền cọc CK', dang_giu: 'Đang giữ hàng', 
 const DC_MAU_TT = { cho_ck: '#D97706', dang_giu: '#0E7490', cho_huy: '#DC2626', da_thanh_toan: '#16A34A', da_huy: '#9CA3AF' };
 let dcPhieu = null, dcDs = [], dcLocTT = 'dang_giu', dcTimDs = '', dcHuyNghe = null, dcKhHen = null;
 // Mã kho chung (để ở quầy, bán cả online): tồn nằm ở Kho Online -> bán quầy theo tồn Online trừ hàng đang đặt online
+// (hàng đặt cọc của mã kho chung đã chuyển sang Cửa hàng và giữ ở đó, phần Cửa hàng dư ra — nếu có — vẫn bán được)
 const tonKhaDungCH = (s) => s?.khoChung
-  ? Math.max(0, layTon(s, 'san') - layDatHangSan(s))
+  ? Math.max(0, layTon(s, 'san') - layDatHangSan(s)) + Math.max(0, layTon(s, 'cuahang') - (Number(s?.datCocCH) || 0))
   : layTon(s, 'cuahang') - (Number(s?.datCocCH) || 0);
 const dcKhoaNhap = () => `dat_coc_soan_${currentUser?.uid || 'chung'}`;
 function dcMoi() { return { gio: [], khach: { ten: '', sdt: '' }, ghiChu: '', tienCoc: 0, cachTra: 'tienmat', tienMat: 0, khachDua: null }; }
@@ -11909,9 +11910,6 @@ function dcLuuNhap() { try { if (dcPhieu && !dcPhieu.ma) localStorage.setItem(dc
 function dcDocNhap() { try { const d = JSON.parse(localStorage.getItem(dcKhoaNhap()) || 'null'); return d && Date.now() - (d.luc || 0) < 3 * 86400000 ? d : null; } catch(e) { return null; } }
 const dcTong = (p) => (p?.gio || []).reduce((a, d) => a + (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (Number(d.giamGia) || 0), 0);
 async function dcGoi(action, body) {
-  const gioKC = [body?.dongHang, body?.gio, body?.items].find(Array.isArray) || [];
-  const kc = gioKC.filter(d => allSKUs.find(s => s.sku === d.sku)?.khoChung);
-  if (kc.length) throw new Error(`Hàng kho chung (để ở quầy, bán cả online) không đặt cọc được — bán thẳng: ${kc.map(d => d.ten || d.sku).join(', ')}`);
   const idToken = await currentUser.getIdToken();
   const r = await fetch(WORKER_URL, { method: 'POST', headers: { 'x-action': action, 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({ success: false, error: `HTTP ${r.status}` }));
@@ -13843,10 +13841,11 @@ function capNhatTheoDoiTonSan() {
     tonSanUnsub(); tonSanUnsub = null; tonSanMap = new Map();
   }
   // Không xem được cả Kho Online nhưng bán hàng: chỉ nghe các mã kho chung (rules cho đọc riêng các mã này)
-  const canKhoChung = !duocDoc && (coQuyen('banhang') || coQuyen('datcoc'));
+  const canKhoChung = !duocDoc && ['banhang', 'datcoc', 'kiemkho', 'kk_duyet'].some(k => coQuyen(k));
   if (canKhoChung && !tonKhoChungUnsub) {
     tonKhoChungUnsub = onSnapshot(query(collection(db, 'ton_san'), where('khoChung', '==', true)), (snap) => {
       snap.docs.forEach(d => tonSanMap.set(d.id, d.data()));
+      if (typeof kkTonDoi === 'function') kkTonDoi();
     }, (e) => console.warn('[tồn kho chung] không đọc được:', e.message));
   } else if (!canKhoChung && tonKhoChungUnsub) { tonKhoChungUnsub(); tonKhoChungUnsub = null; }
 }
@@ -17982,6 +17981,8 @@ function kkCuaNguoiKhac(d) {
 const KK_TT = { dang_kiem: ['Đang kiểm', '#2563EB', '#EFF6FF'], cho_duyet: ['Chờ duyệt', '#B45309', '#FFFBEB'], da_duyet: ['Đã duyệt', '#15803D', '#F0FDF4'], da_huy: ['Đã hủy', '#6B7280', '#F3F4F6'] };
 const kkTenKho = (k) => k === 'san' ? 'Kho Online' : 'Kho Cửa hàng';
 const kkMaKho = (k) => k === 'san' ? 'san' : 'cuahang';
+// Tồn của mã trong phiếu: phiếu Kho Cửa hàng + mã kho chung (để ở quầy, tồn nằm ở Kho Online) = Online + Cửa hàng
+const kkTonSku = (s, kho) => kho !== 'san' && s?.khoChung ? layTon(s, 'san') + layTon(s, 'cuahang') : layTon(s, kkMaKho(kho));
 const kkNgay = (t) => { const d = t?.toDate ? t.toDate() : (t ? new Date(t) : null); return d && !isNaN(d) ? d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : ''; };
 const kkNgayDu = (t) => { const d = t?.toDate ? t.toDate() : (t ? new Date(t) : null); if (!d || isNaN(d)) return ''; const p2 = (n) => String(n).padStart(2, '0');
   return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
@@ -18063,8 +18064,8 @@ function kkCacNhom() {
   return [...new Set(allSKUs.filter(s => !s.laCombo).map(nhomCuoiCuaSku).filter(Boolean).flatMap(p => { const ph = p.split(' > '); return ph.map((_, i) => ph.slice(0, i + 1).join(' > ')); }))].sort((a, b) => a.localeCompare(b, 'vi'));
 }
 function kkSkuTheoNhom(nhom, kho, coTon0) {
-  return allSKUs.filter(s => !s.laCombo && !s.deleted && !(kho === 'ch' && s.khoChung) && nhom.some(n => { const p = nhomCuoiCuaSku(s); return p === n || p.startsWith(n + ' > '); })
-    && (coTon0 || layTon(s, kkMaKho(kho)) !== 0));
+  return allSKUs.filter(s => !s.laCombo && !s.deleted && nhom.some(n => { const p = nhomCuoiCuaSku(s); return p === n || p.startsWith(n + ' > '); })
+    && (coTon0 || kkTonSku(s, kho) !== 0));
 }
 window.kkMoTao = function() {
   kkTao = kkTao || { kho: 'ch', nhom: [], coTon0: false };
@@ -18160,7 +18161,7 @@ function kkVeChiTiet() {
   const xemDuyet = kkDuocDuyet() && p.trangThai !== 'da_huy';
   const dong = (p.dsSku || []).map(s => {
     const g = kkGiaTri(p, s.id), sk = skuMap.get(s.id);
-    const tonNay = sk ? layTon(sk, kkMaKho(p.kho)) : null;
+    const tonNay = sk ? kkTonSku(sk, p.kho) : null;
     const thucTe = g ? (g.khop && g.tt === null ? tonNay : g.tt) : null;
     const tonLucDem = g && Number.isFinite(g.ton) ? g.ton : (g ? tonNay : null);
     const lech = g ? (Number(thucTe) - Number(tonLucDem)) : 0;
@@ -18352,7 +18353,7 @@ function kkQuetDuoc(sp) {
 }
 function kkVeTheQuet(sp, trong) {
   const o = document.getElementById('bh-quet-ds'), p = kkPhieu; if (!o || !p) return;
-  const ton = layTon(sp, kkMaKho(p.kho)), g = kkGiaTri(p, sp.id);
+  const ton = kkTonSku(sp, p.kho), g = kkGiaTri(p, sp.id);
   const id = escHtml(sp.id);
   if (trong && kkCuaNguoiKhac(p.dem?.[sp.id])) {
     o.innerHTML = `<div style="padding:4px 0"><div style="font-weight:700;font-size:14.5px">${escHtml(sp.ten)}</div>
@@ -23221,7 +23222,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v579</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v580</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23275,7 +23276,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v579</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v580</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23321,7 +23322,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v579</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v580</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
