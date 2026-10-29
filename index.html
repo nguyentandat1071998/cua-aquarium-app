@@ -2147,7 +2147,7 @@ const ANH_XA_QUYEN_THEO_MOD = {
   baocao: 'bc_ngay', tknhap: 'bc_tk_nhap', tkxuat: 'bc_tk_xuat', nhaphang: 'nhaphang', dathang: 'dathang',
   hanghoa: 'hanghoa', banhang: 'banhang', dungnb: 'dungnb', datcoc: 'datcoc', thuchi: 'soquy', ketca: 'ketca', hanghoan: 'tmdt_hoantra', kiemkho: 'kiemkho',
   donbanle: 'donbanle', khachhang: 'khachhang', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
-  chamcong: 'chamcong', luongnv: 'luong'
+  chamcong: 'chamcong', luongnv: 'luong', nhacungcap: 'nhacungcap'
 };
 
 window.switchModule = function(mod) {
@@ -2257,6 +2257,13 @@ window.switchModule = function(mod) {
     document.getElementById('panel-khuyenmai-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderKhuyenMai();
+    return;
+  }
+  if (mod === 'nhacungcap') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-nhacungcap-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderNhaCungCap(true);
     return;
   }
   if (mod === 'khachhang') {
@@ -2493,9 +2500,21 @@ async function renderHangHoaTab() {
     ${qHH.hh_xuatfile ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="exportDanhSachHangHoaExcel()">Xuất Excel danh sách hàng hóa</button>` : ''}
     ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>` : ''}
-    <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px">
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <span id="hh-nut-canhbao"></span>
+      <select id="hh-loc-ncc" onchange="doiLocNccHangHoa(this.value)" title="Lọc theo nhà cung cấp" style="width:auto;max-width:170px;padding:5px 8px;font-size:12px">
+        <option value="">Mọi nhà cung cấp</option>
+      </select>
+      <select id="hh-sap-xep" onchange="doiSapXepHangHoa(this.value)" title="Sắp xếp" style="width:auto;padding:5px 8px;font-size:12px">
+        <option value="">Sắp xếp: mặc định</option>
+        <option value="ton_tang">Tồn kho: ít → nhiều</option>
+        <option value="ton_giam">Tồn kho: nhiều → ít</option>
+        <option value="ten">Tên A → Z</option>
+        <option value="moi">Mới → cũ</option>
+        <option value="het_som">Sắp bán hết trước</option>
+      </select>
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
-      <select onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
+      <select id="hh-so-trang" onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
         <option value="30">30</option>
         <option value="50">50</option>
         <option value="100">100</option>
@@ -2504,10 +2523,24 @@ async function renderHangHoaTab() {
     </div>
     <div id="hanghoa-list"></div>`;
   veChonKhoHangHoa();
-  document.querySelector('#hanghoa-content select').value = String(hangHoaPageSize);
+  document.getElementById('hh-so-trang').value = String(hangHoaPageSize);
+  document.getElementById('hh-sap-xep').value = hangHoaSapXep;
   renderHangHoaNhomFilters();
   renderHangHoaList();
+  // Danh sách nhà cung cấp cho ô lọc + cảnh báo tồn: nạp ngầm rồi vẽ lại
+  hhTaiNcc().then(ds => {
+    const o = document.getElementById('hh-loc-ncc'); if (!o) return;
+    o.innerHTML = `<option value="">Mọi nhà cung cấp</option><option value="__chua">Chưa gắn nhà cung cấp</option>`
+      + ds.map(n => `<option value="${n.id}">${escHtml(n.ten)}</option>`).join('');
+    o.value = hangHoaLocNcc;
+  });
+  hhTinhCanhBaoTatCa().then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
 }
+
+let hangHoaSapXep = '', hangHoaLocNcc = '', hangHoaChiCanhBao = false;
+window.doiSapXepHangHoa = function(v) { hangHoaSapXep = v; hangHoaPage = 1; renderHangHoaList(); };
+window.doiLocNccHangHoa = function(v) { hangHoaLocNcc = v; hangHoaPage = 1; renderHangHoaList(); };
+window.doiChiCanhBao = function() { hangHoaChiCanhBao = !hangHoaChiCanhBao; hangHoaPage = 1; renderHangHoaList(); };
 
 window.doiSoLuongTrangHangHoa = function(v) {
   hangHoaPageSize = parseInt(v) || 30;
@@ -3057,9 +3090,6 @@ const MAN_HINH_TMDT = [
   { key: 'sanpham',   ten: 'Sản phẩm trên sàn', icon: '🔗', nhom: 'Hàng hóa',
     moTa: 'Đồng bộ sản phẩm từ sàn về, liên kết SKU nội bộ',
     quyen: 'tmdt_sanpham',   render: () => renderSanPhamTMDTList() },
-  { key: 'daytonkho', ten: 'Đẩy tồn kho',     icon: '📤', nhom: 'Hàng hóa',
-    moTa: 'Danh sách SKU được phép đẩy tồn kho lên sàn',
-    quyen: 'tmdt_daytonkho', render: () => renderDayTonKhoTab() },
 ];
 
 function coQuyenTMDT(quyen) {
@@ -6613,7 +6643,9 @@ function nhVeTao() {
     // Phiếu tạm đang mở thì cố định kho và loại.
     const khoaKho = !!sua || dsKho.length < 2;
     const khoa = 'background-image:none;padding-right:10px;cursor:default;opacity:.9';
+    if (sua && !nhNcc && sua.ncc?.id && !sua._nccDaDoc) { nhNcc = sua.ncc; sua._nccDaDoc = true; }
     dau += `<div style="display:flex;gap:6px">
+      ${nccCoSua() ? `<button class="bh-chon-tt" aria-label="Nhà cung cấp" onclick="nhMoChonNcc()" style="font-weight:600${nhNcc ? '' : ';border-style:dashed;color:var(--text2);background-color:#fff'}">${nhNcc ? escHtml(nhNcc.ten) : 'Nhà cung cấp'}</button>` : ''}
       <button class="bh-chon-tt" aria-label="Kho nhập" onclick="nhMoChonKho()" ${khoaKho ? 'disabled' : ''} style="font-weight:600;${khoaKho ? khoa : ''}">${kn ? kn.ten : 'Chọn kho'}</button>
       <button class="bh-chon-tt" aria-label="Loại hàng" onclick="nhMoChonLoai()" ${sua ? 'disabled' : ''}
         style="font-weight:600;${sua ? khoa : ''}${nhLoai ? '' : ';border-style:dashed;border-color:#2563EB;background-color:#fff;color:#2563EB'}">${nhLoai ? NH_LOAI[nhLoai] : 'Chọn loại hàng'}</button>
@@ -6838,6 +6870,8 @@ Vào Đặt hàng → mở đơn → "Đối chiếu & nhập kho" để lưu.`)
     suaLuc: serverTimestamp()
   };
   if (!duLieu.nguoiTaoUid) delete duLieu.nguoiTaoUid;
+  // Nhà cung cấp: chỉ người có quyền mới chọn; nhân viên tạo phiếu thì để trống, quản lý gán sau
+  if (nccCoSua()) { duLieu.ncc = nhNcc || null; duLieu.nccId = nhNcc?.id || ''; }
 
   const nut = document.getElementById(luuThat ? 'btn-nh-luu' : 'btn-nh-tam');
   const chuNut = nut?.textContent;
@@ -6892,7 +6926,7 @@ Vào Đặt hàng → mở đơn → "Đối chiếu & nhập kho" để lưu.`)
     nhDaKhoiPhucNhap = false;
     nhPhieuHienTai = null;
     nhDongHang = [];
-    nhAnh = []; nhLoai = null;
+    nhAnh = []; nhLoai = null; nhNcc = null;
     if (dangSua) delete nhBoNhoAnh[dangSua.id];
     nhKho = nhKhoMacDinh();
     if (nut) { nut.disabled = false; nut.textContent = chuNut; }
@@ -6943,6 +6977,207 @@ async function nhTaiDs(L) {
   return ds.sort((a, b) => (a.trangThai === 'tam' ? 0 : 1) - (b.trangThai === 'tam' ? 0 : 1) || b.createdAt.toMillis() - a.createdAt.toMillis());
 }
 async function nhTimDs() { return nhGoiDs({ ganDay: true }); }
+
+// ==========================================================================
+// ===== NHÀ CUNG CẤP (chỉ lưu trong app) =====
+// Quyền: nhacungcap (xem danh sách) · ncc_sua (thêm / sửa, gắn NCC cho phiếu nhập kho)
+//        ncc_congno (xem công nợ, dự kiến phải trả) · ncc_thanhtoan (ghi thanh toán phiếu nhập kho)
+// Công nợ = đơn đặt hàng (tổng tiền − đã trả) + phiếu nhập kho đã lưu KHÔNG gắn đơn đặt hàng
+// (tổng phiếu − đã trả). Phiếu gắn đơn đặt hàng thì tiền tính theo đơn, không cộng hai lần.
+// ==========================================================================
+let nccTim = '', nccCongNo = null, nccDangTai = false;
+const nccCoSua = () => currentUserData?.role === 'admin' || coQuyen('ncc_sua');
+const nccCoNo = () => currentUserData?.role === 'admin' || coQuyen('ncc_congno');
+const nccCoTT = () => currentUserData?.role === 'admin' || coQuyen('ncc_thanhtoan') || coQuyen('dh_thanhtoan');
+const nccNgay = (v) => { const t = v?.toDate ? v.toDate() : (v ? new Date(v) : null); return t && !isNaN(t) ? t.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''; };
+
+async function renderNhaCungCap(taiLai) {
+  const el = document.getElementById('nhacungcap-content');
+  if (!el) return;
+  if (!allSKUs.length) await loadSKUs();
+  if (taiLai || !hhDsNccCache) { el.innerHTML = '<div class="loading">Đang tải...</div>'; await hhTaiNcc(true); }
+  if (nccCoNo() && (taiLai || !nccCongNo) && !nccDangTai) {
+    nccDangTai = true;
+    goiWorkerAdmin('ncc-cong-no', {}).then(kq => { nccCongNo = kq?.success ? kq.ds : []; nccDangTai = false; veNhaCungCap(); })
+      .catch(() => { nccCongNo = []; nccDangTai = false; veNhaCungCap(); });
+  }
+  veNhaCungCap();
+}
+function nccTongCua(id) {
+  const ds = (nccCongNo || []).filter(x => x.ncc?.id === id);
+  const tong = ds.reduce((a, x) => a + x.tong, 0), daTra = ds.reduce((a, x) => a + x.daTra, 0);
+  return { ds, tong, daTra, con: Math.max(0, tong - daTra) };
+}
+function veNhaCungCap() {
+  const el = document.getElementById('nhacungcap-content');
+  if (!el) return;
+  const tu = boDauTim(nccTim);
+  const ds = (hhDsNccCache || []).filter(n => !tu || boDauTim(n.ten).includes(tu) || String(n.sdt || '').includes(nccTim.trim()));
+  const soMa = (id) => allSKUs.filter(s => !s.deleted && (s.nccIds || []).includes(id)).length;
+  const coNo = nccCoNo();
+  const tongCon = coNo && nccCongNo ? (hhDsNccCache || []).reduce((a, n) => a + nccTongCua(n.id).con, 0) : 0;
+  el.innerHTML = `
+    ${coNo ? `<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:10px 12px;margin-bottom:10px">
+      <div style="font-size:12px;color:var(--text2)">Dự kiến phải trả nhà cung cấp</div>
+      <div style="font-size:22px;font-weight:800;color:${tongCon ? '#DC2626' : 'var(--text)'}">${nccCongNo ? fmt(tongCon) + 'đ' : 'Đang tính...'}</div>
+      <div style="font-size:11.5px;color:var(--text2)">Gồm đơn đặt hàng và phiếu nhập kho (không gắn đơn) còn chưa trả hết</div>
+    </div>` : ''}
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input type="text" id="ncc-tim" placeholder="Tìm tên / số điện thoại..." value="${escHtml(nccTim)}" oninput="nccDoiTim(this.value)" style="flex:1">
+      ${nccCoSua() ? `<button class="btn-g" style="width:auto;margin:0;padding:0 14px;background:#2563EB" onclick="nccMoSua('')">+ Thêm</button>` : ''}
+    </div>
+    ${!ds.length ? `<p class="info-note">${(hhDsNccCache || []).length ? 'Không có nhà cung cấp nào khớp.' : 'Chưa có nhà cung cấp nào.'}</p>` : ds.map(n => {
+      const t = coNo && nccCongNo ? nccTongCua(n.id) : null;
+      return `<div onclick="nccXem('${n.id}')" style="cursor:pointer;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:flex;gap:10px;align-items:center">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:15px">${escHtml(n.ten)}</div>
+          <div style="font-size:12px;color:var(--text2)">${[n.sdt, `${soMa(n.id)} mã hàng`].filter(Boolean).map(escHtml).join(' · ')}</div>
+        </div>
+        ${t ? `<div style="text-align:right;flex-shrink:0">
+          <div style="font-size:11px;color:var(--text2)">Còn nợ</div>
+          <b style="font-size:15px;color:${t.con ? '#DC2626' : '#16A34A'}">${fmt(t.con)}đ</b></div>` : ''}
+      </div>`; }).join('')}`;
+  const o = document.getElementById('ncc-tim');
+  if (o && document.activeElement !== o && window._nccDangGo) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+}
+window.nccDoiTim = function(v) { nccTim = v; window._nccDangGo = true; veNhaCungCap(); window._nccDangGo = false; };
+
+window.nccMoSua = function(id) {
+  if (!nccCoSua()) { showToast('Bạn không có quyền sửa nhà cung cấp', true); return; }
+  const n = id ? (hhDsNccCache || []).find(x => x.id === id) : {};
+  if (id && !n) return;
+  ddbMoKhung('ncc-sua-modal', id ? 'Sửa nhà cung cấp' : 'Thêm nhà cung cấp', '', `
+    <div class="field"><label>Tên nhà cung cấp</label><input id="nccs-ten" maxlength="120" value="${escHtml(n.ten || '')}" placeholder="VD: Trại cá Ba Hòa"></div>
+    <div class="field"><label>Số điện thoại</label><input id="nccs-sdt" inputmode="tel" maxlength="20" value="${escHtml(n.sdt || '')}"></div>
+    <div class="field"><label>Địa chỉ</label><input id="nccs-dc" maxlength="200" value="${escHtml(n.diaChi || '')}"></div>
+    <div class="field"><label>Tài khoản ngân hàng</label><input id="nccs-tk" maxlength="120" value="${escHtml(n.taiKhoan || '')}" placeholder="VD: Vietcombank 0123456789 - NGUYEN VAN A"></div>
+    <div class="field"><label>Ghi chú</label><input id="nccs-gc" maxlength="300" value="${escHtml(n.ghiChu || '')}"></div>`,
+    `${id && currentUserData?.role === 'admin' ? `<button class="btn-r" style="flex:0 0 auto;margin:0" onclick="nccXoa('${id}')">Xóa</button>` : ''}
+     <button class="btn-outline" style="flex:1" onclick="document.getElementById('ncc-sua-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0;background:#2563EB" onclick="nccLuu('${id}')">Lưu</button>`);
+  ddbCanhGiua('ncc-sua-modal');
+  setTimeout(() => document.getElementById('nccs-ten')?.focus(), 50);
+};
+window.nccLuu = async function(id) {
+  const lay = (k) => String(document.getElementById(k)?.value || '').trim();
+  const ten = lay('nccs-ten');
+  if (!ten) { showToast('Nhập tên nhà cung cấp', true); return; }
+  const trung = (hhDsNccCache || []).find(n => n.id !== id && boDauTim(n.ten) === boDauTim(ten));
+  if (trung) { showToast('Đã có nhà cung cấp tên này', true); return; }
+  const d = { ten, sdt: lay('nccs-sdt'), diaChi: lay('nccs-dc'), taiKhoan: lay('nccs-tk'), ghiChu: lay('nccs-gc') };
+  try {
+    if (id) await updateDoc(doc(db, 'nha_cung_cap', id), { ...d, suaLuc: serverTimestamp() });
+    else await addDoc(collection(db, 'nha_cung_cap'), { ...d, nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten || '' }, createdAt: serverTimestamp() });
+    document.getElementById('ncc-sua-modal').style.display = 'none';
+    showToast(id ? 'Đã lưu' : 'Đã thêm nhà cung cấp');
+    await hhTaiNcc(true); dhDsNcc = null;
+    veNhaCungCap();
+    if (id && document.getElementById('ncc-ct-modal')?.style.display === 'flex') nccXem(id);
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.nccXoa = async function(id) {
+  const n = (hhDsNccCache || []).find(x => x.id === id); if (!n) return;
+  const t = nccCongNo ? nccTongCua(id) : null;
+  if (!await hoiXacNhan(`Xóa nhà cung cấp "${n.ten}"?${t?.con ? `\n\nVẫn còn nợ ${fmt(t.con)}đ.` : ''}\n\nĐơn, phiếu cũ vẫn giữ tên nhà cung cấp.`, { nutDongY: 'Xóa' })) return;
+  try {
+    await updateDoc(doc(db, 'nha_cung_cap', id), { deleted: true, deletedAt: serverTimestamp() });
+    ['ncc-sua-modal', 'ncc-ct-modal'].forEach(k => { const m = document.getElementById(k); if (m) m.style.display = 'none'; });
+    await hhTaiNcc(true); dhDsNcc = null; veNhaCungCap();
+    showToast('Đã xóa');
+  } catch(e) { showToast('Không xóa được: ' + e.message, true); }
+};
+
+window.nccXem = function(id) {
+  const n = (hhDsNccCache || []).find(x => x.id === id); if (!n) return;
+  const hang = allSKUs.filter(s => !s.deleted && (s.nccIds || []).includes(id));
+  const coNo = nccCoNo();
+  const t = coNo && nccCongNo ? nccTongCua(id) : null;
+  const dsNo = t ? t.ds.slice().sort((a, b) => (b.tong - b.daTra > 0) - (a.tong - a.daTra > 0) || String(b.luc || '').localeCompare(String(a.luc || ''))) : [];
+  ddbMoKhung('ncc-ct-modal', escHtml(n.ten), escHtml([n.sdt, n.diaChi].filter(Boolean).join(' · ')), `
+    ${n.taiKhoan || n.ghiChu ? `<div style="background:var(--bg);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:13px">
+      ${n.taiKhoan ? `<div>TK: <b>${escHtml(n.taiKhoan)}</b></div>` : ''}${n.ghiChu ? `<div style="color:var(--text2)">${escHtml(n.ghiChu)}</div>` : ''}</div>` : ''}
+    ${t ? `<div style="display:flex;gap:8px;margin-bottom:10px">
+      ${[['Tổng mua', t.tong, 'var(--text)'], ['Đã trả', t.daTra, '#16A34A'], ['Còn nợ', t.con, t.con ? '#DC2626' : 'var(--text)']].map(([nh, v, m]) => `
+      <div style="flex:1;background:var(--bg);border-radius:8px;padding:8px;text-align:center"><div style="font-size:11px;color:var(--text2)">${nh}</div><b style="color:${m}">${fmt(v)}đ</b></div>`).join('')}
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">ĐƠN / PHIẾU (${dsNo.length})</div>
+    ${dsNo.length ? dsNo.map(x => { const con = Math.max(0, x.tong - x.daTra); return `
+      <div style="border:1px solid var(--border);border-left:3px solid ${con ? '#DC2626' : '#16A34A'};border-radius:8px;padding:8px 10px;margin-bottom:6px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="flex:1;min-width:0;font-size:13px"><b>${escHtml(x.ma)}</b> <span style="font-size:11px;color:${x.loai === 'don' ? '#1D4ED8' : '#0369A1'};background:${x.loai === 'don' ? '#DBEAFE' : '#E0F2FE'};padding:1px 6px;border-radius:4px">${x.loai === 'don' ? 'Đơn đặt hàng' : 'Phiếu nhập kho'}</span>
+            <div style="font-size:11.5px;color:var(--text2)">${nccNgay(x.luc)}${x.loai === 'don' && x.trangThai ? ` · ${escHtml(DH_TRANG_THAI[x.trangThai] || '')}` : ''}</div></div>
+          <div style="text-align:right;font-size:12.5px">${fmt(x.tong)}đ<br><span style="color:${con ? '#DC2626' : '#16A34A'};font-weight:700">${con ? 'Còn ' + fmt(con) + 'đ' : 'Đã trả đủ'}</span></div>
+        </div>
+        ${(x.thanhToan || []).filter(p => !p.huy).length ? `<div style="font-size:11.5px;color:var(--text2);margin-top:4px">${x.thanhToan.filter(p => !p.huy).map(p => `${escHtml(p.maPC || '')} · ${fmt(p.soTien)}đ · ${escHtml(p.lucChu || '')}`).join('<br>')}</div>` : ''}
+        ${con && (x.loai === 'phieu' ? nccCoTT() : dhCoTT()) ? `<div style="display:flex;justify-content:flex-end;margin-top:6px">
+          <button class="btn-xs" style="background:#2563EB;color:#fff" onclick="${x.loai === 'phieu' ? `nccMoThanhToanPN('${x.id}',${con},'${id}')` : `dhMoThanhToan('${x.id}',${con})`}">Thanh toán</button></div>` : ''}
+      </div>`; }).join('') : '<p class="info-note">Chưa có đơn đặt hàng / phiếu nhập kho nào gắn nhà cung cấp này.</p>'}` : (coNo ? '<div class="loading">Đang tính công nợ...</div>' : '')}
+    <div style="font-size:12px;font-weight:600;color:var(--text2);margin:10px 0 6px">HÀNG HÓA (${hang.length})</div>
+    ${hang.length ? hang.slice(0, 200).map(s => `<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
+      ${s.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId, 80)}" style="width:30px;height:30px;object-fit:cover;border-radius:5px">` : '<div style="width:30px;height:30px"></div>'}
+      <span style="flex:1;min-width:0">${escHtml(s.ten || '')} <span style="color:var(--text2)">(${escHtml(s.sku)})</span></span>
+      <span style="font-size:12px;color:var(--text2)">Tồn ${layTon(s, 'cuahang') + layTon(s, 'san')}</span></div>`).join('')
+      : '<p class="info-note">Chưa gắn mã hàng nào. Gắn ở Hàng hóa › Sửa › Nhà cung cấp.</p>'}`,
+    nccCoSua() ? `<button class="btn-outline" style="flex:1" onclick="nccMoSua('${id}')">Sửa thông tin</button>` : '');
+  ddbCanhGiua('ncc-ct-modal');
+};
+
+// Thanh toán phiếu nhập kho (không gắn đơn đặt hàng) — phiếu chi vào sổ quỹ như thanh toán đơn đặt hàng
+let nccCachTT = 'chuyenkhoan';
+window.nccMoThanhToanPN = function(pid, conLai, nccId) {
+  if (!nccCoTT()) { showToast('Bạn không có quyền thanh toán', true); return; }
+  nccCachTT = 'chuyenkhoan';
+  ddbMoKhung('ncc-tt-modal', 'Thanh toán phiếu nhập kho', `Còn phải trả ${fmt(conLai)}đ`, `
+    <div class="field"><label>Số tiền thanh toán</label>
+      <input id="ncctt-tien" type="text" inputmode="numeric" value="${conLai ? fmt(conLai) : ''}" oninput="dhDinhDangTien(this)" style="font-size:18px;font-weight:700;text-align:right"></div>
+    <div class="field"><label>Hình thức</label>
+      <button class="bh-chon-tt" id="ncctt-cach" style="width:100%;font-weight:600" onclick="moBangChon('Hình thức thanh toán', Object.entries(SQ_CACH).map(([gt, nhan]) => ({ gt, nhan })), nccCachTTHienTai(), nccDoiCachTT)">Chuyển khoản</button></div>
+    <div class="field"><label>Ghi chú</label><input id="ncctt-gc" maxlength="200" placeholder="VD: trả đợt 2..."></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('ncc-tt-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" id="btn-ncctt" style="flex:1;margin:0;background:#2563EB" onclick="nccLuuThanhToanPN('${pid}',${conLai},'${nccId}')">Xác nhận thanh toán</button>`);
+  ddbCanhGiua('ncc-tt-modal');
+};
+window.nccCachTTHienTai = () => nccCachTT;
+window.nccDoiCachTT = (v) => { nccCachTT = v; const b = document.getElementById('ncctt-cach'); if (b) b.textContent = SQ_CACH[v]; };
+window.nccLuuThanhToanPN = async function(pid, conLai, nccId) {
+  const soTien = Number(String(document.getElementById('ncctt-tien')?.value || '').replace(/[^0-9]/g, '')) || 0;
+  if (soTien <= 0) { showToast('Nhập số tiền thanh toán', true); return; }
+  if (conLai > 0 && soTien > conLai && !await hoiXacNhan(`Số tiền ${fmt(soTien)}đ lớn hơn số còn phải trả (${fmt(conLai)}đ).\n\nVẫn ghi nhận?`)) return;
+  const nut = document.getElementById('btn-ncctt'); if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
+  try {
+    const kq = await sqGoi('sq-chi-ncc', { loai: 'phieu_nhap', donId: pid, soTien, hangMuc: 'tien_hang', cach: nccCachTT, ghiChu: String(document.getElementById('ncctt-gc')?.value || '').trim().slice(0, 200) });
+    document.getElementById('ncc-tt-modal').style.display = 'none';
+    showToast(`Đã ghi phiếu chi ${kq.ma} · ${fmt(soTien)}đ`);
+    await renderNhaCungCap(true);
+    const cho = setInterval(() => { if (!nccDangTai) { clearInterval(cho); nccXem(nccId); } }, 300);
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); if (nut) { nut.disabled = false; nut.textContent = 'Xác nhận thanh toán'; } }
+};
+
+// Gắn nhà cung cấp cho phiếu nhập kho đã lưu (nhân viên tạo phiếu không cần chọn, quản lý gán sau)
+window.nccGanPhieuNhap = async function(pid, nccCu) {
+  if (!nccCoSua() && !coQuyen('nh_duyet')) { showToast('Bạn không có quyền gán nhà cung cấp', true); return; }
+  const ds = await hhTaiNcc();
+  moBangChon('Nhà cung cấp của phiếu', [...ds.map(n => ({ gt: n.id, nhan: n.ten, phu: n.sdt || '' })), ...(nccCu ? [{ gt: '__bo', nhan: 'Bỏ nhà cung cấp' }] : [])], nccCu || '', async (v) => {
+    try {
+      const kq = await goiWorkerAdmin('ncc-gan-phieu', { phieuId: pid, nccId: v === '__bo' ? '' : v });
+      if (!kq?.success) throw new Error(kq?.error || 'Lỗi');
+      showToast(kq.ncc ? `Đã gắn ${kq.ncc.ten}` : 'Đã bỏ nhà cung cấp');
+      nccCongNo = null;
+      if (activeModule === 'nhaphang' && activeSubTab === 'ds') plTai('nhaphang');
+    } catch(e) { showToast('Không gán được: ' + e.message, true); }
+  });
+};
+
+// Nhập kho — chọn nhà cung cấp khi tạo phiếu (chỉ người có quyền sửa NCC / Admin; nhân viên không cần chọn)
+let nhNcc = null;
+window.nhMoChonNcc = async function() {
+  const ds = await hhTaiNcc();
+  moBangChon('Nhà cung cấp', [...ds.map(n => ({ gt: n.id, nhan: n.ten, phu: n.sdt || '' })), ...(nhNcc ? [{ gt: '__bo', nhan: 'Không chọn' }] : [])], nhNcc?.id || '', (v) => {
+    const n = ds.find(x => x.id === v);
+    nhNcc = n ? { id: n.id, ten: n.ten } : null;
+    nhVeTao();
+  });
+};
 
 // ==========================================================================
 // ===== ĐẶT HÀNG NHÀ CUNG CẤP (chỉ trong app, chưa đụng tồn kho) =====
@@ -7399,6 +7634,7 @@ window.dhLuuThanhToan = async function(id, conLai) {
     showToast(`Đã ghi phiếu chi ${ma} · ${fmt(soTien)}đ`);
     dhXem(id);
     if (activeModule === 'dathang' && activeSubTab === 'ds') plTai('dathang');
+    if (activeModule === 'nhacungcap') renderNhaCungCap(true);
   } catch(e) { showToast('Không lưu được: ' + e.message, true); if (nut) { nut.disabled = false; nut.textContent = 'Xác nhận thanh toán'; } }
 };
 // Hủy phiếu chi (ghi nhầm): phiếu vẫn còn trong sổ quỹ với trạng thái Đã hủy, đơn trừ lại số đã trả
@@ -11235,7 +11471,7 @@ function veManHinhBanHang() {
     </div>`;
 
   veTabPhieu();
-  makeSKUSearch('bh-tim', 'bh-drop', null);
+  makeSKUSearch('bh-tim', 'bh-drop', null, false, s => s.banTrucTiep !== false);
   veGioHang();
   veDayDuoi();
   requestAnimationFrame(bhVuaManHinh);
@@ -12089,6 +12325,7 @@ window.bhThemHang = function(maSku, ten) {
   const p = bhPhieuHienTai();
   const sku = allSKUs.find(s => s.sku === maSku);
   if (!p || !sku) return;
+  if (sku.banTrucTiep === false) { bip(400, 250); showToast(`${maSku} không bán trực tiếp (bỏ tick "Bán trực tiếp" ở Hàng hóa)`, true); return; }
   const i = p.gio.findIndex(d => d.sku === maSku);
   if (i >= 0) p.gio[i].soLuong++;
   else p.gio.push({ sku: maSku, ten, gia: Number(sku.gia) || 0, soLuong: 1, giamGia: 0 });
@@ -12641,7 +12878,7 @@ function dcVe() {
       <div class="bh-o-hang-trong" id="dc-gio"></div>
       <div class="bh-day-duoi" id="dc-duoi"></div>
     </div>`;
-  makeSKUSearch('dc-tim', 'dc-drop', null, false, s => !s.laCombo);
+  makeSKUSearch('dc-tim', 'dc-drop', null, false, s => !s.laCombo && s.banTrucTiep !== false);
   dcVeGio(); dcVeDuoi();
   requestAnimationFrame(bhVuaManHinh);
 }
@@ -14142,7 +14379,10 @@ function hhTheSku(s, trongNhom = false) {
     const kho = khoHangHoaDangXem();
     const hienCH = kho === 'ch' || kho === 'ca', hienSan = kho === 'san' || kho === 'ca';
     const het = kho === 'ch' ? tonCH <= 0 : kho === 'san' ? tonSan <= 0 : (tonSan + tonCH) <= 0;
-    const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
+    const cbT = hhCanhBao.get(s.id);
+    const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>`
+      : cbT?.canhBao ? `<span style="color:var(--red);font-weight:600" title="${escHtml(veChuCanhBao(cbT))}">⚠️ Sắp hết · còn ~${cbT.conNgay} ngày</span>`
+      : cbT?.tb ? `<span style="color:var(--text2)" title="${escHtml(veChuCanhBao(cbT))}">~${cbT.conNgay} ngày bán hết</span>` : '';
     return `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
@@ -14150,7 +14390,7 @@ function hhTheSku(s, trongNhom = false) {
           ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
           : `<div style="width:64px;height:64px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3);text-align:center">Không ảnh</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:${trongNhom ? 13.5 : 15}px;margin-bottom:2px">${escHtml(s.ten||'')}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}${s.khoChung ? ' <span title="Hàng để ở quầy, bán cả online — tồn tính ở Kho Online" style="background:#CFFAFE;color:#0E7490;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHO CHUNG · Ở QUẦY</span>' : ''}</div>
+          <div style="font-weight:700;font-size:${trongNhom ? 13.5 : 15}px;margin-bottom:2px">${escHtml(s.ten||'')}${s.banTrucTiep === false ? ' <span title="Không hiện ở Bán hàng" style="background:#F1F5F9;color:#64748B;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHÔNG BÁN TRỰC TIẾP</span>' : ''}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}${s.khoChung ? ' <span title="Hàng để ở quầy, bán cả online — tồn tính ở Kho Online" style="background:#CFFAFE;color:#0E7490;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHO CHUNG · Ở QUẦY</span>' : ''}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ` : '', hienCH ? `Bán: ${fmt(s.gia||0)}đ` : ''].filter(Boolean).join(' - ')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
@@ -14182,8 +14422,14 @@ function renderHangHoaList() {
     (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q) || (s.tenChinh||'').toLowerCase().includes(q)) &&
     (!hangHoaNhom1Filter || s.nhom1 === hangHoaNhom1Filter) &&
     (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
-    (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter)
+    (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter) &&
+    (!hangHoaLocNcc || (hangHoaLocNcc === '__chua' ? !(s.nccIds || []).length : (s.nccIds || []).includes(hangHoaLocNcc))) &&
+    (!hangHoaChiCanhBao || hhCanhBao.get(s.id)?.canhBao)
   );
+  // Nút "⚠ N mã sắp hết" (đếm trên toàn bộ, không theo bộ lọc)
+  const soCB = [...hhCanhBao.values()].filter(x => x.canhBao).length;
+  const oCB = document.getElementById('hh-nut-canhbao');
+  if (oCB) oCB.innerHTML = soCB || hangHoaChiCanhBao ? `<button class="btn-xs" onclick="doiChiCanhBao()" style="background:${hangHoaChiCanhBao ? '#DC2626' : '#FEE2E2'};color:${hangHoaChiCanhBao ? '#fff' : '#DC2626'};font-weight:700">⚠ ${soCB} mã sắp hết${hangHoaChiCanhBao ? ' ✕' : ''}</button>` : '';
   // Mỗi mục là 1 hàng lẻ hoặc 1 nhóm cùng loại (từ 2 mã trở lên); phân trang theo mục
   const demNhom = new Map();
   list.forEach(s => { if (s.nhomCL) demNhom.set(s.nhomCL, (demNhom.get(s.nhomCL) || 0) + 1); });
@@ -14194,10 +14440,26 @@ function renderHangHoaList() {
       daGom.get(s.nhomCL).ds.push(s);
     } else muc.push({ s });
   });
+  const kho = khoHangHoaDangXem();
+  if (hangHoaSapXep) {
+    const tonCua = (s) => kho === 'ch' ? layTon(s, 'cuahang') : kho === 'san' ? layTon(s, 'san') : layTon(s, 'cuahang') + layTon(s, 'san');
+    const lucTao = (s) => s.createdAt?.toDate ? s.createdAt.toDate().getTime() : (s.createdAt?.seconds ? s.createdAt.seconds * 1000 : 0);
+    const conNgay = (s) => { const c = hhCanhBao.get(s.id); return c?.conNgay ?? Infinity; };
+    const khoaMuc = (m) => {
+      const ds = m.s ? [m.s] : m.ds;
+      if (hangHoaSapXep === 'ton_tang' || hangHoaSapXep === 'ton_giam') return ds.reduce((t, s) => t + tonCua(s), 0);
+      if (hangHoaSapXep === 'moi') return Math.max(...ds.map(lucTao));
+      if (hangHoaSapXep === 'het_som') return Math.min(...ds.map(conNgay));
+      return String(m.s ? m.s.ten : m.ten || '');
+    };
+    muc.forEach(m => { m._k = khoaMuc(m); });
+    if (hangHoaSapXep === 'ten') muc.sort((a, b) => String(a._k).localeCompare(String(b._k), 'vi'));
+    else if (hangHoaSapXep === 'ton_giam' || hangHoaSapXep === 'moi') muc.sort((a, b) => b._k - a._k);
+    else muc.sort((a, b) => a._k - b._k);
+  }
   const totalPages = Math.max(1, Math.ceil(muc.length / hangHoaPageSize));
   if (hangHoaPage > totalPages) hangHoaPage = totalPages;
   const trang = muc.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
-  const kho = khoHangHoaDangXem();
   el.innerHTML = trang.map(m => {
     if (m.s) return hhTheSku(m.s);
     const dong = hhNhomDong.has(m.nhom);
@@ -14392,90 +14654,277 @@ function truongCoNhan(nhan, inputHtml) {
   return `<label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">${nhan}</label>${inputHtml}<div style="margin-bottom:8px"></div>`;
 }
 
-window.moFormThemHangDon = async function() {
-  document.getElementById('hanghoa-them-menu').style.display = 'none';
-  const el = document.getElementById('hanghoa-form');
-  if (!el) return;
-  comboThanhPhan = [];
-  const laAdmin = currentUserData.role === 'admin';
-  if (!allNhomHang.length) await loadNhomHang();
-  el.innerHTML = `
-    <div class="admin-block" style="margin-bottom:12px">
-      <h4 style="margin-bottom:10px">Thêm hàng hóa</h4>
-      ${truongCoNhan('Tên hàng hóa', `<input type="text" id="hh-ten" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Mã SKU', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
-      ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hh-giavon" placeholder="Ô nhập liệu">`) : ''}
-      ${truongCoNhan('Giá bán', `<input type="number" id="hh-gia" placeholder="Ô nhập liệu">`)}
-      <div style="display:flex;gap:8px">
-        <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="hh-toncuahang" placeholder="0" value="0">`)}</div>
-        <div style="flex:1">${truongCoNhan('Tồn Kho Online', `<input type="number" id="hh-soluong" placeholder="0" value="0">`)}</div>
-      </div>
-      ${renderNhomHangSelector('hh')}
-      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        <input type="number" id="hh-dai" placeholder="Dài">
-        <input type="number" id="hh-rong" placeholder="Rộng">
-        <input type="number" id="hh-cao" placeholder="Cao">
-      </div>
-      ${truongCoNhan('Cân nặng (gram)', `<input type="number" id="hh-cannang" placeholder="Ô nhập liệu">`)}
-      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Ảnh sản phẩm</label>
-      <div id="hh-anh-preview" style="margin-bottom:8px"></div>
-      <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhHangHoa(this)" style="margin-bottom:8px">
-      <div style="display:flex;gap:8px">
-        <button class="btn-g" style="flex:1" onclick="luuHangHoa()">Lưu</button>
-        <button class="btn-outline" onclick="document.getElementById('hanghoa-form').innerHTML='';hangHoaAnhBlob=null">Hủy</button>
-      </div>
-    </div>`;
-  veNhomHangSelector('hh', '', '', '');
-};
+// ===== FORM HÀNG HÓA DÙNG CHUNG (Thêm / Sửa) — cùng một cửa sổ giữa màn hình =====
+// id = 'moi' khi thêm mới. Các ô dùng chung mẫu id `hhs-<ô>-<id>`.
+let hhFormNcc = new Set();          // nhà cung cấp đang chọn trong form
+let hhFormGom = null;               // { ds: [id SKU cùng nhóm, không gồm mã đang sửa], boRa: Set(id bị bỏ khỏi nhóm) }
+let hhDsNccCache = null;
+async function hhTaiNcc(moi) {
+  if (hhDsNccCache && !moi) return hhDsNccCache;
+  try {
+    const snap = await getDocs(collection(db, 'nha_cung_cap'));
+    hhDsNccCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(n => !n.deleted)
+      .sort((a, b) => String(a.ten || '').localeCompare(String(b.ten || ''), 'vi'));
+  } catch(e) { hhDsNccCache = hhDsNccCache || []; }
+  return hhDsNccCache;
+}
+window.moFormThemHangDon = async function() { document.getElementById('hanghoa-them-menu').style.display = 'none'; await moFormHangHoa(null, false); };
+window.moFormThemHangCombo = async function() { document.getElementById('hanghoa-them-menu').style.display = 'none'; await moFormHangHoa(null, true); };
+window.moFormSuaHangHoa = async function(id) { await moFormHangHoa(id); };
 
-window.moFormThemHangCombo = async function() {
-  document.getElementById('hanghoa-them-menu').style.display = 'none';
-  const el = document.getElementById('hanghoa-form');
-  if (!el) return;
-  comboThanhPhan = [];
+async function moFormHangHoa(idSua, laComboMoi) {
+  const s = idSua ? allSKUs.find(x => x.id === idSua) : null;
+  if (idSua && !s) return;
+  const id = idSua || 'moi';
+  const laCombo = s ? !!s.laCombo : !!laComboMoi;
+  const laAdmin = currentUserData.role === 'admin';
+  const kt = s?.kichThuoc || {};
+  const I = (o) => `hhs-${o}-${id}`;
+  const tieuDe = s ? 'Sửa hàng hóa' : (laCombo ? 'Thêm combo hàng hóa' : 'Thêm hàng hóa');
+  ddbMoKhung('hh-sua-modal', tieuDe, s ? escHtml(s.sku || '') : '', `<div id="hh-sua-${id}"><div class="loading">Đang tải...</div></div>`);
+  ddbCanhGiua('hh-sua-modal');
+  hangHoaSuaAnhBlob = null;
+  comboThanhPhan = laCombo && s ? JSON.parse(JSON.stringify(s.thanhPhanCombo || [])) : [];
+  hhFormNcc = new Set(Array.isArray(s?.nccIds) ? s.nccIds : []);
+  const cungNhom = (s?.nhomCL) ? allSKUs.filter(x => x.nhomCL === s.nhomCL && x.id !== s.id && !x.deleted) : [];
+  hhFormGom = { ds: cungNhom.map(x => x.id), boRa: new Set() };
   if (!allNhomHang.length) await loadNhomHang();
+  await hhTaiNcc();
+  const el = document.getElementById(`hh-sua-${id}`);
+  if (!el) return;
+  const cb = s ? hhTinhCanhBao(s) : null;
   el.innerHTML = `
-    <div class="admin-block" style="margin-bottom:12px">
-      <h4 style="margin-bottom:10px">Thêm combo hàng hóa</h4>
-      ${truongCoNhan('Tên combo', `<input type="text" id="hh-ten" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Mã SKU Combo', `<input type="text" id="hh-sku" placeholder="Ô nhập liệu">`)}
-      ${truongCoNhan('Giá bán', `<input type="number" id="hh-gia" placeholder="Ô nhập liệu">`)}
+    <div class="admin-block" style="margin-top:4px">
+      ${laCombo ? `<p class="info-note" style="margin-bottom:8px">📦 Đây là SKU Combo</p>` : ''}
+      ${truongCoNhan(laCombo ? 'Tên combo' : 'Tên hàng hóa', `<input type="text" id="${I('ten')}" placeholder="Ô nhập liệu" value="${escHtml(s?.ten || '')}">`)}
+      ${truongCoNhan(laCombo ? 'Mã SKU Combo' : 'Mã SKU', `<input type="text" id="${I('sku')}" placeholder="Ô nhập liệu" value="${escHtml(s?.sku || '')}">`)}
+      ${laAdmin && !laCombo ? truongCoNhan('Giá vốn', `<input type="number" id="${I('giavon')}" placeholder="Ô nhập liệu" value="${s ? (s.giaVon || 0) : ''}">`) : ''}
+      ${truongCoNhan('Giá bán', `<input type="number" id="${I('gia')}" placeholder="Ô nhập liệu" value="${s ? (s.gia || 0) : ''}">`)}
+      <input type="hidden" id="${I('la-combo')}" value="${laCombo ? '1' : '0'}">
+      <label style="display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="${I('bantt')}" ${s?.banTrucTiep === false ? '' : 'checked'} style="width:19px;height:19px">
+        <span style="font-size:13.5px"><b>Bán trực tiếp</b><br><span style="font-size:12px;color:var(--text2)">Bỏ tick thì mã không hiện ở Bán hàng / Đặt cọc (VD combo chỉ để liên kết sàn)</span></span></label>
+      ${s && !laCombo && laAdmin ? `<label style="display:flex;gap:10px;align-items:flex-start;background:${s.khoChung ? '#ECFEFF' : 'var(--bg)'};border:1px solid ${s.khoChung ? '#67E8F9' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" ${s.khoChung ? 'checked' : ''} onchange="hhDoiKhoChung('${id}', this.checked, this)" style="width:19px;height:19px;margin-top:1px">
+        <span style="font-size:13.5px"><b>Kho chung — hàng để ở quầy, bán cả online</b><br>
+        <span style="font-size:12px;color:var(--text2)">Toàn bộ tồn nằm ở Kho Online để sàn thấy. Bán tại quầy thì app tự chuyển Kho Online → Cửa hàng đúng số đang bán.</span></span></label>` : ''}
+      ${!laCombo ? `<div style="display:flex;gap:8px">
+        <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="${I('toncuahang')}" placeholder="0" value="${s ? layTon(s, 'cuahang') : 0}" data-cu="${s ? layTon(s, 'cuahang') : 0}">`)}</div>
+        <div style="flex:1">${truongCoNhan('Tồn Kho Online', `<input type="number" id="${I('soluong')}" placeholder="0" value="${s ? layTon(s, 'san') : 0}" data-cu="${s ? layTon(s, 'san') : 0}">`)}</div>
+      </div>` : `
       <div style="margin-bottom:8px">
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
         <div class="field sku-wrap">
-          <input type="text" id="hh-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
-          <div class="sku-drop" id="hh-combo-sku-drop"></div>
+          <input type="text" id="hhs-${id}-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
+          <div class="sku-drop" id="hhs-${id}-combo-sku-drop"></div>
         </div>
         <div class="row2" style="margin:6px 0">
           <div class="qty-ctrl">
-            <button onclick="document.getElementById('hh-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hh-combo-item-tyle').value)||1)-1)">−</button>
-            <input type="number" id="hh-combo-item-tyle" value="1" min="1">
-            <button onclick="document.getElementById('hh-combo-item-tyle').value=(parseInt(document.getElementById('hh-combo-item-tyle').value)||0)+1">+</button>
+            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||1)-1)">−</button>
+            <input type="number" id="hhs-${id}-combo-item-tyle" value="1" min="1">
+            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||0)+1">+</button>
           </div>
-          <button class="btn-outline" onclick="themThanhPhanCombo('hh')">+ Thêm thành phần</button>
+          <button class="btn-outline" onclick="themThanhPhanCombo('hhs-${id}')">+ Thêm thành phần</button>
         </div>
-        <div id="hh-combo-list"></div>
+        <div id="hhs-${id}-combo-list"></div>
+      </div>`}
+      ${!laCombo ? `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px">Hàng cùng loại (gom mã)</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input type="text" id="${I('tenchinh')}" placeholder="Tên chung, VD: Phân nền ADA AMAZONIA Ver.2" value="${escHtml(s?.tenChinh || '')}" style="flex:2;min-width:0">
+          <input type="text" id="${I('thuoctinh')}" placeholder="Phân loại của mã này, VD: Túi 1L" value="${escHtml(s?.thuocTinh || '')}" style="flex:1;min-width:0">
+        </div>
+        <div id="${I('gom-ds')}"></div>
+        <div class="field sku-wrap" style="margin:6px 0 0">
+          <input type="text" id="${I('gom-tim')}" placeholder="+ Gõ tên / mã để gom thêm mã cùng loại..." autocomplete="off">
+          <div class="sku-drop" id="${I('gom-drop')}"></div>
+        </div>
+      </div>` : ''}
+      <div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:6px">Nhà cung cấp</div>
+        <div id="${I('ncc')}"></div>
       </div>
-      ${renderNhomHangSelector('hh')}
+      ${!laCombo ? `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="flex:1;font-size:13px"><b>Cảnh báo tồn kho</b><br><span style="font-size:12px;color:var(--text2)">Số ngày: lấy trung bình bán / ngày trong ngần ấy ngày gần nhất (bỏ ngày hết hàng), cảnh báo khi tồn ≤ trung bình × số ngày. Để trống = tắt.</span></div>
+          <input type="number" id="${I('canhbao')}" min="0" max="365" placeholder="Số ngày" value="${s?.canhBaoSoNgay || ''}" style="width:86px;text-align:center">
+        </div>
+        ${cb ? `<div style="font-size:12px;margin-top:6px;color:${cb.canhBao ? '#DC2626' : 'var(--text2)'}">${veChuCanhBao(cb)}</div>` : ''}
+      </div>` : ''}
+      ${renderNhomHangSelector(`hhs-${id}`)}
       <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
       <div style="display:flex;gap:6px;margin-bottom:8px">
-        <input type="number" id="hh-dai" placeholder="Dài">
-        <input type="number" id="hh-rong" placeholder="Rộng">
-        <input type="number" id="hh-cao" placeholder="Cao">
+        <input type="number" id="${I('dai')}" placeholder="Dài" value="${kt.dai || ''}">
+        <input type="number" id="${I('rong')}" placeholder="Rộng" value="${kt.rong || ''}">
+        <input type="number" id="${I('cao')}" placeholder="Cao" value="${kt.cao || ''}">
       </div>
-      ${truongCoNhan('Cân nặng (gram)', `<input type="number" id="hh-cannang" placeholder="Ô nhập liệu">`)}
+      ${truongCoNhan('Cân nặng (gram)', `<input type="number" id="${I('cannang')}" placeholder="Ô nhập liệu" value="${s?.canNang || ''}">`)}
       <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Ảnh sản phẩm</label>
-      <div id="hh-anh-preview" style="margin-bottom:8px"></div>
-      <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhHangHoa(this)" style="margin-bottom:8px">
+      <div id="hhs-anh-preview-${id}" style="margin-bottom:8px">
+        ${s?.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId, 300)}" style="width:100px;height:100px;object-fit:cover;border-radius:8px">` : ''}
+      </div>
+      <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhSuaHangHoa(this,'${id}')" style="margin-bottom:8px">
       <div style="display:flex;gap:8px">
-        <button class="btn-g" style="flex:1" onclick="luuHangHoa(true)">Lưu Combo</button>
-        <button class="btn-outline" onclick="document.getElementById('hanghoa-form').innerHTML='';hangHoaAnhBlob=null;comboThanhPhan=[]">Hủy</button>
+        <button class="btn-g" style="flex:1" onclick="${s ? `luuSuaHangHoa('${id}')` : `luuHangHoa(${laCombo})`}">${s ? 'Lưu thay đổi' : (laCombo ? 'Lưu Combo' : 'Lưu')}</button>
+        <button class="btn-outline" onclick="dongSuaHangHoa()">Hủy</button>
       </div>
     </div>`;
-  makeSKUSearch('hh-combo-item-ten','hh-combo-sku-drop', null);
-  veNhomHangSelector('hh', '', '', '');
+  if (laCombo) makeSKUSearch(`hhs-${id}-combo-item-ten`, `hhs-${id}-combo-sku-drop`, null);
+  renderThanhPhanCombo(`hhs-${id}`);
+  veNhomHangSelector(`hhs-${id}`, s?.nhom1 || '', s?.nhom2 || '', s?.nhom3 || '');
+  hhVeNccForm(id);
+  if (!laCombo) {
+    hhVeGomForm(id);
+    makeSKUSearch(I('gom-tim'), I('gom-drop'), null, false, (x) => !x.laCombo && x.id !== s?.id && !hhFormGom.ds.includes(x.id));
+  }
+}
+
+function hhVeNccForm(id) {
+  const el = document.getElementById(`hhs-ncc-${id}`);
+  if (!el) return;
+  const ds = hhDsNccCache || [];
+  el.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap">
+    ${ds.map(n => { const co = hhFormNcc.has(n.id); return `<button type="button" onclick="hhDoiNccForm('${id}','${n.id}')"
+      style="border:1.5px solid ${co ? '#2563EB' : 'var(--border)'};background:${co ? '#2563EB' : '#fff'};color:${co ? '#fff' : 'var(--text)'};border-radius:16px;padding:5px 11px;font-size:12.5px;cursor:pointer">${co ? '✓ ' : ''}${escHtml(n.ten)}</button>`; }).join('')}
+    <button type="button" onclick="hhThemNccNhanh('${id}')" style="border:1.5px dashed #2563EB;background:#fff;color:#2563EB;border-radius:16px;padding:5px 11px;font-size:12.5px;cursor:pointer">+ Nhà cung cấp mới</button>
+  </div>${!ds.length ? '<div style="font-size:12px;color:var(--text2);margin-top:4px">Chưa có nhà cung cấp nào.</div>' : ''}`;
+}
+window.hhDoiNccForm = function(id, nccId) {
+  if (hhFormNcc.has(nccId)) hhFormNcc.delete(nccId); else hhFormNcc.add(nccId);
+  hhVeNccForm(id);
 };
+window.hhThemNccNhanh = async function(id) {
+  const ten = String(await hoiNhap('Tên nhà cung cấp mới:', '') || '').trim();
+  if (!ten) return;
+  const trung = (hhDsNccCache || []).find(n => boDauTim(n.ten) === boDauTim(ten));
+  if (trung) { hhFormNcc.add(trung.id); hhVeNccForm(id); showToast('Đã có nhà cung cấp này — đã chọn'); return; }
+  try {
+    const ref = await addDoc(collection(db, 'nha_cung_cap'), { ten, sdt: '', ghiChu: '', nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten || '' }, createdAt: serverTimestamp() });
+    await hhTaiNcc(true);
+    hhFormNcc.add(ref.id);
+    hhVeNccForm(id);
+  } catch(e) { showToast('Không thêm được: ' + e.message, true); }
+};
+
+function hhVeGomForm(id) {
+  const el = document.getElementById(`hhs-gom-ds-${id}`);
+  if (!el || !hhFormGom) return;
+  const ds = hhFormGom.ds.map(x => allSKUs.find(s => s.id === x)).filter(Boolean);
+  el.innerHTML = ds.length ? ds.map(x => `
+    <div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border);font-size:13px">
+      ${x.anhFileId ? `<img src="${anhThumbUrl(x.anhFileId, 80)}" style="width:28px;height:28px;object-fit:cover;border-radius:5px">` : ''}
+      <span style="flex:1;min-width:0">${escHtml(x.thuocTinh || x.ten || '')} <span style="color:var(--text2)">(${escHtml(x.sku)})</span></span>
+      <button class="del-btn" onclick="hhGomBo('${id}','${x.id}')" title="Bỏ khỏi nhóm">✕</button>
+    </div>`).join('') : '<div style="font-size:12px;color:var(--text2)">Chưa gom với mã nào.</div>';
+}
+window.hhGomThem = function(id, skuId) {
+  if (!hhFormGom || hhFormGom.ds.includes(skuId)) return;
+  const x = allSKUs.find(s => s.id === skuId);
+  if (!x) return;
+  hhFormGom.ds.push(skuId); hhFormGom.boRa.delete(skuId);
+  // Mã thêm vào đang ở nhóm khác -> lấy luôn tên chung của nhóm đó nếu ô tên chung còn trống
+  const oTen = document.getElementById(`hhs-tenchinh-${id}`);
+  if (oTen && !oTen.value.trim() && x.tenChinh) oTen.value = x.tenChinh;
+  const o = document.getElementById(`hhs-gom-tim-${id}`); if (o) { o.value = ''; o.dataset.skuId = ''; o.dataset.sku = ''; }
+  hhVeGomForm(id);
+};
+window.hhGomBo = function(id, skuId) {
+  if (!hhFormGom) return;
+  hhFormGom.ds = hhFormGom.ds.filter(x => x !== skuId);
+  hhFormGom.boRa.add(skuId);
+  hhVeGomForm(id);
+};
+// Ghi nhóm cùng loại (app làm chủ — nhomCLTay: đồng bộ từ KiotViet không ghi đè nữa)
+async function hhLuuGom(skuMa, id) {
+  if (!hhFormGom) return;
+  const s = allSKUs.find(x => x.sku === skuMa) || {};
+  const tenChinh = String(document.getElementById(`hhs-tenchinh-${id}`)?.value || '').trim();
+  const thuocTinh = String(document.getElementById(`hhs-thuoctinh-${id}`)?.value || '').trim();
+  const coNhom = hhFormGom.ds.length > 0;
+  const cu = allSKUs.find(x => x.id === id);
+  const khoa = coNhom ? (cu?.nhomCL || allSKUs.find(x => hhFormGom.ds.includes(x.id) && x.nhomCL)?.nhomCL || ('a' + Date.now().toString(36))) : '';
+  const ghi = [];
+  const doiThe = (docId, f) => ghi.push(updateDoc(doc(db, 'skus', docId), f));
+  // Mã đang sửa
+  const fMinh = { nhomCL: khoa, tenChinh: coNhom ? (tenChinh || s.ten || '') : tenChinh, thuocTinh, nhomCLTay: true };
+  const thayDoiMinh = !cu || cu.nhomCL !== fMinh.nhomCL || (cu.tenChinh || '') !== fMinh.tenChinh || (cu.thuocTinh || '') !== thuocTinh;
+  if (thayDoiMinh) doiThe(skuMa, fMinh);
+  // Các mã cùng nhóm: chung khóa + tên chung
+  for (const x of hhFormGom.ds) {
+    const m = allSKUs.find(v => v.id === x); if (!m) continue;
+    if (m.nhomCL !== khoa || (m.tenChinh || '') !== fMinh.tenChinh) doiThe(m.id, { nhomCL: khoa, tenChinh: fMinh.tenChinh, nhomCLTay: true });
+  }
+  for (const x of hhFormGom.boRa) {
+    const m = allSKUs.find(v => v.id === x); if (!m || hhFormGom.ds.includes(x)) continue;
+    if (m.nhomCL) doiThe(m.id, { nhomCL: '', nhomCLTay: true });
+  }
+  if (ghi.length) await Promise.all(ghi);
+}
+
+// ===== CẢNH BÁO TỒN KHO =====
+// Trung bình bán / ngày = số bán trong N ngày gần nhất ÷ số ngày CÒN HÀNG trong N ngày đó.
+// Ngày hết hàng không tính (chỗ Bigseller tính sai: hết hàng không bán được mà vẫn chia vào).
+// Số bán và tồn từng ngày dựng lại từ thẻ kho (cộng cả hai kho; chuyển kho qua lại tự triệt tiêu).
+let hhCanhBao = new Map();        // id SKU -> { tb, soBan, ngayCoHang, soNgay, ton, conNgay, canhBao }
+let hhCanhBaoLuc = 0, hhCanhBaoDangTinh = false;
+const laBanRa = (loai) => /^Bán/.test(String(loai || ''));
+const laTraLai = (loai) => /^(Hủy đơn sàn|Trả hàng|Nhập hàng khách trả)/.test(String(loai || ''));
+function hhTinhCanhBao(s) { return hhCanhBao.get(s?.id) || null; }
+function veChuCanhBao(cb) {
+  if (!cb) return '';
+  if (!cb.tb) return `Chưa bán được trong ${cb.soNgay} ngày qua (${cb.ngayCoHang} ngày còn hàng) — chưa tính được`;
+  return `${cb.canhBao ? '⚠ ' : ''}TB ${cb.tb.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/ngày (bán ${cb.soBan} trong ${cb.ngayCoHang} ngày còn hàng) · mức cảnh báo ${Math.ceil(cb.tb * cb.soNgay)} · còn ${cb.ton} → dự kiến bán hết sau ~${cb.conNgay} ngày`;
+}
+async function hhTinhCanhBaoTatCa(ep) {
+  const ds = allSKUs.filter(s => !s.laCombo && !s.deleted && Number(s.canhBaoSoNgay) > 0);
+  if (!ds.length) { hhCanhBao = new Map(); return; }
+  if (hhCanhBaoDangTinh || (!ep && Date.now() - hhCanhBaoLuc < 30 * 60000)) return;
+  if (!coQuyen('hh_kho_ch') && !coQuyen('hh_kho_san') && currentUserData.role !== 'admin') return;
+  hhCanhBaoDangTinh = true;
+  try {
+    const maxN = Math.min(365, Math.max(...ds.map(s => Number(s.canhBaoSoNgay) || 0)));
+    const nay = Date.now();
+    const tu = new Date(nay - maxN * 86400000);
+    tu.setHours(0, 0, 0, 0);
+    const snap = await getDocs(query(collection(db, 'the_kho'), where('thoiGian', '>=', tu)));
+    const theoMa = new Map();
+    snap.docs.forEach(d => {
+      const g = d.data(); const t = g.thoiGian?.toDate ? g.thoiGian.toDate().getTime() : 0;
+      if (!t || !g.sku) return;
+      if (!theoMa.has(g.sku)) theoMa.set(g.sku, []);
+      theoMa.get(g.sku).push({ t, sl: Number(g.soLuong) || 0, loai: g.loaiGiaoDich });
+    });
+    const dauHomNay = new Date(); dauHomNay.setHours(0, 0, 0, 0);
+    const m = new Map();
+    for (const s of ds) {
+      const N = Number(s.canhBaoSoNgay);
+      const ton = layTon(s, 'cuahang') + layTon(s, 'san');
+      const gd = (theoMa.get(s.sku) || []);
+      let soBan = 0, ngayCoHang = 0;
+      // Đi lùi từng ngày: tồn cuối ngày = tồn hiện tại − mọi biến động sau ngày đó
+      let tonCuoi = ton;
+      for (let i = 0; i < N; i++) {
+        const dau = dauHomNay.getTime() - i * 86400000, cuoi = dau + 86400000;
+        const trongNgay = gd.filter(x => x.t >= dau && x.t < cuoi);
+        const bienDong = trongNgay.reduce((a, x) => a + x.sl, 0);
+        const ban = trongNgay.reduce((a, x) => a + (laBanRa(x.loai) ? -x.sl : laTraLai(x.loai) ? -x.sl : 0), 0);
+        const tonDau = tonCuoi - bienDong;
+        if (tonDau > 0 || tonCuoi > 0 || ban > 0) ngayCoHang++;
+        soBan += ban;
+        tonCuoi = tonDau;
+      }
+      soBan = Math.max(0, soBan);
+      const tb = ngayCoHang ? soBan / ngayCoHang : 0;
+      const conNgay = tb > 0 ? Math.floor(Math.max(0, ton) / tb) : null;
+      m.set(s.id, { tb, soBan, ngayCoHang, soNgay: N, ton, conNgay, canhBao: tb > 0 && ton <= tb * N });
+    }
+    hhCanhBao = m;
+    hhCanhBaoLuc = Date.now();
+  } catch(e) { console.warn('Không tính được cảnh báo tồn:', e.message); }
+  hhCanhBaoDangTinh = false;
+}
 
 // prefix: 'hh' (thêm mới) hoặc 'hhs-{id}' (sửa) — dùng chung ID input giữa 2 form
 window.themThanhPhanCombo = function(prefix) {
@@ -14636,17 +15085,23 @@ function baoKetQuaDayKV(r, sku) {
 
 window.luuHangHoa = async function(laComboParam) {
   const laCombo = !!laComboParam;
-  const ten = document.getElementById('hh-ten').value.trim();
-  const sku = document.getElementById('hh-sku').value.trim();
-  const gia = parseFloat(document.getElementById('hh-gia').value) || 0;
-  const nhom = layGiaTriNhomHangDaChon('hh');
+  const V = (o) => document.getElementById(`hhs-${o}-moi`);
+  const ten = V('ten').value.trim();
+  const sku = V('sku').value.trim();
+  const gia = parseFloat(V('gia').value) || 0;
+  const nhom = layGiaTriNhomHangDaChon('hhs-moi');
   if (!sku) { showToast('Vui lòng nhập mã SKU (bắt buộc)', true); return; }
+  if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
+
+  // Mã đã xóa (xóa mềm, còn bản ghi deleted) thì cho tạo lại đè lên; mã đang dùng thì chặn trùng
+  const daTonTai = await getDoc(doc(db, 'skus', sku));
+  if (daTonTai.exists() && !daTonTai.data().deleted) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể tạo trùng`, true); return; }
 
   showToast('Đang lưu...');
   let anhFileId = '', anhUrl = '';
-  if (hangHoaAnhBlob) {
+  if (hangHoaSuaAnhBlob) {
     try {
-      const up = await uploadAnhSanPham(hangHoaAnhBlob, ten);
+      const up = await uploadAnhSanPham(hangHoaSuaAnhBlob, ten);
       anhFileId = up.fileId;
       anhUrl = up.viewUrl;
     } catch(e) {
@@ -14654,123 +15109,54 @@ window.luuHangHoa = async function(laComboParam) {
       return;
     }
   }
-
-  if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
-
-  // Mã đã xóa (xóa mềm, còn bản ghi deleted) thì cho tạo lại đè lên; mã đang dùng thì chặn trùng
-  const daTonTai = await getDoc(doc(db, 'skus', sku));
-  if (daTonTai.exists() && !daTonTai.data().deleted) { showToast(`Mã SKU "${sku}" đã tồn tại rồi, không thể tạo trùng`, true); return; }
-
-  if (!laCombo) await setDoc(doc(db, 'ton_san', sku), { soLuongTon: parseInt(document.getElementById('hh-soluong')?.value) || 0 }, { merge: true });
+  const tonCH = laCombo ? 0 : (parseInt(V('toncuahang')?.value) || 0);
+  const tonSan = laCombo ? 0 : (parseInt(V('soluong')?.value) || 0);
+  const canNang = parseFloat(V('cannang')?.value) || 0;
+  if (!laCombo) await setDoc(doc(db, 'ton_san', sku), { soLuongTon: tonSan }, { merge: true });
   await setDoc(doc(db, 'skus', sku), {
     ten, sku, gia, anhFileId, anhUrl, ...nhom, deleted: false,
     // giaVon KHÔNG lưu ở đây nữa — nằm ở collection gia_von, chỉ Admin đọc được
     kichThuoc: {
-      dai: parseFloat(document.getElementById('hh-dai')?.value) || 0,
-      rong: parseFloat(document.getElementById('hh-rong')?.value) || 0,
-      cao: parseFloat(document.getElementById('hh-cao')?.value) || 0
+      dai: parseFloat(V('dai')?.value) || 0,
+      rong: parseFloat(V('rong')?.value) || 0,
+      cao: parseFloat(V('cao')?.value) || 0
     },
-    canNang: parseFloat(document.getElementById('hh-cannang')?.value) || 0,
-    tonCuaHang: laCombo ? 0 : (parseInt(document.getElementById('hh-toncuahang')?.value) || 0),
+    canNang,
+    tonCuaHang: tonCH,
     laCombo,
     thanhPhanCombo: laCombo ? comboThanhPhan : [],
+    banTrucTiep: !!V('bantt')?.checked,
+    nccIds: [...hhFormNcc],
+    canhBaoSoNgay: laCombo ? 0 : Math.max(0, Math.min(365, parseInt(V('canhbao')?.value) || 0)),
     createdAt: serverTimestamp(),
     createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
+  await loadSKUs();
+  if (!laCombo) { try { await hhLuuGom(sku, 'moi'); } catch(e) { showToast('Chưa gom được mã cùng loại: ' + e.message, true); } }
   // Giá vốn ghi riêng để nhân viên không đọc được
-  const giaVonMoi = parseFloat(document.getElementById('hh-giavon')?.value) || 0;
+  const giaVonMoi = parseFloat(V('giavon')?.value) || 0;
   await luuGiaVon(sku, giaVonMoi);
-  showToast('Đã thêm hàng hóa — đang tạo bên KiotViet...');
+  showToast(ghiGocKV ? 'Đã thêm hàng hóa — đang tạo bên KiotViet...' : 'Đã thêm hàng hóa');
   try {
-    const kq = await dayHangHoaKV({ ten, sku, gia, anhFileId, canNang: parseFloat(document.getElementById('hh-cannang')?.value) || 0, laCombo, ...nhom }, {
+    const kq = await dayHangHoaKV({ ten, sku, gia, anhFileId, canNang, laCombo, ...nhom }, {
       giaVon: giaVonMoi,
       ton: laCombo ? [] : [
-        { branchId: branchKhoTheoMa('ch'), sl: parseInt(document.getElementById('hh-toncuahang')?.value) || 0 },
-        { branchId: branchKhoTheoMa('san'), sl: parseInt(document.getElementById('hh-soluong')?.value) || 0 }]
+        { branchId: branchKhoTheoMa('ch'), sl: tonCH },
+        { branchId: branchKhoTheoMa('san'), sl: tonSan }]
     });
     baoKetQuaDayKV(kq, sku);
-    const coTon = !laCombo && ((parseInt(document.getElementById('hh-toncuahang')?.value) || 0) > 0 || (parseInt(document.getElementById('hh-soluong')?.value) || 0) > 0);
+    const coTon = !laCombo && (tonCH > 0 || tonSan > 0);
     if (!kq.tao && !kq.boQua && coTon) alert(`Mã ${sku} đã có sẵn bên KiotViet nên app chỉ cập nhật thông tin, KHÔNG nhập tồn bên KiotViet.\n\nKiểm tra tồn bên KiotViet; lệch thì dùng Hệ thống › Đồng bộ tồn từ KiotViet hoặc làm phiếu nhập.`);
   } catch(e) {
     alert(`Đã lưu ${sku} trong app nhưng CHƯA tạo được bên KiotViet:\n\n${e.message}\n\nVào Thiết lập › Hệ thống › "Hàng hóa chưa có bên KiotViet" để đẩy lại.`);
   }
-  comboThanhPhan = [];
-  hangHoaAnhBlob = null;
-  document.getElementById('hanghoa-form').innerHTML = '';
+  dongSuaHangHoa();
   await loadSKUs();
+  renderHangHoaNhomFilters();
   renderHangHoaList();
 };
 
 let hangHoaSuaAnhBlob = null;
-
-window.moFormSuaHangHoa = async function(id) {
-  const s = allSKUs.find(x => x.id === id);
-  if (!s) return;
-  // Mở form sửa trong cửa sổ giữa màn hình
-  ddbMoKhung('hh-sua-modal', 'Sửa hàng hóa', escHtml(s.sku || ''), `<div id="hh-sua-${id}"></div>`);
-  ddbCanhGiua('hh-sua-modal');
-  const el = document.getElementById(`hh-sua-${id}`);
-  if (!el) return;
-  hangHoaSuaAnhBlob = null;
-  const laAdmin = currentUserData.role === 'admin';
-  const kt = s.kichThuoc || {};
-  comboThanhPhan = s.laCombo ? JSON.parse(JSON.stringify(s.thanhPhanCombo||[])) : [];
-  if (!allNhomHang.length) await loadNhomHang();
-
-  el.innerHTML = `
-    <div class="admin-block" style="margin-top:10px">
-      ${s.laCombo ? `<p class="info-note" style="margin-bottom:8px">📦 Đây là SKU Combo</p>` : ''}
-      ${truongCoNhan('Tên hàng hóa', `<input type="text" id="hhs-ten-${id}" placeholder="Ô nhập liệu" value="${escHtml(s.ten||'')}">`)}
-      ${truongCoNhan('Mã SKU', `<input type="text" id="hhs-sku-${id}" placeholder="Ô nhập liệu" value="${escHtml(s.sku||'')}">`)}
-      ${laAdmin ? truongCoNhan('Giá vốn', `<input type="number" id="hhs-giavon-${id}" placeholder="Ô nhập liệu" value="${s.giaVon||0}">`) : ''}
-      ${truongCoNhan('Giá bán', `<input type="number" id="hhs-gia-${id}" placeholder="Ô nhập liệu" value="${s.gia||0}">`)}
-      <input type="hidden" id="hhs-la-combo-${id}" value="${s.laCombo ? '1':'0'}">
-      ${!s.laCombo && laAdmin ? `<label style="display:flex;gap:10px;align-items:flex-start;background:${s.khoChung ? '#ECFEFF' : 'var(--bg)'};border:1px solid ${s.khoChung ? '#67E8F9' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
-        <input type="checkbox" ${s.khoChung ? 'checked' : ''} onchange="hhDoiKhoChung('${id}', this.checked, this)" style="width:19px;height:19px;margin-top:1px">
-        <span style="font-size:13.5px"><b>Kho chung — hàng để ở quầy, bán cả online</b><br>
-        <span style="font-size:12px;color:var(--text2)">Toàn bộ tồn nằm ở Kho Online để sàn thấy. Bán tại quầy thì app tự chuyển Kho Online → Cửa hàng đúng số đang bán.</span></span></label>` : ''}
-      ${!s.laCombo ? `<div style="display:flex;gap:8px">
-        <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="hhs-toncuahang-${id}" placeholder="0" value="${layTon(s, 'cuahang')}" data-cu="${layTon(s, 'cuahang')}">`)}</div>
-        <div style="flex:1">${truongCoNhan('Tồn Kho Online', `<input type="number" id="hhs-soluong-${id}" placeholder="0" value="${layTon(s, 'san')}" data-cu="${layTon(s, 'san')}">`)}</div>
-      </div>` : `
-      <div style="margin-bottom:8px">
-        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
-        <div class="field sku-wrap">
-          <input type="text" id="hhs-${id}-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
-          <div class="sku-drop" id="hhs-${id}-combo-sku-drop"></div>
-        </div>
-        <div class="row2" style="margin:6px 0">
-          <div class="qty-ctrl">
-            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||1)-1)">−</button>
-            <input type="number" id="hhs-${id}-combo-item-tyle" value="1" min="1">
-            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||0)+1">+</button>
-          </div>
-          <button class="btn-outline" onclick="themThanhPhanCombo('hhs-${id}')">+ Thêm thành phần</button>
-        </div>
-        <div id="hhs-${id}-combo-list"></div>
-      </div>`}
-      ${renderNhomHangSelector(`hhs-${id}`)}
-      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        <input type="number" id="hhs-dai-${id}" placeholder="Dài" value="${kt.dai||''}">
-        <input type="number" id="hhs-rong-${id}" placeholder="Rộng" value="${kt.rong||''}">
-        <input type="number" id="hhs-cao-${id}" placeholder="Cao" value="${kt.cao||''}">
-      </div>
-      ${truongCoNhan('Cân nặng (gram)', `<input type="number" id="hhs-cannang-${id}" placeholder="Ô nhập liệu" value="${s.canNang||''}">`)}
-      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Ảnh sản phẩm</label>
-      <div id="hhs-anh-preview-${id}" style="margin-bottom:8px">
-        ${s.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId,300)}" style="width:100px;height:100px;object-fit:cover;border-radius:8px">` : ''}
-      </div>
-      <input type="file" accept="image/*" capture="environment" onchange="xemTruocAnhSuaHangHoa(this,'${id}')" style="margin-bottom:8px">
-      <div style="display:flex;gap:8px">
-        <button class="btn-g" style="flex:1" onclick="luuSuaHangHoa('${id}')">Lưu thay đổi</button>
-        <button class="btn-outline" onclick="dongSuaHangHoa()">Hủy</button>
-      </div>
-    </div>`;
-  if (s.laCombo) makeSKUSearch(`hhs-${id}-combo-item-ten`, `hhs-${id}-combo-sku-drop`, null);
-  renderThanhPhanCombo(`hhs-${id}`);
-  veNhomHangSelector(`hhs-${id}`, s.nhom1||'', s.nhom2||'', s.nhom3||'');
-};
 
 window.xemTruocAnhSuaHangHoa = async function(input, id) {
   const file = input.files[0];
@@ -14801,10 +15187,13 @@ window.luuSuaHangHoa = async function(id) {
       rong: parseFloat(document.getElementById(`hhs-rong-${id}`)?.value) || 0,
       cao: parseFloat(document.getElementById(`hhs-cao-${id}`)?.value) || 0
     },
-    canNang: parseFloat(document.getElementById(`hhs-cannang-${id}`)?.value) || 0
+    canNang: parseFloat(document.getElementById(`hhs-cannang-${id}`)?.value) || 0,
+    banTrucTiep: !!document.getElementById(`hhs-bantt-${id}`)?.checked,
+    nccIds: [...hhFormNcc]
   };
   const s = allSKUs.find(x => x.id === id);
   const laCombo = document.getElementById(`hhs-la-combo-${id}`)?.value === '1';
+  if (!laCombo) updateData.canhBaoSoNgay = Math.max(0, Math.min(365, parseInt(document.getElementById(`hhs-canhbao-${id}`)?.value) || 0));
   if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
   // Tồn kho: so với số lúc mở form, chỉ ghi phần chênh lệch (cộng/trừ) và ghi thẻ kho —
   // trong lúc sửa có ai bán thì số đó không bị đè mất
@@ -14857,6 +15246,7 @@ window.luuSuaHangHoa = async function(id) {
   if (lechCH) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechCH) }], Math.sign(lechCH), 'cuahang', ctSuaTon);
   if (lechSan) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechSan) }], Math.sign(lechSan), 'san', ctSuaTon);
   if (giaVonMoi !== null) await luuGiaVon(sku, giaVonMoi);
+  if (!laCombo) { try { await hhLuuGom(sku, id); } catch(e) { showToast('Chưa gom được mã cùng loại: ' + e.message, true); } }
   showToast(ghiGocKV ? 'Đã cập nhật hàng hóa — đang cập nhật bên KiotViet...' : 'Đã cập nhật hàng hóa');
   try {
     const kq = await dayHangHoaKV({ ...(s || {}), ...updateData }, { skuCu: id, giaVon: giaVonMoi ?? s?.giaVon });
@@ -14913,6 +15303,7 @@ window.dongSuaHangHoa = function() {
   if (m) { m.style.display = 'none'; m.innerHTML = ''; }
   comboThanhPhan = [];
   hangHoaSuaAnhBlob = null;
+  hhFormGom = null;
 };
 
 window.xoaHangHoa = async function(id) {
@@ -15064,6 +15455,11 @@ const DANH_SACH_MODULE = [
     { key: 'dh_giavon', ten: 'Nhập / xem giá vốn, tổng tiền đơn' },
     { key: 'dh_thanhtoan', ten: 'Ghi thanh toán cho nhà cung cấp' }
   ]},
+  { key: 'nhacungcap', ten: 'Nhà cung cấp', con: [
+    { key: 'ncc_sua', ten: 'Thêm / sửa nhà cung cấp, gắn nhà cung cấp cho phiếu nhập kho' },
+    { key: 'ncc_congno', ten: 'Xem công nợ, số tiền dự kiến phải trả' },
+    { key: 'ncc_thanhtoan', ten: 'Ghi thanh toán cho phiếu nhập kho' }
+  ]},
   { key: 'nhaphang', ten: 'Nhập kho', con: [
     { key: 'nh_kho_ch', ten: 'Nhập vào kho Cửa hàng' },
     { key: 'nh_kho_san', ten: 'Nhập vào Kho Online' },
@@ -15206,8 +15602,6 @@ const NHOM_MENU = [
     { key: 'donggoi',   ten: 'Đóng gói',       quyen: 'quetdonggoi', moGi: () => switchModule('quetdonggoi') },
     { key: 'spsan',     ten: 'Sản phẩm trên sàn', quyen: 'tmdt_sanpham',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('sanpham', true); } },
-    { key: 'daytonkho', ten: 'Đẩy tồn kho',    quyen: 'tmdt_daytonkho',
-      moGi: () => { switchModule('tmdt'); moManHinhTMDT('daytonkho', true); } }
   ]},
   { key: 'hanghoa', ten: 'Hàng hóa', muc: [
     { key: 'tonkho',    ten: 'Tồn kho',        quyen: 'hanghoa',   moGi: () => switchModule('hanghoa') },
@@ -15216,7 +15610,8 @@ const NHOM_MENU = [
     { key: 'dungnb',    ten: 'Xuất dùng nội bộ', quyen: 'dungnb',  moGi: () => switchModule('dungnb') },
     { key: 'kiemkho',   ten: 'Kiểm kho',       quyen: 'kiemkho',   moGi: () => switchModule('kiemkho') },
     { key: 'dathang',   ten: 'Đặt hàng',       quyen: 'dathang',   moGi: () => switchModule('dathang') },
-    { key: 'nhaphang',  ten: 'Nhập kho',       quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') }
+    { key: 'nhaphang',  ten: 'Nhập kho',       quyen: 'nhaphang',  moGi: () => switchModule('nhaphang') },
+    { key: 'nhacungcap', ten: 'Nhà cung cấp',  quyen: 'nhacungcap', moGi: () => switchModule('nhacungcap') }
   ]},
   { key: 'nhansu', ten: 'Nhân sự', muc: [
     { key: 'danhsachnv', ten: 'Danh sách nhân viên', chiAdmin: true,       moGi: () => moNVTab('danhsachnv') },
@@ -15571,6 +15966,7 @@ function locQuyen(goc, phienBan) {
   // Quyền con Sổ quỹ chỉ có hiệu lực khi được vào Sổ quỹ (khớp worker)
   if (!r.soquy) ['sq_taothu', 'sq_xemtatca', 'sq_duyet'].forEach(k => { r[k] = false; });
   if (!r.ketca) ['sq_ketca'].forEach(k => { r[k] = false; });
+  if (!r.nhacungcap) ['ncc_sua', 'ncc_congno', 'ncc_thanhtoan'].forEach(k => { r[k] = false; });
   r.tmdt = KHOA_TMDT.some(k => k !== 'hh_kho_san' && r[k]);
   return r;
 }
@@ -16026,6 +16422,8 @@ window.selectSKU = function(inputId, dropdownId, giaId, id, ten, gia, sku) {
   }
   // Xuất hủy: chọn là vào phiếu luôn (một loại hàng)
   if (inputId === 'xuat-item-ten') xhChonHang(id);
+  // Form hàng hóa: gom mã cùng loại — chọn là vào nhóm luôn
+  if (inputId.startsWith('hhs-gom-tim-')) hhGomThem(inputId.slice('hhs-gom-tim-'.length), id);
 };
 
 document.addEventListener('click', e => {
@@ -17934,6 +18332,11 @@ const PL = {
     nhan: (p) => (p._goc?.donDatHang ? `<span style="font-size:11px;color:#1D4ED8;background:#DBEAFE;padding:1px 7px;border-radius:4px;font-weight:600">Đơn ${escHtml(p._goc.donDatHang)}</span> ` : '') + (p.loaiHang ? `<span style="font-size:11px;color:#0369A1;background:#E0F2FE;padding:1px 7px;border-radius:4px;font-weight:600">${NH_LOAI[p.loaiHang]}</span> ` : '') + (p.trangThai === 'tam'
       ? '<span style="font-size:11px;color:#fff;background:#D97706;padding:1px 7px;border-radius:4px;font-weight:600">Phiếu tạm</span>'
       : '<span style="font-size:11px;color:#16A34A;font-weight:600">Đã lưu</span>'),
+    // Nhà cung cấp của phiếu (phiếu gắn đơn đặt hàng thì NCC theo đơn)
+    dongPhu: (p) => p.trangThai === 'da_luu' && !p._goc?.donDatHang && (p._goc?.ncc?.id || nccCoSua() || coQuyen('nh_duyet'))
+      ? `<div style="font-size:12px;margin-top:4px;display:flex;gap:6px;align-items:center" onclick="event.stopPropagation()">
+          <span style="color:var(--text2)">NCC:</span> <b>${p._goc?.ncc?.ten ? escHtml(p._goc.ncc.ten) : '<span style="color:#D97706">chưa gắn</span>'}</b>
+          ${nccCoSua() || coQuyen('nh_duyet') ? `<button class="btn-xs" onclick="nccGanPhieuNhap('${p.id}','${escHtml(p._goc?.ncc?.id || '')}')">${p._goc?.ncc?.id ? 'Đổi' : 'Gắn'}</button>` : ''}</div>` : '',
     tai: (L) => nhTaiDs(L), tim: () => nhTimDs() }
 };
 PL.dathang = { col: 'don_dat_hang', ten: 'đơn đặt hàng', mau: '#2563EB', quyenSua: null, quyenFile: null,
@@ -23970,7 +24373,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v606</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v607</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24024,7 +24427,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v606</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v607</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24070,7 +24473,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v606</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v607</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -24358,6 +24761,10 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
       <div class="panel" id="panel-khachhang-main">
         <div id="khachhang-content"></div>
+      </div>
+
+      <div class="panel" id="panel-nhacungcap-main" style="display:none">
+        <div id="nhacungcap-content"></div>
       </div>
 
       <div class="panel" id="panel-banhang-main">
