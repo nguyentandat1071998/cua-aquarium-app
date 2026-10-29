@@ -3937,8 +3937,9 @@ function veNutThaoTac(d, maTT) {
              border-radius:6px;padding:7px 11px;font-size:12px;font-weight:600;
              cursor:pointer;white-space:nowrap">${nhan}</button>`;
 
-  // Chờ sàn duyệt = sàn đang điều phối đơn vị vận chuyển, chưa cho chuẩn bị -> nút xám, không bấm được
-  if (maTT === 'san_chua_duyet') {
+  // Chờ sàn duyệt, hoặc hãng vận chuyển còn là "Đang điều phối ĐVVC" (Shopee chưa gán hãng):
+  // sàn chưa cho chuẩn bị -> nút xám, không bấm được (trước đây bấm vào mới báo lỗi)
+  if (maTT === 'san_chua_duyet' || (maTT === 'cho_xu_ly' && laDangDieuPhoi(d))) {
     if (!['shopee', 'tiktok', 'lazada'].includes(d.san)) return '';
     return `<button disabled title="Sàn đang điều phối đơn vị vận chuyển — chưa chuẩn bị được"
       style="flex-shrink:0;align-self:center;background:#E5E7EB;color:#9CA3AF;border:none;border-radius:6px;padding:7px 11px;font-size:12px;font-weight:600;cursor:not-allowed;white-space:nowrap">Chuẩn bị</button>`;
@@ -3962,6 +3963,10 @@ function veNutThaoTac(d, maTT) {
   return '';
 }
 
+// Shopee để tên hãng là "Đang Điều Phối ĐVVC" khi chưa gán đơn vị vận chuyển — chưa chuẩn bị được
+function laDangDieuPhoi(d) {
+  return /điều phối/i.test(String(d?.hangVanChuyen || d?.donViVanChuyen || ''));
+}
 // In vận đơn cho một đơn — dùng lại luồng in hàng loạt cho khỏi lặp code
 window.inMotVanDon = async function(maDon) {
   const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
@@ -3979,7 +3984,9 @@ window.inMotVanDon = async function(maDon) {
 function veThanhChon(trang) {
   const tt = donFilterTrangThai;
   const hienChuanBi = tt === 'cho_xu_ly' || tt === 'san_chua_duyet' || tt === 'all';
-  const chuanBiXam = tt === 'san_chua_duyet';   // sàn đang điều phối ĐVVC — chưa chuẩn bị được
+  const dsChonCB = [...vdDaChon].map(ma => allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean);
+  // sàn đang điều phối ĐVVC — chưa chuẩn bị được (cả bộ lọc Chờ sàn duyệt, hoặc mọi đơn đang chọn đều đang điều phối)
+  const chuanBiXam = tt === 'san_chua_duyet' || (dsChonCB.length > 0 && dsChonCB.every(d => trangThaiHienThi(d) === 'san_chua_duyet' || laDangDieuPhoi(d)));
   const hienIn = tt === 'cho_in' || tt === 'cho_dong_goi' || tt === 'all';
   const daChonHet = trang.length && trang.every(d => vdDaChon.has(d.maDonSan || d.maHoaDon));
 
@@ -9977,7 +9984,7 @@ window.chuanBiHangLoat = async function() {
     allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean)
     .filter(d => !d.maVanDon && d.coHoaDon !== true
       && (d.san === 'shopee' || d.san === 'tiktok' || d.san === 'lazada')
-      && trangThaiHienThi(d) !== 'chua_thanh_toan' && trangThaiHienThi(d) !== 'san_chua_duyet');
+      && trangThaiHienThi(d) !== 'chua_thanh_toan' && trangThaiHienThi(d) !== 'san_chua_duyet' && !laDangDieuPhoi(d));
 
   if (!ds.length) {
     hienPopup({ loai: 'thuong', tieuDe: 'Không có đơn nào',
@@ -23968,7 +23975,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v604</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v605</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24022,7 +24029,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v604</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v605</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24068,7 +24075,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v604</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v605</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
