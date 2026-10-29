@@ -10209,6 +10209,46 @@ window.vdChonHetTrang = function() {
 
 function veThanhInVanDon() { veDanhSachDon(); }
 
+// ----- Cửa sổ tiến trình khi lấy vận đơn (in nhiều đơn mất vài chục giây) -----
+const TEN_NEN_TANG_IN = { ShopeeOrder: 'Shopee', TiktokShopOrder: 'TikTok', LazadaOrder: 'Lazada' };
+const tienDoIn = {
+  hen: null, batDauLuc: 0, tong: 0, soLo: 0, xong: 0, loi: 0,
+  batDau(soDon, soLo) {
+    this.batDauLuc = Date.now(); this.tong = soDon; this.soLo = soLo; this.xong = 0; this.loi = 0;
+    ddbMoKhung('vd-tai-modal', '🖨 Đang lấy vận đơn', `${soDon} đơn · ${soLo} lần lấy từ sàn`, `
+      <style>@keyframes vdChay{0%{left:-35%}100%{left:100%}}</style>
+      <div style="height:12px;background:var(--bg);border-radius:6px;overflow:hidden;position:relative;border:1px solid var(--border)">
+        <div id="vd-tai-xong" style="position:absolute;left:0;top:0;bottom:0;width:0;background:#16A34A;transition:width .3s"></div>
+        <div id="vd-tai-chay" style="position:absolute;top:0;bottom:0;width:35%;background:linear-gradient(90deg,transparent,#22C55E,transparent);animation:vdChay 1.2s linear infinite"></div>
+      </div>
+      <div id="vd-tai-buoc" style="font-size:14px;font-weight:600;margin-top:10px">Đang chuẩn bị...</div>
+      <div id="vd-tai-gio" style="font-size:12.5px;color:var(--text2);margin-top:4px">Đã chờ 0 giây</div>
+      <div id="vd-tai-canh" style="font-size:12.5px;color:#DC2626;margin-top:6px"></div>`,
+      `<button class="btn-outline" style="flex:1" onclick="document.getElementById('vd-tai-modal').style.display='none'">Ẩn (vẫn chạy tiếp)</button>`);
+    ddbCanhGiua?.('vd-tai-modal');
+    clearInterval(this.hen);
+    this.hen = setInterval(() => {
+      const giay = Math.round((Date.now() - this.batDauLuc) / 1000);
+      const g = document.getElementById('vd-tai-gio'); if (g) g.textContent = `Đã chờ ${giay} giây`;
+      const c = document.getElementById('vd-tai-canh');
+      if (c) c.textContent = giay >= 45 ? 'Lâu hơn bình thường — sàn / KiotViet đang chậm. Quá 90 giây không phản hồi app sẽ tự dừng và báo lỗi.' : '';
+    }, 1000);
+  },
+  lo(i, moTa) {
+    const b = document.getElementById('vd-tai-buoc');
+    if (b) b.textContent = this.soLo > 1 ? `Lần ${i + 1}/${this.soLo}: ${moTa}` : `Đang lấy vận đơn: ${moTa}`;
+  },
+  xongLo(i, ok) {
+    this.xong = i + 1; if (!ok) this.loi++;
+    const x = document.getElementById('vd-tai-xong'); if (x) x.style.width = `${Math.round(this.xong / Math.max(1, this.soLo) * 100)}%`;
+    if (!ok) { const c = document.getElementById('vd-tai-canh'); if (c) c.textContent = `${this.loi} lần lấy bị lỗi — xem chi tiết khi xong`; }
+  },
+  dong() {
+    clearInterval(this.hen); this.hen = null;
+    const m = document.getElementById('vd-tai-modal'); if (m) m.style.display = 'none';
+  }
+};
+
 window.inVanDonHangLoat = async function() {
   if (!vdDaChon.size) return;
   // In hàng loạt chỉ cho cùng MỘT đơn vị vận chuyển — trộn hãng thì tem lẫn lộn, giao nhầm shipper
@@ -10250,38 +10290,49 @@ window.inVanDonHangLoat = async function() {
       donTheoSan.get(nt).push(d);
     }
 
-    const idToken = await currentUser.getIdToken();
-
+    // Danh sách lô gọi máy chủ: Lazada gọi từng đơn (endpoint chỉ nhận một orderId), hai sàn kia gộp một lô
+    const dsLo = [];
     for (const [nenTang, cacMaGoc] of theoSan) {
       const dsDonGoc = donTheoSan.get(nenTang) || [];
-      // Lazada gọi từng đơn (endpoint chỉ nhận một orderId), hai sàn kia gộp được
-      const cacLo = nenTang === 'LazadaOrder'
-        ? dsDonGoc.map(d => ({ ma: [d.maDonSan || d.maHoaDon], don: [d] }))
-        : [{ ma: cacMaGoc, don: dsDonGoc }];
+      if (nenTang === 'LazadaOrder') dsDonGoc.forEach(d => dsLo.push({ nenTang, ma: [d.maDonSan || d.maHoaDon], don: [d] }));
+      else dsLo.push({ nenTang, ma: cacMaGoc, don: dsDonGoc });
+    }
+    tienDoIn.batDau(dsLo.reduce((a, l) => a + l.ma.length, 0), dsLo.length);
 
-      for (const lo of cacLo) {
-      const cacMa = lo.ma, dsDon = lo.don;
-      const res = await fetch(WORKER_URL, {
-        method: 'POST',
-        headers: { 'x-action': 'lay-van-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cacMaDon: cacMa, nenTang,
-          // Lazada in từng đơn một, nên gửi mã món của ĐÚNG đơn đầu tiên —
-          // gộp mọi đơn vào thì sàn nhận nhầm món của đơn khác
-          shopId: dsDon[0]?.shopId || '',
-          orderItemIds: dsDon[0]?.orderItemIds || [] })
-      });
-      const kq = await res.json();
+    const idToken = await currentUser.getIdToken();
+
+    for (let iLo = 0; iLo < dsLo.length; iLo++) {
+      const { nenTang, ma: cacMa, don: dsDon } = dsLo[iLo];
+      tienDoIn.lo(iLo, `${TEN_NEN_TANG_IN[nenTang] || nenTang} · ${cacMa.length} đơn`);
+      let kq;
+      try {
+        const ctl = new AbortController(); const henGio = setTimeout(() => ctl.abort(), 90000);
+        const res = await fetch(WORKER_URL, {
+          method: 'POST', signal: ctl.signal,
+          headers: { 'x-action': 'lay-van-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cacMaDon: cacMa, nenTang,
+            // Lazada in từng đơn một, nên gửi mã món của ĐÚNG đơn đầu tiên —
+            // gộp mọi đơn vào thì sàn nhận nhầm món của đơn khác
+            shopId: dsDon[0]?.shopId || '',
+            orderItemIds: dsDon[0]?.orderItemIds || [] })
+        });
+        clearTimeout(henGio);
+        kq = await res.json();
+      } catch(e) {
+        kq = { success: false, error: `${TEN_NEN_TANG_IN[nenTang] || nenTang}: ${e.name === 'AbortError' ? 'quá 90 giây không có phản hồi — sàn / KiotViet đang chậm' : e.message}` };
+      }
+      tienDoIn.xongLo(iLo, kq.success);
       console.log(`[vận đơn ${nenTang}]`, kq);
       if (kq.success) cacLink.push(...(kq.cacLink || []));
-      else loi.push(kq.error || `${nenTang}: không lấy được`);
+      else { loi.push(kq.error || `${nenTang}: không lấy được`); cacMa.forEach(m => maLoi.add(m)); }   // cả lô lỗi -> các đơn đó giữ ở Chờ in
       // Liệt kê đơn lỗi kèm lý do, tối đa 5 dòng cho khỏi dài
       (kq.donLoi || []).forEach(x => { const m = String(x?.maDon || x || ''); if (m) maLoi.add(m); });
       for (const x of (kq.donLoi || []).slice(0, 5)) {
         loi.push(`  · ${x.maDon || x}: ${x.lyDo || ''}`);
       }
       if ((kq.donLoi || []).length > 5) loi.push(`  · và ${kq.donLoi.length - 5} đơn nữa`);
-      }
     }
+    tienDoIn.dong();
 
     if (!cacLink.length) throw new Error(loi.join('\n') || 'Không lấy được vận đơn nào');
 
@@ -10304,6 +10355,7 @@ window.inVanDonHangLoat = async function() {
     veDanhSachDon();
     if (maIn.length) hoiXacNhanDaIn(maIn, cacLink);
   } catch(e) {
+    tienDoIn.dong();
     try { if (tabCho && !tabCho.closed) tabCho.close(); } catch(_) {}
     hienPopup({ loai: 'loi', tieuDe: 'Không in được vận đơn', noiDung: e.message });
   } finally {
@@ -23658,7 +23710,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v596</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v597</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23712,7 +23764,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v596</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v597</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23758,7 +23810,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v596</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v597</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
