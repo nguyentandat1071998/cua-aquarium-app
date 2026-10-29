@@ -4881,7 +4881,7 @@ function tenHangVanChuyen(d) {
 const TEN_KHOAN_PHI = {
   SellerTransactionFee: 'Phí thanh toán', ServiceFee: 'Phí dịch vụ', CommissionFee: 'Phí cố định (hoa hồng)', VAT: 'Thuế VAT',
   TransactionFee: 'Phí giao dịch', TiktokPlatformCommission: 'Phí hoa hồng nền tảng', TiktokAffiliateCommission: 'Hoa hồng affiliate (KOC)',
-  TiktokOtherFee: 'Phí khác', PhiSanDoiSoat: 'Tổng phí trả sàn (Đối soát KiotViet)', TiktokTransactionFee: 'Phí giao dịch', TiktokShippingFee: 'Phí vận chuyển', TaxFee: 'Thuế'
+  TiktokOtherFee: 'Phí khác', PhiSanDoiSoat: 'Tổng phí trả sàn (đối soát)', TiktokTransactionFee: 'Phí giao dịch', TiktokShippingFee: 'Phí vận chuyển', TaxFee: 'Thuế'
 };
 window.xemLaiDon = function(id) {
   const d = allDonHangSan.find(x => x.id === id); if (!d) return;
@@ -4908,7 +4908,7 @@ window.xemLaiDon = function(id) {
       ${dong('Tiền đơn', f(tong), '', true)}
       <div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:10px">PHÍ SÀN ${t.duKien ? '<span style="color:#D97706">(DỰ KIẾN)</span>' : d.phiSanTong != null ? '<span style="color:#DC2626">(CHÍNH XÁC)</span>' : ''}</div>
       ${phiHtml}
-      ${d.phiSanNguon === 'doi_soat' ? '<div style="font-size:12px;color:var(--text2);padding:2px 0 4px">KiotViet chỉ có tổng phí ở mục Đối soát, không có chi tiết từng loại phí cho TikTok / Lazada.</div>' : ''}
+      ${d.phiSanNguon === 'doi_soat' ? '<div style="font-size:12px;color:var(--text2);padding:2px 0 4px">Sàn chỉ trả tổng phí khi đối soát, không có chi tiết từng loại phí cho TikTok / Lazada.</div>' : ''}
       ${t.phi != null ? dong('Tổng phí sàn', `−${f(t.phi)} (${t.tiLePhi}%)`, t.duKien ? '#D97706' : '#DC2626', true) : ''}
       <div style="font-size:11px;font-weight:700;color:var(--text2);margin-top:10px">GIÁ VỐN</div>
       ${vonHtml}
@@ -10212,9 +10212,11 @@ function veThanhInVanDon() { veDanhSachDon(); }
 // ----- Cửa sổ tiến trình khi lấy vận đơn (in nhiều đơn mất vài chục giây) -----
 const TEN_NEN_TANG_IN = { ShopeeOrder: 'Shopee', TiktokShopOrder: 'TikTok', LazadaOrder: 'Lazada' };
 const tienDoIn = {
-  hen: null, batDauLuc: 0, tong: 0, soLo: 0, xong: 0, loi: 0,
+  hen: null, batDauLuc: 0, tong: 0, soLo: 0, xong: 0, loi: 0, ctl: null, daDung: false,
+  // Người dùng bấm "Dừng lại": hủy lần lấy đang chạy và không lấy tiếp các lần sau
+  dung() { this.daDung = true; try { this.ctl?.abort(); } catch(e) {} },
   batDau(soDon, soLo) {
-    this.batDauLuc = Date.now(); this.tong = soDon; this.soLo = soLo; this.xong = 0; this.loi = 0;
+    this.batDauLuc = Date.now(); this.tong = soDon; this.soLo = soLo; this.xong = 0; this.loi = 0; this.daDung = false; this.ctl = null;
     ddbMoKhung('vd-tai-modal', '🖨 Đang lấy vận đơn', `${soDon} đơn · ${soLo} lần lấy từ sàn`, `
       <style>@keyframes vdChay{0%{left:-35%}100%{left:100%}}</style>
       <div style="height:12px;background:var(--bg);border-radius:6px;overflow:hidden;position:relative;border:1px solid var(--border)">
@@ -10224,14 +10226,15 @@ const tienDoIn = {
       <div id="vd-tai-buoc" style="font-size:14px;font-weight:600;margin-top:10px">Đang chuẩn bị...</div>
       <div id="vd-tai-gio" style="font-size:12.5px;color:var(--text2);margin-top:4px">Đã chờ 0 giây</div>
       <div id="vd-tai-canh" style="font-size:12.5px;color:#DC2626;margin-top:6px"></div>`,
-      `<button class="btn-outline" style="flex:1" onclick="document.getElementById('vd-tai-modal').style.display='none'">Ẩn (vẫn chạy tiếp)</button>`);
+      `<button class="btn-outline" style="flex:1" onclick="tienDoIn.dung()">Dừng lại</button>
+       <button class="btn-outline" style="flex:1" onclick="document.getElementById('vd-tai-modal').style.display='none'">Ẩn (vẫn chạy tiếp)</button>`);
     ddbCanhGiua?.('vd-tai-modal');
     clearInterval(this.hen);
     this.hen = setInterval(() => {
       const giay = Math.round((Date.now() - this.batDauLuc) / 1000);
       const g = document.getElementById('vd-tai-gio'); if (g) g.textContent = `Đã chờ ${giay} giây`;
       const c = document.getElementById('vd-tai-canh');
-      if (c) c.textContent = giay >= 45 ? 'Lâu hơn bình thường — sàn / KiotViet đang chậm. Quá 90 giây không phản hồi app sẽ tự dừng và báo lỗi.' : '';
+      if (c && !this.loi) c.textContent = giay >= 60 ? 'In nhiều đơn sẽ lâu hơn — vẫn đang tải, cứ chờ. Đồng hồ còn chạy là app vẫn đang làm.' : '';
     }, 1000);
   },
   lo(i, moTa) {
@@ -10248,6 +10251,8 @@ const tienDoIn = {
     const m = document.getElementById('vd-tai-modal'); if (m) m.style.display = 'none';
   }
 };
+
+window.tienDoIn = tienDoIn;   // nút "Dừng lại" trong cửa sổ gọi tới
 
 window.inVanDonHangLoat = async function() {
   if (!vdDaChon.size) return;
@@ -10304,9 +10309,10 @@ window.inVanDonHangLoat = async function() {
     for (let iLo = 0; iLo < dsLo.length; iLo++) {
       const { nenTang, ma: cacMa, don: dsDon } = dsLo[iLo];
       tienDoIn.lo(iLo, `${TEN_NEN_TANG_IN[nenTang] || nenTang} · ${cacMa.length} đơn`);
+      if (tienDoIn.daDung) { loi.push('Đã dừng — các đơn chưa lấy vẫn ở Chờ in'); cacMa.forEach(m => maLoi.add(m)); continue; }
       let kq;
       try {
-        const ctl = new AbortController(); const henGio = setTimeout(() => ctl.abort(), 90000);
+        const ctl = new AbortController(); tienDoIn.ctl = ctl;
         const res = await fetch(WORKER_URL, {
           method: 'POST', signal: ctl.signal,
           headers: { 'x-action': 'lay-van-don', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
@@ -10316,10 +10322,9 @@ window.inVanDonHangLoat = async function() {
             shopId: dsDon[0]?.shopId || '',
             orderItemIds: dsDon[0]?.orderItemIds || [] })
         });
-        clearTimeout(henGio);
         kq = await res.json();
       } catch(e) {
-        kq = { success: false, error: `${TEN_NEN_TANG_IN[nenTang] || nenTang}: ${e.name === 'AbortError' ? 'quá 90 giây không có phản hồi — sàn / KiotViet đang chậm' : e.message}` };
+        kq = { success: false, error: `${TEN_NEN_TANG_IN[nenTang] || nenTang}: ${e.name === 'AbortError' ? 'đã dừng theo yêu cầu' : e.message}` };
       }
       tienDoIn.xongLo(iLo, kq.success);
       console.log(`[vận đơn ${nenTang}]`, kq);
@@ -13370,8 +13375,8 @@ function htVePhiSan() {
     ${o('tiktok', 'TikTok')}${o('lazada', 'Lazada')}
     <button class="btn-g" onclick="htLuuPhiSan()">Lưu</button>
     <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:13px">
-      <b>Phí thật TikTok / Lazada (Đối soát KiotViet)</b><br>
-      <span style="color:var(--text2)">Khi sàn thanh toán, KiotViet ghi tổng phí mỗi đơn ở mục Đối soát (không có từng loại phí). App tự lấy mỗi sáng 9h và thay cho phí dự kiến.</span>
+      <b>Phí thật TikTok / Lazada (đối soát)</b><br>
+      <span style="color:var(--text2)">Khi sàn thanh toán đơn, app lấy tổng phí thật của đơn đó (không có từng loại phí) thay cho phí dự kiến. Tự lấy mỗi sáng 9h.</span>
       <div id="ht-doisoat-kq" style="margin:6px 0;color:var(--text2)"></div>
       <button class="btn-outline" onclick="htLayPhiDoiSoat()">Lấy phí từ Đối soát ngay (30 ngày)</button>
     </div>`;
@@ -23710,7 +23715,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v597</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v598</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23764,7 +23769,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v597</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v598</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23810,7 +23815,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v597</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v598</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
