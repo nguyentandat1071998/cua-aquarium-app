@@ -10211,47 +10211,72 @@ function veThanhInVanDon() { veDanhSachDon(); }
 
 // ----- Cửa sổ tiến trình khi lấy vận đơn (in nhiều đơn mất vài chục giây) -----
 const TEN_NEN_TANG_IN = { ShopeeOrder: 'Shopee', TiktokShopOrder: 'TikTok', LazadaOrder: 'Lazada' };
+// Hiện ở CẢ tab vận đơn mở sẵn (trình duyệt chuyển sang tab đó ngay khi bấm — người dùng đang nhìn tab này)
+// lẫn trong app. Bấm "Hủy" ở đâu cũng hủy toàn bộ: không mở file nào, đơn giữ ở Chờ in.
+const HTML_TIEN_DO_IN = (soDon, soLo) => `
+  <style>@keyframes vdChay{0%{left:-35%}100%{left:100%}}</style>
+  <div style="height:12px;background:#F3F4F6;border-radius:6px;overflow:hidden;position:relative;border:1px solid #E5E7EB">
+    <div id="vd-tai-xong" style="position:absolute;left:0;top:0;bottom:0;width:0;background:#16A34A;transition:width .3s"></div>
+    <div id="vd-tai-chay" style="position:absolute;top:0;bottom:0;width:35%;background:linear-gradient(90deg,transparent,#22C55E,transparent);animation:vdChay 1.2s linear infinite"></div>
+  </div>
+  <div id="vd-tai-buoc" style="font-size:14px;font-weight:600;margin-top:10px">Đang chuẩn bị...</div>
+  <div id="vd-tai-gio" style="font-size:12.5px;color:#6B7280;margin-top:4px">Đã chờ 0 giây</div>
+  <div id="vd-tai-canh" style="font-size:12.5px;color:#DC2626;margin-top:6px"></div>`;
 const tienDoIn = {
-  hen: null, batDauLuc: 0, tong: 0, soLo: 0, xong: 0, loi: 0, ctl: null, daDung: false,
-  // Người dùng bấm "Dừng lại": hủy lần lấy đang chạy và không lấy tiếp các lần sau
-  dung() { this.daDung = true; try { this.ctl?.abort(); } catch(e) {} },
-  batDau(soDon, soLo) {
-    this.batDauLuc = Date.now(); this.tong = soDon; this.soLo = soLo; this.xong = 0; this.loi = 0; this.daDung = false; this.ctl = null;
-    ddbMoKhung('vd-tai-modal', '🖨 Đang lấy vận đơn', `${soDon} đơn · ${soLo} lần lấy từ sàn`, `
-      <style>@keyframes vdChay{0%{left:-35%}100%{left:100%}}</style>
-      <div style="height:12px;background:var(--bg);border-radius:6px;overflow:hidden;position:relative;border:1px solid var(--border)">
-        <div id="vd-tai-xong" style="position:absolute;left:0;top:0;bottom:0;width:0;background:#16A34A;transition:width .3s"></div>
-        <div id="vd-tai-chay" style="position:absolute;top:0;bottom:0;width:35%;background:linear-gradient(90deg,transparent,#22C55E,transparent);animation:vdChay 1.2s linear infinite"></div>
-      </div>
-      <div id="vd-tai-buoc" style="font-size:14px;font-weight:600;margin-top:10px">Đang chuẩn bị...</div>
-      <div id="vd-tai-gio" style="font-size:12.5px;color:var(--text2);margin-top:4px">Đã chờ 0 giây</div>
-      <div id="vd-tai-canh" style="font-size:12.5px;color:#DC2626;margin-top:6px"></div>`,
-      `<button class="btn-outline" style="flex:1" onclick="tienDoIn.dung()">Dừng lại</button>
-       <button class="btn-outline" style="flex:1" onclick="document.getElementById('vd-tai-modal').style.display='none'">Ẩn (vẫn chạy tiếp)</button>`);
+  hen: null, batDauLuc: 0, tong: 0, soLo: 0, xong: 0, loi: 0, ctl: null, daHuy: false, tab: null,
+  // Gán nội dung cho phần tử cùng id ở cả app và tab vận đơn
+  dat(id, fn) {
+    for (const doc of [document, this.tab && !this.tab.closed ? this.tab.document : null]) {
+      try { const o = doc?.getElementById(id); if (o) fn(o); } catch(e) {}
+    }
+  },
+  huy() {
+    this.daHuy = true;
+    try { this.ctl?.abort(); } catch(e) {}
+  },
+  batDau(soDon, soLo, tab) {
+    this.batDauLuc = Date.now(); this.tong = soDon; this.soLo = soLo; this.xong = 0; this.loi = 0; this.daHuy = false; this.ctl = null; this.tab = tab || null;
+    ddbMoKhung('vd-tai-modal', '🖨 Đang lấy vận đơn', `${soDon} đơn · ${soLo} lần lấy từ sàn`, HTML_TIEN_DO_IN(soDon, soLo),
+      `<button class="btn-outline" style="flex:1;color:#DC2626;border-color:#DC2626" onclick="tienDoIn.huy()">Hủy</button>`);
     ddbCanhGiua?.('vd-tai-modal');
+    if (this.tab && !this.tab.closed) {
+      try {
+        const d = this.tab.document;
+        d.open();
+        d.write(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Đang lấy vận đơn...</title>
+          <body style="font-family:system-ui,sans-serif;background:#F9FAFB;margin:0;display:flex;justify-content:center;padding:40px 16px">
+          <div style="background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:20px;max-width:460px;width:100%;box-shadow:0 4px 16px rgba(0,0,0,.06)">
+            <div style="font-size:18px;font-weight:700">🖨 Đang lấy vận đơn</div>
+            <div style="font-size:13px;color:#6B7280;margin:2px 0 14px">${soDon} đơn · ${soLo} lần lấy từ sàn — xong sẽ tự mở file để in</div>
+            ${HTML_TIEN_DO_IN(soDon, soLo)}
+            <button id="vd-tai-huy" style="margin-top:16px;width:100%;padding:10px;border:1.5px solid #DC2626;color:#DC2626;background:#fff;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Hủy</button>
+          </div></body>`);
+        d.close();
+        const nutHuy = d.getElementById('vd-tai-huy');
+        if (nutHuy) nutHuy.onclick = () => this.huy();
+      } catch(e) {}
+    }
     clearInterval(this.hen);
     this.hen = setInterval(() => {
       const giay = Math.round((Date.now() - this.batDauLuc) / 1000);
-      const g = document.getElementById('vd-tai-gio'); if (g) g.textContent = `Đã chờ ${giay} giây`;
-      const c = document.getElementById('vd-tai-canh');
-      if (c && !this.loi) c.textContent = giay >= 60 ? 'In nhiều đơn sẽ lâu hơn — vẫn đang tải, cứ chờ. Đồng hồ còn chạy là app vẫn đang làm.' : '';
+      this.dat('vd-tai-gio', o => { o.textContent = `Đã chờ ${giay} giây`; });
     }, 1000);
   },
   lo(i, moTa) {
-    const b = document.getElementById('vd-tai-buoc');
-    if (b) b.textContent = this.soLo > 1 ? `Lần ${i + 1}/${this.soLo}: ${moTa}` : `Đang lấy vận đơn: ${moTa}`;
+    const t = this.soLo > 1 ? `Lần ${i + 1}/${this.soLo}: ${moTa}` : `Đang lấy vận đơn: ${moTa}`;
+    this.dat('vd-tai-buoc', o => { o.textContent = t; });
   },
   xongLo(i, ok) {
     this.xong = i + 1; if (!ok) this.loi++;
-    const x = document.getElementById('vd-tai-xong'); if (x) x.style.width = `${Math.round(this.xong / Math.max(1, this.soLo) * 100)}%`;
-    if (!ok) { const c = document.getElementById('vd-tai-canh'); if (c) c.textContent = `${this.loi} lần lấy bị lỗi — xem chi tiết khi xong`; }
+    const w = `${Math.round(this.xong / Math.max(1, this.soLo) * 100)}%`;
+    this.dat('vd-tai-xong', o => { o.style.width = w; });
+    if (!ok) this.dat('vd-tai-canh', o => { o.textContent = `${this.loi} lần lấy bị lỗi — xem chi tiết khi xong`; });
   },
   dong() {
     clearInterval(this.hen); this.hen = null;
     const m = document.getElementById('vd-tai-modal'); if (m) m.style.display = 'none';
   }
 };
-
 window.tienDoIn = tienDoIn;   // nút "Dừng lại" trong cửa sổ gọi tới
 
 window.inVanDonHangLoat = async function() {
@@ -10272,7 +10297,6 @@ window.inVanDonHangLoat = async function() {
   let tabCho = null;
   try {
     tabCho = window.open('', '_blank');
-    if (tabCho) tabCho.document.write('<title>Đang lấy vận đơn...</title><p style="font:16px sans-serif;padding:24px">Đang lấy file vận đơn từ sàn, chờ chút...</p>');
   } catch(e) {}
   const nut = document.getElementById('vd-nut-in');
   if (nut) { nut.disabled = true; nut.textContent = 'Đang lấy vận đơn...'; }
@@ -10302,14 +10326,14 @@ window.inVanDonHangLoat = async function() {
       if (nenTang === 'LazadaOrder') dsDonGoc.forEach(d => dsLo.push({ nenTang, ma: [d.maDonSan || d.maHoaDon], don: [d] }));
       else dsLo.push({ nenTang, ma: cacMaGoc, don: dsDonGoc });
     }
-    tienDoIn.batDau(dsLo.reduce((a, l) => a + l.ma.length, 0), dsLo.length);
+    tienDoIn.batDau(dsLo.reduce((a, l) => a + l.ma.length, 0), dsLo.length, tabCho);
 
     const idToken = await currentUser.getIdToken();
 
     for (let iLo = 0; iLo < dsLo.length; iLo++) {
       const { nenTang, ma: cacMa, don: dsDon } = dsLo[iLo];
       tienDoIn.lo(iLo, `${TEN_NEN_TANG_IN[nenTang] || nenTang} · ${cacMa.length} đơn`);
-      if (tienDoIn.daDung) { loi.push('Đã dừng — các đơn chưa lấy vẫn ở Chờ in'); cacMa.forEach(m => maLoi.add(m)); continue; }
+      if (tienDoIn.daHuy) break;
       let kq;
       try {
         const ctl = new AbortController(); tienDoIn.ctl = ctl;
@@ -10324,8 +10348,9 @@ window.inVanDonHangLoat = async function() {
         });
         kq = await res.json();
       } catch(e) {
-        kq = { success: false, error: `${TEN_NEN_TANG_IN[nenTang] || nenTang}: ${e.name === 'AbortError' ? 'đã dừng theo yêu cầu' : e.message}` };
+        kq = { success: false, error: `${TEN_NEN_TANG_IN[nenTang] || nenTang}: ${e.message}` };
       }
+      if (tienDoIn.daHuy) break;
       tienDoIn.xongLo(iLo, kq.success);
       console.log(`[vận đơn ${nenTang}]`, kq);
       if (kq.success) cacLink.push(...(kq.cacLink || []));
@@ -10338,6 +10363,12 @@ window.inVanDonHangLoat = async function() {
       if ((kq.donLoi || []).length > 5) loi.push(`  · và ${kq.donLoi.length - 5} đơn nữa`);
     }
     tienDoIn.dong();
+    // Bấm Hủy: bỏ toàn bộ — không mở file nào (tránh tưởng đã lấy đủ), đơn giữ nguyên ở Chờ in
+    if (tienDoIn.daHuy) {
+      try { if (tabCho && !tabCho.closed) tabCho.close(); } catch(_) {}
+      showToast('Đã hủy in vận đơn — các đơn vẫn ở Chờ in');
+      return;
+    }
 
     if (!cacLink.length) throw new Error(loi.join('\n') || 'Không lấy được vận đơn nào');
 
@@ -23715,7 +23746,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v598</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v599</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23769,7 +23800,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v598</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v599</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23815,7 +23846,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v598</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v599</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
