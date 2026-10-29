@@ -13571,7 +13571,7 @@ async function renderHeThong(man = 'hethong') {
       htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
       muc('thanhtoan', 'Thanh toán'), '<div id="ht-thanhtoan"><div class="loading">Đang tải...</div></div>',
       muc('ketnoi', 'Kết nối'), htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
-      htThe('Ghi dữ liệu gốc sang KiotViet', `<div id="ht-ghigoc"></div>`),
+      htThe('Đồng bộ hàng hóa & tồn kho sang KiotViet', `<div id="ht-ghigoc"></div>`),
       htThe('Kéo bù đơn sàn', `<div id="ht-keobu"><div class="loading">Đang tải...</div></div>`),
       htThe('Phí sàn TMĐT dự kiến', `<div id="ht-phisan"></div>`),
       htThe('Kho KiotViet', `<div id="ht-khokv"></div>`),
@@ -13846,14 +13846,13 @@ function htVeGhiGoc() {
   const el = document.getElementById('ht-ghigoc'); if (!el) return;
   el.innerHTML = `<label style="display:flex;gap:10px;align-items:flex-start;font-size:14px;cursor:pointer">
       <input type="checkbox" ${ghiGocKV ? 'checked' : ''} onchange="htLuuGhiGoc(this.checked)" style="width:20px;height:20px;margin-top:2px">
-      <span><b>${ghiGocKV ? 'Đang BẬT' : 'Đang TẮT'}</b> — ${ghiGocKV ? 'sửa trong app đổi luôn bên KiotViet' : 'sửa trong app chỉ đổi trong app'}<br>
-      <span style="font-size:12.5px;color:var(--text2)">Áp dụng cho: sửa tên / giá bán / nhóm hàng, sửa tồn & "Đặt tồn", xóa hàng hóa, tạo mã thiếu bên KiotViet, tự đẩy tồn lên sàn sau khi sửa.
-      Tắt thì duyệt kiểm kho chỉ cộng/trừ đúng phần chênh lệch bên KiotViet.<br>
-      Bán hàng, xuất hủy, xuất dùng, chuyển kho, nhập kho, hàng hoàn luôn ghi sang KiotViet như bình thường.</span></span></label>`;
+      <span><b>${ghiGocKV ? 'Đang BẬT' : 'Đang TẮT'}</b> — ${ghiGocKV ? 'thông tin hàng hóa và tồn kho trong app ghi luôn sang KiotViet' : 'thông tin hàng hóa và tồn kho chỉ đổi trong app, KiotViet giữ nguyên'}<br>
+      <span style="font-size:12.5px;color:var(--text2)">Áp dụng cho: thêm / sửa / xóa hàng hóa (tên, giá, nhóm, cân nặng…), sửa tồn, kiểm kho, chuyển kho, xuất hủy, xuất dùng nội bộ, nhập kho, chuyển kho chung, tự đẩy tồn lên sàn.<br>
+      Bán hàng, đặt cọc, trả hàng tại quầy vẫn tạo hóa đơn / phiếu bên KiotViet. Chiều ngược lại (đơn sàn, hóa đơn từ KiotViet về app) không đổi.</span></span></label>`;
 }
 window.htLuuGhiGoc = async function(bat) {
-  if (!await hoiXacNhan(bat ? 'BẬT ghi dữ liệu gốc sang KiotViet?\n\nTừ giờ sửa giá bán, sửa tồn, xóa hàng trong app sẽ đổi luôn bên KiotViet. Chỉ bật khi dữ liệu app đã chuẩn.' : 'TẮT ghi dữ liệu gốc sang KiotViet?\n\nSửa giá, sửa tồn, xóa hàng trong app sẽ chỉ đổi trong app.', { nutDongY: bat ? 'Bật' : 'Tắt' })) { htVeGhiGoc(); return; }
-  try { await setDoc(doc(db, 'cau_hinh', 'dong_bo_kv'), { ghiGoc: !!bat, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true }); ghiGocKV = !!bat; htVeGhiGoc(); showToast(bat ? 'Đã bật ghi dữ liệu gốc sang KiotViet' : 'Đã tắt — sửa trong app chỉ đổi trong app'); }
+  if (!await hoiXacNhan(bat ? 'BẬT đồng bộ hàng hóa & tồn kho sang KiotViet?\n\nTừ giờ thêm/sửa/xóa hàng hóa, kiểm kho, chuyển kho, xuất hủy, xuất dùng, nhập kho trong app sẽ ghi luôn sang KiotViet.\n\nLƯU Ý: các phiếu làm trong lúc TẮT không có bên KiotViet — trước khi bật nên cho tồn hai bên khớp nhau (kiểm kho đặt tồn).' : 'TẮT đồng bộ hàng hóa & tồn kho sang KiotViet?\n\nThông tin hàng hóa và mọi phiếu kho trong app chỉ đổi trong app, KiotViet giữ nguyên.', { nutDongY: bat ? 'Bật' : 'Tắt' })) { htVeGhiGoc(); return; }
+  try { await setDoc(doc(db, 'cau_hinh', 'dong_bo_kv'), { ghiGoc: !!bat, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true }); ghiGocKV = !!bat; htVeGhiGoc(); showToast(bat ? 'Đã bật đồng bộ hàng hóa & tồn kho sang KiotViet' : 'Đã tắt — hàng hóa và tồn kho chỉ đổi trong app'); }
   catch(e) { showToast('Không lưu được: ' + e.message, true); htVeGhiGoc(); }
 };
 function htVePhiSan() {
@@ -24641,7 +24640,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v610</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v611</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24695,7 +24694,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v610</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v611</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24741,7 +24740,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v610</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v611</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
