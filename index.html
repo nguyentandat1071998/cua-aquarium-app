@@ -3933,7 +3933,12 @@ function veNutThaoTac(d, maTT) {
     return nut('Đồng bộ', `moKhungDongBoDon('${ngay}')`, '#FFE4E6', '#BE123C');
   }
   if (maTT === 'cho_in') return nut('In đơn', `inMotVanDon('${ma}')`, '#EDE9FE', '#6D28D9');
-  if (maTT === 'cho_dong_goi') return nut('In lại', `inMotVanDon('${ma}')`, 'var(--bg)', 'var(--text2)');
+  if (maTT === 'cho_dong_goi') {
+    const inLai = nut('In lại', `inMotVanDon('${ma}')`, 'var(--bg)', 'var(--text2)');
+    return coQuyenHoanTatDG()
+      ? `<div style="display:flex;flex-direction:column;gap:5px">${nut('✓ Hoàn tất đóng gói', `hoanTatDongGoi(['${ma}'])`, '#DCFCE7', '#15803D')}${inLai}</div>`
+      : inLai;
+  }
   return '';
 }
 
@@ -3973,6 +3978,9 @@ function veThanhChon(trang) {
       ${hienChuanBi ? `<button class="btn-outline" id="vd-nut-chuanbi"
         style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
         onclick="chuanBiHangLoat()">📦 Chuẩn bị hàng</button>` : ''}
+      ${tt === 'cho_dong_goi' && coQuyenHoanTatDG() ? `<button class="btn-outline" id="vd-nut-hoantat"
+        style="width:auto;padding:6px 12px;font-size:12px;color:#15803D;border-color:#16A34A" ${vdDaChon.size ? '' : 'disabled'}
+        onclick="hoanTatDongGoi([...vdDaChon])">✓ Hoàn tất đóng gói</button>` : ''}
       ${hienIn ? `<button class="btn-g" id="vd-nut-in"
         style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
         onclick="inVanDonHangLoat()">🖨 In vận đơn</button>` : ''}
@@ -10442,6 +10450,33 @@ async function danhDauDaInVanDon(cacMa) {
   } catch(e) { console.warn('Không đánh dấu được đã in:', e.message); }
 }
 
+// ===== HOÀN TẤT ĐÓNG GÓI BẰNG NÚT (không cần quét) — quyền tmdt_hoantat_donggoi =====
+// Ghi đúng 4 trường như khi quét đóng gói (firestore.rules chỉ cho đơn CHƯA đóng gói, người ghi là chính mình).
+// Người bấm được tính là người đóng gói (thưởng đóng gói theo người này).
+const coQuyenHoanTatDG = () => currentUserData?.role === 'admin' || coQuyen('tmdt_hoantat_donggoi');
+window.hoanTatDongGoi = async function(cacMa) {
+  if (!coQuyenHoanTatDG()) { showToast('Bạn chưa có quyền Hoàn tất đóng gói', true); return; }
+  const ds = (cacMa || []).map(ma => allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean);
+  const chon = ds.filter(d => trangThaiHienThi(d) === 'cho_dong_goi' && !d.thoiGianDongGoi);
+  if (!chon.length) { showToast('Không có đơn nào đang Chờ đóng gói trong số đã chọn', true); return; }
+  if (!await hoiXacNhan(`Xác nhận đã đóng gói xong ${chon.length} đơn?\n\n${chon.slice(0, 8).map(d => d.maDonSan || d.id).join('\n')}${chon.length > 8 ? `\n… và ${chon.length - 8} đơn nữa` : ''}\n\nĐơn sẽ chuyển sang "Đã đóng gói", người đóng gói ghi là bạn.`, { nutDongY: 'Hoàn tất' })) return;
+  let ok = 0; const loi = [];
+  for (const d of chon) {
+    try {
+      await updateDoc(doc(db, 'don_hang_san', d.id), {
+        trangThaiNoiBo: 'da_dong_goi', thoiGianDongGoi: serverTimestamp(),
+        nhanVienDongGoi: currentUser?.uid || '', banDongGoi: currentUserData?.ten || currentUser?.email || ''
+      });
+      d.trangThaiNoiBo = 'da_dong_goi'; d.thoiGianDongGoi = new Date(); d.nhanVienDongGoi = currentUser?.uid || ''; d.banDongGoi = currentUserData?.ten || '';
+      vdDaChon.delete(d.maDonSan || d.maHoaDon);
+      ok++;
+    } catch(e) { loi.push(`${d.maDonSan || d.id}: ${e.message}`); }
+  }
+  veDanhSachDon();
+  if (loi.length) hienPopup({ loai: 'loi', tieuDe: `Hoàn tất ${ok}/${chon.length} đơn`, noiDung: loi.slice(0, 5).join('\n') });
+  else { bip(1800, 120); showToast(`✓ Đã hoàn tất đóng gói ${ok} đơn`); }
+};
+
 // Lấy đơn đang hiện trên màn hình, dùng cho nút chọn tất cả
 function layDonDangHien() {
   return (window._donDangHien || []);
@@ -14865,6 +14900,7 @@ const DANH_SACH_MODULE = [
     { key: 'tmdt_hoantra', ten: 'Đơn hoàn trả (xem, xác nhận đã nhận hàng hoàn)' },
     { key: 'tmdt_hoantra_duyet', ten: 'Duyệt đơn hoàn trả nhập kho không đủ (có hàng hỏng / mất)' },
     { key: 'quetdonggoi', ten: 'Đóng gói' },
+    { key: 'tmdt_hoantat_donggoi', ten: 'Hoàn tất đóng gói (bấm nút ở Chờ đóng gói, không cần quét)' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
   ]}
@@ -15301,7 +15337,7 @@ let unsubscribeVaiTroDoc = null;
 // ===== CÔNG TẮC TÍNH NĂNG (cau_hinh/tinh_nang, Admin bật/tắt ở Thiết lập › Hệ thống) =====
 // Sàn TMĐT: nhân viên thấy mục nào là theo quyền tick trong Vai trò.
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -23746,7 +23782,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v599</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v600</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23800,7 +23836,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v599</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v600</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23846,7 +23882,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v599</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v600</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
