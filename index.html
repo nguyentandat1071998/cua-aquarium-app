@@ -3286,7 +3286,14 @@ function ngayYMD(d) {
 }
 
 // Đơn hủy có cần lấy lại hàng không — dùng cho ô cảnh báo, không phải trạng thái
+// Khách gửi YÊU CẦU hủy (Shopee GHN...), sàn chờ người bán Đồng ý / Từ chối. Worker gắn cờ coYeuCauHuy.
+// Đơn này vào luôn nhóm "Đơn hủy (Đã in đơn)" để kho dừng lại xử lý trước khi in / đóng gói tiếp.
+function coYeuCauHuy(d) {
+  return d?.coYeuCauHuy === true && trangThaiHienThi(d) !== 'da_huy' && d.daTungRoiKho !== true;
+}
+window.coYeuCauHuy = coYeuCauHuy;
 function mucDoHuy(d) {
+  if (coYeuCauHuy(d)) return 'sau_in';
   if (trangThaiHienThi(d) !== 'da_huy') return null;
   // Hủy khi đã giao đi = giao thất bại -> thuộc Đơn hoàn trả (xác nhận hoàn bên đó), không phải đơn hủy của kho
   if (d.daTungRoiKho === true) return null;
@@ -3313,7 +3320,7 @@ const MUC_HUY = {
 let dsQuetHuy = [];
 function veDsQuetHuy() {
   if (!dsQuetHuy.length) return '';
-  const nhan = { ok: ['✓', '#15803D'], roi: ['✓ đã xác nhận trước đó', '#6B7280'], khong_huy: ['✕ Đơn hàng không ở trạng thái hủy', '#DC2626'], khong_thay: ['✕ Không tìm thấy đơn', '#DC2626'], loi: ['✕ Không ghi được', '#DC2626'] };
+  const nhan = { yeu_cau: ['⏳ Khách yêu cầu hủy — bấm Đồng ý hoặc Từ chối', '#DC2626'], ok: ['✓', '#15803D'], roi: ['✓ đã xác nhận trước đó', '#6B7280'], khong_huy: ['✕ Đơn hàng không ở trạng thái hủy', '#DC2626'], khong_thay: ['✕ Không tìm thấy đơn', '#DC2626'], loi: ['✕ Không ghi được', '#DC2626'] };
   return `<div style="margin-top:8px;max-height:180px;overflow:auto;background:#fff;border:1px solid #FECACA;border-radius:8px">
     ${dsQuetHuy.map(x => { const [t, mau] = nhan[x.kq] || ['', '#6B7280'];
       return `<div style="display:flex;gap:8px;align-items:center;padding:5px 9px;border-bottom:1px solid #FEE2E2;font-size:12.5px">
@@ -3322,13 +3329,13 @@ function veDsQuetHuy() {
         <span style="color:${mau};font-weight:600">${x.kq === 'ok' ? `✓ ${escHtml(MUC_HUY[x.muc]?.ten || '')}` : t}</span></div>`; }).join('')}
   </div>`;
 }
-function veKhungHuyCanXuLy(soIn, soDG) {
+function veKhungHuyCanXuLy(soIn, soDG, soYC = 0) {
   const tong = soIn + soDG;
   if (!tong && !dsQuetHuy.length) return '';
-  const chip = (muc, so) => so ? `<button onclick="moKhungDonHuy('${muc}')" style="border:1.5px solid ${MUC_HUY[muc].mau};background:#fff;color:${MUC_HUY[muc].mau};border-radius:6px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">${MUC_HUY[muc].ten}: ${so} →</button>` : '';
+  const chip = (muc, so) => so ? `<button onclick="moKhungDonHuy('${muc}')" style="border:1.5px solid ${MUC_HUY[muc].mau};background:#fff;color:${MUC_HUY[muc].mau};border-radius:6px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">${MUC_HUY[muc].ten}: ${so}${muc === 'sau_in' && soYC ? ` <span style="background:#DC2626;color:#fff;border-radius:4px;padding:1px 6px;margin-left:3px">${soYC} chờ xác nhận hủy</span>` : ''} →</button>` : '';
   return `<div style="border:2px solid #DC2626;background:#FEF2F2;border-radius:8px;padding:10px 12px;margin-bottom:8px">
     <b style="font-size:13.5px;color:#DC2626">${tong ? `⚠ ${tong} đơn hủy cần xử lý` : '✓ Đã xử lý hết đơn hủy'}</b>
-    ${tong ? `<div style="font-size:11.5px;color:var(--text2);margin-top:2px">Bỏ tem / tháo kiện nhập lại rồi xác nhận — bấm vào nhóm, hoặc quét mã đơn / mã vận đơn ngay dưới.</div>
+    ${tong ? `<div style="font-size:11.5px;color:var(--text2);margin-top:2px">Bỏ tem / tháo kiện nhập lại rồi xác nhận — bấm vào nhóm, hoặc quét mã đơn / mã vận đơn ngay dưới.${soYC ? ` <b style="color:#DC2626">Có ${soYC} đơn khách yêu cầu hủy: Đồng ý / Từ chối trước 0h, quá giờ sàn tự hủy.</b>` : ''}</div>
     <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px">${chip('sau_in', soIn)}${chip('sau_dong_goi', soDG)}</div>` : ''}
     <div style="display:flex;gap:6px;margin-top:8px">
       <input id="huy-quet" type="text" placeholder="Quét / nhập mã đơn hoặc mã vận đơn để xác nhận" autocomplete="off"
@@ -3353,6 +3360,7 @@ window.xacNhanHuyTheoMa = async function(ma) {
   const muc = d ? mucDoHuy(d) : null;
   if (!d) { bip(400, 250); ghi('khong_thay', String(ma).trim()); showToast('Không tìm thấy đơn này', true); }
   else if (!muc) { bip(400, 250); ghi('khong_huy', d.maDonSan || d.id); showToast('Đơn hàng không ở trạng thái hủy', true); }
+  else if (coYeuCauHuy(d)) { bip(400, 250); ghi('yeu_cau', d.maDonSan || d.id); showToast('Khách yêu cầu hủy — bấm Đồng ý hoặc Từ chối', true); }
   else if (daNhanLaiKien(d)) { ghi('roi', d.maDonSan || d.id, muc); }
   else {
     await doiNhanLaiKien(d.id, true);
@@ -3503,6 +3511,8 @@ async function renderDonHangTab() {
   el.innerHTML = '<div class="loading">Đang tải đơn hàng...</div>';
   await loadDonHangSan();
   veDanhSachDon();
+  batNgheDonHuy();
+  hoiYeuCauHuyNeuCan();
   // Hỏi sàn xem có đơn nào vừa được duyệt — chạy NGẦM sau khi đã vẽ xong,
   // để không bắt nhân viên chờ mỗi lần mở tab.
   tuDongBoNeuCu();
@@ -4738,7 +4748,7 @@ function veDanhSachDon() {
         onclick="moKhungDongBoDon()" title="Kéo lại đơn theo khoảng ngày">⤓ Đồng bộ</button>
     </div>
 
-    ${veKhungHuyCanXuLy(huySauIn, huySauDongGoi)}
+    ${veKhungHuyCanXuLy(huySauIn, huySauDongGoi, allDonHangSan.filter(coYeuCauHuy).length)}
     ${trang.length ? veThanhChon(trang) : ''}
     <div id="don-list"></div>
     <div id="don-phantrang"></div>`;
@@ -4791,6 +4801,8 @@ function veDanhSachDon() {
               border-radius:4px;font-size:10px;font-weight:700">HỎA TỐC</span>` : ''}
             ${loiHeThong(d) ? `<span style="background:var(--red);color:#fff;padding:2px 7px;
               border-radius:4px;font-size:10px;font-weight:700">LỖI!!!</span>` : ''}
+            ${coYeuCauHuy(d) ? `<span onclick="event.stopPropagation();moKhungDonHuy('sau_in')" title="Khách gửi yêu cầu hủy — Đồng ý / Từ chối trước 0h"
+              style="cursor:pointer;background:#DC2626;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">⏳ KHÁCH YÊU CẦU HỦY</span>` : ''}
             <span style="font-size:10px;color:var(--text2)">${tt.ten}</span>
             ${soCungKhach > 1 ? `<span onclick="event.stopPropagation();locCungKhach('${escHtml(d.maKhachKV)}')" title="Xem các đơn của khách này"
               style="cursor:pointer;background:#F59E0B;color:#fff;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700">👥 KHÁCH ĐẶT ${soCungKhach} ĐƠN</span>` : ''}
@@ -5416,6 +5428,7 @@ function veKhungDonHuy() {
 
   const cfg = MUC_HUY[dhMuc];
   const ds = dhLocDon().sort((a, b) => {
+    if (coYeuCauHuy(a) !== coYeuCauHuy(b)) return coYeuCauHuy(a) ? -1 : 1;
     const ta = ngayCua(dhTab === 'chua' ? a.ngayDat : a.nhanLaiLuc)?.getTime() || 0;
     const tb = ngayCua(dhTab === 'chua' ? b.ngayDat : b.nhanLaiLuc)?.getTime() || 0;
     return tb - ta;
@@ -5513,12 +5526,12 @@ function veKhungDonHuy() {
               ✓ Xử lý lúc ${lucXong.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit',
                 day:'2-digit', month:'2-digit' })}${
                 d.nguoiNhanLai ? ` · ${escHtml(d.nguoiNhanLai)}` : ''}</div>` : ''}
-            <div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+            ${coYeuCauHuy(d) ? veHangYeuCauHuy(d) : `<div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
               <button class="btn-xs" style="background:${daNhan ? '#FEE2E2' : '#16A34A'};
                 color:${daNhan ? '#DC2626' : '#fff'}"
                 onclick="doiNhanLaiKien('${escHtml(d.id)}', ${!daNhan})">
                 ${daNhan ? 'Bỏ đánh dấu' : cfg.nutXong}</button>
-            </div>
+            </div>`}
           </div>`;
         }).join('')}
       </div>
@@ -6029,6 +6042,17 @@ async function xuLyMaQuet(ma) {
     return;
   }
 
+  if (!don.thoiGianDongGoi && (coYeuCauHuy(don) || trangThaiHienThi(don) === 'da_huy')) {
+    const laYC = coYeuCauHuy(don);
+    bip(400, 350);
+    if (navigator.vibrate) navigator.vibrate([100, 60, 100]);
+    bao.style.background = 'rgba(185,28,28,.9)';
+    bao.textContent = laYC ? `KHÁCH YÊU CẦU HỦY — không đóng gói: ${ma}` : `ĐƠN ĐÃ HỦY — không đóng gói: ${ma}`;
+    phienQuet.lichSu.unshift({ ma, ok: false, ghiChu: laYC ? 'khách yêu cầu hủy — chờ xác nhận' : 'đơn đã hủy', don, luc: new Date() });
+    veLichSuQuet();
+    return;
+  }
+
   if (don.thoiGianDongGoi) {
     bip(900, 100);
     if (navigator.vibrate) navigator.vibrate(60);
@@ -6283,6 +6307,8 @@ function ktVeDanhSachHang() {
   const thuong = tinhThuongDon ? (tinhThuongDon(ktDon)?.thuongCoDinh || 0) : 0;
 
   el.innerHTML = `
+    ${!daDongGoi && (coYeuCauHuy(ktDon) || trangThaiHienThi(ktDon) === 'da_huy') ? `<div style="background:#DC2626;color:#fff;border-radius:10px;padding:12px;margin-bottom:10px;text-align:center;font-weight:700">
+      ${coYeuCauHuy(ktDon) ? '⏳ KHÁCH YÊU CẦU HỦY — dừng lại, chưa đóng gói' : '✕ ĐƠN ĐÃ HỦY — không đóng gói'}</div>` : ''}
     <div style="background:${daDongGoi ? '#DCFCE7' : (xong ? '#DCFCE7' : 'var(--bg)')};border:1.5px solid ${daDongGoi || xong ? '#16A34A' : 'var(--border)'};border-radius:10px;padding:12px;margin-bottom:10px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span style="font-size:10px;background:#fff;padding:2px 7px;border-radius:4px;color:var(--text2)">${escHtml(TEN_SAN[ktDon.san] || ktDon.san || '')}</span>
@@ -6333,6 +6359,8 @@ function ktVeDanhSachHang() {
 window.ktHoanThanhDongGoi = async function() {
   if (!ktDon) return;
   if (ktDon.thoiGianDongGoi) { showToast('Đơn này đã đóng gói rồi', true); return; }
+  if (coYeuCauHuy(ktDon)) { bip(400, 350); showToast('Khách đang yêu cầu hủy đơn này — không đóng gói', true); return; }
+  if (trangThaiHienThi(ktDon) === 'da_huy') { bip(400, 350); showToast('Đơn đã hủy — không đóng gói', true); return; }
   const hang = ktDon.chiTiet || [];
   if (ktDaTich.size < hang.length) {
     if (!await hoiXacNhan(`Mới tích ${ktDaTich.size}/${hang.length} món.\n\nVẫn xác nhận đã đóng gói xong?`)) return;
@@ -10300,6 +10328,7 @@ window.inVanDonHangLoat = async function() {
         + '\n\nIn hàng loạt chỉ cho cùng một đơn vị vận chuyển. Lọc theo đơn vị vận chuyển ở trên rồi chọn lại.' });
     return;
   }
+  if (baoChanYeuCauHuy(donChon.filter(coYeuCauHuy), 'in vận đơn')) return;
   // Trình duyệt chặn mở tab mới nếu không mở NGAY lúc bấm (sau khi chờ máy chủ là bị coi như popup).
   // Mở sẵn một tab trống lúc bấm, có link vận đơn thì chuyển tab đó sang file PDF.
   let tabCho = null;
@@ -10307,7 +10336,17 @@ window.inVanDonHangLoat = async function() {
     tabCho = window.open('', '_blank');
   } catch(e) {}
   const nut = document.getElementById('vd-nut-in');
-  if (nut) { nut.disabled = true; nut.textContent = 'Đang lấy vận đơn...'; }
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang kiểm tra yêu cầu hủy...'; }
+  // Hỏi sàn ngay lúc bấm: khách vừa gửi yêu cầu hủy trong vài phút qua thì chặn lại
+  const ycMoi = await kiemYeuCauHuyNgay(donChon);
+  if (ycMoi.length) {
+    try { tabCho?.close(); } catch(e) {}
+    if (nut) { nut.disabled = false; nut.textContent = '🖨 In vận đơn'; }
+    veDanhSachDon();
+    baoChanYeuCauHuy(ycMoi, 'in vận đơn');
+    return;
+  }
+  if (nut) nut.textContent = 'Đang lấy vận đơn...';
 
   try {
     // Gom theo sàn — KiotViet không gộp được đơn khác sàn vào một file
@@ -10450,6 +10489,117 @@ async function danhDauDaInVanDon(cacMa) {
   } catch(e) { console.warn('Không đánh dấu được đã in:', e.message); }
 }
 
+// ===== YÊU CẦU HỦY CỦA KHÁCH: kiểm tra, chặn thao tác, Đồng ý / Từ chối =====
+const coQuyenXuLyHuy = () => currentUserData?.role === 'admin' || coQuyen('tmdt_xuly_huy');
+function baoChanYeuCauHuy(ds, viec) {
+  if (!ds?.length) return false;
+  hienPopup({ loai: 'loi', tieuDe: `Khách yêu cầu hủy ${ds.length} đơn`,
+    noiDung: `Chưa ${viec} được:\n${ds.slice(0, 8).map(d => '• ' + (d.maDonSan || d.id)).join('\n')}${ds.length > 8 ? `\n… và ${ds.length - 8} đơn nữa` : ''}`
+      + `\n\nVào khung đỏ "Đơn hủy (Đã in đơn)" bấm Đồng ý hoặc Từ chối. Từ chối thì đơn quay lại xử lý bình thường.` });
+  return true;
+}
+// Hỏi sàn ngay (kết quả cũ hơn 30 giây thì hỏi lại). Lỗi mạng / lỗi sàn thì không chặn.
+async function kiemYeuCauHuyNgay(ds) {
+  try {
+    const kq = await goiWorkerAdmin('kiem-yeu-cau-huy', { ep: true });
+    if (!kq?.success) return [];
+    const co = new Set((kq.ds || []).map(String));
+    const trung = ds.filter(d => co.has(String(d.maDonSan || d.id)));
+    trung.forEach(d => { d.coYeuCauHuy = true; });
+    return trung;
+  } catch(e) { return []; }
+}
+function veHangYeuCauHuy(d) {
+  const yc = d.yeuCauHuySan || {};
+  const thay = ngayCua(yc.thayLuc);
+  return `<div style="margin-top:8px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:8px 10px">
+    <div style="font-size:12px;color:#DC2626;font-weight:700">⏳ Khách yêu cầu hủy — chờ xác nhận</div>
+    ${yc.lyDo ? `<div style="font-size:12px;margin-top:2px">Lý do: ${escHtml(yc.lyDo)}</div>` : ''}
+    <div style="font-size:11px;color:var(--text2);margin-top:2px">${thay ? `Phát hiện lúc ${thay.toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' })} · ` : ''}Không xử lý trước 0h sàn sẽ tự hủy</div>
+    ${coQuyenXuLyHuy() ? `<div style="margin-top:8px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn-xs" style="background:#fff;border:1.5px solid #64748B;color:#334155;font-weight:700" onclick="xuLyYeuCauHuy('${escHtml(d.id)}', false)">Từ chối</button>
+      <button class="btn-xs" style="background:#DC2626;color:#fff;font-weight:700" onclick="xuLyYeuCauHuy('${escHtml(d.id)}', true)">Đồng ý hủy</button>
+    </div>` : `<div style="font-size:11px;color:var(--text2);margin-top:6px">Báo quản lý xử lý — bạn chưa có quyền Đồng ý / Từ chối.</div>`}
+  </div>`;
+}
+window.xuLyYeuCauHuy = async function(id, dongY) {
+  if (!coQuyenXuLyHuy()) { showToast('Bạn chưa có quyền xử lý yêu cầu hủy', true); return; }
+  const d = allDonHangSan.find(x => x.id === id);
+  if (!d) return;
+  const ma = d.maDonSan || d.id;
+  const ok = await hoiXacNhan(dongY
+    ? `Đồng ý cho khách hủy đơn ${ma}?\n\nĐơn sẽ bị hủy trên sàn. Hàng đã in tem / đóng gói thì bỏ tem, tháo kiện nhập lại như đơn hủy bình thường.`
+    : `Từ chối yêu cầu hủy đơn ${ma}?\n\nĐơn quay lại xử lý bình thường, tiếp tục in / đóng gói / giao.`,
+    { nutDongY: dongY ? 'Đồng ý hủy' : 'Từ chối' });
+  if (!ok) return;
+  showToast('Đang gửi lên sàn...');
+  const kq = await goiWorkerAdmin('xu-ly-yeu-cau-huy', { maDon: d.id, dongY }).catch(e => ({ success: false, error: e.message }));
+  if (!kq?.success) { hienPopup({ loai: 'loi', tieuDe: 'Chưa xử lý được', noiDung: kq?.error || 'Lỗi không rõ' }); return; }
+  d.coYeuCauHuy = false;
+  d.yeuCauHuyXuLy = { ketQua: dongY ? 'dong_y' : 'tu_choi', ten: currentUserData?.ten || '', luc: new Date() };
+  bip(1800, 120);
+  showToast(dongY ? `✓ Đã đồng ý hủy đơn ${ma}` : `✓ Đã từ chối hủy — đơn ${ma} xử lý tiếp bình thường`);
+  veDanhSachDon();
+  if (document.getElementById('don-huy-modal')) veKhungDonHuy();
+};
+
+// Theo dõi thời gian thực: đơn có yêu cầu hủy + đơn vừa bị hủy (hoàn tồn) trong 3 ngày.
+// Firestore đẩy về ngay khi worker / webhook ghi -> khung đỏ hiện ra không cần tải lại.
+// Chỉ nghe hai nhóm nhỏ này, không nghe cả danh sách (tốn lượt đọc).
+let ngheHuyDaBat = false, henVeLaiHuy = null;
+function veLaiDonHuyNgam() {
+  clearTimeout(henVeLaiHuy);
+  henVeLaiHuy = setTimeout(() => {
+    if (!document.getElementById('don-list')) return;
+    const a = document.activeElement, idA = a?.id, vt = (a && 'selectionStart' in a) ? a.selectionStart : null;
+    veDanhSachDon();
+    if (document.getElementById('don-huy-modal')) veKhungDonHuy();
+    if (idA) { const e = document.getElementById(idA); if (e && e !== document.activeElement) { e.focus(); try { if (vt != null) e.setSelectionRange(vt, vt); } catch(x) {} } }
+  }, 400);
+}
+function batNgheDonHuy() {
+  if (ngheHuyDaBat || !currentUser) return;
+  ngheHuyDaBat = true;
+  const c = collection(db, 'don_hang_san');
+  const gop = (snap) => {
+    let doi = false;
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') return;
+      const x = { id: ch.doc.id, ...ch.doc.data() };
+      const i = allDonHangSan.findIndex(d => d.id === x.id);
+      if (i >= 0) { allDonHangSan[i] = { ...allDonHangSan[i], ...x }; doi = true; }
+      else if (x.coYeuCauHuy === true) { allDonHangSan.unshift(x); doi = true; }
+    });
+    if (doi) veLaiDonHuyNgam();
+  };
+  // Yêu cầu hủy: rời khỏi nhóm (cờ gỡ) thì đọc lại đúng đơn đó cho chắc trạng thái mới
+  onSnapshot(query(c, where('coYeuCauHuy', '==', true)), (snap) => {
+    gop(snap);
+    snap.docChanges().filter(ch => ch.type === 'removed').forEach(async ch => {
+      try {
+        const m = await getDoc(doc(db, 'don_hang_san', ch.doc.id));
+        const i = allDonHangSan.findIndex(d => d.id === ch.doc.id);
+        if (m.exists() && i >= 0) { allDonHangSan[i] = { id: m.id, ...m.data() }; veLaiDonHuyNgam(); }
+      } catch(e) {}
+    });
+  }, (e) => console.warn('Không nghe được yêu cầu hủy:', e.message));
+  onSnapshot(query(c, where('hoanTonLuc', '>=', new Date(Date.now() - 3 * 86400000))), gop,
+    (e) => console.warn('Không nghe được đơn hủy:', e.message));
+}
+// Hỏi sàn danh sách "chờ xử lý hủy" 5 phút / lần khi đang mở Đơn hàng hoặc màn hình Đóng gói.
+// Máy chủ dùng chung kết quả cho mọi máy, nhiều máy mở cùng lúc vẫn chỉ hỏi sàn 1 lần.
+let lanHoiYeuCauHuy = 0;
+function hoiYeuCauHuyNeuCan(ep = false) {
+  if (!currentUser || document.hidden) return;
+  if (!ep && Date.now() - lanHoiYeuCauHuy < 5 * 60000) return;
+  if (!(document.getElementById('don-list') || document.getElementById('qdg-bao') || document.getElementById('kt-video'))) return;
+  lanHoiYeuCauHuy = Date.now();
+  batNgheDonHuy();
+  goiWorkerAdmin('kiem-yeu-cau-huy', {}).catch(() => {});
+}
+setInterval(() => hoiYeuCauHuyNeuCan(), 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) hoiYeuCauHuyNeuCan(); });
+
 // ===== HOÀN TẤT ĐÓNG GÓI BẰNG NÚT (không cần quét) — quyền tmdt_hoantat_donggoi =====
 // Ghi đúng 4 trường như khi quét đóng gói (firestore.rules chỉ cho đơn CHƯA đóng gói, người ghi là chính mình).
 // Người bấm được tính là người đóng gói (thưởng đóng gói theo người này).
@@ -10462,6 +10612,9 @@ window.hoanTatDongGoi = async function(cacMa) {
   const ds = (cacMa || []).map(ma => allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean);
   const chon = ds.filter(d => trangThaiHienThi(d) === 'cho_dong_goi' && !d.thoiGianDongGoi);
   if (!chon.length) { showToast('Không có đơn nào đang Chờ đóng gói trong số đã chọn', true); return; }
+  if (baoChanYeuCauHuy(chon.filter(coYeuCauHuy), 'hoàn tất đóng gói')) return;
+  const ycMoi = await kiemYeuCauHuyNgay(chon);
+  if (ycMoi.length) { veDanhSachDon(); baoChanYeuCauHuy(ycMoi, 'hoàn tất đóng gói'); return; }
   if (!await hoiXacNhan(`Xác nhận đã đóng gói xong ${chon.length} đơn?\n\n${chon.slice(0, 8).map(d => d.maDonSan || d.id).join('\n')}${chon.length > 8 ? `\n… và ${chon.length - 8} đơn nữa` : ''}\n\nĐơn sẽ chuyển sang "Đã đóng gói", người đóng gói ghi là bạn.`, { nutDongY: 'Hoàn tất' })) return;
   let ok = 0; const loi = [];
   for (const d of chon) {
@@ -14904,6 +15057,7 @@ const DANH_SACH_MODULE = [
     { key: 'tmdt_hoantra_duyet', ten: 'Duyệt đơn hoàn trả nhập kho không đủ (có hàng hỏng / mất)' },
     { key: 'quetdonggoi', ten: 'Đóng gói' },
     { key: 'tmdt_hoantat_donggoi', ten: 'Hoàn tất đóng gói (bấm nút ở Chờ đóng gói, không cần quét)' },
+    { key: 'tmdt_xuly_huy', ten: 'Xử lý yêu cầu hủy của khách (Đồng ý / Từ chối)' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
   ]}
@@ -15340,7 +15494,7 @@ let unsubscribeVaiTroDoc = null;
 // ===== CÔNG TẮC TÍNH NĂNG (cau_hinh/tinh_nang, Admin bật/tắt ở Thiết lập › Hệ thống) =====
 // Sàn TMĐT: nhân viên thấy mục nào là theo quyền tick trong Vai trò.
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'tmdt_xuly_huy', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -23785,7 +23939,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v602</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v603</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23839,7 +23993,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v602</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v603</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23885,7 +24039,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v602</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v603</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
