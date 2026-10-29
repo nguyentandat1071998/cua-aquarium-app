@@ -6987,6 +6987,7 @@ async function nhTimDs() { return nhGoiDs({ ganDay: true }); }
 // ==========================================================================
 let nccTim = '', nccCongNo = null, nccDangTai = false;
 const nccCoSua = () => currentUserData?.role === 'admin' || coQuyen('ncc_sua');
+const nccCoXem = () => currentUserData?.role === 'admin' || coQuyen('nhacungcap');
 const nccCoNo = () => currentUserData?.role === 'admin' || coQuyen('ncc_congno');
 const nccCoTT = () => currentUserData?.role === 'admin' || coQuyen('ncc_thanhtoan') || coQuyen('dh_thanhtoan');
 const nccNgay = (v) => { const t = v?.toDate ? v.toDate() : (v ? new Date(v) : null); return t && !isNaN(t) ? t.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: '2-digit' }) : ''; };
@@ -7155,7 +7156,7 @@ window.nccLuuThanhToanPN = async function(pid, conLai, nccId) {
 
 // Gắn nhà cung cấp cho phiếu nhập kho đã lưu (nhân viên tạo phiếu không cần chọn, quản lý gán sau)
 window.nccGanPhieuNhap = async function(pid, nccCu) {
-  if (!nccCoSua() && !coQuyen('nh_duyet')) { showToast('Bạn không có quyền gán nhà cung cấp', true); return; }
+  if (!nccCoSua()) { showToast('Bạn không có quyền gán nhà cung cấp', true); return; }
   const ds = await hhTaiNcc();
   moBangChon('Nhà cung cấp của phiếu', [...ds.map(n => ({ gt: n.id, nhan: n.ten, phu: n.sdt || '' })), ...(nccCu ? [{ gt: '__bo', nhan: 'Bỏ nhà cung cấp' }] : [])], nccCu || '', async (v) => {
     try {
@@ -14380,9 +14381,12 @@ function hhTheSku(s, trongNhom = false) {
     const hienCH = kho === 'ch' || kho === 'ca', hienSan = kho === 'san' || kho === 'ca';
     const het = kho === 'ch' ? tonCH <= 0 : kho === 'san' ? tonSan <= 0 : (tonSan + tonCH) <= 0;
     const cbT = hhCanhBao.get(s.id);
-    const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>`
-      : cbT?.canhBao ? `<span style="color:var(--red);font-weight:600" title="${escHtml(veChuCanhBao(cbT))}">⚠️ Sắp hết · còn ~${cbT.conNgay} ngày</span>`
-      : cbT?.tb ? `<span style="color:var(--text2)" title="${escHtml(veChuCanhBao(cbT))}">~${cbT.conNgay} ngày bán hết</span>` : '';
+    const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
+    // Cảnh báo tồn: luôn hiện dưới dòng tồn kho khi mã có đặt số ngày; tồn ≤ mức cảnh báo thì số tồn màu đỏ
+    const nCB = !s.laCombo ? Number(s.canhBaoSoNgay) || 0 : 0;
+    const mucCB = cbT ? Math.ceil(cbT.tb * cbT.soNgay) : 0;
+    const dongCanhBao = !nCB ? '' : !cbT ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:2px">Cảnh báo ${nCB} ngày: đang tính...</div>`
+      : `<div style="font-size:12.5px;margin-bottom:2px;color:${cbT.canhBao ? '#DC2626' : 'var(--text2)'}">${cbT.canhBao ? '⚠️ ' : ''}Tồn <b style="color:${cbT.canhBao ? '#DC2626' : 'var(--text)'};font-size:14px">${cbT.ton}</b> / mức cảnh báo <b>${mucCB}</b>${cbT.tb ? ` · TB ${cbT.tb.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/ngày (${cbT.soNgay} ngày) · ~${cbT.conNgay} ngày bán hết` : ` · chưa bán trong ${cbT.soNgay} ngày qua`}</div>`;
     return `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
@@ -14400,6 +14404,7 @@ function hhTheSku(s, trongNhom = false) {
               : hienCH ? `<span>Cửa hàng: <b style="color:${tonCH <= 0 ? 'var(--red)' : 'var(--text)'}">${tonCH}</b>${Number(s.datCocCH) > 0 ? ` <span style="color:#0E7490">(giữ cọc ${s.datCocCH})</span>` : ''}</span>` : ''}
             ${canhBaoTon}
           </div>
+          ${dongCanhBao}
           ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
         </div>
@@ -14688,79 +14693,84 @@ async function moFormHangHoa(idSua, laComboMoi) {
   hhFormNcc = new Set(Array.isArray(s?.nccIds) ? s.nccIds : []);
   const cungNhom = (s?.nhomCL) ? allSKUs.filter(x => x.nhomCL === s.nhomCL && x.id !== s.id && !x.deleted) : [];
   hhFormGom = { ds: cungNhom.map(x => x.id), boRa: new Set() };
+  hhPL = null;
   if (!allNhomHang.length) await loadNhomHang();
   await hhTaiNcc();
   const el = document.getElementById(`hh-sua-${id}`);
   if (!el) return;
   const cb = s ? hhTinhCanhBao(s) : null;
+  const khung = (noiDung) => `<div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">${noiDung}</div>`;
   el.innerHTML = `
     <div class="admin-block" style="margin-top:4px">
       ${laCombo ? `<p class="info-note" style="margin-bottom:8px">📦 Đây là SKU Combo</p>` : ''}
       ${truongCoNhan(laCombo ? 'Tên combo' : 'Tên hàng hóa', `<input type="text" id="${I('ten')}" placeholder="Ô nhập liệu" value="${escHtml(s?.ten || '')}">`)}
-      ${truongCoNhan(laCombo ? 'Mã SKU Combo' : 'Mã SKU', `<input type="text" id="${I('sku')}" placeholder="Ô nhập liệu" value="${escHtml(s?.sku || '')}">`)}
-      ${laAdmin && !laCombo ? truongCoNhan('Giá vốn', `<input type="number" id="${I('giavon')}" placeholder="Ô nhập liệu" value="${s ? (s.giaVon || 0) : ''}">`) : ''}
-      ${truongCoNhan('Giá bán', `<input type="number" id="${I('gia')}" placeholder="Ô nhập liệu" value="${s ? (s.gia || 0) : ''}">`)}
-      <input type="hidden" id="${I('la-combo')}" value="${laCombo ? '1' : '0'}">
-      <label style="display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
-        <input type="checkbox" id="${I('bantt')}" ${s?.banTrucTiep === false ? '' : 'checked'} style="width:19px;height:19px">
-        <span style="font-size:13.5px"><b>Bán trực tiếp</b><br><span style="font-size:12px;color:var(--text2)">Bỏ tick thì mã không hiện ở Bán hàng / Đặt cọc (VD combo chỉ để liên kết sàn)</span></span></label>
-      ${s && !laCombo && laAdmin ? `<label style="display:flex;gap:10px;align-items:flex-start;background:${s.khoChung ? '#ECFEFF' : 'var(--bg)'};border:1px solid ${s.khoChung ? '#67E8F9' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
-        <input type="checkbox" ${s.khoChung ? 'checked' : ''} onchange="hhDoiKhoChung('${id}', this.checked, this)" style="width:19px;height:19px;margin-top:1px">
-        <span style="font-size:13.5px"><b>Kho chung — hàng để ở quầy, bán cả online</b><br>
-        <span style="font-size:12px;color:var(--text2)">Toàn bộ tồn nằm ở Kho Online để sàn thấy. Bán tại quầy thì app tự chuyển Kho Online → Cửa hàng đúng số đang bán.</span></span></label>` : ''}
-      ${!laCombo ? `<div style="display:flex;gap:8px">
-        <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="${I('toncuahang')}" placeholder="0" value="${s ? layTon(s, 'cuahang') : 0}" data-cu="${s ? layTon(s, 'cuahang') : 0}">`)}</div>
-        <div style="flex:1">${truongCoNhan('Tồn Kho Online', `<input type="number" id="${I('soluong')}" placeholder="0" value="${s ? layTon(s, 'san') : 0}" data-cu="${s ? layTon(s, 'san') : 0}">`)}</div>
-      </div>` : `
-      <div style="margin-bottom:8px">
-        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
-        <div class="field sku-wrap">
-          <input type="text" id="hhs-${id}-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
-          <div class="sku-drop" id="hhs-${id}-combo-sku-drop"></div>
+      ${!s && !laCombo ? `<label style="display:flex;gap:10px;align-items:center;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+        <input type="checkbox" id="${I('copl')}" onchange="hhDoiCoPhanLoai(this.checked)" style="width:19px;height:19px">
+        <span style="font-size:13.5px"><b>Hàng có nhiều phân loại</b><br><span style="font-size:12px;color:var(--text2)">Mỗi phân loại là một mã SKU riêng: giá, kích thước, cân nặng, cảnh báo, bán trực tiếp riêng</span></span></label>` : ''}
+      <div id="${I('don')}">
+        ${truongCoNhan(laCombo ? 'Mã SKU Combo' : 'Mã SKU', `<input type="text" id="${I('sku')}" placeholder="Ô nhập liệu" value="${escHtml(s?.sku || '')}">`)}
+        <div style="display:flex;gap:8px">
+          ${laAdmin && !laCombo ? `<div style="flex:1">${truongCoNhan('Giá vốn', `<input type="number" id="${I('giavon')}" placeholder="Ô nhập liệu" value="${s ? (s.giaVon || 0) : ''}">`)}</div>` : ''}
+          <div style="flex:1">${truongCoNhan('Giá bán', `<input type="number" id="${I('gia')}" placeholder="Ô nhập liệu" value="${s ? (s.gia || 0) : ''}">`)}</div>
         </div>
-        <div class="row2" style="margin:6px 0">
-          <div class="qty-ctrl">
-            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||1)-1)">−</button>
-            <input type="number" id="hhs-${id}-combo-item-tyle" value="1" min="1">
-            <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||0)+1">+</button>
+        <label style="display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+          <input type="checkbox" id="${I('bantt')}" ${s?.banTrucTiep === false ? '' : 'checked'} style="width:19px;height:19px">
+          <span style="font-size:13.5px"><b>Bán trực tiếp</b><br><span style="font-size:12px;color:var(--text2)">Bỏ tick thì mã không hiện ở Bán hàng / Đặt cọc (VD combo chỉ để liên kết sàn)</span></span></label>
+        ${s && !laCombo && laAdmin ? `<label style="display:flex;gap:10px;align-items:flex-start;background:${s.khoChung ? '#ECFEFF' : 'var(--bg)'};border:1px solid ${s.khoChung ? '#67E8F9' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+          <input type="checkbox" ${s.khoChung ? 'checked' : ''} onchange="hhDoiKhoChung('${id}', this.checked, this)" style="width:19px;height:19px;margin-top:1px">
+          <span style="font-size:13.5px"><b>Kho chung — hàng để ở quầy, bán cả online</b><br>
+          <span style="font-size:12px;color:var(--text2)">Toàn bộ tồn nằm ở Kho Online để sàn thấy. Bán tại quầy thì app tự chuyển Kho Online → Cửa hàng đúng số đang bán.</span></span></label>` : ''}
+        ${!laCombo ? `<div style="display:flex;gap:8px">
+          <div style="flex:1">${truongCoNhan('Tồn kho Cửa hàng', `<input type="number" id="${I('toncuahang')}" placeholder="0" value="${s ? layTon(s, 'cuahang') : 0}" data-cu="${s ? layTon(s, 'cuahang') : 0}">`)}</div>
+          <div style="flex:1">${truongCoNhan('Tồn Kho Online', `<input type="number" id="${I('soluong')}" placeholder="0" value="${s ? layTon(s, 'san') : 0}" data-cu="${s ? layTon(s, 'san') : 0}">`)}</div>
+        </div>` : `
+        <div style="margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Thành phần Combo</label>
+          <div class="field sku-wrap">
+            <input type="text" id="hhs-${id}-combo-item-ten" placeholder="Gõ để tìm SKU con..." autocomplete="off">
+            <div class="sku-drop" id="hhs-${id}-combo-sku-drop"></div>
           </div>
-          <button class="btn-outline" onclick="themThanhPhanCombo('hhs-${id}')">+ Thêm thành phần</button>
+          <div class="row2" style="margin:6px 0">
+            <div class="qty-ctrl">
+              <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=Math.max(1,(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||1)-1)">−</button>
+              <input type="number" id="hhs-${id}-combo-item-tyle" value="1" min="1">
+              <button onclick="document.getElementById('hhs-${id}-combo-item-tyle').value=(parseInt(document.getElementById('hhs-${id}-combo-item-tyle').value)||0)+1">+</button>
+            </div>
+            <button class="btn-outline" onclick="themThanhPhanCombo('hhs-${id}')">+ Thêm thành phần</button>
+          </div>
+          <div id="hhs-${id}-combo-list"></div>
+        </div>`}
+        <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <input type="number" id="${I('dai')}" placeholder="Dài" value="${kt.dai || ''}">
+          <input type="number" id="${I('rong')}" placeholder="Rộng" value="${kt.rong || ''}">
+          <input type="number" id="${I('cao')}" placeholder="Cao" value="${kt.cao || ''}">
         </div>
-        <div id="hhs-${id}-combo-list"></div>
-      </div>`}
-      ${!laCombo ? `
-      <div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">
-        <div style="font-size:13px;font-weight:700;margin-bottom:6px">Hàng cùng loại (gom mã)</div>
+        ${truongCoNhan('Cân nặng (gram)', `<input type="number" id="${I('cannang')}" placeholder="Ô nhập liệu" value="${s?.canNang || ''}">`)}
+        ${!laCombo ? khung(`
+          <div style="display:flex;gap:8px;align-items:center">
+            <div style="flex:1;font-size:13px"><b>Cảnh báo tồn kho</b><br><span style="font-size:12px;color:var(--text2)">Số ngày: lấy trung bình bán / ngày trong ngần ấy ngày gần nhất (bỏ ngày hết hàng), cảnh báo khi tồn ≤ trung bình × số ngày. Để trống = tắt.</span></div>
+            <input type="number" id="${I('canhbao')}" min="0" max="365" placeholder="Số ngày" value="${s?.canhBaoSoNgay || ''}" style="width:86px;text-align:center">
+          </div>
+          ${cb ? `<div style="font-size:12px;margin-top:6px;color:${cb.canhBao ? '#DC2626' : 'var(--text2)'}">${veChuCanhBao(cb)}</div>` : ''}`) : ''}
+      </div>
+      ${!s && !laCombo ? `<div id="${I('pl')}" style="display:none;margin-bottom:10px"></div>` : ''}
+      ${s && !laCombo ? khung(`
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+          <b style="flex:1;font-size:13px">Phân loại</b>
+          <button class="btn-xs" style="background:#2563EB;color:#fff" onclick="hhMoPhanLoaiNhom('${id}')">✏️ Sửa hàng loạt / thêm phân loại</button>
+        </div>
         <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input type="text" id="${I('tenchinh')}" placeholder="Tên chung, VD: Phân nền ADA AMAZONIA Ver.2" value="${escHtml(s?.tenChinh || '')}" style="flex:2;min-width:0">
-          <input type="text" id="${I('thuoctinh')}" placeholder="Phân loại của mã này, VD: Túi 1L" value="${escHtml(s?.thuocTinh || '')}" style="flex:1;min-width:0">
+          <input type="text" id="${I('tenchinh')}" placeholder="Tên chung, VD: Phân nền ADA AMAZONIA Ver.2" value="${escHtml(s.tenChinh || '')}" style="flex:2;min-width:0">
+          <input type="text" id="${I('thuoctinh')}" placeholder="Phân loại của mã này, VD: Túi 1L" value="${escHtml(s.thuocTinh || '')}" style="flex:1;min-width:0">
         </div>
         <div id="${I('gom-ds')}"></div>
         <div class="field sku-wrap" style="margin:6px 0 0">
-          <input type="text" id="${I('gom-tim')}" placeholder="+ Gõ tên / mã để gom thêm mã cùng loại..." autocomplete="off">
+          <input type="text" id="${I('gom-tim')}" placeholder="+ Gõ tên / mã để gom mã có sẵn vào cùng loại..." autocomplete="off">
           <div class="sku-drop" id="${I('gom-drop')}"></div>
-        </div>
-      </div>` : ''}
-      <div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">
-        <div style="font-size:13px;font-weight:700;margin-bottom:6px">Nhà cung cấp</div>
-        <div id="${I('ncc')}"></div>
-      </div>
-      ${!laCombo ? `
-      <div style="border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px">
-        <div style="display:flex;gap:8px;align-items:center">
-          <div style="flex:1;font-size:13px"><b>Cảnh báo tồn kho</b><br><span style="font-size:12px;color:var(--text2)">Số ngày: lấy trung bình bán / ngày trong ngần ấy ngày gần nhất (bỏ ngày hết hàng), cảnh báo khi tồn ≤ trung bình × số ngày. Để trống = tắt.</span></div>
-          <input type="number" id="${I('canhbao')}" min="0" max="365" placeholder="Số ngày" value="${s?.canhBaoSoNgay || ''}" style="width:86px;text-align:center">
-        </div>
-        ${cb ? `<div style="font-size:12px;margin-top:6px;color:${cb.canhBao ? '#DC2626' : 'var(--text2)'}">${veChuCanhBao(cb)}</div>` : ''}
-      </div>` : ''}
+        </div>`) : ''}
+      ${khung(`<div style="font-size:13px;font-weight:700;margin-bottom:6px">Nhà cung cấp</div><div id="${I('ncc')}"></div>`)}
       ${renderNhomHangSelector(`hhs-${id}`)}
-      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:4px">Kích thước (cm)</label>
-      <div style="display:flex;gap:6px;margin-bottom:8px">
-        <input type="number" id="${I('dai')}" placeholder="Dài" value="${kt.dai || ''}">
-        <input type="number" id="${I('rong')}" placeholder="Rộng" value="${kt.rong || ''}">
-        <input type="number" id="${I('cao')}" placeholder="Cao" value="${kt.cao || ''}">
-      </div>
-      ${truongCoNhan('Cân nặng (gram)', `<input type="number" id="${I('cannang')}" placeholder="Ô nhập liệu" value="${s?.canNang || ''}">`)}
       <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Ảnh sản phẩm</label>
       <div id="hhs-anh-preview-${id}" style="margin-bottom:8px">
         ${s?.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId, 300)}" style="width:100px;height:100px;object-fit:cover;border-radius:8px">` : ''}
@@ -14775,11 +14785,230 @@ async function moFormHangHoa(idSua, laComboMoi) {
   renderThanhPhanCombo(`hhs-${id}`);
   veNhomHangSelector(`hhs-${id}`, s?.nhom1 || '', s?.nhom2 || '', s?.nhom3 || '');
   hhVeNccForm(id);
-  if (!laCombo) {
+  if (s && !laCombo) {
     hhVeGomForm(id);
     makeSKUSearch(I('gom-tim'), I('gom-drop'), null, false, (x) => !x.laCombo && x.id !== s?.id && !hhFormGom.ds.includes(x.id));
   }
 }
+
+// ===== PHÂN LOẠI: mỗi phân loại một mã SKU (giá, kích thước, cân nặng, cảnh báo, bán trực tiếp riêng) =====
+// Dùng ở Thêm hàng hóa (bật "Hàng có nhiều phân loại") và ở Sửa › "Sửa hàng loạt / thêm phân loại".
+// Sửa hàng loạt: tick các phân loại giống nhau, chọn ô cần sửa, nhập 1 lần rồi Áp dụng.
+let hhPL = null;   // { el: id khung, rows: [...] }
+const hhPLRowMoi = (b = {}) => ({ id: null, ten: '', sku: '', giaVon: '', gia: '', tonCH: 0, tonSan: 0, dai: '', rong: '', cao: '', canNang: '', canhBao: '', banTT: true, chon: true, ...b });
+const HH_PL_TRUONG = { gia: 'Giá bán', giaVon: 'Giá vốn', kichThuoc: 'Kích thước (cm)', canNang: 'Cân nặng (g)', canhBao: 'Cảnh báo (ngày)', banTT: 'Bán trực tiếp', tonCH: 'Tồn Cửa hàng (mã mới)', tonSan: 'Tồn Kho Online (mã mới)' };
+window.hhDoiCoPhanLoai = function(bat) {
+  const don = document.getElementById('hhs-don-moi'), pl = document.getElementById('hhs-pl-moi');
+  if (!don || !pl) return;
+  don.style.display = bat ? 'none' : '';
+  pl.style.display = bat ? '' : 'none';
+  if (bat && !hhPL) { hhPL = { el: 'hhs-pl-moi', rows: [hhPLRowMoi(), hhPLRowMoi()] }; }
+  if (bat) veBangPhanLoai();
+};
+function veBangPhanLoai() {
+  const el = document.getElementById(hhPL?.el || '');
+  if (!el) return;
+  const laAdmin = currentUserData.role === 'admin';
+  const truong = Object.entries(HH_PL_TRUONG).filter(([k]) => laAdmin || k !== 'giaVon');
+  const soChon = hhPL.rows.filter(r => r.chon).length;
+  const o = (i, k, nhan, extra = '') => `<label style="display:block;min-width:0"><span style="font-size:11px;color:var(--text2)">${nhan}</span>
+    <input ${extra} value="${escHtml(String(hhPL.rows[i][k] ?? ''))}" oninput="hhPLSua(${i},'${k}',this.value)" style="width:100%;padding:6px 7px;font-size:13px"></label>`;
+  el.innerHTML = `
+    <div style="background:#F8FAFC;border:1px solid #CBD5E1;border-radius:8px;padding:9px 10px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+        <b style="font-size:13px;flex:1">Sửa hàng loạt</b>
+        <span style="font-size:12px;color:var(--text2)">${soChon}/${hhPL.rows.length} phân loại đang tick</span>
+        <button class="btn-xs" onclick="hhPLChonHet(true)">Tick hết</button>
+        <button class="btn-xs" onclick="hhPLChonHet(false)">Bỏ tick</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select id="hhpl-truong" onchange="hhPLVeOGiaTri()" style="width:auto;flex:0 0 auto;padding:6px 8px;font-size:13px">
+          ${truong.map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}
+        </select>
+        <span id="hhpl-o" style="display:flex;gap:4px;flex:1;min-width:140px"></span>
+        <button class="btn-xs" style="background:#2563EB;color:#fff;padding:7px 12px" onclick="hhPLApDung()">Áp dụng</button>
+      </div>
+    </div>
+    ${hhPL.rows.map((r, i) => `
+    <div style="border:1.5px solid ${r.chon ? '#93C5FD' : 'var(--border)'};border-radius:8px;padding:8px 10px;margin-bottom:8px;background:#fff">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <input type="checkbox" ${r.chon ? 'checked' : ''} onchange="hhPLSua(${i},'chon',this.checked,true)" style="width:18px;height:18px;flex:0 0 auto">
+        <input value="${escHtml(r.ten)}" oninput="hhPLSua(${i},'ten',this.value)" placeholder="Tên phân loại, VD: Túi 1L" style="flex:1;min-width:0;font-weight:600;padding:6px 8px">
+        ${r.id ? `<span style="font-size:11px;color:var(--text2);flex:0 0 auto">${escHtml(r.sku)}</span>` : `<button class="del-btn" onclick="hhPLXoa(${i})" title="Bỏ phân loại này">✕</button>`}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px">
+        ${r.id ? '' : o(i, 'sku', 'Mã SKU', 'type="text"')}
+        ${laAdmin ? o(i, 'giaVon', 'Giá vốn', 'type="number" inputmode="numeric"') : ''}
+        ${o(i, 'gia', 'Giá bán', 'type="number" inputmode="numeric"')}
+        ${r.id ? `<label><span style="font-size:11px;color:var(--text2)">Tồn CH / Online</span><div style="padding:6px 2px;font-size:13px">${r.tonCH} / ${r.tonSan}</div></label>`
+          : o(i, 'tonCH', 'Tồn Cửa hàng', 'type="number"') + o(i, 'tonSan', 'Tồn Online', 'type="number"')}
+        ${o(i, 'canNang', 'Cân nặng (g)', 'type="number"')}
+        ${o(i, 'dai', 'Dài (cm)', 'type="number"')}${o(i, 'rong', 'Rộng (cm)', 'type="number"')}${o(i, 'cao', 'Cao (cm)', 'type="number"')}
+        ${o(i, 'canhBao', 'Cảnh báo (ngày)', 'type="number"')}
+        <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;padding-top:14px"><input type="checkbox" ${r.banTT ? 'checked' : ''} onchange="hhPLSua(${i},'banTT',this.checked)"> Bán trực tiếp</label>
+      </div>
+    </div>`).join('')}
+    <button class="btn-outline" style="width:100%" onclick="hhPLThem()">+ Thêm phân loại</button>`;
+  hhPLVeOGiaTri();
+}
+window.hhPLSua = function(i, k, v, veLai) { if (!hhPL?.rows[i]) return; hhPL.rows[i][k] = v; if (veLai) veBangPhanLoai(); };
+window.hhPLChonHet = function(c) { hhPL.rows.forEach(r => { r.chon = c; }); veBangPhanLoai(); };
+window.hhPLXoa = function(i) { hhPL.rows.splice(i, 1); veBangPhanLoai(); };
+window.hhPLThem = function() {
+  // Phân loại mới chép sẵn giá / kích thước / cân nặng / cảnh báo của phân loại cuối — đỡ nhập lại
+  const c = hhPL.rows[hhPL.rows.length - 1];
+  hhPL.rows.push(hhPLRowMoi(c ? { giaVon: c.giaVon, gia: c.gia, dai: c.dai, rong: c.rong, cao: c.cao, canNang: c.canNang, canhBao: c.canhBao, banTT: c.banTT } : {}));
+  veBangPhanLoai();
+};
+window.hhPLVeOGiaTri = function() {
+  const k = document.getElementById('hhpl-truong')?.value, o = document.getElementById('hhpl-o');
+  if (!o) return;
+  const st = 'flex:1;min-width:0;padding:6px 8px;font-size:13px';
+  o.innerHTML = k === 'kichThuoc' ? ['Dài', 'Rộng', 'Cao'].map((p, j) => `<input id="hhpl-v${j}" type="number" placeholder="${p}" style="${st}">`).join('')
+    : k === 'banTT' ? `<select id="hhpl-v0" style="${st}"><option value="1">Có bán trực tiếp</option><option value="0">Không bán trực tiếp</option></select>`
+    : `<input id="hhpl-v0" type="number" placeholder="Giá trị" style="${st}">`;
+};
+window.hhPLApDung = function() {
+  const k = document.getElementById('hhpl-truong')?.value;
+  const v = (j) => document.getElementById('hhpl-v' + j)?.value ?? '';
+  const ds = hhPL.rows.filter(r => r.chon);
+  if (!ds.length) { showToast('Tick các phân loại cần sửa trước', true); return; }
+  ds.forEach(r => {
+    if (k === 'kichThuoc') { if (v(0) !== '') r.dai = v(0); if (v(1) !== '') r.rong = v(1); if (v(2) !== '') r.cao = v(2); }
+    else if (k === 'banTT') r.banTT = v(0) === '1';
+    else if ((k === 'tonCH' || k === 'tonSan') && r.id) { /* mã đã có: tồn sửa ở từng mã hoặc kiểm kho */ }
+    else r[k] = v(0);
+  });
+  veBangPhanLoai();
+  showToast(`Đã áp dụng ${HH_PL_TRUONG[k]} cho ${ds.length} phân loại`);
+};
+
+// Ghi một phân loại MỚI thành mã SKU riêng
+async function hhTaoMaPhanLoai(r, chung) {
+  const sku = String(r.sku || '').trim();
+  const ten = chung.tenChinh + (r.ten ? ' - ' + r.ten.trim() : '');
+  const kichThuoc = { dai: parseFloat(r.dai) || 0, rong: parseFloat(r.rong) || 0, cao: parseFloat(r.cao) || 0 };
+  const canNang = parseFloat(r.canNang) || 0, gia = parseFloat(r.gia) || 0;
+  const tonCH = parseInt(r.tonCH) || 0, tonSan = parseInt(r.tonSan) || 0;
+  await setDoc(doc(db, 'ton_san', sku), { soLuongTon: tonSan }, { merge: true });
+  await setDoc(doc(db, 'skus', sku), {
+    ten, sku, gia, anhFileId: chung.anhFileId || '', anhUrl: chung.anhUrl || '', ...chung.nhom, deleted: false,
+    kichThuoc, canNang, tonCuaHang: tonCH, laCombo: false, thanhPhanCombo: [],
+    banTrucTiep: r.banTT !== false, nccIds: chung.nccIds, canhBaoSoNgay: Math.max(0, Math.min(365, parseInt(r.canhBao) || 0)),
+    nhomCL: chung.nhomCL, tenChinh: chung.tenChinh, thuocTinh: String(r.ten || '').trim(), nhomCLTay: true,
+    createdAt: serverTimestamp(), createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
+  });
+  if (currentUserData.role === 'admin') await luuGiaVon(sku, parseFloat(r.giaVon) || 0);
+  try {
+    const kq = await dayHangHoaKV({ ten, sku, gia, anhFileId: chung.anhFileId || '', canNang, laCombo: false, ...chung.nhom }, {
+      giaVon: parseFloat(r.giaVon) || 0, ton: [{ branchId: branchKhoTheoMa('ch'), sl: tonCH }, { branchId: branchKhoTheoMa('san'), sl: tonSan }] });
+    if (!kq.tatGhiGoc) baoKetQuaDayKV(kq, sku);
+  } catch(e) { console.warn('Chưa tạo được bên KiotViet', sku, e.message); }
+}
+async function hhKiemPhanLoai(rows) {
+  const moi = rows.filter(r => !r.id);
+  if (!rows.length) return 'Cần ít nhất 1 phân loại';
+  for (const r of rows) if (!String(r.ten || '').trim()) return 'Còn phân loại chưa có tên';
+  const ma = moi.map(r => String(r.sku || '').trim());
+  if (ma.some(x => !x)) return 'Còn phân loại mới chưa có mã SKU';
+  if (new Set(ma).size !== ma.length) return 'Có mã SKU bị trùng nhau';
+  for (const m of ma) {
+    const d = await getDoc(doc(db, 'skus', m));
+    if (d.exists() && !d.data().deleted) return `Mã SKU "${m}" đã tồn tại rồi`;
+  }
+  return '';
+}
+async function luuHangHoaPhanLoai() {
+  const tenChinh = String(document.getElementById('hhs-ten-moi')?.value || '').trim();
+  if (!tenChinh) { showToast('Nhập tên hàng hóa (tên chung của các phân loại)', true); return; }
+  const loi = await hhKiemPhanLoai(hhPL.rows);
+  if (loi) { showToast(loi, true); return; }
+  showToast('Đang lưu...');
+  let anhFileId = '', anhUrl = '';
+  if (hangHoaSuaAnhBlob) {
+    try { const up = await uploadAnhSanPham(hangHoaSuaAnhBlob, tenChinh); anhFileId = up.fileId; anhUrl = up.viewUrl; }
+    catch(e) { showToast('Upload ảnh lỗi: ' + e.message, true); return; }
+  }
+  const chung = { tenChinh, nhomCL: 'a' + Date.now().toString(36), nhom: layGiaTriNhomHangDaChon('hhs-moi'), nccIds: [...hhFormNcc], anhFileId, anhUrl };
+  const loiGhi = [];
+  for (const r of hhPL.rows) { try { await hhTaoMaPhanLoai(r, chung); } catch(e) { loiGhi.push(`${r.sku}: ${e.message}`); } }
+  if (loiGhi.length) alert('Một số phân loại chưa lưu được:\n\n' + loiGhi.join('\n'));
+  else showToast(`Đã thêm ${hhPL.rows.length} phân loại của ${tenChinh}`);
+  dongSuaHangHoa();
+  await loadSKUs();
+  renderHangHoaNhomFilters();
+  renderHangHoaList();
+  hhTinhCanhBaoTatCa(true).then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
+}
+
+// Sửa hàng loạt / thêm phân loại cho một nhóm đã có (mở từ cửa sổ Sửa hàng hóa)
+let hhPLNhom = null;   // { idGoc, nhomCL, cu: Map(id -> SKU) }
+window.hhMoPhanLoaiNhom = function(idGoc) {
+  const s = allSKUs.find(x => x.id === idGoc); if (!s) return;
+  const ds = s.nhomCL ? allSKUs.filter(x => x.nhomCL === s.nhomCL && !x.deleted && !x.laCombo) : [s];
+  if (!ds.some(x => x.id === s.id)) ds.unshift(s);
+  ds.sort((a, b) => String(a.thuocTinh || a.ten).localeCompare(String(b.thuocTinh || b.ten), 'vi'));
+  hhPLNhom = { idGoc, nhomCL: s.nhomCL || '', cu: new Map(ds.map(x => [x.id, x])) };
+  hhPL = { el: 'hhpl-nhom', rows: ds.map(x => hhPLRowMoi({ id: x.id, sku: x.sku, ten: x.thuocTinh || '', giaVon: x.giaVon ?? '', gia: x.gia ?? '',
+    tonCH: layTon(x, 'cuahang'), tonSan: layTon(x, 'san'), dai: x.kichThuoc?.dai || '', rong: x.kichThuoc?.rong || '', cao: x.kichThuoc?.cao || '',
+    canNang: x.canNang || '', canhBao: x.canhBaoSoNgay || '', banTT: x.banTrucTiep !== false, chon: true })) };
+  const tenChung = document.getElementById(`hhs-tenchinh-${idGoc}`)?.value?.trim() || s.tenChinh || s.ten || '';
+  ddbMoKhung('hh-pl-modal', 'Phân loại', escHtml(tenChung), `
+    <div class="field"><label>Tên chung</label><input id="hhpl-tenchung" value="${escHtml(tenChung)}"></div>
+    <div id="hhpl-nhom"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('hh-pl-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" id="btn-hhpl" style="flex:1;margin:0" onclick="hhLuuPhanLoaiNhom()">Lưu các phân loại</button>`);
+  ddbCanhGiua('hh-pl-modal');
+  const m = document.getElementById('hh-pl-modal'); if (m) m.style.zIndex = '1350';
+  veBangPhanLoai();
+};
+window.hhLuuPhanLoaiNhom = async function() {
+  const tenChinh = String(document.getElementById('hhpl-tenchung')?.value || '').trim();
+  if (!tenChinh) { showToast('Nhập tên chung', true); return; }
+  const loi = await hhKiemPhanLoai(hhPL.rows);
+  if (loi) { showToast(loi, true); return; }
+  const nut = document.getElementById('btn-hhpl'); if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
+  const goc = allSKUs.find(x => x.id === hhPLNhom.idGoc) || {};
+  const nhomCL = hhPLNhom.nhomCL || ('a' + Date.now().toString(36));
+  const loiGhi = [];
+  for (const r of hhPL.rows) {
+    try {
+      if (!r.id) {
+        await hhTaoMaPhanLoai(r, { tenChinh, nhomCL, nhom: { nhom1: goc.nhom1 || '', nhom2: goc.nhom2 || '', nhom3: goc.nhom3 || '', nhomFull: goc.nhomFull || '' },
+          nccIds: Array.isArray(goc.nccIds) ? goc.nccIds : [], anhFileId: goc.anhFileId || '', anhUrl: goc.anhUrl || '' });
+        continue;
+      }
+      const c = hhPLNhom.cu.get(r.id); if (!c) continue;
+      const thuocTinh = String(r.ten || '').trim();
+      const f = {
+        gia: parseFloat(r.gia) || 0, canNang: parseFloat(r.canNang) || 0,
+        kichThuoc: { dai: parseFloat(r.dai) || 0, rong: parseFloat(r.rong) || 0, cao: parseFloat(r.cao) || 0 },
+        canhBaoSoNgay: Math.max(0, Math.min(365, parseInt(r.canhBao) || 0)), banTrucTiep: r.banTT !== false,
+        nhomCL, tenChinh, thuocTinh, nhomCLTay: true
+      };
+      // Tên mã chỉ đổi khi tên chung / phân loại đổi (giữ nguyên tên cũ từ KiotViet nếu không đụng tới)
+      if ((c.tenChinh || '') !== tenChinh || (c.thuocTinh || '') !== thuocTinh) f.ten = tenChinh + (thuocTinh ? ' - ' + thuocTinh : '');
+      const cuChuan = { gia: Number(c.gia) || 0, canNang: Number(c.canNang) || 0,
+        kichThuoc: { dai: Number(c.kichThuoc?.dai) || 0, rong: Number(c.kichThuoc?.rong) || 0, cao: Number(c.kichThuoc?.cao) || 0 },
+        canhBaoSoNgay: Number(c.canhBaoSoNgay) || 0, banTrucTiep: c.banTrucTiep !== false,
+        nhomCL: c.nhomCL || '', tenChinh: c.tenChinh || '', thuocTinh: c.thuocTinh || '', nhomCLTay: c.nhomCLTay === true };
+      const doi = f.ten !== undefined || Object.keys(cuChuan).some(k => JSON.stringify(f[k]) !== JSON.stringify(cuChuan[k]));
+      if (doi) await updateDoc(doc(db, 'skus', r.id), f);
+      if (currentUserData.role === 'admin' && String(r.giaVon) !== String(c.giaVon ?? '')) await luuGiaVon(c.sku, parseFloat(r.giaVon) || 0);
+      if (doi && ghiGocKV) { try { await dayHangHoaKV({ ...c, ...f }, { skuCu: c.sku, giaVon: parseFloat(r.giaVon) || 0 }); } catch(e) {} }
+    } catch(e) { loiGhi.push(`${r.sku || r.ten}: ${e.message}`); }
+  }
+  if (loiGhi.length) alert('Một số phân loại chưa lưu được:\n\n' + loiGhi.join('\n'));
+  else showToast('Đã lưu các phân loại');
+  document.getElementById('hh-pl-modal').style.display = 'none';
+  const idGoc = hhPLNhom.idGoc;
+  hhPL = null; hhPLNhom = null;
+  await loadSKUs();
+  renderHangHoaNhomFilters();
+  renderHangHoaList();
+  hhTinhCanhBaoTatCa(true).then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
+  if (document.getElementById('hh-sua-modal')?.style.display === 'flex') moFormHangHoa(idGoc);
+};
 
 function hhVeNccForm(id) {
   const el = document.getElementById(`hhs-ncc-${id}`);
@@ -14812,12 +15041,12 @@ function hhVeGomForm(id) {
   const el = document.getElementById(`hhs-gom-ds-${id}`);
   if (!el || !hhFormGom) return;
   const ds = hhFormGom.ds.map(x => allSKUs.find(s => s.id === x)).filter(Boolean);
-  el.innerHTML = ds.length ? ds.map(x => `
+  el.innerHTML = !ds.length ? '' : ds.map(x => `
     <div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border);font-size:13px">
       ${x.anhFileId ? `<img src="${anhThumbUrl(x.anhFileId, 80)}" style="width:28px;height:28px;object-fit:cover;border-radius:5px">` : ''}
       <span style="flex:1;min-width:0">${escHtml(x.thuocTinh || x.ten || '')} <span style="color:var(--text2)">(${escHtml(x.sku)})</span></span>
       <button class="del-btn" onclick="hhGomBo('${id}','${x.id}')" title="Bỏ khỏi nhóm">✕</button>
-    </div>`).join('') : '<div style="font-size:12px;color:var(--text2)">Chưa gom với mã nào.</div>';
+    </div>`).join('');
 }
 window.hhGomThem = function(id, skuId) {
   if (!hhFormGom || hhFormGom.ds.includes(skuId)) return;
@@ -15085,6 +15314,7 @@ function baoKetQuaDayKV(r, sku) {
 
 window.luuHangHoa = async function(laComboParam) {
   const laCombo = !!laComboParam;
+  if (!laCombo && document.getElementById('hhs-copl-moi')?.checked && hhPL) return luuHangHoaPhanLoai();
   const V = (o) => document.getElementById(`hhs-${o}-moi`);
   const ten = V('ten').value.trim();
   const sku = V('sku').value.trim();
@@ -15132,7 +15362,6 @@ window.luuHangHoa = async function(laComboParam) {
     createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
   await loadSKUs();
-  if (!laCombo) { try { await hhLuuGom(sku, 'moi'); } catch(e) { showToast('Chưa gom được mã cùng loại: ' + e.message, true); } }
   // Giá vốn ghi riêng để nhân viên không đọc được
   const giaVonMoi = parseFloat(V('giavon')?.value) || 0;
   await luuGiaVon(sku, giaVonMoi);
@@ -15307,6 +15536,8 @@ window.dongSuaHangHoa = function() {
   comboThanhPhan = [];
   hangHoaSuaAnhBlob = null;
   hhFormGom = null;
+  hhPL = null;
+  const m2 = document.getElementById('hh-pl-modal'); if (m2) m2.style.display = 'none';
 };
 
 window.xoaHangHoa = async function(id) {
@@ -18336,10 +18567,10 @@ const PL = {
       ? '<span style="font-size:11px;color:#fff;background:#D97706;padding:1px 7px;border-radius:4px;font-weight:600">Phiếu tạm</span>'
       : '<span style="font-size:11px;color:#16A34A;font-weight:600">Đã lưu</span>'),
     // Nhà cung cấp của phiếu (phiếu gắn đơn đặt hàng thì NCC theo đơn)
-    dongPhu: (p) => p.trangThai === 'da_luu' && !p._goc?.donDatHang && (p._goc?.ncc?.id || nccCoSua() || coQuyen('nh_duyet'))
+    dongPhu: (p) => p.trangThai === 'da_luu' && !p._goc?.donDatHang && nccCoXem()
       ? `<div style="font-size:12px;margin-top:4px;display:flex;gap:6px;align-items:center" onclick="event.stopPropagation()">
           <span style="color:var(--text2)">NCC:</span> <b>${p._goc?.ncc?.ten ? escHtml(p._goc.ncc.ten) : '<span style="color:#D97706">chưa gắn</span>'}</b>
-          ${nccCoSua() || coQuyen('nh_duyet') ? `<button class="btn-xs" onclick="nccGanPhieuNhap('${p.id}','${escHtml(p._goc?.ncc?.id || '')}')">${p._goc?.ncc?.id ? 'Đổi' : 'Gắn'}</button>` : ''}</div>` : '',
+          ${nccCoSua() ? `<button class="btn-xs" onclick="nccGanPhieuNhap('${p.id}','${escHtml(p._goc?.ncc?.id || '')}')">${p._goc?.ncc?.id ? 'Đổi' : 'Gắn'}</button>` : ''}</div>` : '',
     tai: (L) => nhTaiDs(L), tim: () => nhTimDs() }
 };
 PL.dathang = { col: 'don_dat_hang', ten: 'đơn đặt hàng', mau: '#2563EB', quyenSua: null, quyenFile: null,
@@ -24376,7 +24607,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v608</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v609</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24430,7 +24661,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v608</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v609</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24476,7 +24707,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v608</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v609</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
