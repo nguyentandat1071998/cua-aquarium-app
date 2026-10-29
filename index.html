@@ -14317,7 +14317,11 @@ window.moFormImportExcel = function() {
   if (el.innerHTML) { el.innerHTML = ''; return; }
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:12px">
-      <p class="info-note">File Excel (.xlsx) hoặc CSV, gồm cột: <b>sku</b> (bắt buộc, mã chính), ten, gia, gia_von, so_luong_ton, cột ảnh (vd "Hình ảnh (url1,url2...)"), <b>Nhóm hàng</b> (3 cấp, phân cách bằng <code>&gt;&gt;</code>, vd: Cá, Tép, Ốc &amp; Chăm sóc&gt;&gt;Cá cảnh), dai_cm, rong_cm, cao_cm, can_nang_gram. Cột nào trống thì giữ nguyên giá trị cũ (nếu SKU đã có sẵn).<br>Để tạo/sửa <b>SKU Combo</b>, dùng cột <b>thanh_phan_combo</b> dạng <code>MãSKUcon1:tỉ_lệ,MãSKUcon2:tỉ_lệ</code> (vd: <code>ABC123:1,MULTITHUOCTIM100G:2</code>) — các mã SKU con phải đã tồn tại (hoặc nằm ở dòng phía trên trong cùng file).</p>
+      <p class="info-note">Cách nhanh nhất: bấm <b>Xuất Excel</b>, sửa trong file rồi Import lại — cột giống hệt nhau. Ô nào để trống thì giữ nguyên giá trị cũ.<br>
+      Cột: <b>sku</b> (bắt buộc) · ten · <b>ten_chung</b> + <b>phan_loai</b> (các mã cùng tên chung được gom thành phân loại của một hàng) · gia · gia_von ·
+      nhom_hang (3 cấp, phân cách <code>&gt;&gt;</code>) · dai_cm · rong_cm · cao_cm · can_nang_gram · <b>ban_truc_tiep</b> (Có / Không) ·
+      <b>nha_cung_cap</b> (nhiều nhà phân cách bằng <code>;</code>, tên chưa có thì tự tạo) · <b>canh_bao_so_ngay</b> · thanh_phan_combo (<code>MãCon1:tỉ_lệ,MãCon2:tỉ_lệ</code>) · url_anh.<br>
+      <b>Tồn kho</b> (ton_kho_online, ton_cua_hang) chỉ dùng khi tạo <b>mã mới</b>; mã đã có thì không đổi tồn — sửa tồn bằng Kiểm kho. Cột kho_chung, trang_thai_anh chỉ để xem.</p>
       <button class="btn-outline" style="width:100%;margin-bottom:10px" onclick="taiFileMauImport()">Tải file mẫu</button>
       <input type="file" accept=".csv,.xlsx,.xls" onchange="importSKU(this)">
       <div id="hanghoa-import-result" style="margin-top:8px;font-size:13px;color:var(--green)"></div>
@@ -14325,37 +14329,50 @@ window.moFormImportExcel = function() {
 };
 
 window.taiFileMauImport = function() {
-  const data = [
-    ['sku', 'ten', 'gia', 'gia_von', 'so_luong_ton', 'Hình ảnh (url1,url2...)', 'Nhóm hàng', 'dai_cm', 'rong_cm', 'cao_cm', 'can_nang_gram', 'thanh_phan_combo'],
-    ['MULTITHUOCTIM100G', 'Multi Thuốc Tím - 100g', 119000, 90000, 50, 'https://cdn2-retail-images.kiotviet.vn/2026/07/27/cuaaquarium/anh1.jpg', 'Cá, Tép, Ốc & Chăm sóc>>Thuốc & Xử lý nước', 10, 5, 5, 100, ''],
-    ['ABC123', 'Tên sản phẩm mẫu', 50000, 35000, 20, '', 'Cá, Tép, Ốc & Chăm sóc>>Cá cảnh>>Cá 7 màu', '', '', '', '', ''],
-    ['COMBO_ABC_MULTI', 'Combo mẫu (1 ABC123 + 2 Multi Thuốc Tím)', 150000, '', '', '', '', '', '', '', '', 'ABC123:1,MULTITHUOCTIM100G:2'],
+  const header = HH_COT_FILE.filter(c => !['kho_chung', 'trang_thai_anh'].includes(c));
+  const mau = [
+    { sku: 'ADAVER205L', ten: 'Phân nền ADA AMAZONIA Ver.2 - Túi 0.5L', ten_chung: 'Phân nền ADA AMAZONIA Ver.2', phan_loai: 'Túi 0.5L', gia: 99000, gia_von: 70000, ton_kho_online: 5, ton_cua_hang: 3, nhom_hang: 'Thủy sinh>>Phân nền', can_nang_gram: 600, ban_truc_tiep: 'Có', nha_cung_cap: 'ADA Việt Nam', canh_bao_so_ngay: 14 },
+    { sku: 'ADAVER21L', ten: 'Phân nền ADA AMAZONIA Ver.2 - Túi 1L', ten_chung: 'Phân nền ADA AMAZONIA Ver.2', phan_loai: 'Túi 1L', gia: 175000, gia_von: 120000, ton_kho_online: 5, ton_cua_hang: 3, nhom_hang: 'Thủy sinh>>Phân nền', can_nang_gram: 1100, ban_truc_tiep: 'Có', nha_cung_cap: 'ADA Việt Nam', canh_bao_so_ngay: 14 },
+    { sku: 'MULTITHUOCTIM100G', ten: 'Multi Thuốc Tím - 100g', gia: 119000, gia_von: 90000, nhom_hang: 'Cá, Tép, Ốc & Chăm sóc>>Thuốc & Xử lý nước', dai_cm: 10, rong_cm: 5, cao_cm: 5, can_nang_gram: 100, ban_truc_tiep: 'Có', nha_cung_cap: 'Multi; Kho sỉ A' },
+    { sku: 'COMBO_ADA_2', ten: 'Combo 2 túi ADA 1L (chỉ bán sàn)', gia: 340000, ban_truc_tiep: 'Không', thanh_phan_combo: 'ADAVER21L:2' }
   ];
-  const ws = XLSX.utils.aoa_to_sheet(data);
+  const ws = XLSX.utils.aoa_to_sheet([header, ...mau.map(m => header.map(c => m[c] ?? ''))]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Mau');
-  XLSX.writeFile(wb, 'mau_import_sku.xlsx');
+  XLSX.writeFile(wb, 'mau_import_hang_hoa.xlsx');
 };
 
+// Cột xuất = cột nhập: sửa trong Excel rồi Import lại là cập nhật đúng chỗ.
+// Tồn kho, kho chung, trạng thái ảnh chỉ để xem — Import không sửa tồn của mã đã có (sửa tồn bằng Kiểm kho).
+const HH_COT_FILE = ['sku', 'ten', 'ten_chung', 'phan_loai', 'gia', 'gia_von', 'ton_kho_online', 'ton_cua_hang', 'nhom_hang',
+  'dai_cm', 'rong_cm', 'cao_cm', 'can_nang_gram', 'ban_truc_tiep', 'nha_cung_cap', 'canh_bao_so_ngay', 'thanh_phan_combo',
+  'kho_chung', 'url_anh', 'trang_thai_anh'];
 window.exportDanhSachHangHoaExcel = async function() {
   showToast('Đang xuất file...');
   await loadSKUs();
   const laAdmin = currentUserData.role === 'admin';
-  const header = ['sku','ten','gia', ...(laAdmin ? ['gia_von'] : []), 'ton_kho_san','ton_cua_hang','trang_thai_anh','url_anh','nhom_cap_1','nhom_cap_2','nhom_cap_3','dai_cm','rong_cm','cao_cm','can_nang_gram','thanh_phan_combo'];
-  const rows = allSKUs.map(s => [
-    s.sku||'', s.ten||'', s.gia||0,
-    ...(laAdmin ? [s.giaVon||0] : []),
-    layTon(s, 'san'),
-    layTon(s, 'cuahang'),
-    s.anhFileId ? 'Đã có ảnh' : 'CHƯA CÓ ẢNH',
-    s.anhUrl||'',
-    s.nhom1||'', s.nhom2||'', s.nhom3||'',
-    s.kichThuoc?.dai||'', s.kichThuoc?.rong||'', s.kichThuoc?.cao||'',
-    s.canNang||'',
-    s.laCombo ? (s.thanhPhanCombo||[]).map(t => `${t.sku}:${t.tyLe}`).join(',') : ''
-  ]);
+  if (laAdmin && allSKUs.some(x => x.giaVon === undefined)) await napGiaVon();
+  const dsNcc = await hhTaiNcc();
+  const tenNcc = new Map(dsNcc.map(n => [n.id, n.ten]));
+  const header = HH_COT_FILE.filter(c => laAdmin || c !== 'gia_von');
+  const giaTri = (x) => ({
+    sku: x.sku || '', ten: x.ten || '', ten_chung: x.nhomCL ? (x.tenChinh || '') : '', phan_loai: x.nhomCL ? (x.thuocTinh || '') : '',
+    gia: x.gia || 0, gia_von: x.giaVon || 0,
+    ton_kho_online: layTon(x, 'san'), ton_cua_hang: x.laCombo ? layTon(x, 'cuahang') : layTon(x, 'cuahang'),
+    nhom_hang: [x.nhom1, x.nhom2, x.nhom3].filter(Boolean).join('>>'),
+    dai_cm: x.kichThuoc?.dai || '', rong_cm: x.kichThuoc?.rong || '', cao_cm: x.kichThuoc?.cao || '', can_nang_gram: x.canNang || '',
+    ban_truc_tiep: x.banTrucTiep === false ? 'Không' : 'Có',
+    nha_cung_cap: (x.nccIds || []).map(id => tenNcc.get(id)).filter(Boolean).join('; '),
+    canh_bao_so_ngay: x.canhBaoSoNgay || '',
+    thanh_phan_combo: x.laCombo ? (x.thanhPhanCombo || []).map(t => `${t.sku}:${t.tyLe}`).join(',') : '',
+    kho_chung: x.khoChung ? 'Có' : '', url_anh: x.anhUrl || '', trang_thai_anh: x.anhFileId ? 'Đã có ảnh' : 'CHƯA CÓ ẢNH'
+  });
+  // Mã cùng loại xếp cạnh nhau cho dễ sửa
+  const ds = allSKUs.filter(x => !x.deleted).slice().sort((a, b) =>
+    String(a.nhomCL ? a.tenChinh : a.ten).localeCompare(String(b.nhomCL ? b.tenChinh : b.ten), 'vi') || String(a.thuocTinh || '').localeCompare(String(b.thuocTinh || ''), 'vi'));
+  const rows = ds.map(x => { const g = giaTri(x); return header.map(c => g[c]); });
   const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
-  ws['!cols'] = header.map(() => ({ wch: 16 }));
+  ws['!cols'] = header.map(c => ({ wch: c === 'ten' ? 40 : c === 'ten_chung' || c === 'nhom_hang' || c === 'nha_cung_cap' ? 28 : 14 }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'DanhSachHangHoa');
   XLSX.writeFile(wb, `danh_sach_hang_hoa_${toLocalISO(new Date())}.xlsx`);
@@ -23576,7 +23593,6 @@ window.importSKU = async function(input) {
 
   const ext = file.name.split('.').pop().toLowerCase();
   let rows = []; // mảng các hàng, mỗi hàng là mảng ô (hàng đầu là tiêu đề cột)
-
   try {
     if (ext === 'xlsx' || ext === 'xls') {
       const buf = await file.arrayBuffer();
@@ -23585,7 +23601,7 @@ window.importSKU = async function(input) {
       rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     } else {
       let text = await file.text();
-      if (text.includes('\uFFFD') || text.split('').some(c=>c.charCodeAt(0)>127&&c.charCodeAt(0)<160)) {
+      if (text.includes('�') || text.split('').some(c=>c.charCodeAt(0)>127&&c.charCodeAt(0)<160)) {
         text = await new Promise(res => { const r=new FileReader(); r.onload=e=>res(e.target.result); r.readAsText(file,'windows-1258'); });
       }
       rows = text.trim().split('\n').map(line => line.split(',').map(c => c.trim().replace(/"/g,'')));
@@ -23594,52 +23610,83 @@ window.importSKU = async function(input) {
     showToast('Không đọc được file: ' + e.message, true);
     return;
   }
-
   if (!rows.length) { showToast('File trống', true); return; }
-  const hdrRaw = rows[0];
-  const hdr = hdrRaw.map(h => chuanHoaTenCot(h));
-  const skuIdx = hdr.indexOf('sku'), tenIdx = hdr.indexOf('ten'), giaIdx = hdr.indexOf('gia');
-  const giaVonIdx = hdr.findIndex(h => h.includes('giavon') || h === 'gia_von' || h.includes('costprice'));
-  const soLuongIdx = hdr.findIndex(h => h.includes('soluong') || h.includes('so_luong') || h === 'ton' || h.includes('stock') || h.includes('quantity'));
-  const daiIdx = hdr.findIndex(h => h.includes('dai') && h.includes('cm') || h === 'dai_cm' || h === 'length');
-  const rongIdx = hdr.findIndex(h => h.includes('rong') && h.includes('cm') || h === 'rong_cm' || h === 'width');
-  const caoIdx = hdr.findIndex(h => h.includes('cao') && h.includes('cm') || h === 'cao_cm' || h === 'height');
-  const canNangIdx = hdr.findIndex(h => h.includes('cannang') || h === 'can_nang_gram' || h.includes('weight'));
-  const anhIdx = hdr.findIndex(h => h.includes('anh') || h.includes('image') || h.includes('url') || h.includes('hinh'));
-  const nhomIdx = hdr.findIndex(h => h.includes('nhom') || h.includes('danhmuc') || h.includes('category') || h.includes('group'));
-  const thanhPhanIdx = hdr.findIndex(h => h.includes('thanhphan') || h.includes('combo'));
+
+  // Tìm cột theo TÊN CHÍNH XÁC trước (file xuất từ app), rồi mới đoán theo tên gần đúng (file cũ / KiotViet)
+  const hdr = rows[0].map(h => chuanHoaTenCot(h));
+  const tim = (...ten) => { for (const t of ten) { const i = hdr.indexOf(t); if (i >= 0) return i; } return -1; };
+  const timGan = (fn) => hdr.findIndex(fn);
+  const or = (i, j) => i >= 0 ? i : j;
+  const skuIdx = tim('sku', 'ma_sku', 'ma hang', 'ma_hang');
+  const tenIdx = tim('ten', 'ten hang', 'ten_hang');
+  const giaIdx = tim('gia', 'gia_ban', 'gia ban');
+  const giaVonIdx = or(tim('gia_von', 'gia von', 'giavon'), timGan(h => h.includes('giavon') || h.includes('costprice')));
+  const tonSanIdx = or(tim('ton_kho_online', 'so_luong_ton', 'ton_kho_san', 'ton'), timGan(h => h.includes('soluong') || h.includes('stock') || h.includes('quantity')));
+  const tonCHIdx = tim('ton_cua_hang');
+  const daiIdx = tim('dai_cm', 'dai (cm)', 'length'), rongIdx = tim('rong_cm', 'rong (cm)', 'width'), caoIdx = tim('cao_cm', 'cao (cm)', 'height');
+  const canNangIdx = or(tim('can_nang_gram', 'can nang', 'can_nang', 'weight'), timGan(h => h.includes('cannang')));
+  const anhIdx = or(tim('url_anh', 'hinh anh (url1,url2...)', 'hinh anh', 'anh', 'image'), timGan(h => h.startsWith('hinh') || h.includes('image')));
+  const nhomIdx = or(tim('nhom_hang', 'nhom hang', 'nhom hang(3 cap)'), timGan(h => (h.includes('nhom') && !/nhom_cap_|nhom_cl/.test(h)) || h.includes('danhmuc') || h.includes('category')));
+  const nhomCapIdx = [tim('nhom_cap_1'), tim('nhom_cap_2'), tim('nhom_cap_3')];   // file xuất bản cũ
+  const thanhPhanIdx = or(tim('thanh_phan_combo'), timGan(h => h.includes('thanhphan')));
+  const tenChungIdx = tim('ten_chung', 'ten chung'), phanLoaiIdx = tim('phan_loai', 'phan loai');
+  const banTTIdx = tim('ban_truc_tiep', 'ban truc tiep'), nccIdx = tim('nha_cung_cap', 'nha cung cap');
+  const canhBaoIdx = tim('canh_bao_so_ngay', 'canh_bao', 'canh bao (ngay)');
   if (skuIdx === -1) { showToast('File thiếu cột "sku" (mã chính, bắt buộc)', true); return; }
 
   await loadSKUs();
   await loadNhomHang();
   const skuMap = new Map(allSKUs.filter(s => s.sku).map(s => [s.sku.trim().toLowerCase(), s]));
+  // Nhóm cùng loại theo tên chung: dùng lại khóa nhóm đã có trong app nếu trùng tên chung
+  const nhomTheoTen = new Map();
+  allSKUs.forEach(x => { if (x.nhomCL && x.tenChinh && !x.deleted) nhomTheoTen.set(boDauTim(x.tenChinh), x.nhomCL); });
+  // Nhà cung cấp theo tên (chưa có thì tạo)
+  const dsNcc = nccIdx >= 0 ? await hhTaiNcc(true) : [];
+  const nccTheoTen = new Map(dsNcc.map(n => [boDauTim(n.ten), n.id]));
+  let nccMoi = 0;
+  const layNccId = async (ten) => {
+    const k = boDauTim(ten); if (!k) return null;
+    if (nccTheoTen.has(k)) return nccTheoTen.get(k);
+    const ref = await addDoc(collection(db, 'nha_cung_cap'), { ten: ten.trim(), sdt: '', ghiChu: '', nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten || '' }, createdAt: serverTimestamp() });
+    nccTheoTen.set(k, ref.id); nccMoi++;
+    return ref.id;
+  };
 
   const rowsData = rows.slice(1).filter(r => r && String(r[skuIdx] ?? '').trim());
-  let themMoi = 0, capNhat = 0, anhOk = 0, anhLoi = 0;
-  const loiGhi = []; // {sku, error} — các dòng ghi Firestore thất bại
+  let themMoi = 0, capNhat = 0, anhOk = 0, anhLoi = 0, boQuaTon = 0;
+  const loiGhi = []; // {sku, error}
 
   for (let i = 0; i < rowsData.length; i++) {
     const cols = rowsData[i];
     if (resultEl) resultEl.textContent = `Đang xử lý ${i+1}/${rowsData.length}...`;
     const sku = String(cols[skuIdx] ?? '').trim();
-    const ten = tenIdx >= 0 ? String(cols[tenIdx] ?? '').trim() : '';
-    const giaRaw = giaIdx >= 0 ? cols[giaIdx] : 0;
-    const gia = typeof giaRaw === 'number' ? giaRaw : parseFloat(String(giaRaw ?? '').replace(/[^0-9.]/g,'')) || 0;
+    const chu = (idx) => idx >= 0 ? String(cols[idx] ?? '').trim() : '';
+    const ten = chu(tenIdx);
+    // Đọc số từ ô, ô trống -> giữ nguyên giá trị cũ (không ép về 0)
+    const docOSo = (idx) => {
+      if (idx < 0) return { co: false, val: 0 };
+      const raw = cols[idx];
+      if (raw === undefined || raw === null || String(raw).trim() === '') return { co: false, val: 0 };
+      const val = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[^0-9.-]/g,'')) || 0;
+      return { co: true, val };
+    };
+    const giaO = docOSo(giaIdx), giaVonO = docOSo(giaVonIdx), tonSanO = docOSo(tonSanIdx), tonCHO = docOSo(tonCHIdx);
+    const daiO = docOSo(daiIdx), rongO = docOSo(rongIdx), caoO = docOSo(caoIdx), canNangO = docOSo(canNangIdx), canhBaoO = docOSo(canhBaoIdx);
+    const existing = skuMap.get(sku.toLowerCase());
 
+    // Ảnh: chỉ tải khi link khác ảnh đang có (file xuất ra rồi nhập lại thì không tải lại hàng loạt)
     let anhFileId = '', anhUrl = '';
     if (anhIdx >= 0) {
-      const anhCell = String(cols[anhIdx] ?? '').trim();
-      const firstUrl = anhCell.split(',')[0].trim(); // chỉ lấy ảnh đầu tiên (url1)
-      if (firstUrl.startsWith('http')) {
-        try {
-          const up = await uploadAnhTuUrl(firstUrl, sku);
-          anhFileId = up.fileId; anhUrl = up.viewUrl;
-          anhOk++;
-        } catch(e) { anhLoi++; }
+      const firstUrl = chu(anhIdx).split(',')[0].trim();
+      if (firstUrl.startsWith('http') && firstUrl !== (existing?.anhUrl || '')) {
+        try { const up = await uploadAnhTuUrl(firstUrl, sku); anhFileId = up.fileId; anhUrl = up.viewUrl; anhOk++; }
+        catch(e) { anhLoi++; }
       }
     }
 
-    const nhom = nhomIdx >= 0 ? tachNhomHang(cols[nhomIdx]) : null;
+    let nhom = null;
+    if (nhomIdx >= 0 && chu(nhomIdx)) nhom = tachNhomHang(chu(nhomIdx));
+    else if (nhomCapIdx[0] >= 0 && chu(nhomCapIdx[0])) nhom = tachNhomHang(nhomCapIdx.map(chu).filter(Boolean).join('>>'));
     if (nhom && nhom.nhom1) {
       const id1 = await taoNhomMoiNeuChua(nhom.nhom1, null, 1);
       if (nhom.nhom2) {
@@ -23648,78 +23695,65 @@ window.importSKU = async function(input) {
       }
     }
 
-    // Cột "thành phần combo" dạng: MASKUCON1:2,MASKUCON2:1 (mã:tỉ_lệ, cách nhau bằng dấu phẩy)
-    let thanhPhanComboMoi = null; // null = không đổi gì (giữ nguyên nếu đang sửa); [] hoặc mảng thật nếu có cột này
+    // Thành phần combo: MASKUCON1:2,MASKUCON2:1
+    let thanhPhanComboMoi = null;
     const thanhPhanKhongTim = [];
-    if (thanhPhanIdx >= 0) {
-      const raw = String(cols[thanhPhanIdx] ?? '').trim();
-      if (raw) {
-        thanhPhanComboMoi = [];
-        raw.split(',').forEach(cap => {
-          const [maCon, tyLeStr] = cap.split(':').map(s => (s||'').trim());
-          if (!maCon) return;
-          const conObj = skuMap.get(maCon.toLowerCase());
-          if (!conObj) { thanhPhanKhongTim.push(maCon); return; }
-          thanhPhanComboMoi.push({ skuId: conObj.id, sku: conObj.sku, ten: conObj.ten, tyLe: parseInt(tyLeStr)||1 });
-        });
-      }
+    if (thanhPhanIdx >= 0 && chu(thanhPhanIdx)) {
+      thanhPhanComboMoi = [];
+      chu(thanhPhanIdx).split(',').forEach(cap => {
+        const [maCon, tyLeStr] = cap.split(':').map(x => (x || '').trim());
+        if (!maCon) return;
+        const conObj = skuMap.get(maCon.toLowerCase());
+        if (!conObj) { thanhPhanKhongTim.push(maCon); return; }
+        thanhPhanComboMoi.push({ skuId: conObj.id, sku: conObj.sku, ten: conObj.ten, tyLe: parseInt(tyLeStr) || 1 });
+      });
     }
 
-    // Đọc số từ ô, giữ nguyên giá trị cũ nếu ô trống (không ép về 0)
-    function docOSo(idx) {
-      if (idx < 0) return { co: false, val: 0 };
-      const raw = cols[idx];
-      const trong = raw === undefined || raw === null || String(raw).trim() === '';
-      if (trong) return { co: false, val: 0 };
-      const val = typeof raw === 'number' ? raw : parseFloat(String(raw).replace(/[^0-9.-]/g,'')) || 0;
-      return { co: true, val };
+    // Trường mới: phân loại, bán trực tiếp, nhà cung cấp, cảnh báo
+    const them = {};
+    const tenChung = chu(tenChungIdx);
+    if (tenChung) {
+      const k = boDauTim(tenChung);
+      const khoa = nhomTheoTen.get(k) || existing?.nhomCL || ('a' + Date.now().toString(36) + i);
+      nhomTheoTen.set(k, khoa);
+      Object.assign(them, { nhomCL: khoa, tenChinh: tenChung, nhomCLTay: true });
+      if (chu(phanLoaiIdx)) them.thuocTinh = chu(phanLoaiIdx);
+    } else if (chu(phanLoaiIdx) && existing?.nhomCL) them.thuocTinh = chu(phanLoaiIdx);
+    const btt = chu(banTTIdx).toLowerCase();
+    if (btt) {
+      if (/^(co|có|x|1|true|yes|y)$/.test(btt)) them.banTrucTiep = true;
+      else if (/^(khong|không|0|false|no|n)$/.test(btt)) them.banTrucTiep = false;
     }
-    const giaVonO = docOSo(giaVonIdx);
-    const soLuongO = docOSo(soLuongIdx);
-    const daiO = docOSo(daiIdx);
-    const rongO = docOSo(rongIdx);
-    const caoO = docOSo(caoIdx);
-    const canNangO = docOSo(canNangIdx);
-
-    const giaCellRaw = giaIdx >= 0 ? cols[giaIdx] : undefined;
-    const giaTrong = giaCellRaw === undefined || giaCellRaw === null || String(giaCellRaw).trim() === '';
+    if (canhBaoO.co) them.canhBaoSoNgay = Math.max(0, Math.min(365, Math.round(canhBaoO.val)));
 
     try {
-      const existing = skuMap.get(sku.toLowerCase());
+      if (nccIdx >= 0 && chu(nccIdx)) {
+        const ids = [];
+        for (const t of chu(nccIdx).split(/[;\n]/).map(x => x.trim()).filter(Boolean)) { const id = await layNccId(t); if (id && !ids.includes(id)) ids.push(id); }
+        them.nccIds = ids;
+      }
       if (existing) {
-        const updateData = { ten: ten || existing.ten, gia: (giaIdx>=0 && !giaTrong) ? gia : existing.gia };
+        const updateData = { ten: ten || existing.ten, gia: giaO.co ? giaO.val : (existing.gia || 0), ...them };
         if (anhFileId) { updateData.anhFileId = anhFileId; updateData.anhUrl = anhUrl; }
         if (nhom && nhom.nhomFull) Object.assign(updateData, nhom);
-        // Giá vốn ghi vào collection riêng, không nhét vào skus
-        if (thanhPhanComboMoi !== null) {
-          // Cột combo có nội dung -> đánh dấu là combo, dùng đúng danh sách thành phần mới
-          updateData.laCombo = true;
-          updateData.thanhPhanCombo = thanhPhanComboMoi;
-        } else if (!existing.laCombo && soLuongO.co) {
-          updateData.soLuongTon = soLuongO.val;
-        }
+        if (thanhPhanComboMoi !== null) { updateData.laCombo = true; updateData.thanhPhanCombo = thanhPhanComboMoi; }
+        if (tonSanO.co || tonCHO.co) boQuaTon++;   // mã đã có: không đổi tồn qua Import
         if (daiO.co || rongO.co || caoO.co) {
           const ktCu = existing.kichThuoc || {};
-          updateData.kichThuoc = {
-            dai: daiO.co ? daiO.val : (ktCu.dai||0),
-            rong: rongO.co ? rongO.val : (ktCu.rong||0),
-            cao: caoO.co ? caoO.val : (ktCu.cao||0)
-          };
+          updateData.kichThuoc = { dai: daiO.co ? daiO.val : (ktCu.dai || 0), rong: rongO.co ? rongO.val : (ktCu.rong || 0), cao: caoO.co ? caoO.val : (ktCu.cao || 0) };
         }
         if (canNangO.co) updateData.canNang = canNangO.val;
-        await tachTonSanKhiGhi(existing.id, updateData);
-        await updateDoc(doc(db,'skus', existing.id), updateData);
+        await updateDoc(doc(db, 'skus', existing.id), updateData);
         if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
         skuMap.set(sku.toLowerCase(), { ...existing, ...updateData, id: existing.id });
         capNhat++;
       } else {
         const laCombo = thanhPhanComboMoi !== null && thanhPhanComboMoi.length > 0;
         const newData = {
-          ten, sku, gia, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp(),
-          soLuongTon: laCombo ? 0 : soLuongO.val,
-          kichThuoc: { dai: daiO.val, rong: rongO.val, cao: caoO.val },
-          canNang: canNangO.val,
-          laCombo, thanhPhanCombo: laCombo ? thanhPhanComboMoi : []
+          ten: ten || (tenChung ? tenChung + (them.thuocTinh ? ' - ' + them.thuocTinh : '') : sku), sku, gia: giaO.val, anhFileId, anhUrl, deleted: false, createdAt: serverTimestamp(),
+          soLuongTon: laCombo ? 0 : tonSanO.val, tonCuaHang: laCombo ? 0 : tonCHO.val,
+          kichThuoc: { dai: daiO.val, rong: rongO.val, cao: caoO.val }, canNang: canNangO.val,
+          laCombo, thanhPhanCombo: laCombo ? thanhPhanComboMoi : [], banTrucTiep: true, nccIds: [], ...them
         };
         if (nhom) Object.assign(newData, nhom);
         await tachTonSanKhiGhi(sku, newData);
@@ -23728,23 +23762,23 @@ window.importSKU = async function(input) {
         skuMap.set(sku.toLowerCase(), { id: sku, ...newData });
         themMoi++;
       }
-      if (thanhPhanKhongTim.length) {
-        loiGhi.push({ sku, error: `Không tìm thấy mã SKU con: ${thanhPhanKhongTim.join(', ')}` });
-      }
+      if (thanhPhanKhongTim.length) loiGhi.push({ sku, error: `Không tìm thấy mã SKU con: ${thanhPhanKhongTim.join(', ')}` });
     } catch(e) {
       loiGhi.push({ sku, error: e.message || 'Lỗi không xác định' });
     }
   }
   const count = themMoi + capNhat;
-  const anhInfo = anhIdx >= 0 ? ` · Ảnh: ${anhOk} thành công${anhLoi ? `, ${anhLoi} lỗi` : ''}` : '';
+  const anhInfo = anhOk || anhLoi ? ` · Ảnh mới: ${anhOk}${anhLoi ? `, ${anhLoi} lỗi` : ''}` : '';
   const loiInfo = loiGhi.length
     ? ` · <span style="color:var(--red)">${loiGhi.length} dòng lỗi: ${loiGhi.slice(0,10).map(l=>`${escHtml(l.sku)} (${escHtml(l.error)})`).join(', ')}${loiGhi.length>10?` +${loiGhi.length-10} dòng khác`:''}</span>`
     : '';
-  if (resultEl) resultEl.innerHTML = `Đã import: ${themMoi} SKU mới, ${capNhat} SKU cập nhật${anhInfo}${loiInfo}`;
+  if (resultEl) resultEl.innerHTML = `Đã import: ${themMoi} SKU mới, ${capNhat} SKU cập nhật${anhInfo}${nccMoi ? ` · tạo ${nccMoi} nhà cung cấp mới` : ''}${boQuaTon ? ` · <span style="color:#D97706">không đổi tồn của ${boQuaTon} mã đã có (sửa tồn bằng Kiểm kho)</span>` : ''}${loiInfo}`;
   await loadSKUs();
+  if (nccMoi) await hhTaiNcc(true);
   showToast(`Import xong ${count} SKU${loiGhi.length ? ` — ${loiGhi.length} dòng lỗi, xem chi tiết bên dưới` : ''}`, loiGhi.length > 0);
   input.value = '';
   if (document.getElementById('hanghoa-list')) { renderHangHoaNhomFilters(); renderHangHoaList(); }
+  hhTinhCanhBaoTatCa(true).then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
 };
 
 window.loadDeletedList = async function() {
@@ -24607,7 +24641,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v609</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v610</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24661,7 +24695,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v609</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v610</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24707,7 +24741,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v609</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v610</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
