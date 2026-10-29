@@ -2502,6 +2502,9 @@ async function renderHangHoaTab() {
     <div id="hanghoa-import-form"></div>` : ''}
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
       <span id="hh-nut-canhbao"></span>
+      <select id="hh-loc-th" onchange="doiLocThHangHoa(this.value)" title="Lọc theo thương hiệu" style="width:auto;max-width:160px;padding:5px 8px;font-size:12px">
+        <option value="">Mọi thương hiệu</option>
+      </select>
       <select id="hh-loc-ncc" onchange="doiLocNccHangHoa(this.value)" title="Lọc theo nhà cung cấp" style="width:auto;max-width:170px;padding:5px 8px;font-size:12px">
         <option value="">Mọi nhà cung cấp</option>
       </select>
@@ -2526,6 +2529,7 @@ async function renderHangHoaTab() {
   document.getElementById('hh-so-trang').value = String(hangHoaPageSize);
   document.getElementById('hh-sap-xep').value = hangHoaSapXep;
   renderHangHoaNhomFilters();
+  veLocThuongHieu();
   renderHangHoaList();
   // Danh sách nhà cung cấp cho ô lọc + cảnh báo tồn: nạp ngầm rồi vẽ lại
   hhTaiNcc().then(ds => {
@@ -2537,7 +2541,17 @@ async function renderHangHoaTab() {
   hhTinhCanhBaoTatCa().then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
 }
 
-let hangHoaSapXep = '', hangHoaLocNcc = '', hangHoaChiCanhBao = false;
+let hangHoaSapXep = '', hangHoaLocNcc = '', hangHoaChiCanhBao = false, hangHoaLocTh = '';
+// Thương hiệu: danh sách lấy từ chính các mã đang có (không cần quản lý riêng)
+const dsThuongHieu = () => [...new Set(allSKUs.filter(x => !x.deleted && x.thuongHieu).map(x => String(x.thuongHieu).trim()))]
+  .sort((a, b) => a.localeCompare(b, 'vi'));
+function veLocThuongHieu() {
+  const o = document.getElementById('hh-loc-th'); if (!o) return;
+  o.innerHTML = `<option value="">Mọi thương hiệu</option><option value="__chua">Chưa có thương hiệu</option>`
+    + dsThuongHieu().map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('');
+  o.value = hangHoaLocTh;
+}
+window.doiLocThHangHoa = function(v) { hangHoaLocTh = v; hangHoaPage = 1; renderHangHoaList(); };
 window.doiSapXepHangHoa = function(v) { hangHoaSapXep = v; hangHoaPage = 1; renderHangHoaList(); };
 window.doiLocNccHangHoa = function(v) { hangHoaLocNcc = v; hangHoaPage = 1; renderHangHoaList(); };
 window.doiChiCanhBao = function() { hangHoaChiCanhBao = !hangHoaChiCanhBao; hangHoaPage = 1; renderHangHoaList(); };
@@ -14317,7 +14331,7 @@ window.moFormImportExcel = function() {
   el.innerHTML = `
     <div class="admin-block" style="margin-bottom:12px">
       <p class="info-note">Cách nhanh nhất: bấm <b>Xuất Excel</b>, sửa trong file rồi Import lại — cột giống hệt nhau. Ô nào để trống thì giữ nguyên giá trị cũ.<br>
-      Cột: <b>sku</b> (bắt buộc) · ten · <b>ten_chung</b> + <b>phan_loai</b> (các mã cùng tên chung được gom thành phân loại của một hàng) · gia · gia_von ·
+      Cột: <b>sku</b> (bắt buộc) · ten · <b>ten_chung</b> + <b>phan_loai</b> (các mã cùng tên chung được gom thành phân loại của một hàng) · <b>thuong_hieu</b> · gia · gia_von ·
       nhom_hang (3 cấp, phân cách <code>&gt;&gt;</code>) · dai_cm · rong_cm · cao_cm · can_nang_gram · <b>ban_truc_tiep</b> (Có / Không) ·
       <b>nha_cung_cap</b> (nhiều nhà phân cách bằng <code>;</code>, tên chưa có thì tự tạo) · <b>canh_bao_so_ngay</b> · thanh_phan_combo (<code>MãCon1:tỉ_lệ,MãCon2:tỉ_lệ</code>) · url_anh.<br>
       <b>Tồn kho</b> (ton_kho_online, ton_cua_hang) chỉ dùng khi tạo <b>mã mới</b>; mã đã có thì không đổi tồn — sửa tồn bằng Kiểm kho. Cột kho_chung, trang_thai_anh chỉ để xem.</p>
@@ -14330,8 +14344,8 @@ window.moFormImportExcel = function() {
 window.taiFileMauImport = function() {
   const header = HH_COT_FILE.filter(c => !['kho_chung', 'trang_thai_anh'].includes(c));
   const mau = [
-    { sku: 'ADAVER205L', ten: 'Phân nền ADA AMAZONIA Ver.2 - Túi 0.5L', ten_chung: 'Phân nền ADA AMAZONIA Ver.2', phan_loai: 'Túi 0.5L', gia: 99000, gia_von: 70000, ton_kho_online: 5, ton_cua_hang: 3, nhom_hang: 'Thủy sinh>>Phân nền', can_nang_gram: 600, ban_truc_tiep: 'Có', nha_cung_cap: 'ADA Việt Nam', canh_bao_so_ngay: 14 },
-    { sku: 'ADAVER21L', ten: 'Phân nền ADA AMAZONIA Ver.2 - Túi 1L', ten_chung: 'Phân nền ADA AMAZONIA Ver.2', phan_loai: 'Túi 1L', gia: 175000, gia_von: 120000, ton_kho_online: 5, ton_cua_hang: 3, nhom_hang: 'Thủy sinh>>Phân nền', can_nang_gram: 1100, ban_truc_tiep: 'Có', nha_cung_cap: 'ADA Việt Nam', canh_bao_so_ngay: 14 },
+    { sku: 'ADAVER205L', ten: 'Phân nền ADA AMAZONIA Ver.2 - Túi 0.5L', ten_chung: 'Phân nền ADA AMAZONIA Ver.2', phan_loai: 'Túi 0.5L', thuong_hieu: 'ADA', gia: 99000, gia_von: 70000, ton_kho_online: 5, ton_cua_hang: 3, nhom_hang: 'Thủy sinh>>Phân nền', can_nang_gram: 600, ban_truc_tiep: 'Có', nha_cung_cap: 'ADA Việt Nam', canh_bao_so_ngay: 14 },
+    { sku: 'ADAVER21L', ten: 'Phân nền ADA AMAZONIA Ver.2 - Túi 1L', ten_chung: 'Phân nền ADA AMAZONIA Ver.2', phan_loai: 'Túi 1L', thuong_hieu: 'ADA', gia: 175000, gia_von: 120000, ton_kho_online: 5, ton_cua_hang: 3, nhom_hang: 'Thủy sinh>>Phân nền', can_nang_gram: 1100, ban_truc_tiep: 'Có', nha_cung_cap: 'ADA Việt Nam', canh_bao_so_ngay: 14 },
     { sku: 'MULTITHUOCTIM100G', ten: 'Multi Thuốc Tím - 100g', gia: 119000, gia_von: 90000, nhom_hang: 'Cá, Tép, Ốc & Chăm sóc>>Thuốc & Xử lý nước', dai_cm: 10, rong_cm: 5, cao_cm: 5, can_nang_gram: 100, ban_truc_tiep: 'Có', nha_cung_cap: 'Multi; Kho sỉ A' },
     { sku: 'COMBO_ADA_2', ten: 'Combo 2 túi ADA 1L (chỉ bán sàn)', gia: 340000, ban_truc_tiep: 'Không', thanh_phan_combo: 'ADAVER21L:2' }
   ];
@@ -14343,7 +14357,7 @@ window.taiFileMauImport = function() {
 
 // Cột xuất = cột nhập: sửa trong Excel rồi Import lại là cập nhật đúng chỗ.
 // Tồn kho, kho chung, trạng thái ảnh chỉ để xem — Import không sửa tồn của mã đã có (sửa tồn bằng Kiểm kho).
-const HH_COT_FILE = ['sku', 'ten', 'ten_chung', 'phan_loai', 'gia', 'gia_von', 'ton_kho_online', 'ton_cua_hang', 'nhom_hang',
+const HH_COT_FILE = ['sku', 'ten', 'ten_chung', 'phan_loai', 'thuong_hieu', 'gia', 'gia_von', 'ton_kho_online', 'ton_cua_hang', 'nhom_hang',
   'dai_cm', 'rong_cm', 'cao_cm', 'can_nang_gram', 'ban_truc_tiep', 'nha_cung_cap', 'canh_bao_so_ngay', 'thanh_phan_combo',
   'kho_chung', 'url_anh', 'trang_thai_anh'];
 window.exportDanhSachHangHoaExcel = async function() {
@@ -14355,7 +14369,7 @@ window.exportDanhSachHangHoaExcel = async function() {
   const tenNcc = new Map(dsNcc.map(n => [n.id, n.ten]));
   const header = HH_COT_FILE.filter(c => laAdmin || c !== 'gia_von');
   const giaTri = (x) => ({
-    sku: x.sku || '', ten: x.ten || '', ten_chung: x.nhomCL ? (x.tenChinh || '') : '', phan_loai: x.nhomCL ? (x.thuocTinh || '') : '',
+    sku: x.sku || '', ten: x.ten || '', ten_chung: x.nhomCL ? (x.tenChinh || '') : '', phan_loai: x.nhomCL ? (x.thuocTinh || '') : '', thuong_hieu: x.thuongHieu || '',
     gia: x.gia || 0, gia_von: x.giaVon || 0,
     ton_kho_online: layTon(x, 'san'), ton_cua_hang: x.laCombo ? layTon(x, 'cuahang') : layTon(x, 'cuahang'),
     nhom_hang: [x.nhom1, x.nhom2, x.nhom3].filter(Boolean).join('>>'),
@@ -14422,7 +14436,7 @@ function hhTheSku(s, trongNhom = false) {
           </div>
           ${dongCanhBao}
           ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
-          ${(s.nhom3||s.nhom2||s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${escHtml(s.nhom3||s.nhom2||s.nhom1)}</div>` : ''}
+          ${(s.thuongHieu || s.nhom3 || s.nhom2 || s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${s.thuongHieu ? `<b style="color:#0F766E">${escHtml(s.thuongHieu)}</b>${(s.nhom3 || s.nhom2 || s.nhom1) ? ' · ' : ''}` : ''}${escHtml(s.nhom3 || s.nhom2 || s.nhom1 || '')}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
           ${hienCH ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','cuahang')">Thẻ kho${kho === 'ca' ? ' CH' : ''}</button>` : ''}
@@ -14438,9 +14452,11 @@ function hhTheSku(s, trongNhom = false) {
 function renderHangHoaList() {
   const el = document.getElementById('hanghoa-list');
   if (!el) return;
+  if (document.getElementById('hh-loc-th')?.options.length !== dsThuongHieu().length + 2) veLocThuongHieu();
   const q = hangHoaSearchQuery.trim().toLowerCase();
   const list = allSKUs.filter(s =>
-    (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q) || (s.tenChinh||'').toLowerCase().includes(q)) &&
+    (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q) || (s.tenChinh||'').toLowerCase().includes(q) || (s.thuongHieu||'').toLowerCase().includes(q)) &&
+    (!hangHoaLocTh || (hangHoaLocTh === '__chua' ? !s.thuongHieu : String(s.thuongHieu || '').trim() === hangHoaLocTh)) &&
     (!hangHoaNhom1Filter || s.nhom1 === hangHoaNhom1Filter) &&
     (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
     (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter) &&
@@ -14720,6 +14736,8 @@ async function moFormHangHoa(idSua, laComboMoi) {
     <div class="admin-block" style="margin-top:4px">
       ${laCombo ? `<p class="info-note" style="margin-bottom:8px">📦 Đây là SKU Combo</p>` : ''}
       ${truongCoNhan(laCombo ? 'Tên combo' : 'Tên hàng hóa', `<input type="text" id="${I('ten')}" placeholder="Ô nhập liệu" value="${escHtml(s?.ten || '')}">`)}
+      ${truongCoNhan('Thương hiệu', `<input type="text" id="${I('thuonghieu')}" list="hh-ds-thuonghieu" placeholder="VD: ADA, Chihiros, JBL..." value="${escHtml(s?.thuongHieu || '')}" autocomplete="off">
+        <datalist id="hh-ds-thuonghieu">${dsThuongHieu().map(t => `<option value="${escHtml(t)}">`).join('')}</datalist>`)}
       ${!s && !laCombo ? `<label style="display:flex;gap:10px;align-items:center;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
         <input type="checkbox" id="${I('copl')}" onchange="hhDoiCoPhanLoai(this.checked)" style="width:19px;height:19px">
         <span style="font-size:13.5px"><b>Hàng có nhiều phân loại</b><br><span style="font-size:12px;color:var(--text2)">Mỗi phân loại là một mã SKU riêng: giá, kích thước, cân nặng, cảnh báo, bán trực tiếp riêng</span></span></label>` : ''}
@@ -14910,7 +14928,7 @@ async function hhTaoMaPhanLoai(r, chung) {
   await setDoc(doc(db, 'skus', sku), {
     ten, sku, gia, anhFileId: chung.anhFileId || '', anhUrl: chung.anhUrl || '', ...chung.nhom, deleted: false,
     kichThuoc, canNang, tonCuaHang: tonCH, laCombo: false, thanhPhanCombo: [],
-    banTrucTiep: r.banTT !== false, nccIds: chung.nccIds, canhBaoSoNgay: Math.max(0, Math.min(365, parseInt(r.canhBao) || 0)),
+    banTrucTiep: r.banTT !== false, nccIds: chung.nccIds, thuongHieu: chung.thuongHieu || '', canhBaoSoNgay: Math.max(0, Math.min(365, parseInt(r.canhBao) || 0)),
     nhomCL: chung.nhomCL, tenChinh: chung.tenChinh, thuocTinh: String(r.ten || '').trim(), nhomCLTay: true,
     createdAt: serverTimestamp(), createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
@@ -14945,7 +14963,8 @@ async function luuHangHoaPhanLoai() {
     try { const up = await uploadAnhSanPham(hangHoaSuaAnhBlob, tenChinh); anhFileId = up.fileId; anhUrl = up.viewUrl; }
     catch(e) { showToast('Upload ảnh lỗi: ' + e.message, true); return; }
   }
-  const chung = { tenChinh, nhomCL: 'a' + Date.now().toString(36), nhom: layGiaTriNhomHangDaChon('hhs-moi'), nccIds: [...hhFormNcc], anhFileId, anhUrl };
+  const chung = { tenChinh, nhomCL: 'a' + Date.now().toString(36), nhom: layGiaTriNhomHangDaChon('hhs-moi'), nccIds: [...hhFormNcc], anhFileId, anhUrl,
+    thuongHieu: String(document.getElementById('hhs-thuonghieu-moi')?.value || '').trim() };
   const loiGhi = [];
   for (const r of hhPL.rows) { try { await hhTaoMaPhanLoai(r, chung); } catch(e) { loiGhi.push(`${r.sku}: ${e.message}`); } }
   if (loiGhi.length) alert('Một số phân loại chưa lưu được:\n\n' + loiGhi.join('\n'));
@@ -14991,7 +15010,7 @@ window.hhLuuPhanLoaiNhom = async function() {
     try {
       if (!r.id) {
         await hhTaoMaPhanLoai(r, { tenChinh, nhomCL, nhom: { nhom1: goc.nhom1 || '', nhom2: goc.nhom2 || '', nhom3: goc.nhom3 || '', nhomFull: goc.nhomFull || '' },
-          nccIds: Array.isArray(goc.nccIds) ? goc.nccIds : [], anhFileId: goc.anhFileId || '', anhUrl: goc.anhUrl || '' });
+          nccIds: Array.isArray(goc.nccIds) ? goc.nccIds : [], anhFileId: goc.anhFileId || '', anhUrl: goc.anhUrl || '', thuongHieu: goc.thuongHieu || '' });
         continue;
       }
       const c = hhPLNhom.cu.get(r.id); if (!c) continue;
@@ -15372,6 +15391,7 @@ window.luuHangHoa = async function(laComboParam) {
     laCombo,
     thanhPhanCombo: laCombo ? comboThanhPhan : [],
     banTrucTiep: !!V('bantt')?.checked,
+    thuongHieu: String(V('thuonghieu')?.value || '').trim(),
     nccIds: [...hhFormNcc],
     canhBaoSoNgay: laCombo ? 0 : Math.max(0, Math.min(365, parseInt(V('canhbao')?.value) || 0)),
     createdAt: serverTimestamp(),
@@ -15435,6 +15455,7 @@ window.luuSuaHangHoa = async function(id) {
     },
     canNang: parseFloat(document.getElementById(`hhs-cannang-${id}`)?.value) || 0,
     banTrucTiep: !!document.getElementById(`hhs-bantt-${id}`)?.checked,
+    thuongHieu: String(document.getElementById(`hhs-thuonghieu-${id}`)?.value || '').trim(),
     nccIds: [...hhFormNcc]
   };
   const s = allSKUs.find(x => x.id === id);
@@ -15493,6 +15514,10 @@ window.luuSuaHangHoa = async function(id) {
   if (lechSan) await dieuChinhTonKhoApp([{ sku, sl: Math.abs(lechSan) }], Math.sign(lechSan), 'san', ctSuaTon);
   if (giaVonMoi !== null) await luuGiaVon(sku, giaVonMoi);
   if (!laCombo) { try { await hhLuuGom(sku, id); } catch(e) { showToast('Chưa gom được mã cùng loại: ' + e.message, true); } }
+  // Thương hiệu là của cả hàng: các phân loại cùng nhóm đi theo
+  if (!laCombo && hhFormGom?.ds?.length && (s?.thuongHieu || '') !== updateData.thuongHieu) {
+    await Promise.all(hhFormGom.ds.map(x => updateDoc(doc(db, 'skus', x), { thuongHieu: updateData.thuongHieu }).catch(() => {})));
+  }
   showToast(ghiGocKV ? 'Đã cập nhật hàng hóa — đang cập nhật bên KiotViet...' : 'Đã cập nhật hàng hóa');
   try {
     const kq = await dayHangHoaKV({ ...(s || {}), ...updateData }, { skuCu: id, giaVon: giaVonMoi ?? s?.giaVon });
@@ -23631,6 +23656,7 @@ window.importSKU = async function(input) {
   const tenChungIdx = tim('ten_chung', 'ten chung'), phanLoaiIdx = tim('phan_loai', 'phan loai');
   const banTTIdx = tim('ban_truc_tiep', 'ban truc tiep'), nccIdx = tim('nha_cung_cap', 'nha cung cap');
   const canhBaoIdx = tim('canh_bao_so_ngay', 'canh_bao', 'canh bao (ngay)');
+  const thIdx = tim('thuong_hieu', 'thuong hieu', 'brand', 'trademark');
   if (skuIdx === -1) { showToast('File thiếu cột "sku" (mã chính, bắt buộc)', true); return; }
 
   await loadSKUs();
@@ -23724,6 +23750,7 @@ window.importSKU = async function(input) {
       else if (/^(khong|không|0|false|no|n)$/.test(btt)) them.banTrucTiep = false;
     }
     if (canhBaoO.co) them.canhBaoSoNgay = Math.max(0, Math.min(365, Math.round(canhBaoO.val)));
+    if (chu(thIdx)) them.thuongHieu = chu(thIdx);
 
     try {
       if (nccIdx >= 0 && chu(nccIdx)) {
@@ -24640,7 +24667,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v611</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v612</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24694,7 +24721,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v611</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v612</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24740,7 +24767,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v611</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v612</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
