@@ -10211,6 +10211,13 @@ function veThanhInVanDon() { veDanhSachDon(); }
 
 window.inVanDonHangLoat = async function() {
   if (!vdDaChon.size) return;
+  // Trình duyệt chặn mở tab mới nếu không mở NGAY lúc bấm (sau khi chờ máy chủ là bị coi như popup).
+  // Mở sẵn một tab trống lúc bấm, có link vận đơn thì chuyển tab đó sang file PDF.
+  let tabCho = null;
+  try {
+    tabCho = window.open('', '_blank');
+    if (tabCho) tabCho.document.write('<title>Đang lấy vận đơn...</title><p style="font:16px sans-serif;padding:24px">Đang lấy file vận đơn từ sàn, chờ chút...</p>');
+  } catch(e) {}
   const nut = document.getElementById('vd-nut-in');
   if (nut) { nut.disabled = true; nut.textContent = 'Đang lấy vận đơn...'; }
 
@@ -10267,8 +10274,10 @@ window.inVanDonHangLoat = async function() {
 
     if (!cacLink.length) throw new Error(loi.join('\n') || 'Không lấy được vận đơn nào');
 
-    // Mở từng file PDF. Trình duyệt chặn mở nhiều tab liên tiếp nên giãn ra chút.
-    cacLink.forEach((u, i) => setTimeout(() => window.open(u, '_blank'), i * 400));
+    // File đầu mở vào tab đã mở sẵn lúc bấm; file sau (nhiều sàn) thử mở thêm — bị chặn thì bấm trong khung xác nhận
+    if (tabCho && !tabCho.closed) { try { tabCho.location.href = cacLink[0]; } catch(e) { window.open(cacLink[0], '_blank'); } }
+    else window.open(cacLink[0], '_blank');
+    cacLink.slice(1).forEach((u, i) => setTimeout(() => window.open(u, '_blank'), (i + 1) * 400));
 
     if (loi.length) {
       hienPopup({ loai: 'cho', tieuDe: 'In vận đơn',
@@ -10284,6 +10293,7 @@ window.inVanDonHangLoat = async function() {
     veDanhSachDon();
     if (maIn.length) hoiXacNhanDaIn(maIn, cacLink);
   } catch(e) {
+    try { if (tabCho && !tabCho.closed) tabCho.close(); } catch(_) {}
     hienPopup({ loai: 'loi', tieuDe: 'Không in được vận đơn', noiDung: e.message });
   } finally {
     if (nut) { nut.disabled = false; nut.innerHTML = '🖨 In vận đơn (<span id="vd-so-don">0</span>)'; }
@@ -10298,7 +10308,9 @@ function hoiXacNhanDaIn(cacMa, cacLink) {
     <div style="font-size:14px;line-height:1.5">Kiểm tra tem đã in ra đủ và rõ chưa.<br>
       <b>Đã in thành công</b> thì đơn chuyển sang <b>Chờ đóng gói</b>. File lỗi / chưa in được thì đơn vẫn ở <b>Chờ in</b> để in lại.</div>
     <div style="font-size:12px;color:var(--text2);margin-top:8px;max-height:120px;overflow:auto">${cacMa.map(escHtml).join(' · ')}</div>
-    <button class="btn-outline" style="margin-top:10px;width:100%" onclick="vdMoLaiFileIn()">↻ Mở lại file vận đơn</button>`,
+    ${cacLink.length > 1
+      ? cacLink.map((u, i) => `<button class="btn-outline" style="margin-top:8px;width:100%" onclick="window.open(vdChoXacNhan?.cacLink?.[${i}], '_blank')">↻ Mở file vận đơn ${i + 1}/${cacLink.length}</button>`).join('')
+      : `<button class="btn-outline" style="margin-top:10px;width:100%" onclick="vdMoLaiFileIn()">↻ Mở lại file vận đơn</button>`}`,
     `<button class="btn-outline" style="flex:1" onclick="vdXacNhanIn(false)">Chưa in được</button>
      <button class="btn-g" style="flex:1" onclick="vdXacNhanIn(true)">✓ Đã in thành công</button>`);
   ddbCanhGiua?.('vd-xac-nhan-in');
@@ -23635,7 +23647,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v594</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v595</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -23689,7 +23701,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v594</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v595</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -23735,7 +23747,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v594</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v595</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
