@@ -2475,7 +2475,7 @@ async function renderHangHoaTab() {
   if (!allSKUs.length) {
     el.innerHTML = '<div class="loading">Đang tải...</div>';
     await loadSKUs();
-  } else if (currentUserData.role === 'admin' && !allSKUs.some(s => s.giaVon)) {
+  } else if (currentUserData.role === 'admin' && !daNapGiaVon) {
     // Danh sách đã nạp từ trước lúc chưa biết vai trò -> giá vốn còn thiếu, bổ sung
     await napGiaVon();
   }
@@ -14364,7 +14364,7 @@ window.exportDanhSachHangHoaExcel = async function() {
   showToast('Đang xuất file...');
   await loadSKUs();
   const laAdmin = currentUserData.role === 'admin';
-  if (laAdmin && allSKUs.some(x => x.giaVon === undefined)) await napGiaVon();
+  if (laAdmin && !daNapGiaVon) await napGiaVon();
   const dsNcc = await hhTaiNcc();
   const tenNcc = new Map(dsNcc.map(n => [n.id, n.ten]));
   const header = HH_COT_FILE.filter(c => laAdmin || c !== 'gia_von');
@@ -15133,6 +15133,7 @@ async function hhLuuGom(skuMa, id) {
 // Số bán và tồn từng ngày dựng lại từ thẻ kho (cộng cả hai kho; chuyển kho qua lại tự triệt tiêu).
 let hhCanhBao = new Map();        // id SKU -> { tb, soBan, ngayCoHang, soNgay, ton, conNgay, canhBao }
 let hhCanhBaoLuc = 0, hhCanhBaoDangTinh = false;
+let theKhoCB = { tu: 0, den: 0, ds: new Map() };   // thẻ kho đã đọc cho cảnh báo tồn (đọc 1 lần / phiên)
 const laBanRa = (loai) => /^Bán/.test(String(loai || ''));
 const laTraLai = (loai) => /^(Hủy đơn sàn|Trả hàng|Nhập hàng khách trả)/.test(String(loai || ''));
 function hhTinhCanhBao(s) { return hhCanhBao.get(s?.id) || null; }
@@ -15152,11 +15153,20 @@ async function hhTinhCanhBaoTatCa(ep) {
     const nay = Date.now();
     const tu = new Date(nay - maxN * 86400000);
     tu.setHours(0, 0, 0, 0);
-    const snap = await getDocs(query(collection(db, 'the_kho'), where('thoiGian', '>=', tu)));
+    // Thẻ kho đọc MỘT lần cho cả khoảng, lần sau chỉ đọc phần phát sinh thêm (lưu hàng hóa xong tính lại không tốn lại hàng nghìn lượt đọc)
+    if (!theKhoCB.tu || theKhoCB.tu > tu.getTime()) {
+      const snap = await getDocs(query(collection(db, 'the_kho'), where('thoiGian', '>=', tu)));
+      theKhoCB = { tu: tu.getTime(), den: nay, ds: new Map() };
+      snap.docs.forEach(d => theKhoCB.ds.set(d.id, d.data()));
+    } else {
+      const moi = await getDocs(query(collection(db, 'the_kho'), where('thoiGian', '>=', new Date(theKhoCB.den - 5 * 60000))));
+      moi.docs.forEach(d => theKhoCB.ds.set(d.id, d.data()));
+      theKhoCB.den = nay;
+    }
     const theoMa = new Map();
-    snap.docs.forEach(d => {
-      const g = d.data(); const t = g.thoiGian?.toDate ? g.thoiGian.toDate().getTime() : 0;
-      if (!t || !g.sku) return;
+    theKhoCB.ds.forEach(g => {
+      const t = g.thoiGian?.toDate ? g.thoiGian.toDate().getTime() : 0;
+      if (!t || !g.sku || t < tu.getTime()) return;
       if (!theoMa.has(g.sku)) theoMa.set(g.sku, []);
       theoMa.get(g.sku).push({ t, sl: Number(g.soLuong) || 0, loai: g.loaiGiaoDich });
     });
@@ -15603,10 +15613,26 @@ window.xoaHangHoa = async function(id) {
   renderHangHoaList();
 };
 
-async function loadSKUs() {
+// TIẾT KIỆM LƯỢT ĐỌC: danh mục hàng đã có trình nghe thời gian thực (batDauTheoDoiSKU) giữ allSKUs luôn mới,
+// nên khi đang nghe thì KHÔNG đọc lại cả danh mục (mỗi lần ~1.500 mã + 1.500 giá vốn). Chỉ đọc khi chưa nghe.
+async function loadSKUs(epDocLai = false) {
+  if (!epDocLai && skusUnsub && allSKUs.length) { apGiaVonTuBoNho(); if (!daNapGiaVon) await napGiaVon(); return; }
   const snap = await getDocs(collection(db, 'skus'));
   allSKUs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => !s.deleted);
-  await napGiaVon();
+  if (daNapGiaVon) apGiaVonTuBoNho(); else await napGiaVon();
+}
+// Bảng giá vốn đọc MỘT lần mỗi phiên rồi giữ trong bộ nhớ (luuGiaVon cập nhật bảng này khi sửa).
+// Trước đây mỗi lần một mã hàng thay đổi là đọc lại toàn bộ gia_von -> import 1.400 dòng = hơn 2 triệu lượt đọc.
+const bangGiaVon = new Map();
+let daNapGiaVon = false;
+function traGiaVon(k) {
+  if (k == null) return null;
+  const x = String(k).trim();
+  return bangGiaVon.get(x) ?? bangGiaVon.get(x.toLowerCase()) ?? null;
+}
+function apGiaVonTuBoNho() {
+  if (!daNapGiaVon) return;
+  allSKUs.forEach(s => { const gt = traGiaVon(s.sku) ?? traGiaVon(s.id); if (gt != null) s.giaVon = gt; });
 }
 
 // Giá vốn nằm ở collection riêng, rules chỉ cho Admin đọc.
@@ -15615,6 +15641,7 @@ async function loadSKUs() {
 // Cứ thử đọc — Firestore tự từ chối nếu không đủ quyền, bắt lỗi là xong.
 async function napGiaVon() {
   try {
+    daNapGiaVon = true;   // đánh dấu trước: không đủ quyền thì cũng không thử lại liên tục
     const snap = await getDocs(collection(db, 'gia_von'));
     // Dựng bảng tra chịu được ba kiểu lệch thường gặp:
     //   - mã tài liệu khác trường sku (bản ghi cũ dùng id tự sinh)
@@ -15626,6 +15653,7 @@ async function napGiaVon() {
       const khoa = String(d.id).trim();
       bang.set(khoa, gt);
       bang.set(khoa.toLowerCase(), gt);
+      bangGiaVon.set(khoa, gt); bangGiaVon.set(khoa.toLowerCase(), gt);
     });
     const tra = (k) => {
       if (k == null) return null;
@@ -15648,6 +15676,7 @@ async function luuGiaVon(maSku, giaVon) {
     await setDoc(doc(db, 'gia_von', maSku), { giaVon: Number(giaVon) || 0, suaLuc: serverTimestamp() });
     const s = allSKUs.find(x => x.sku === maSku);
     if (s) s.giaVon = Number(giaVon) || 0;
+    bangGiaVon.set(String(maSku).trim(), Number(giaVon) || 0); bangGiaVon.set(String(maSku).trim().toLowerCase(), Number(giaVon) || 0);
   } catch(e) {
     console.warn('Không lưu được giá vốn (có thể do không đủ quyền):', e.message);
   }
@@ -16577,8 +16606,9 @@ function batDauTheoDoiSKU() {
       const gt = giaVonCu.get(String(s.sku)) ?? giaVonCu.get(String(s.id));
       if (gt != null) s.giaVon = gt;
     });
-    // Có SKU mới chưa biết giá vốn -> nạp bổ sung từ collection riêng
-    if (allSKUs.some(s => !s.giaVon)) await napGiaVon();
+    // Giá vốn lấy từ bảng trong bộ nhớ (đọc 1 lần mỗi phiên) — KHÔNG đọc lại gia_von mỗi lần mã hàng đổi
+    if (daNapGiaVon) apGiaVonTuBoNho();
+    else if (currentUserData?.role === 'admin') await napGiaVon();
     // Chỉ vẽ lại nếu đang mở đúng tab VÀ không có ai đang gõ dở/sửa dở — tránh làm gián đoạn thao tác đang làm
     if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) {
       renderHangHoaNhomFilters();
@@ -24667,7 +24697,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v612</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v613</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24721,7 +24751,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v612</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v613</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24767,7 +24797,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v612</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v613</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
