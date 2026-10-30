@@ -2505,6 +2505,11 @@ async function renderHangHoaTab() {
       <select id="hh-loc-th" onchange="doiLocThHangHoa(this.value)" title="Lọc theo thương hiệu" style="width:auto;max-width:160px;padding:5px 8px;font-size:12px">
         <option value="">Mọi thương hiệu</option>
       </select>
+      <select id="hh-loc-loai" onchange="doiLocLoaiHangHoa(this.value)" title="Lọc SKU đơn / SKU combo" style="width:auto;padding:5px 8px;font-size:12px">
+        <option value="">SKU đơn + combo</option>
+        <option value="don">SKU đơn</option>
+        <option value="combo">SKU combo</option>
+      </select>
       <select id="hh-loc-ncc" onchange="doiLocNccHangHoa(this.value)" title="Lọc theo nhà cung cấp" style="width:auto;max-width:170px;padding:5px 8px;font-size:12px">
         <option value="">Mọi nhà cung cấp</option>
       </select>
@@ -2528,6 +2533,7 @@ async function renderHangHoaTab() {
   veChonKhoHangHoa();
   document.getElementById('hh-so-trang').value = String(hangHoaPageSize);
   document.getElementById('hh-sap-xep').value = hangHoaSapXep;
+  document.getElementById('hh-loc-loai').value = hangHoaLocLoai;
   renderHangHoaNhomFilters();
   veLocThuongHieu();
   renderHangHoaList();
@@ -2541,7 +2547,7 @@ async function renderHangHoaTab() {
   hhTinhCanhBaoTatCa().then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
 }
 
-let hangHoaSapXep = '', hangHoaLocNcc = '', hangHoaChiCanhBao = false, hangHoaLocTh = '';
+let hangHoaSapXep = '', hangHoaLocNcc = '', hangHoaChiCanhBao = false, hangHoaLocTh = '', hangHoaLocLoai = '';
 // Thương hiệu: danh sách lấy từ chính các mã đang có (không cần quản lý riêng)
 const dsThuongHieu = () => [...new Set(allSKUs.filter(x => !x.deleted && x.thuongHieu).map(x => String(x.thuongHieu).trim()))]
   .sort((a, b) => a.localeCompare(b, 'vi'));
@@ -2552,6 +2558,7 @@ function veLocThuongHieu() {
   o.value = hangHoaLocTh;
 }
 window.doiLocThHangHoa = function(v) { hangHoaLocTh = v; hangHoaPage = 1; renderHangHoaList(); };
+window.doiLocLoaiHangHoa = function(v) { hangHoaLocLoai = v; hangHoaPage = 1; renderHangHoaList(); };
 window.doiSapXepHangHoa = function(v) { hangHoaSapXep = v; hangHoaPage = 1; renderHangHoaList(); };
 window.doiLocNccHangHoa = function(v) { hangHoaLocNcc = v; hangHoaPage = 1; renderHangHoaList(); };
 window.doiChiCanhBao = function() { hangHoaChiCanhBao = !hangHoaChiCanhBao; hangHoaPage = 1; renderHangHoaList(); };
@@ -4922,7 +4929,8 @@ function phiDuKienCua(d) {
 // Giá vốn 1 đơn vị: combo chưa nhập giá vốn thì cộng giá vốn các thành phần
 function giaVonDonVi(sk) {
   if (!sk) return null;
-  if (Number(sk.giaVon) > 0) return Number(sk.giaVon);
+  // Combo không có giá vốn riêng — luôn cộng từ hàng thành phần
+  if (!sk.laCombo && Number(sk.giaVon) > 0) return Number(sk.giaVon);
   if (sk.laCombo && sk.thanhPhanCombo?.length) {
     let t = 0;
     for (const tp of sk.thanhPhanCombo) { const con = allSKUs.find(x => x.id === tp.skuId); const g = Number(con?.giaVon) || 0; if (!g) return null; t += g * (Number(tp.tyLe) || 1); }
@@ -14373,8 +14381,9 @@ window.exportDanhSachHangHoaExcel = async function() {
   const header = HH_COT_FILE.filter(c => laAdmin || c !== 'gia_von');
   const giaTri = (x) => ({
     sku: x.sku || '', ten: x.ten || '', ten_chung: x.nhomCL ? (x.tenChinh || '') : '', phan_loai: x.nhomCL ? (x.thuocTinh || '') : '', thuong_hieu: x.thuongHieu || '',
-    gia: x.gia || 0, gia_von: x.giaVon || 0,
-    ton_kho_online: layTon(x, 'san'), ton_cua_hang: x.laCombo ? layTon(x, 'cuahang') : layTon(x, 'cuahang'),
+    gia: x.gia || 0, gia_von: x.laCombo ? '' : (x.giaVon || 0),
+    // Combo không có tồn / giá vốn riêng (tự tính từ thành phần) -> để trống
+    ton_kho_online: x.laCombo ? '' : layTon(x, 'san'), ton_cua_hang: x.laCombo ? '' : layTon(x, 'cuahang'),
     nhom_hang: [x.nhom1, x.nhom2, x.nhom3].filter(Boolean).join('>>'),
     dai_cm: x.kichThuoc?.dai || '', rong_cm: x.kichThuoc?.rong || '', cao_cm: x.kichThuoc?.cao || '', can_nang_gram: x.canNang || '',
     ban_truc_tiep: x.banTrucTiep === false ? 'Không' : 'Có',
@@ -14429,7 +14438,7 @@ function hhTheSku(s, trongNhom = false) {
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:${trongNhom ? 13.5 : 15}px;margin-bottom:2px">${escHtml(s.ten||'')}${s.banTrucTiep === false ? ' <span title="Không hiện ở Bán hàng" style="background:#F1F5F9;color:#64748B;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHÔNG BÁN TRỰC TIẾP</span>' : ''}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}${s.khoChung ? ' <span title="Hàng để ở quầy, bán cả online — tồn tính ở Kho Online" style="background:#CFFAFE;color:#0E7490;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHO CHUNG · Ở QUẦY</span>' : ''}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
-          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? `Vốn: ${fmt(s.giaVon||0)}đ` : '', hienCH ? `Bán: ${fmt(s.gia||0)}đ` : ''].filter(Boolean).join(' - ')}</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? (s.laCombo ? `Vốn: ${giaVonDonVi(s) != null ? fmt(giaVonDonVi(s)) + 'đ' : '—'} <span style="font-size:11px">(cộng từ thành phần)</span>` : `Vốn: ${fmt(s.giaVon||0)}đ`) : '', hienCH ? `Bán: ${fmt(s.gia||0)}đ` : ''].filter(Boolean).join(' - ')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
             ${hienSan ? `<span>Kho Online: <b>${tonSan}</b>${dat > 0
               ? ` <span style="color:#D97706">(đặt ${dat}, còn ${khaDung})</span>` : ''}</span>` : ''}
@@ -14460,6 +14469,7 @@ function renderHangHoaList() {
   const list = allSKUs.filter(s =>
     (!q || (s.ten||'').toLowerCase().includes(q) || (s.sku||'').toLowerCase().includes(q) || (s.tenChinh||'').toLowerCase().includes(q) || (s.thuongHieu||'').toLowerCase().includes(q)) &&
     (!hangHoaLocTh || (hangHoaLocTh === '__chua' ? !s.thuongHieu : String(s.thuongHieu || '').trim() === hangHoaLocTh)) &&
+    (!hangHoaLocLoai || (hangHoaLocLoai === 'combo') === !!s.laCombo) &&
     (!hangHoaNhom1Filter || s.nhom1 === hangHoaNhom1Filter) &&
     (!hangHoaNhom2Filter || s.nhom2 === hangHoaNhom2Filter) &&
     (!hangHoaNhom3Filter || s.nhom3 === hangHoaNhom3Filter) &&
@@ -14500,7 +14510,20 @@ function renderHangHoaList() {
   const totalPages = Math.max(1, Math.ceil(muc.length / hangHoaPageSize));
   if (hangHoaPage > totalPages) hangHoaPage = totalPages;
   const trang = muc.slice((hangHoaPage-1)*hangHoaPageSize, hangHoaPage*hangHoaPageSize);
-  el.innerHTML = trang.map(m => {
+  // Tổng tồn + giá trị kho theo bộ lọc đang chọn — chỉ SKU đơn; combo chỉ là cách bán gộp, không phải hàng trong kho
+  let tomTat = '';
+  if (currentUserData.role === 'admin' && list.length) {
+    const don = list.filter(s => !s.laCombo), soCombo = list.length - don.length;
+    const tonCua = (s) => kho === 'ch' ? layTon(s, 'cuahang') : kho === 'san' ? layTon(s, 'san') : layTon(s, 'cuahang') + layTon(s, 'san');
+    let tongTon = 0, giaTri = 0, thieuVon = 0;
+    don.forEach(s => { const t = Math.max(0, tonCua(s)); tongTon += t; if (t > 0) { const v = Number(s.giaVon) || 0; if (v > 0) giaTri += t * v; else thieuVon++; } });
+    tomTat = `<div style="font-size:12.5px;color:var(--text2);background:var(--bg);border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.5">`
+      + (don.length ? `<b style="color:var(--text)">${don.length}</b> SKU đơn · Tồn <b style="color:var(--text)">${fmt(tongTon)}</b> · Giá trị kho (giá vốn) <b style="color:var(--green)">${fmt(Math.round(giaTri))}đ</b>`
+        + (thieuVon ? ` · <span style="color:#D97706">${thieuVon} mã còn tồn chưa có giá vốn</span>` : '') : '')
+      + (soCombo ? `${don.length ? '<br>' : ''}<b style="color:#7C3AED">${soCombo}</b> SKU combo — không tính tồn, không tính giá trị kho (tồn hiển thị là số bộ ghép được từ hàng thành phần)` : '')
+      + `</div>`;
+  }
+  el.innerHTML = tomTat + trang.map(m => {
     if (m.s) return hhTheSku(m.s);
     const dong = hhNhomDong.has(m.nhom);
     const tongCH = m.ds.reduce((t, s) => t + layTon(s, 'cuahang'), 0);
@@ -18054,7 +18077,7 @@ function renderNhapItems() {
 //
 // Dùng increment() thay vì đọc-rồi-ghi: hai người cùng thao tác một lúc vẫn
 // cộng trừ đúng, không đè mất số của nhau.
-// Combo KHÔNG trừ trực tiếp vì tồn combo tính động từ thành phần.
+// Combo không có tồn riêng (tính động từ thành phần): truyền mã combo vào thì trừ/cộng hàng thành phần.
 // ==========================================================================
 async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san', chungTu = null) {
   if (!Array.isArray(items) || !items.length) return { soDong: 0, boQuaCombo: [] };
@@ -18063,12 +18086,25 @@ async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san', chungTu = null
   const batch = writeBatch(db);
   let soDong = 0;
 
+  // Combo không có tồn riêng: bung ra hàng thành phần (SL × tỉ lệ). Combo chưa khai thành phần thì bỏ qua và báo.
+  const dsDong = [];
   for (const it of items) {
     const ma = String(it.sku || '').trim();
     const sl = Number(it.sl ?? it.soLuong) || 0;
     if (!ma || !sl) continue;
+    const sk = allSKUs.find(s => s.sku === ma);
+    if (!sk?.laCombo) { dsDong.push({ sku: ma, sl }); continue; }
+    if (!sk.thanhPhanCombo?.length) { boQuaCombo.push(ma); continue; }
+    for (const tp of sk.thanhPhanCombo) {
+      const con = allSKUs.find(s => s.id === tp.skuId) || allSKUs.find(s => s.sku === tp.sku);
+      const maCon = con?.sku || tp.sku;
+      if (!maCon || con?.laCombo) continue;
+      dsDong.push({ sku: maCon, sl: sl * (Number(tp.tyLe) || 1), quaCombo: ma });
+    }
+  }
+  for (const it of dsDong) {
+    const ma = it.sku, sl = it.sl;
     const sku = allSKUs.find(s => s.sku === ma);
-    if (sku?.laCombo) { boQuaCombo.push(ma); continue; }
     const idTaiLieu = sku?.id || ma;
     if (maKho === 'cuahang') batch.update(doc(db, 'skus', idTaiLieu), { tonCuaHang: increment(dau * sl) });
     else batch.set(doc(db, 'ton_san', idTaiLieu), { soLuongTon: increment(dau * sl) }, { merge: true });
@@ -18083,7 +18119,7 @@ async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san', chungTu = null
         sku: ma,
         tenHang: sku?.ten || '',
         kho: maKho,
-        loaiGiaoDich: chungTu.loai || 'Điều chỉnh',
+        loaiGiaoDich: (chungTu.loai || 'Điều chỉnh') + (it.quaCombo ? ` (combo ${it.quaCombo})` : ''),
         maChungTu: chungTu.ma || '',
         soLuong: dau * sl,
         tonTruoc,
@@ -23798,6 +23834,8 @@ window.importSKU = async function(input) {
         if (anhFileId) { updateData.anhFileId = anhFileId; updateData.anhUrl = anhUrl; }
         if (nhom && nhom.nhomFull) Object.assign(updateData, nhom);
         if (thanhPhanComboMoi !== null) { updateData.laCombo = true; updateData.thanhPhanCombo = thanhPhanComboMoi; }
+        const thanhCombo = !existing.laCombo && updateData.laCombo === true;
+        if (thanhCombo) updateData.tonCuaHang = 0;   // mã thường chuyển thành combo: tồn riêng không còn ý nghĩa
         if ((tonSanO.co || tonCHO.co) && (!choDatTon || existing.laCombo)) boQuaTon++;   // mã đã có: mặc định không đổi tồn qua Import
         if (daiO.co || rongO.co || caoO.co) {
           const ktCu = existing.kichThuoc || {};
@@ -23805,7 +23843,11 @@ window.importSKU = async function(input) {
         }
         if (canNangO.co) updateData.canNang = canNangO.val;
         await updateDoc(doc(db, 'skus', existing.id), updateData);
-        if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
+        if (thanhCombo) {
+          try { await setDoc(doc(db, 'ton_san', existing.id), { soLuongTon: 0 }, { merge: true }); } catch(e) {}
+          try { await deleteDoc(doc(db, 'gia_von', existing.sku || sku)); bangGiaVon.delete(existing.sku || sku); } catch(e) {}
+        }
+        if (currentUserData.role === 'admin' && giaVonO.co && !existing.laCombo && !thanhCombo) await luuGiaVon(sku, giaVonO.val);
         // Đặt tồn theo file (chỉ khi tick): ghi phần chênh lệch so với tồn hiện tại + thẻ kho
         if (choDatTon && !existing.laCombo) {
           const ma = existing.sku || sku;
@@ -23828,7 +23870,7 @@ window.importSKU = async function(input) {
         if (nhom) Object.assign(newData, nhom);
         await tachTonSanKhiGhi(sku, newData);
         await setDoc(doc(db, 'skus', sku), newData);
-        if (currentUserData.role === 'admin' && giaVonO.co) await luuGiaVon(sku, giaVonO.val);
+        if (currentUserData.role === 'admin' && giaVonO.co && !laCombo) await luuGiaVon(sku, giaVonO.val);
         skuMap.set(sku.toLowerCase(), { id: sku, ...newData });
         themMoi++;
       }
@@ -24711,7 +24753,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v614</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v615</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24765,7 +24807,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v614</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v615</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -24811,7 +24853,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v614</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v615</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
