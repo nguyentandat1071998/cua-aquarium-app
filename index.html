@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 655;
+  const APP_VERSION = 656;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -15373,7 +15373,7 @@ function hhTheSku(s, trongNhom = false) {
         <div style="display:flex;flex-direction:column;gap:6px">
           ${hienCH ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','cuahang')">Thẻ kho${kho === 'ca' ? ' CH' : ''}</button>` : ''}
           ${hienSan ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho${kho === 'ca' ? ' Online' : ''}</button>` : ''}
-          ${hienCH && coQuyen('hh_intem') ? `<button class="btn-xs" id="nut-tem-${s.id}" onclick="themVaoGioTem('${s.id}')">🏷 Tem${gioTem.get(s.id) ? ` (${gioTem.get(s.id).soLuong})` : ''}</button>` : ''}
+
           ${currentUserData.role === 'admin' ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
           <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
         </div>
@@ -15531,21 +15531,20 @@ window.moGioTem = function() {
   document.getElementById('khung-gio-tem')?.remove();
   const nen = document.createElement('div');
   nen.id = 'khung-gio-tem';
-  nen.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1350;display:flex;align-items:flex-end;justify-content:center';
+  nen.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1350;display:flex;align-items:center;justify-content:center;padding:12px';
   nen.onclick = (e) => { if (e.target === nen) nen.remove(); };
   nen.innerHTML = `
-    <div style="background:var(--surface,#fff);width:100%;max-width:560px;max-height:88vh;border-radius:14px 14px 0 0;display:flex;flex-direction:column">
+    <div style="background:var(--surface,#fff);width:100%;max-width:820px;height:min(92vh,900px);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.3)">
       <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <b style="flex:1;font-size:16px">🏷 Danh sách in tem <span style="font-size:11px;font-weight:500;color:var(--text2)">· lưu chung, in khi đủ</span></b>
+        <b style="flex:1;font-size:16px">🏷 Danh sách in tem <span style="font-size:11px;font-weight:500;color:var(--text2)">· lưu chung</span></b>
         <button class="btn-xs" onclick="document.getElementById('khung-gio-tem').remove()">Đóng</button>
       </div>
-      <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
-        <input type="text" id="tem-tim" placeholder="Thêm nhanh: gõ tên hoặc mã SKU..." oninput="timHangChoTem(this.value)" style="width:100%">
-        <div id="tem-goi-y"></div>
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border);position:relative;flex-shrink:0">
+        <input type="text" id="tem-tim" placeholder="Gõ tên hoặc mã SKU để thêm tem..." autocomplete="off" oninput="timHangChoTem(this.value)" style="width:100%">
+        <div id="tem-goi-y" style="position:absolute;left:14px;right:14px;top:100%;z-index:5;background:var(--surface,#fff);border-radius:0 0 8px 8px;box-shadow:0 8px 20px rgba(0,0,0,.15);max-height:50vh;overflow:auto"></div>
       </div>
-      <div id="tem-ds" style="overflow:auto;padding:10px 14px;flex:1"></div>
-      <div id="tem-ghichu" style="padding:6px 14px 0;font-size:12px;color:var(--text2)"></div>
-      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px">
+      <div id="tem-ds" style="overflow:auto;padding:10px 14px;flex:1;min-height:0;overscroll-behavior:contain"></div>
+      <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px;flex-shrink:0">
         <button class="btn-outline" onclick="xoaHetGioTem()">Xóa hết</button>
         <button class="btn-g" id="tem-gui" style="flex:1" onclick="guiLenhInTem()">Gửi in</button>
       </div>
@@ -15561,20 +15560,13 @@ function veGioTem() {
   const nutGui = document.getElementById('tem-gui');
   const n = tongSoTem();
   if (nutGui) { nutGui.textContent = n ? `Gửi in ${n} tem` : 'Gửi in'; nutGui.disabled = !n; }
-  const oGhiChu = document.getElementById('tem-ghichu');
-  if (oGhiChu) oGhiChu.innerHTML = n ? `${n} tem = ${Math.ceil(n / 2)} hàng giấy${n % 2 ? ' · <b style="color:#B45309">lẻ 1 tem — hàng cuối thừa 1 ô</b>' : ' · <span style="color:var(--green)">chẵn, không thừa ô</span>'}` : '';
   if (!gioTem.size) {
-    el.innerHTML = '<p class="info-note">Chưa có tem nào. Bấm nút <b>🏷 Tem</b> ở từng hàng hóa, hoặc gõ tìm ở ô phía trên.</p>';
+    el.innerHTML = '<p class="info-note">Chưa có tem nào. Gõ tên hoặc mã hàng ở ô phía trên để thêm.</p>';
     return;
   }
   el.innerHTML = [...gioTem.entries()].map(([id, t]) => `
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
-      <div style="width:105px;height:66px;flex-shrink:0;border:1px solid #999;border-radius:3px;background:#fff;color:#000;
-                  display:flex;flex-direction:column;justify-content:space-between;align-items:center;padding:3px 4px;box-sizing:border-box;text-align:center">
-        <div style="font-weight:700;font-size:8.5px;line-height:1.15;overflow:hidden;max-height:20px">${escHtml(t.ten)}</div>
-        <div style="font-weight:800;font-size:15px;line-height:1">${fmt(t.gia)}đ</div>
-        <div style="font-size:7px;line-height:1">${escHtml(t.sku)}</div>
-      </div>
+      <canvas class="tem-xem" data-id="${id}" width="280" height="176" style="width:140px;height:88px;flex-shrink:0;border:1px solid #999;border-radius:3px;background:#fff"></canvas>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.ten)}</div>
         <div style="font-size:12px;color:var(--text2)">${escHtml(t.sku)} · ${fmt(t.gia)}đ</div>
@@ -15587,6 +15579,65 @@ function veGioTem() {
         </div>
       </div>
     </div>`).join('');
+  el.querySelectorAll('canvas.tem-xem').forEach(cv => { const t = gioTem.get(cv.dataset.id); if (t) veTemXemTruoc(cv, t); });
+}
+// ----- Xem trước tem giống bản in của app Trạm in (VeIn.veMotTem): tên 2 dòng, giá to, mã vạch Code 128 ở đáy -----
+const C128 = ['212222','222122','222221','121223','121322','131222','122213','122312','132212','221213','221312','231212','112232','122132','122231','113222','123122','123221','223211','221132','221231','213212','223112','312131','311222','321122','321221','312212','322112','322211','212123','212321','232121','111323','131123','131321','112313','132113','132311','211313','231113','231311','112133','112331','132131','113123','113321','133121','313121','211331','231131','213113','213311','213131','311123','311321','331121','312113','312311','332111','314111','221411','431111','111224','111422','121124','121421','141122','141221','112214','112412','122114','122411','142112','142211','241211','221114','413111','241112','134111','111242','121142','121241','114212','124112','124211','411212','421112','421211','212141','214121','412121','111143','111341','131141','114113','114311','411113','411311','113141','114131','311141','411131','211412','211214','211232','2331112'];
+// Giống MaVach.maHoa: bộ B cho chữ, chuyển bộ C cho đoạn số dài
+function c128MaHoa(chuoi) {
+  const s = [...String(chuoi)].map(c => { const k = c.charCodeAt(0); return k >= 32 && k <= 126 ? c : ' '; }).join('');
+  const demSo = (tu) => { let n = 0; while (tu + n < s.length && s[tu + n] >= '0' && s[tu + n] <= '9') n++; return n; };
+  const kh = []; let i = 0, boC;
+  const dau = demSo(0);
+  if ((dau >= 4 && dau === s.length) || dau >= 6) { boC = true; kh.push(105); } else { boC = false; kh.push(104); }
+  while (i < s.length) {
+    if (boC) {
+      if (demSo(i) >= 2) { kh.push(parseInt(s.substr(i, 2), 10)); i += 2; }
+      else { kh.push(100); boC = false; }
+    } else {
+      const so = demSo(i), cuoi = i + so === s.length;
+      if (so >= 6 || (cuoi && so >= 4)) {
+        if (so % 2 === 1) { kh.push(s.charCodeAt(i) - 32); i++; }
+        kh.push(99); boC = true;
+      } else { kh.push(s.charCodeAt(i) - 32); i++; }
+    }
+  }
+  let tong = kh[0];
+  for (let k = 1; k < kh.length; k++) tong += kh[k] * k;
+  kh.push(tong % 103); kh.push(106);
+  return kh;
+}
+function c128OVach(chuoi) {
+  const o = [];
+  for (const k of c128MaHoa(chuoi)) { let den = true; for (const ch of C128[k]) { for (let j = 0; j < +ch; j++) o.push(den); den = !den; } }
+  return o;
+}
+function veTemXemTruoc(cv, t) {
+  const w = cv.width, h = cv.height, le = 8, ctx = cv.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#000';
+  const sku = String(t.sku || '');
+  let dinhVach = h - 4;
+  let o = sku ? c128OVach(sku) : null;
+  if (o && o.length * 2 > w - 12) o = c128OVach(maVachNgan(sku));   // SKU dài -> mã số ngắn 12 chữ số (vạch dày)
+  if (o && o.length <= w - 12) {
+    const m = Math.max(1, Math.min(3, Math.floor((w - 12) / o.length)));
+    const caoVach = Math.round(h * 0.22), duoi = h - 9, tren = duoi - caoVach, x0 = Math.floor((w - o.length * m) / 2);
+    for (let k = 0; k < o.length; ) { if (!o[k]) { k++; continue; } const d = k; while (k < o.length && o[k]) k++; ctx.fillRect(x0 + d * m, tren, (k - d) * m, duoi - tren); }
+    dinhVach = tren;
+  }
+  const chuGia = fmt(t.gia) + 'đ';
+  let coGia = h * 0.2;
+  ctx.font = `bold ${coGia}px sans-serif`;
+  while (ctx.measureText(chuGia).width > w - 2 * le && coGia > 14) { coGia--; ctx.font = `bold ${coGia}px sans-serif`; }
+  const yGia = dinhVach - 6;
+  ctx.fillText(chuGia, (w - ctx.measureText(chuGia).width) / 2, yGia);
+  const dinhGia = yGia - coGia * 0.95;
+  let co = h * 0.115, dong = [];
+  const ngat = (chu) => { const tu = chu.split(/\s+/).filter(Boolean), kq = []; let d = ''; for (const x of tu) { const thu = d ? d + ' ' + x : x; if (ctx.measureText(thu).width <= w - 2 * le || !d) d = thu; else { kq.push(d); d = x; } } if (d) kq.push(d); return kq; };
+  while (true) { ctx.font = `bold ${co}px sans-serif`; dong = ngat(String(t.ten || '').trim()); if ((dong.length <= 2 && dong.length * co * 1.12 <= dinhGia - 4) || co <= 12) break; co -= 1; }
+  dong = dong.slice(0, 2);
+  let y = Math.max(co, (dinhGia - dong.length * co * 1.12) / 2 + co);
+  for (const d of dong) { ctx.fillText(d, (w - Math.min(ctx.measureText(d).width, w - 2 * le)) / 2, y, w - 2 * le); y += co * 1.12; }
 }
 
 window.doiSoTem = function(id, d) { themVaoGioTem(id, d); veGioTem(); };
@@ -15614,7 +15665,7 @@ window.timHangChoTem = function(q) {
   if (q.length < 2) { el.innerHTML = ''; return; }
   const kq = allSKUs.filter(s => !s.deleted && (boDauTim(s.ten || '').includes(q) || boDauTim(s.sku || '').includes(q))).slice(0, 8);
   el.innerHTML = kq.length ? kq.map(s => `
-    <div onclick="themVaoGioTem('${s.id}'); veGioTem();"
+    <div onclick="themVaoGioTem('${s.id}'); veGioTem(); const o=document.getElementById('tem-tim'); o.value=''; timHangChoTem(''); o.focus();"
          style="padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
       <b>${escHtml(s.ten || '')}</b> <span style="color:var(--text2)">· ${escHtml(s.sku || '')} · ${fmt(giaBanHang(s))}đ</span>
     </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:6px 0">Không thấy hàng nào</div>';
@@ -15623,25 +15674,7 @@ window.timHangChoTem = function(q) {
 window.guiLenhInTem = async function() {
   const muc = [...gioTem.entries()].filter(([, t]) => t.soLuong > 0);
   if (!muc.length) return;
-  const tongTem = muc.reduce((a, [, t]) => a + t.soLuong, 0);
-  // Máy in 2 tem/hàng: tổng lẻ thì hàng cuối thừa 1 ô -> cho chọn giữ lại 1 tem để lần sau in chung
-  let giuLai = null;   // id SKU giữ lại 1 tem
-  if (tongTem % 2) {
-    const [idCuoi, tCuoi] = muc[muc.length - 1];
-    const chon = await new Promise(xong => {
-      let daChon = false;
-      moBangChon(`Tổng ${tongTem} tem (lẻ) — hàng cuối sẽ thừa 1 ô trống`, [
-        ...(tongTem > 1 ? [{ gt: 'giu', nhan: `In ${tongTem - 1} tem, giữ lại 1 tem`, phu: `Giữ 1 tem "${tCuoi.ten}" trong danh sách cho lần in sau` }] : []),
-        { gt: 'het', nhan: `In cả ${tongTem} tem`, phu: 'Chấp nhận thừa 1 ô trống' }
-      ], '', (v) => { daChon = true; xong(v); });
-      // Đóng bảng chọn mà không chọn -> hủy
-      const cho = setInterval(() => { if (daChon) return clearInterval(cho); if (document.getElementById('bang-chon')?.style.display !== 'flex') { clearInterval(cho); xong(null); } }, 400);
-    });
-    if (!chon) return;
-    if (chon === 'giu') giuLai = idCuoi;
-  }
-  const ds = muc.map(([id, t]) => ({ ten: t.ten, gia: t.gia, sku: t.sku, soLuong: t.soLuong - (id === giuLai ? 1 : 0) }))
-    .filter(t => t.soLuong > 0);
+  const ds = muc.map(([, t]) => ({ ten: t.ten, gia: t.gia, sku: t.sku, soLuong: t.soLuong }));
   if (!ds.length) return;
   const nut = document.getElementById('tem-gui');
   if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
@@ -15660,15 +15693,13 @@ window.guiLenhInTem = async function() {
       });
     }
     const tong = ds.reduce((a, t) => a + t.soLuong, 0);
-    // Dọn danh sách: chỉ còn lại tem giữ lại (nếu có)
-    const conLai = giuLai ? { ...gioTem.get(giuLai), soLuong: 1 } : null;
+    // In xong: danh sách tự trống lại (cho mọi máy, vì lưu chung)
     const ids = [...gioTem.keys()];
     gioTem.clear();
-    if (conLai) gioTem.set(giuLai, conLai);
     ids.forEach(capNhatNutTem); capNhatNutTem();
     try { await ghiCaDanhSachTem(); } catch(e) {}
     document.getElementById('khung-gio-tem')?.remove();
-    showToast(`Đã gửi ${tong} tem tới máy in tem` + (conLai ? ' · giữ lại 1 tem trong danh sách' : ''));
+    showToast(`Đã gửi ${tong} tem tới máy in tem`);
   } catch (e) {
     console.error('[in tem]', e);
     showToast('Không gửi được lệnh in tem — thử lại', true);
@@ -17676,6 +17707,17 @@ function skuDuocXuatHuy(s) {
   return [s?.nhom1, s?.nhom2, s?.nhom3].some(n => n && ds.includes(String(n)));
 }
 
+// Tồn bán được tại quầy (hiện khi tìm hàng ở Bán hàng). Combo: số bộ ghép được từ tồn thành phần
+function tonBanQuay(s) {
+  if (!s?.laCombo) return tonKhaDungCH(s);
+  let m = Infinity;
+  for (const tp of (s.thanhPhanCombo || [])) {
+    const con = allSKUs.find(x => x.id === tp.skuId) || allSKUs.find(x => x.sku === tp.sku);
+    const tl = Number(tp.tyLe) || 1;
+    m = Math.min(m, con ? Math.floor(Math.max(0, tonKhaDungCH(con)) / tl) : 0);
+  }
+  return m === Infinity ? 0 : m;
+}
 function makeSKUSearch(inputId, dropdownId, giaId, chiNhom, locSp) {
   const input = document.getElementById(inputId);
   const box = document.getElementById(dropdownId);
@@ -17705,7 +17747,7 @@ function makeSKUSearch(inputId, dropdownId, giaId, chiNhom, locSp) {
           : `<div style="width:32px;height:32px;border-radius:5px;background:var(--bg);flex-shrink:0"></div>`}
         <div style="min-width:0">
           <span class="sku-name">${escHtml(s.ten || '(chưa đặt tên)')}</span>
-          <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&giaBanHang(s)?' · ':''}${giaBanHang(s)?fmt(giaBanHang(s))+'₫':''}</span>
+          <span class="sku-meta">${escHtml(s.sku||'')}${s.sku&&giaBanHang(s)?' · ':''}${giaBanHang(s)?fmt(giaBanHang(s))+'₫':''}${inputId === 'bh-tim' ? (() => { const t = tonBanQuay(s); return ` · <b style="color:${t > 0 ? 'var(--green)' : 'var(--red)'}">tồn ${t}</b>`; })() : ''}</span>
         </div>
       </div>`
     ).join('');
@@ -25816,7 +25858,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v655</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v656</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25874,7 +25916,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v655</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v656</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25923,7 +25965,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v655</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v656</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -25931,7 +25973,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v655</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v656</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
