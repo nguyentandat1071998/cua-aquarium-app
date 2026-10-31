@@ -577,23 +577,33 @@ window.banHangChuaVaoCa = async function() {
   cheDoChuaVaoCa = true;
   try { await tinhQuyenModuleHienTai(); } catch(e) {}
   if (!quyenModuleHienTai?.banhang) { cheDoChuaVaoCa = false; showToast('Tài khoản chưa được cấp quyền Bán hàng', true); return; }
-  showApp();
   apDungHienThiModule(quyenModuleHienTai);
-  try { switchModule('banhang'); } catch(e) {}
-  let bar = document.getElementById('bar-chua-vao-ca');
-  if (!bar) {
-    bar = document.createElement('div'); bar.id = 'bar-chua-vao-ca';
-    bar.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(70px + env(safe-area-inset-bottom));z-index:1200;background:#FEF3C7;color:#92400E;border:1px solid #F59E0B;border-radius:999px;padding:6px 8px 6px 14px;font-size:12.5px;font-weight:600;display:flex;gap:10px;align-items:center;box-shadow:0 2px 10px rgba(0,0,0,.15)';
-    bar.innerHTML = 'Chưa vào ca · chỉ bán hàng <button onclick="vaoCaTuBanHang()" style="background:var(--green);color:#fff;border:none;border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:600;cursor:pointer">Vào ca</button>';
-    document.body.appendChild(bar);
+  // Cửa sổ nổi trên màn hình Vào ca (giống "Xem lịch làm việc"): mượn khung Bán hàng của app đặt vào đây, đóng thì trả về
+  let m = document.getElementById('banhang-cv-modal');
+  if (!m) {
+    m = document.createElement('div'); m.id = 'banhang-cv-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:950;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto';
+    m.innerHTML = `<div style="background:var(--surface);border-radius:var(--radius);padding:12px;width:100%;max-width:560px;margin-top:1rem">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 style="font-size:15px;font-weight:600">Bán hàng <span style="font-size:12px;font-weight:500;color:#B45309">· chưa vào ca</span></h3>
+        <button onclick="dongBanHangChuaVaoCa()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1">✕</button>
+      </div>
+      <div id="banhang-cv-than"></div></div>`;
+    document.body.appendChild(m);
   }
-  bar.style.display = 'flex';
+  const noiDung = document.getElementById('banhang-content');
+  if (noiDung) document.getElementById('banhang-cv-than').appendChild(noiDung);
+  m.style.display = 'flex';
+  try { batDauTheoDoiSKU(); } catch(e) {}
+  await renderBanHang();
 };
-window.vaoCaTuBanHang = function() {
-  cheDoChuaVaoCa = false;
-  document.getElementById('bar-chua-vao-ca')?.remove();
-  showVaoCa();
-  apDungQuyenNgayLapTuc();   // trả lại đủ quyền theo vai trò
+window.dongBanHangChuaVaoCa = function() {
+  const m = document.getElementById('banhang-cv-modal');
+  if (m) m.style.display = 'none';
+  const noiDung = document.getElementById('banhang-content');
+  const panel = document.getElementById('panel-banhang-main');
+  if (noiDung && panel && noiDung.parentElement !== panel) panel.appendChild(noiDung);
+  if (cheDoChuaVaoCa) { cheDoChuaVaoCa = false; apDungQuyenNgayLapTuc(); }   // trả lại đủ quyền theo vai trò
 };
 
 function showVaoCa() {
@@ -611,8 +621,7 @@ function showVaoCa() {
   // Reset về bước bấm nút, chưa mở camera
   document.getElementById('step-bat-dau').style.display = 'block';
   document.getElementById('step-quet-qr').style.display = 'none';
-  if (cheDoChuaVaoCa) { cheDoChuaVaoCa = false; apDungQuyenNgayLapTuc(); }
-  document.getElementById('bar-chua-vao-ca')?.remove();
+  if (document.getElementById('banhang-cv-modal')?.style.display === 'flex' || cheDoChuaVaoCa) dongBanHangChuaVaoCa();
 }
 
 window.batDauQuetQR = function() {
@@ -811,7 +820,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
 
 // Chụp ảnh timestamp từ camera QR rồi checkin luôn
 async function chupAnhQRVaCheckin(khung) {
-  cheDoChuaVaoCa = false; document.getElementById('bar-chua-vao-ca')?.remove();
+  if (cheDoChuaVaoCa) dongBanHangChuaVaoCa();
   const statusEl = document.getElementById('qr-status');
   statusEl.textContent = '⏳ Đang xác minh vị trí...';
 
@@ -25154,7 +25163,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v631</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v632</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25211,7 +25220,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v631</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v632</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25257,7 +25266,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v631</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v632</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
