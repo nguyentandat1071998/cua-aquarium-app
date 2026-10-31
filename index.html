@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 647;
+  const APP_VERSION = 648;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21388,8 +21388,10 @@ async function napCaLamViec() {
     const tho = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(c => !c.deleted);
     // Tách riêng bản ghi thiếu trường để Admin dọn, thay vì hiện NaN ra màn hình
     caLamViecHong = tho.filter(c => !c.ten || c.batDau == null || c.ketThuc == null);
+    // Thứ tự hiển thị: theo thuTu Admin sắp ở Thiết lập › Ca làm việc; ca chưa sắp xếp sau, theo giờ bắt đầu
+    const tt = (c) => Number.isFinite(Number(c.thuTu)) && c.thuTu !== null && c.thuTu !== '' ? Number(c.thuTu) : 1e9;
     allCaLamViec = tho.filter(c => c.ten && c.batDau != null && c.ketThuc != null)
-      .sort((a, b) => (a.batDau || 0) - (b.batDau || 0));
+      .sort((a, b) => tt(a) - tt(b) || (a.batDau || 0) - (b.batDau || 0));
   } catch (e) {
     console.warn('Không nạp được ca làm việc:', e.message);
     allCaLamViec = [];
@@ -21461,6 +21463,20 @@ function nhanGio(phut) {
 }
 
 // ===== MÀN HÌNH QUẢN LÝ CA =====
+// Sắp thứ tự ca: đổi chỗ trong danh sách rồi ghi lại thuTu = vị trí cho mọi ca
+window.doiThuTuCa = async function(caId, buoc) {
+  const i = allCaLamViec.findIndex(c => c.id === caId), j = i + buoc;
+  if (i < 0 || j < 0 || j >= allCaLamViec.length) return;
+  const ds = [...allCaLamViec];
+  [ds[i], ds[j]] = [ds[j], ds[i]];
+  allCaLamViec = ds.map((c, k) => ({ ...c, thuTu: k }));
+  veDanhSachCa();
+  try {
+    const b = writeBatch(db);
+    allCaLamViec.forEach((c, k) => b.update(doc(db, 'ca_lam_viec', c.id), { thuTu: k }));
+    await b.commit();
+  } catch(e) { showToast('Không lưu được thứ tự: ' + e.message, true); await napCaLamViec(); veDanhSachCa(); }
+};
 async function renderCaLamViec() {
   const el = document.getElementById('calamviec-content');
   if (!el) return;
@@ -21499,7 +21515,7 @@ function veDanhSachCa() {
         <button class="btn-outline" style="width:100%" onclick="taoCaMacDinh()">
           Tạo 3 ca mẫu (sáng, chiều, full)
         </button>
-      </div>` : allCaLamViec.map(c => {
+      </div>` : allCaLamViec.map((c, iCa) => {
         const vt = (c.vaiTroIds || []).map(id => {
           const v = allVaiTro.find(x => x.id === id);
           return v ? (v.ten || v.tenVaiTro || v.name || id) : null;
@@ -21508,6 +21524,10 @@ function veDanhSachCa() {
         <div style="background:var(--surface);border:1px solid var(--border);border-left:4px solid ${c.mau || 'var(--green)'};
                     border-radius:10px;padding:12px;margin-bottom:10px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+            <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0">
+              <button class="btn-xs" title="Lên trên" ${iCa === 0 ? 'disabled style="opacity:.3"' : ''} onclick="doiThuTuCa('${c.id}',-1)">▲</button>
+              <button class="btn-xs" title="Xuống dưới" ${iCa === allCaLamViec.length - 1 ? 'disabled style="opacity:.3"' : ''} onclick="doiThuTuCa('${c.id}',1)">▼</button>
+            </div>
             <div style="flex:1;min-width:0">
               <b style="font-size:15px">${escHtml(c.ten)}</b>${c.khung2 ? ' <span style="font-size:11px;color:#7C3AED;font-weight:600">CA GÃY</span>' : ''}
               <div style="font-size:13px;color:var(--text2);margin-top:2px">
@@ -21532,6 +21552,7 @@ function veDanhSachCa() {
         </div>`;
       }).join('')}
 
+    ${allCaLamViec.length > 1 ? '<p style="font-size:12px;color:var(--text2);margin:-2px 2px 8px">Bấm ▲ ▼ để sắp thứ tự — ca hiện theo thứ tự này ở xếp lịch, chấm công, bảng lương.</p>' : ''}
     <button class="btn-g" style="width:100%;margin-top:8px" onclick="moSuaCa()">+ Thêm ca mới</button>
     <h3 style="font-size:15px;font-weight:700;margin:22px 2px 8px">Chấm công</h3>
     <div id="cc-caidat"><div class="loading">Đang tải...</div></div>`;
@@ -25577,7 +25598,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v647</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v648</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25634,7 +25655,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v647</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v648</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25683,14 +25704,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v647</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v648</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v647</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v648</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
