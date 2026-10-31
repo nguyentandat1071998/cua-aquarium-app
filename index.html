@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 638;
+  const APP_VERSION = 639;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2331,6 +2331,7 @@ function showApp() {
   document.getElementById('user-name').textContent = currentUserData.ten || currentUser.email;
   if (window._nkVuaDangNhap) { window._nkVuaDangNhap = false; nkGhiSuKien('Đăng nhập' + (LA_BAN_DEMO ? ' (link demo)' : '')); }
   document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
+  apMauVaiTro();
   if (currentUserData.role === 'admin') {
     document.getElementById('mod-admin').style.display = 'flex';
     quyenModuleHienTai = layQuyenFullAdmin();
@@ -2370,6 +2371,53 @@ function roleLabel(r) {
   return r === 'admin' ? 'Quản trị' : r === 'quan_ly' ? 'Quản lý' : 'Nhân viên bán hàng';
 }
 // Nhãn hiển thị theo VAI TRÒ đang gán (quyền tính theo vai trò). Trường role cũ chỉ còn để nhận biết Admin.
+// ===== MÀU VIỀN KHUNG TÊN THEO VAI TRÒ =====
+// Không ghi tên vai trò cạnh tên nhân viên nữa — nhìn màu viền khung tên là biết vai trò.
+// Màu từng vai trò chọn ở Thiết lập › Phân quyền (vai_tro.mauVien); Admin: cau_hinh/giao_dien.mauAdmin.
+const MAU_VIEN_MAC_DINH = '#D1D5DB', MAU_ADMIN_MAC_DINH = '#7C3AED';
+const BANG_MAU_VIEN = ['#16A34A', '#2563EB', '#0E7490', '#7C3AED', '#DB2777', '#DC2626', '#EA580C', '#CA8A04', '#4B5563', '#111827'];
+let mauAdminCache = null;
+async function layMauAdmin() {
+  if (mauAdminCache) return mauAdminCache;
+  try { mauAdminCache = (await getDoc(doc(db, 'cau_hinh', 'giao_dien'))).data()?.mauAdmin || MAU_ADMIN_MAC_DINH; } catch(e) { mauAdminCache = MAU_ADMIN_MAC_DINH; }
+  return mauAdminCache;
+}
+function mauVaiTroCua(u) {
+  if (u?.role === 'admin') return mauAdminCache || MAU_ADMIN_MAC_DINH;
+  const vt = u?.vaiTroId ? allVaiTro.find(v => v.id === u.vaiTroId) : null;
+  return vt?.mauVien || MAU_VIEN_MAC_DINH;
+}
+async function apMauVaiTro() {
+  if (!currentUserData) return;
+  if (currentUserData.role === 'admin') await layMauAdmin();
+  const mau = mauVaiTroCua(currentUserData), ten = nhanVaiTro(currentUserData);
+  document.querySelectorAll('.user-menu-trigger').forEach(k => {
+    k.style.borderColor = mau; k.style.borderWidth = '2px';
+    k.style.background = mau === MAU_VIEN_MAC_DINH ? '' : mau + '12';
+    k.title = ten;
+  });
+}
+function oChonMauVien(idInput, mau) {
+  const hien = mau || '';
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    ${BANG_MAU_VIEN.map(m => `<button type="button" onclick="chonMauVien('${idInput}','${m}')" title="${m}" style="width:26px;height:26px;border-radius:50%;border:3px solid ${m};background:${m}22;cursor:pointer;padding:0;outline:${hien.toLowerCase() === m.toLowerCase() ? '2px solid #111' : 'none'};outline-offset:2px" data-mau-cho="${idInput}" data-mau="${m}"></button>`).join('')}
+    <input type="color" id="${idInput}" value="${hien || '#16A34A'}" data-co="${hien ? 1 : 0}" oninput="chonMauVien('${idInput}',this.value)" style="width:34px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer" title="Màu khác">
+    <span id="${idInput}-xem" style="padding:4px 10px;border-radius:8px;border:2px solid ${hien || MAU_VIEN_MAC_DINH};font-size:13px;font-weight:700;background:${hien ? hien + '12' : 'transparent'}">Tên nhân viên</span>
+  </div>`;
+}
+window.chonMauVien = function(idInput, m) {
+  const o = document.getElementById(idInput); if (!o) return;
+  o.value = m; o.dataset.co = '1';
+  document.querySelectorAll(`[data-mau-cho="${idInput}"]`).forEach(b => b.style.outline = b.dataset.mau.toLowerCase() === m.toLowerCase() ? '2px solid #111' : 'none');
+  const x = document.getElementById(idInput + '-xem'); if (x) { x.style.borderColor = m; x.style.background = m + '12'; }
+};
+const docMauVien = (idInput) => { const o = document.getElementById(idInput); return o && o.dataset.co === '1' ? o.value : ''; };
+window.luuMauAdmin = async function() {
+  const m = docMauVien('vt-mau-admin'); if (!m) { showToast('Chọn một màu', true); return; }
+  try { await setDoc(doc(db, 'cau_hinh', 'giao_dien'), { mauAdmin: m }, { merge: true }); mauAdminCache = m; apMauVaiTro(); showToast('Đã lưu màu viền Admin'); }
+  catch(e) { showToast('Lỗi: ' + e.message, true); }
+};
+
 function nhanVaiTro(u) {
   if (u?.role === 'admin') return 'Quản trị';
   const vt = u?.vaiTroId ? allVaiTro.find(v => v.id === u.vaiTroId) : null;
@@ -16956,6 +17004,7 @@ async function apDungQuyenNgayLapTuc() {
       ? locQuyen(snap.data().quyenModule || {}, snap.data().phienBanQuyen)
       : locQuyen({}, PHIEN_BAN_QUYEN);
     xhNhomHienTai = snap.exists() ? chuanXhNhom(snap.data()) : [];
+    if (snap.exists()) { const i = allVaiTro.findIndex(v => v.id === snap.id); const vt = { id: snap.id, ...snap.data() }; if (i >= 0) allVaiTro[i] = vt; else allVaiTro.push(vt); apMauVaiTro(); }
     apDungHienThiModule(quyenModuleHienTai);
     kiemTraModuleDangXemConHopLeKhong();
   }, () => {
@@ -17003,6 +17052,7 @@ async function moModuleMacDinhTheoQuyen() {
   veDaiDemo();
   const quyen = await tinhQuyenModuleHienTai();
   const oVt = document.getElementById('user-role'); if (oVt) oVt.textContent = nhanVaiTro(currentUserData);
+  apMauVaiTro();
   const thuTuUuTien = [
     ['banhang','banhang'], ['datcoc','datcoc'], ['ketca','ketca'], ['donbanle','donbanle'], ['khachhang','khachhang'], ['checklist','checklist'], ['nhap','nhap'],
     ['xuat','xuat'], ['dungnb','dungnb'], ['hanghoa','hanghoa'], ['nhaphang','nhaphang'], ['dathang','dathang'], ['lichca','lichca'], ['chamcong','chamcong'],
@@ -23946,15 +23996,21 @@ async function renderVaiTroList() {
     el.innerHTML = `<p class="info-note">Chưa có vai trò nào. Bấm "Thêm vai trò" để tạo vai trò đầu tiên.</p>`;
     return;
   }
-  el.innerHTML = allVaiTro.map(v => {
+  await layMauAdmin();
+  const dongAdmin = `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+        <b style="padding:2px 10px;border:2px solid ${mauAdminCache};border-radius:8px;background:${mauAdminCache}12">Quản trị (Admin)</b>
+        <button class="btn-xs" onclick="luuMauAdmin()">Lưu màu</button>
+      </div>${oChonMauVien('vt-mau-admin', mauAdminCache)}</div>`;
+  el.innerHTML = dongAdmin + allVaiTro.map(v => {
     const qv = locQuyenXem(v);
     const soTab = DANH_SACH_MODULE.flatMap(m => m.nhom ? (m.con || []) : [m]).filter(m => qv[m.key]).length;
     return `
     <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
-          <b>${escHtml(v.ten)}</b>
-          <span style="font-size:11px;color:var(--text2);margin-left:6px">${soTab} tab${(v.phienBanQuyen || 0) < PHIEN_BAN_QUYEN ? ' · <span style="color:#B45309">cây quyền cũ — mở Sửa, kiểm tra rồi Lưu</span>' : ''}</span>
+          <b style="padding:2px 10px;border:2px solid ${v.mauVien || MAU_VIEN_MAC_DINH};border-radius:8px;background:${v.mauVien ? v.mauVien + '12' : 'transparent'}">${escHtml(v.ten)}</b>
+          <span style="font-size:11px;color:var(--text2);margin-left:6px">${v.mauVien ? '' : 'chưa chọn màu · '}${soTab} tab${(v.phienBanQuyen || 0) < PHIEN_BAN_QUYEN ? ' · <span style="color:#B45309">cây quyền cũ — mở Sửa, kiểm tra rồi Lưu</span>' : ''}</span>
         </div>
         <div style="display:flex;gap:6px">
           <button class="btn-xs" onclick="moFormSuaVaiTro('${v.id}')">Sửa</button>
@@ -24010,6 +24066,8 @@ function renderFormVaiTro(prefix, v) {
     <div class="admin-block" style="margin-top:8px">
       <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Tên vai trò</label>
       <input type="text" id="${prefix}-ten" placeholder="VD: Nhân viên bán hàng" value="${escHtml(ten)}" style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:4px">Màu viền khung tên nhân viên <span style="font-weight:400">(nhìn màu là biết vai trò)</span></label>
+      <div style="margin-bottom:12px">${oChonMauVien(`${prefix}-mau`, v?.mauVien)}</div>
       <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Tab được vào và chức năng trong từng tab</label>
       <div style="display:flex;flex-direction:column;gap:2px;margin-bottom:10px">
         ${DANH_SACH_MODULE.map(m => m.nhom ? `
@@ -24061,18 +24119,20 @@ window.luuVaiTro = async function(prefix, id) {
   const xhNhom = docChonNhomXuatHuy(prefix);
   if (quyenModule.xuat && !xhNhom.length) { showToast('Chọn ít nhất một danh mục được xuất hủy (hoặc Tất cả)', true); return; }
 
+  const mauVien = docMauVien(`${prefix}-mau`) || (id ? (allVaiTro.find(x => x.id === id)?.mauVien || '') : '');
   let idVaiTro = id;
   if (id) {
-    await updateDoc(doc(db, 'vai_tro', id), { ten, quyenModule, xhNhom, phienBanQuyen: PHIEN_BAN_QUYEN });
+    await updateDoc(doc(db, 'vai_tro', id), { ten, quyenModule, xhNhom, mauVien, phienBanQuyen: PHIEN_BAN_QUYEN });
   } else {
-    const ref = await addDoc(collection(db, 'vai_tro'), { ten, quyenModule, xhNhom, phienBanQuyen: PHIEN_BAN_QUYEN, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, 'vai_tro'), { ten, quyenModule, xhNhom, mauVien, phienBanQuyen: PHIEN_BAN_QUYEN, createdAt: serverTimestamp() });
     idVaiTro = ref.id;
   }
   // Ghi quyền vào thẻ đăng nhập của mọi người đang giữ vai trò này
   const kq = await dongBoQuyen({ vaiTroId: idVaiTro });
   showToast(kq.success ? `Đã lưu vai trò · cập nhật quyền cho ${kq.soNguoi ?? 0} người` : 'Đã lưu vai trò, nhưng chưa ghi được quyền lên máy chủ: ' + (kq.error || ''), !kq.success);
   document.getElementById('vaitro-form').innerHTML = '';
-  renderVaiTroList();
+  await renderVaiTroList();
+  apMauVaiTro();
 };
 
 window.xoaVaiTro = async function(id) {
@@ -24769,7 +24829,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .brand{font-weight:700;font-size:14px;color:var(--green)}
 .header-right{display:flex;align-items:center;gap:10px}
 .uinfo .uname{font-size:13px;font-weight:700;text-align:right}
-.uinfo .urole{font-size:10px;color:var(--text2);text-align:right}
+.uinfo .urole{display:none}
 .btn-logout{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--text2)}
 .user-menu-trigger{display:flex;align-items:center;gap:6px;cursor:pointer;border-radius:8px;padding:6px 10px;border:1.5px solid var(--border);transition:background .15s,border-color .15s}
 .user-menu-trigger:hover{border-color:var(--green);background:var(--bg)}
@@ -25300,6 +25360,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .loading{padding:24px;text-align:center;color:var(--text3)}
 
 /* MENU GỌN cho điện thoại / máy cảm ứng: ẩn hai hàng menu, dùng nút ☰ */
+.logo-gon{display:none;width:32px;height:32px;border-radius:8px;flex-shrink:0}
 .nut-menu-gon{display:none;align-items:center;gap:8px;border:1.5px solid var(--border);background:var(--surface);
   border-radius:9px;padding:5px 12px 5px 9px;font-size:15px;font-weight:700;color:var(--text);cursor:pointer;
   max-width:62vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -25310,7 +25371,8 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 .o-menu:active{background:var(--bg)}
 .o-menu.dang{background:var(--green-bg);border-color:var(--green);color:var(--green)}
 @media (max-width: 899px), (pointer: coarse) {
-  .nut-menu-gon{display:inline-flex}
+  .nut-menu-gon{display:inline-flex;max-width:calc(62vw - 40px)}
+  .logo-gon{display:block}
   .app-header .brand{display:none}
   .mod-bar-row{display:none!important}
 }
@@ -25327,7 +25389,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
   .sidebar .mod-btn.admin-btn:not(.active){background:var(--bg);color:#5B21B6}
   .sidebar-user{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);position:relative}
   .sidebar-user .uname{font-size:14px;font-weight:700}
-  .sidebar-user .urole{font-size:11px;color:var(--text2)}
+  .sidebar-user .urole{display:none}
   .main-content{flex:1;display:flex;flex-direction:column;overflow:hidden}
   /* Ẩn sidebar, dùng menu hai cấp cho cả desktop lẫn điện thoại.
      Thanh tiêu đề phải bật lại vì tên người dùng và nút đăng xuất vốn nằm ở sidebar. */
@@ -25365,7 +25427,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v638</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v639</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25422,7 +25484,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v638</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v639</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25464,11 +25526,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
     <div class="mobile-sticky-top">
     <!-- Header (mobile) -->
     <header class="app-header">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+      <img class="logo-gon" src="icon-192.png" alt="CUA Aquarium">
       <button class="nut-menu-gon" onclick="moMenuGon()" aria-label="Mở menu">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v638</span></div>
+      </div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v639</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
