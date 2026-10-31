@@ -1,6 +1,125 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
+<meta charset="UTF-8">
+<script>
+// ===== CHẶN PHIÊN BẢN CŨ =====
+// App cài trên điện thoại giữ trang cũ trong bộ nhớ nhiều ngày; CDN cũng có thể trả bản cũ.
+// version.json (deploy cùng index.html) cho biết bản mới nhất. Lấy kèm ?t= để vượt mọi lớp cache.
+// - Mở app / quay lại app: thấy bản mới -> che màn hình "Đang cập nhật" rồi tải lại ngay.
+// - Đang dùng (kiểm tra mỗi 5 phút): nếu đang nhập dở / đang quét QR thì hiện thanh báo,
+//   đợi rảnh tay mới tự tải lại. Giỏ bán hàng đã tự lưu nên tải lại không mất.
+(function () {
+  const APP_VERSION = 636;
+  window.APP_VERSION = APP_VERSION;
+  const KHOA = 'cua_ver_target';
+  let lanNhapCuoi = 0, anLuc = 0, dangTai = false, banMoi = 0;
+  ['input', 'keydown', 'change'].forEach(ev => document.addEventListener(ev, () => { lanNhapCuoi = Date.now(); }, true));
+
+  function ss(k, v) { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) { return null; } }
+
+  async function layBanMoiNhat() {
+    try {
+      const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) return 0;
+      return Number((await r.json()).v) || 0;
+    } catch (e) { return 0; }
+  }
+
+  function khiCoBody(fn) { document.body ? fn() : document.addEventListener('DOMContentLoaded', fn); }
+
+  function che(chu) {
+    khiCoBody(() => {
+      let c = document.getElementById('cua-ver-che');
+      if (!c) {
+        c = document.createElement('div');
+        c.id = 'cua-ver-che';
+        c.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;font-family:system-ui,sans-serif;color:#1B7A3E;text-align:center;padding:24px';
+        document.body.appendChild(c);
+      }
+      c.innerHTML = '<div style="width:42px;height:42px;border:4px solid #D1FAE5;border-top-color:#1B7A3E;border-radius:50%;animation:cuaQuay 0.9s linear infinite"></div>'
+        + '<div style="font-size:17px;font-weight:700">' + chu + '</div>'
+        + '<style>@keyframes cuaQuay{to{transform:rotate(360deg)}}</style>';
+    });
+  }
+
+  function taiLai(v) {
+    if (dangTai) return;
+    dangTai = true;
+    ss(KHOA, String(v));
+    che('Đang cập nhật phiên bản mới v' + v + '…');
+    const u = new URL(location.href);
+    u.searchParams.set('v', v);
+    u.searchParams.set('t', Date.now());
+    setTimeout(() => location.replace(u.toString()), 300);
+  }
+
+  function dangBan() {
+    if (Date.now() - lanNhapCuoi < 90000) return true;                       // vừa gõ / nhập dở
+    if ([...document.querySelectorAll('video')].some(v => v.srcObject && !v.paused)) return true; // đang mở camera quét QR
+    return false;
+  }
+
+  function thanhBao(v) {
+    khiCoBody(() => {
+      if (document.getElementById('cua-ver-thanh')) return;
+      const b = document.createElement('div');
+      b.id = 'cua-ver-thanh';
+      b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99998;background:#1B7A3E;color:#fff;font:600 13px system-ui,sans-serif;padding:8px 12px;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+      b.innerHTML = '<span>Có phiên bản mới v' + v + ' — app sẽ tự cập nhật khi bạn xong thao tác</span>';
+      const n = document.createElement('button');
+      n.textContent = 'Cập nhật ngay';
+      n.style.cssText = 'background:#fff;color:#1B7A3E;border:none;border-radius:6px;padding:5px 10px;font-weight:700;cursor:pointer';
+      n.onclick = () => taiLai(v);
+      b.appendChild(n);
+      document.body.appendChild(b);
+    });
+  }
+
+  // Bắt buộc = vừa mở app hoặc quay lại sau khi rời app
+  async function kiemTra(batBuoc) {
+    if (dangTai) return;
+    const v = await layBanMoiNhat();
+    if (v <= APP_VERSION) {
+      ss(KHOA, null);
+      const c = document.getElementById('cua-ver-che'); if (c) c.remove();
+      return;
+    }
+    banMoi = v;
+    // Vừa tải lại để lên bản v mà vẫn nhận bản cũ (máy chủ chưa phát xong) -> thử lại vài lần
+    const daThu = Number(ss('cua_ver_thu') || 0);
+    if (Number(ss(KHOA)) >= v && daThu >= 4) { thanhBao(v); return; }
+    if (Number(ss(KHOA)) >= v) {
+      ss('cua_ver_thu', String(daThu + 1));
+      che('Máy chủ đang phát bản v' + v + ', thử lại sau ít giây…');
+      setTimeout(() => { dangTai = false; taiLai(v); }, 15000);
+      dangTai = true;
+      return;
+    }
+    ss('cua_ver_thu', null);
+    if (batBuoc || !dangBan()) taiLai(v); else thanhBao(v);
+  }
+
+  // Lên đúng bản rồi -> xóa dấu vết thử lại
+  if (Number(ss(KHOA) || 0) <= APP_VERSION) { ss(KHOA, null); ss('cua_ver_thu', null); }
+
+  kiemTra(true);
+  setInterval(() => {
+    if (document.hidden) return;
+    if (banMoi > APP_VERSION) { if (!dangBan()) taiLai(banMoi); }
+    else kiemTra(false);
+  }, 5 * 60 * 1000);
+  // Đang có thanh báo: rảnh tay thì tự cập nhật (kiểm tra mỗi 20s, không gọi mạng)
+  setInterval(() => { if (banMoi > APP_VERSION && !document.hidden && !dangBan()) taiLai(banMoi); }, 20000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { anLuc = Date.now(); return; }
+    const roi = anLuc ? Date.now() - anLuc : 0;
+    // Rời app chốc lát để copy gì đó giữa lúc đang nhập -> không ép, chỉ báo
+    kiemTra(!(roi < 120000 && Date.now() - lanNhapCuoi < roi + 60000));
+  });
+  window.addEventListener('pageshow', e => { if (e.persisted) kiemTra(true); });
+})();
+</script>
 <style>
 .ht-nen{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:5000;display:flex;align-items:center;justify-content:center;
   padding:20px;opacity:0;transition:opacity .15s ease}
@@ -25182,7 +25301,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v635</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v636</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25239,7 +25358,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v635</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v636</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25285,7 +25404,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v635</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v636</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
