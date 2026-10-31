@@ -21639,10 +21639,14 @@ async function tinhLuongThang(thang) {
       n.luong = Math.round(donGia * n.soCong);
 
       // Làm thêm: chỉ tính khi quản lý đã duyệt
-      n.phutLamThem = gioCa.khung2 ? (n.ra2 ? tinhPhutLamThem(n.ra2, gioCa.khung2.ketThuc) : 0) : tinhPhutLamThem(n.ra, gioCa.ketThuc);
+      // Làm thêm = check-in SỚM (trước giờ bắt đầu ca / khung 2, quá 5 phút) + ở lại SAU giờ kết thúc ca (quá 5 phút)
+      n.phutOLai = gioCa.khung2 ? (n.ra2 ? tinhPhutLamThem(n.ra2, gioCa.khung2.ketThuc) : 0) : tinhPhutLamThem(n.ra, gioCa.ketThuc);
+      n.phutDenSom = tinhPhutDenSom(n.vao, gioCa.batDau) + (gioCa.khung2 && ca.vaoLuc2?.seconds ? tinhPhutDenSom(new Date(ca.vaoLuc2.seconds * 1000), gioCa.khung2.batDau) : 0);
+      n.phutLamThem = n.phutDenSom + n.phutOLai;
       n.lamThemDaDuyet = !!ca.lamThemDuyet;
-      if (n.phutLamThem && n.lamThemDaDuyet) {
-        n.tienLamThem = Math.round(donGia / phutMotCong(caLV) * n.phutLamThem * HE_SO_LAM_THEM);
+      if (n.lamThemDaDuyet) {
+        const pDuyet = Number(ca.lamThemDuyet.soPhut) || n.phutLamThem;   // tính đúng số phút đã duyệt
+        n.tienLamThem = Math.round(donGia / phutMotCong(caLV) * pDuyet * HE_SO_LAM_THEM);
       }
     }
   }
@@ -22213,6 +22217,7 @@ function veBangLuong(dl) {
                        onclick="duyetLamThem('${n.ngay}',${n.phutLamThem})">Duyệt ${n.phutLamThem}p</button>`
                      : `<span style="color:#D97706;font-size:11px">chờ duyệt</span>`}`)
                 : '—'}
+                ${n.phutLamThem && n.phutDenSom ? `<div style="font-size:10px;color:var(--text2)">sớm ${n.phutDenSom}′${n.phutOLai ? ` + sau ca ${n.phutOLai}′` : ''}</div>` : ''}
               </td>
               <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
               <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
@@ -22351,8 +22356,8 @@ window.hoanTacBoQuaTre = async function(ngay) {
 };
 
 // ===== DUYỆT LÀM THÊM GIỜ =====
-// Ở lại sau giờ ra không tự thành làm thêm — có thể chỉ là dọn dẹp hoặc quên
-// check-out. Quản lý duyệt thì mới tính, hưởng 150% đơn giá.
+// Đến sớm / ở lại sau giờ ra không tự thành làm thêm — có thể chỉ là đến sớm ngồi chơi, dọn dẹp hoặc quên
+// check-out. Quản lý duyệt thì mới tính (hệ số HE_SO_LAM_THEM).
 window.duyetLamThem = async function(ngay, soPhut) {
   if (!coQuyen('luong_duyet')) { showToast('Bạn không có quyền duyệt làm thêm', true); return; }
   const uid = blNhanVienDangXem || currentUser.uid;
@@ -22504,6 +22509,12 @@ const PHUT_TOI_THIEU_LAM_THEM = 5;
 const HE_SO_LAM_THEM = 1;   // làm thêm tính như giờ thường (8 giờ = 1 công)
 
 // Số phút làm thêm của một ca: tính từ giờ ra quy định tới lúc check-out thật
+// Số phút check-in sớm so với giờ bắt đầu ca — quá 5 phút mới tính (chờ duyệt như làm thêm)
+function tinhPhutDenSom(gioVaoThat, gioCaBatDau) {
+  if (!gioVaoThat) return 0;
+  const som = gioCaBatDau - (gioVaoThat.getHours() * 60 + gioVaoThat.getMinutes());
+  return som > PHUT_TOI_THIEU_LAM_THEM ? som : 0;
+}
 function tinhPhutLamThem(gioRaThat, gioCaKetThuc) {
   if (!gioRaThat) return 0;
   const phutRa = gioRaThat.getHours() * 60 + gioRaThat.getMinutes();
@@ -25171,7 +25182,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v634</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v635</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25228,7 +25239,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v634</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v635</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25274,7 +25285,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v634</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v635</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
