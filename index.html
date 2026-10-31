@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 641;
+  const APP_VERSION = 642;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -118,6 +118,15 @@
 </script>
 <style>
 html.co-ban-moi body{padding-top:36px}
+/* Viền khung tên theo vai trò — kiểu ánh kim (chọn ở Thiết lập › Phân quyền) */
+.vien-kimcuong,.vien-vang,.vien-bac{border:2px solid transparent!important;background-origin:border-box!important}
+[data-nhan]{display:inline-block;padding:2px 10px;border-radius:8px}
+[data-nen]{display:inline-block;border-radius:8px}
+.vien-kimcuong{background:linear-gradient(#fff,#fff) padding-box,linear-gradient(115deg,#67e8f9,#ffffff,#c4b5fd,#f0abfc,#ffffff,#a5f3fc,#818cf8,#ffffff,#67e8f9) border-box!important;
+  background-size:100% 100%,300% 100%!important;animation:vienKimCuong 3.5s ease-in-out infinite alternate;box-shadow:0 0 7px rgba(129,140,248,.45),0 0 2px rgba(103,232,249,.8)}
+@keyframes vienKimCuong{from{background-position:0 0,0% 50%}to{background-position:0 0,100% 50%}}
+.vien-vang{background:linear-gradient(#fffdf5,#fffdf5) padding-box,linear-gradient(135deg,#7a5a12,#f7dc7c,#c79a22,#fff3c4,#b8860b,#f2cf63) border-box!important;box-shadow:0 0 5px rgba(201,154,34,.35)}
+.vien-bac{background:linear-gradient(#fbfcfd,#fbfcfd) padding-box,linear-gradient(135deg,#7b8794,#eef2f6,#a6b0bb,#ffffff,#8792a0,#d5dbe2) border-box!important;box-shadow:0 0 4px rgba(120,135,150,.3)}
 html.co-ban-moi .app-header,html.co-ban-moi .mobile-sticky-top,html.co-ban-moi .sub-tab-bar,html.co-ban-moi .sidebar{top:36px}
 /* Màn rộng: các thanh dính nằm trong .main-content (overflow:hidden) nên không cần đẩy xuống */
 @media (min-width:768px){html.co-ban-moi .app-header,html.co-ban-moi .mobile-sticky-top,html.co-ban-moi .sub-tab-bar,html.co-ban-moi .sidebar{top:0}}
@@ -2383,6 +2392,16 @@ function roleLabel(r) {
 // Không ghi tên vai trò cạnh tên nhân viên nữa — nhìn màu viền khung tên là biết vai trò.
 // Màu từng vai trò chọn ở Thiết lập › Phân quyền (vai_tro.mauVien); Admin: cau_hinh/giao_dien.mauAdmin.
 const MAU_VIEN_MAC_DINH = '#D1D5DB', MAU_ADMIN_MAC_DINH = '#7C3AED';
+const KIEU_VIEN = { kimcuong: 'Kim cương', vang: 'Vàng gold', bac: 'Bạc' };   // viền ánh kim: lưu tên kiểu thay cho mã màu
+const laKieuVien = (m) => !!KIEU_VIEN[m];
+// Gắn viền lên 1 phần tử: kiểu ánh kim -> class; mã màu -> viền thường
+function gangVien(el, mau) {
+  Object.keys(KIEU_VIEN).forEach(k => el.classList.remove('vien-' + k));
+  if (laKieuVien(mau)) { el.classList.add('vien-' + mau); el.style.borderColor = ''; el.style.background = ''; el.style.borderWidth = '2px'; return; }
+  el.style.borderColor = mau || MAU_VIEN_MAC_DINH; el.style.borderWidth = '2px';
+  el.style.background = mau && mau !== MAU_VIEN_MAC_DINH ? mau + '12' : '';
+}
+const vienHtml = (mau) => laKieuVien(mau) ? `class="vien-${mau}"` : `style="border:2px solid ${mau || MAU_VIEN_MAC_DINH};background:${mau ? mau + '12' : 'transparent'}"`;
 const BANG_MAU_VIEN = ['#16A34A', '#2563EB', '#0E7490', '#7C3AED', '#DB2777', '#DC2626', '#EA580C', '#CA8A04', '#4B5563', '#111827'];
 let mauAdminCache = null;
 async function layMauAdmin() {
@@ -2399,25 +2418,23 @@ async function apMauVaiTro() {
   if (!currentUserData) return;
   if (currentUserData.role === 'admin') await layMauAdmin();
   const mau = mauVaiTroCua(currentUserData), ten = nhanVaiTro(currentUserData);
-  document.querySelectorAll('.user-menu-trigger').forEach(k => {
-    k.style.borderColor = mau; k.style.borderWidth = '2px';
-    k.style.background = mau === MAU_VIEN_MAC_DINH ? '' : mau + '12';
-    k.title = ten;
-  });
+  document.querySelectorAll('.user-menu-trigger').forEach(k => { gangVien(k, mau); k.title = ten; });
 }
 function oChonMauVien(idInput, mau) {
   const hien = mau || '';
   return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    ${Object.entries(KIEU_VIEN).map(([k, ten]) => `<button type="button" onclick="chonMauVien('${idInput}','${k}')" class="vien-${k}" title="${ten}" style="height:26px;border-radius:13px;cursor:pointer;padding:0 9px;font-size:11px;font-weight:700;color:#374151;outline:${hien === k ? '2px solid #111' : 'none'};outline-offset:2px" data-mau-cho="${idInput}" data-mau="${k}">${ten}</button>`).join('')}
     ${BANG_MAU_VIEN.map(m => `<button type="button" onclick="chonMauVien('${idInput}','${m}')" title="${m}" style="width:26px;height:26px;border-radius:50%;border:3px solid ${m};background:${m}22;cursor:pointer;padding:0;outline:${hien.toLowerCase() === m.toLowerCase() ? '2px solid #111' : 'none'};outline-offset:2px" data-mau-cho="${idInput}" data-mau="${m}"></button>`).join('')}
-    <input type="color" id="${idInput}" value="${hien || '#16A34A'}" data-co="${hien ? 1 : 0}" oninput="chonMauVien('${idInput}',this.value)" style="width:34px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer" title="Màu khác">
-    <span id="${idInput}-xem" style="padding:4px 10px;border-radius:8px;border:2px solid ${hien || MAU_VIEN_MAC_DINH};font-size:13px;font-weight:700;background:${hien ? hien + '12' : 'transparent'}">Tên nhân viên</span>
+    <input type="color" id="${idInput}-bang" value="${hien && !laKieuVien(hien) ? hien : '#16A34A'}" oninput="chonMauVien('${idInput}',this.value)" style="width:34px;height:28px;padding:0;border:1px solid var(--border);border-radius:6px;cursor:pointer" title="Màu khác">
+    <input type="hidden" id="${idInput}" value="${hien}" data-co="${hien ? 1 : 0}">
+    <span id="${idInput}-xem" ${vienHtml(hien)} data-nen="1"><span style="padding:4px 10px;display:inline-block;font-size:13px;font-weight:700">Tên nhân viên</span></span>
   </div>`;
 }
 window.chonMauVien = function(idInput, m) {
   const o = document.getElementById(idInput); if (!o) return;
   o.value = m; o.dataset.co = '1';
   document.querySelectorAll(`[data-mau-cho="${idInput}"]`).forEach(b => b.style.outline = b.dataset.mau.toLowerCase() === m.toLowerCase() ? '2px solid #111' : 'none');
-  const x = document.getElementById(idInput + '-xem'); if (x) { x.style.borderColor = m; x.style.background = m + '12'; }
+  const x = document.getElementById(idInput + '-xem'); if (x) gangVien(x, m);
 };
 const docMauVien = (idInput) => { const o = document.getElementById(idInput); return o && o.dataset.co === '1' ? o.value : ''; };
 window.luuMauAdmin = async function() {
@@ -24007,7 +24024,7 @@ async function renderVaiTroList() {
   await layMauAdmin();
   const dongAdmin = `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
-        <b style="padding:2px 10px;border:2px solid ${mauAdminCache};border-radius:8px;background:${mauAdminCache}12">Quản trị (Admin)</b>
+        <b ${vienHtml(mauAdminCache)} data-nhan="1">Quản trị (Admin)</b>
         <button class="btn-xs" onclick="luuMauAdmin()">Lưu màu</button>
       </div>${oChonMauVien('vt-mau-admin', mauAdminCache)}</div>`;
   el.innerHTML = dongAdmin + allVaiTro.map(v => {
@@ -24017,8 +24034,8 @@ async function renderVaiTroList() {
     <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div>
-          <b style="padding:2px 10px;border:2px solid ${v.mauVien || MAU_VIEN_MAC_DINH};border-radius:8px;background:${v.mauVien ? v.mauVien + '12' : 'transparent'}">${escHtml(v.ten)}</b>
-          <span style="font-size:11px;color:var(--text2);margin-left:6px">${v.mauVien ? '' : 'chưa chọn màu · '}${soTab} tab${(v.phienBanQuyen || 0) < PHIEN_BAN_QUYEN ? ' · <span style="color:#B45309">cây quyền cũ — mở Sửa, kiểm tra rồi Lưu</span>' : ''}</span>
+          <b ${vienHtml(v.mauVien)} data-nhan="1">${escHtml(v.ten)}</b>
+          <span style="font-size:11px;color:var(--text2);margin-left:6px">${v.mauVien ? (KIEU_VIEN[v.mauVien] ? KIEU_VIEN[v.mauVien] + ' · ' : '') : 'chưa chọn màu · '}${soTab} tab${(v.phienBanQuyen || 0) < PHIEN_BAN_QUYEN ? ' · <span style="color:#B45309">cây quyền cũ — mở Sửa, kiểm tra rồi Lưu</span>' : ''}</span>
         </div>
         <div style="display:flex;gap:6px">
           <button class="btn-xs" onclick="moFormSuaVaiTro('${v.id}')">Sửa</button>
@@ -25435,7 +25452,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v641</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v642</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25492,7 +25509,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v641</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v642</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25541,14 +25558,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v641</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v642</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v641</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v642</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
