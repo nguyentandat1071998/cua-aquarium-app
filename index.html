@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 646;
+  const APP_VERSION = 647;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -730,6 +730,7 @@ window.banHangChuaVaoCa = async function() {
   document.getElementById('banhang-cv-tabs').innerHTML = tabs.length > 1 ? tabs.map(([k, ten]) =>
     `<button id="bhcv-tab-${k}" onclick="bhCvChonTab('${k}')" style="flex:1;padding:8px 6px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;cursor:pointer;color:var(--text2)">${ten}</button>`).join('') : '';
   m.style.display = 'flex';
+  document.documentElement.classList.add('khoa-cuon');
   try { batDauTheoDoiSKU(); } catch(e) {}
   await bhCvChonTab(tabs[0][0]);
 };
@@ -753,10 +754,14 @@ window.bhCvChonTab = async function(tab) {
   if (tab === 'bh') await renderBanHang();
   else if (tab === 'dc-tao') await dcVaoTao();
   else if (tab === 'dc-ds') dcTaiDs();
+  // Danh sách phiếu cọc dài: cho cửa sổ cuộn bình thường; Bán hàng / Đặt cọc: khóa khung vừa màn hình
+  document.documentElement.classList.toggle('khoa-cuon', tab !== 'dc-ds');
+  requestAnimationFrame(bhVuaManHinh);
 };
 window.dongBanHangChuaVaoCa = function() {
   const m = document.getElementById('banhang-cv-modal');
   if (m) m.style.display = 'none';
+  document.documentElement.classList.remove('khoa-cuon');
   Object.values(BH_CV_KHUNG).forEach(([idKhung, idPanel]) => {
     const el = document.getElementById(idKhung), panel = document.getElementById(idPanel);
     if (el && panel && el.parentElement !== panel) panel.appendChild(el);
@@ -12026,11 +12031,27 @@ function bhVuaManHinh() {
   if (!k) return;
   const vh = window.visualViewport?.height || window.innerHeight;
   if (window.scrollY) window.scrollTo(0, 0);
+  const trongCuaSo = k.closest('#banhang-cv-modal');
+  if (trongCuaSo) trongCuaSo.scrollTop = 0;
   const tren = k.getBoundingClientRect().top;
-  const day = parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14;
+  // Trong cửa sổ "Bán hàng (chưa vào ca)": chừa phần đệm dưới của cửa sổ (12px khung + 16px nền)
+  const day = trongCuaSo ? 30 : (parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14);
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
 }
-window.addEventListener('resize', () => { if (activeModule === 'banhang' || (['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc'].includes(activeModule) && activeSubTab === 'tao')) bhVuaManHinh(); });
+const canVuaManHinh = () => document.documentElement.classList.contains('khoa-cuon');
+window.addEventListener('resize', () => { if (canVuaManHinh() || activeModule === 'banhang' || (['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc'].includes(activeModule) && activeSubTab === 'tao')) bhVuaManHinh(); });
+// iPhone: thanh địa chỉ co giãn / bàn phím bật lên chỉ đổi visualViewport, không bắn resize của window
+window.visualViewport?.addEventListener('resize', () => { if (canVuaManHinh()) requestAnimationFrame(bhVuaManHinh); });
+// iPhone bỏ qua overflow:hidden khi vuốt -> chặn vuốt ở chỗ không có gì để cuộn (danh sách hàng, thanh phiếu, hộp thoại... vẫn cuộn được)
+document.addEventListener('touchmove', (e) => {
+  if (!canVuaManHinh() || e.touches.length > 1) return;
+  for (let el = e.target; el && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+    const cs = getComputedStyle(el);
+    if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 1) return;
+    if (/(auto|scroll)/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1) return;
+  }
+  e.preventDefault();
+}, { passive: false });
 
 function veTabPhieu() {
   const el = document.getElementById('bh-tab-phieu');
@@ -25018,6 +25039,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
    khối thanh toán luôn dính đáy — nhân viên không phải cuộn để bấm hoàn thành. */
 .bh-khung{display:flex;flex-direction:column;height:calc(100vh - 190px);min-height:320px}
 html.khoa-cuon #screen-app{min-height:0}
+/* Khóa cuộn cả trang (iPhone Safari/Chrome vẫn cho vuốt nảy trang nếu chỉ dựa vào chiều cao) — chỉ danh sách hàng cuộn */
+html.khoa-cuon,html.khoa-cuon body{overflow:hidden;overscroll-behavior:none;height:100%}
 /* Phiếu nằm giữa thanh menu và ô tìm: trên 6px, dưới 6px */
 html.khoa-cuon .app-body{padding-top:6px}
 .bh-tab-phieu{display:flex;gap:6px;overflow-x:auto;padding:0;flex-shrink:0;-webkit-overflow-scrolling:touch}
@@ -25554,7 +25577,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v646</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v647</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25611,7 +25634,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v646</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v647</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25660,14 +25683,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v646</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v647</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v646</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v647</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
