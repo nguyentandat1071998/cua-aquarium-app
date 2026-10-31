@@ -2519,7 +2519,7 @@ async function renderHangHoaTab() {
         <option value="ton_giam">Tồn kho: nhiều → ít</option>
         <option value="ten">Tên A → Z</option>
         <option value="moi">Mới → cũ</option>
-        <option value="het_som">Sắp bán hết trước</option>
+        ${coQuyen('hh_canhbao') ? '<option value="het_som">Sắp bán hết trước</option>' : ''}
       </select>
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
       <select id="hh-so-trang" onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
@@ -14724,7 +14724,7 @@ function hhTheSku(s, trongNhom = false) {
     const cbT = hhCanhBao.get(s.id);
     const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
     // Cảnh báo tồn: luôn hiện dưới dòng tồn kho khi mã có đặt số ngày; tồn ≤ mức cảnh báo thì số tồn màu đỏ
-    const nCB = !s.laCombo ? Number(s.canhBaoSoNgay) || 0 : 0;
+    const nCB = !s.laCombo && coQuyen('hh_canhbao') ? Number(s.canhBaoSoNgay) || 0 : 0;
     const mucCB = cbT ? Math.ceil(cbT.tb * cbT.soNgay) : 0;
     const dongCanhBao = !nCB ? '' : !cbT ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:2px">Cảnh báo ${nCB} ngày: đang tính...</div>`
       : `<div style="font-size:12.5px;margin-bottom:2px;color:${cbT.canhBao ? '#DC2626' : 'var(--text2)'}">${cbT.canhBao ? '⚠️ ' : ''}Tồn <b style="color:${cbT.canhBao ? '#DC2626' : 'var(--text)'};font-size:14px">${cbT.ton}</b> / mức cảnh báo <b>${mucCB}</b>${cbT.tb ? ` · TB ${cbT.tb.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/ngày (${cbT.soNgay} ngày) · ~${cbT.conNgay} ngày bán hết` : ` · chưa bán trong ${cbT.soNgay} ngày qua`}</div>`;
@@ -14778,7 +14778,7 @@ function renderHangHoaList() {
   // Nút "⚠ N mã sắp hết" (đếm trên toàn bộ, không theo bộ lọc)
   const soCB = [...hhCanhBao.values()].filter(x => x.canhBao).length;
   const oCB = document.getElementById('hh-nut-canhbao');
-  if (oCB) oCB.innerHTML = soCB || hangHoaChiCanhBao ? `<button class="btn-xs" onclick="doiChiCanhBao()" style="background:${hangHoaChiCanhBao ? '#DC2626' : '#FEE2E2'};color:${hangHoaChiCanhBao ? '#fff' : '#DC2626'};font-weight:700">⚠ ${soCB} mã sắp hết${hangHoaChiCanhBao ? ' ✕' : ''}</button>` : '';
+  if (oCB) oCB.innerHTML = !coQuyen('hh_canhbao') ? '' : soCB || hangHoaChiCanhBao ? `<button class="btn-xs" onclick="doiChiCanhBao()" style="background:${hangHoaChiCanhBao ? '#DC2626' : '#FEE2E2'};color:${hangHoaChiCanhBao ? '#fff' : '#DC2626'};font-weight:700">⚠ ${soCB} mã sắp hết${hangHoaChiCanhBao ? ' ✕' : ''}</button>` : '';
   // Mỗi mục là 1 hàng lẻ hoặc 1 nhóm cùng loại (từ 2 mã trở lên); phân trang theo mục
   const demNhom = new Map();
   list.forEach(s => { if (s.nhomCL) demNhom.set(s.nhomCL, (demNhom.get(s.nhomCL) || 0) + 1); });
@@ -15471,7 +15471,7 @@ async function hhTinhCanhBaoTatCa(ep) {
   const ds = allSKUs.filter(s => !s.laCombo && !s.deleted && Number(s.canhBaoSoNgay) > 0);
   if (!ds.length) { hhCanhBao = new Map(); return; }
   if (hhCanhBaoDangTinh || (!ep && Date.now() - hhCanhBaoLuc < 30 * 60000)) return;
-  if (!coQuyen('hh_kho_ch') && !coQuyen('hh_kho_san') && currentUserData.role !== 'admin') return;
+  if (!coQuyen('hh_canhbao') || (!coQuyen('hh_kho_ch') && !coQuyen('hh_kho_san'))) return;   // không có quyền xem cảnh báo thì không tính (đỡ đọc thẻ kho)
   hhCanhBaoDangTinh = true;
   try {
     const maxN = Math.min(365, Math.max(...ds.map(s => Number(s.canhBaoSoNgay) || 0)));
@@ -16051,7 +16051,8 @@ const DANH_SACH_MODULE = [
     { key: 'hh_kho_ch', ten: 'Xem kho Cửa hàng (tồn, giá bán)' },
     { key: 'hh_kho_san', ten: 'Xem Kho Online (tồn, đang đặt)' },
     { key: 'hh_intem', ten: 'In tem giá' },
-    { key: 'hh_xuatfile', ten: 'Xuất file Excel' }
+    { key: 'hh_xuatfile', ten: 'Xuất file Excel' },
+    { key: 'hh_canhbao', ten: 'Xem cảnh báo tồn kho (sắp hết hàng)' }
   ]},
   // Chuyển kho: tick chiều nào thì chỉ chuyển được chiều đó (tick cả hai = chuyển cả hai chiều)
   { key: 'nhap', ten: 'Chuyển kho', con: [
@@ -16171,6 +16172,7 @@ function quyDoiQuyenCu(cu) {
     if (!coKho || co('hh_kho_san')) them('hh_kho_san');
   }
   if (co('hh_xuatfile')) them('hh_xuatfile');
+  if (co('hh_canhbao')) them('hh_canhbao');
   if (co('baocao')) them('baocao');
   if (co('quetdonggoi')) them('quetdonggoi');
   if (co('tmdt_donhang')) them('tmdt_donhang', 'tmdt_hoantra');
@@ -25054,7 +25056,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v623</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v624</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25108,7 +25110,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v623</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v624</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25154,7 +25156,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v623</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v624</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
