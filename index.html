@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 661;
+  const APP_VERSION = 662;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -19436,11 +19436,32 @@ function renderNhapPhotos() {
 // Ảnh gắn skuId để người xem (và máy chủ) đối chiếu từng mã với ảnh của nó.
 const XH_TOI_DA_ANH = 40;  // cả phiếu — mỗi ảnh lưu thành tài liệu riêng
 let xhAnhCho = [];         // ảnh vừa chụp, chưa chọn hàng
+// Loại hàng của phiếu: 'phukien' | 'song' (Cá, tép, cây, ốc). Chọn trước khi chụp; ô tìm hàng chỉ hiện đúng loại.
+let xhLoai = '';
+const XH_LOAI = { phukien: 'Phụ kiện', song: 'Cá, tép, cây, ốc' };
+const xhHopLoai = (sp) => !!sp && !sp.laCombo && !sp.deleted && (xhLoai === 'song' ? nhLaHangSong(sp) : xhLoai === 'phukien' ? !nhLaHangSong(sp) : false);
+function veXhLoai() {
+  const el = document.getElementById('xuat-loai-wrap');
+  if (!el) return;
+  el.innerHTML = `<select onchange="xhDoiLoai(this.value)" style="width:100%;padding:8px 10px;font-size:14px;font-weight:600;border:1.5px solid ${xhLoai ? 'var(--red)' : '#FCA5A5'};border-radius:8px;color:${xhLoai ? 'var(--red)' : 'var(--text2)'};background:#fff">
+    <option value="" ${xhLoai ? '' : 'selected'} disabled>— Chọn loại hàng hủy —</option>
+    ${Object.entries(XH_LOAI).map(([k, t]) => `<option value="${k}" ${k === xhLoai ? 'selected' : ''}>${t}</option>`).join('')}
+  </select>`;
+}
+window.xhDoiLoai = function(l) {
+  if (!XH_LOAI[l] || l === xhLoai) return;
+  const khac = currentPhieu.items.filter(i => !xhHopLoaiVoi(allSKUs.find(s => s.id === i.skuId), l));
+  if (khac.length) { showToast(`Phiếu đang có hàng ${XH_LOAI[xhLoai] || ''} — lưu phiếu hoặc bỏ các mã đó rồi đổi loại`, true); veXhLoai(); return; }
+  xhLoai = l;
+  veXuatHuyTao();
+};
+const xhHopLoaiVoi = (sp, l) => { const cu = xhLoai; xhLoai = l; const ok = xhHopLoai(sp); xhLoai = cu; return ok; };
 const xhAnhCua = (skuId) => currentPhieu.photos.filter(p => p.skuId === skuId);
 const xhTongAnh = () => currentPhieu.photos.length + xhAnhCho.length;
 
 window.xhChupAnh = function(skuId) {
   if (!xhKho) { showToast('Chọn kho trước', true); return; }
+  if (!xhLoai) { showToast('Chọn loại hàng hủy trước: Phụ kiện hoặc Cá, tép, cây, ốc', true); return; }
   if (xhTongAnh() >= XH_TOI_DA_ANH) { showToast(`Tối đa ${XH_TOI_DA_ANH} ảnh mỗi phiếu — lưu phiếu này rồi tạo phiếu mới`, true); return; }
   openCamera(skuId ? 'xuat:' + skuId : 'xuat');
 };
@@ -19455,6 +19476,7 @@ window.xhChonHang = function(skuId) {
   if (!sp) return;
   if (!xhAnhCho.length) { showToast('Chụp ảnh hàng cần hủy trước', true); return; }
   if (sp.laCombo) { showToast('Combo không xuất hủy trực tiếp — hủy từng món', true); return; }
+  if (!xhHopLoai(sp)) { showToast(`${sp.ten || sp.sku} không thuộc loại ${XH_LOAI[xhLoai] || '(chưa chọn)'}`, true); return; }
   if (!skuDuocXuatHuy(sp) && !coQuyen('xh_duyet')) showToast('Hàng ngoài danh mục hủy thẳng — phiếu sẽ chờ duyệt');
   if (!currentPhieu.items.some(i => i.skuId === skuId)) {
     const gia = Number(sp.gia) || 0;
@@ -19473,6 +19495,7 @@ window.xhXoaAnh = function(skuId, i) {
 };
 
 function veXuatHuyTao() {
+  veXhLoai();
   const el = document.getElementById('xh-than');
   if (!el) return;
   const items = currentPhieu.items;
@@ -19496,11 +19519,11 @@ function veXuatHuyTao() {
   if (!items.length && !xhAnhCho.length) {
     el.innerHTML = `
       <div style="height:100%;min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:12px">
-        <button onclick="xhChupAnh()" ${xhKho ? '' : 'disabled'}
+        <button onclick="xhChupAnh()" ${xhKho && xhLoai ? '' : 'disabled'}
           style="width:132px;height:132px;border-radius:50%;border:3px solid var(--red);background:#FEF2F2;color:var(--red);font-size:16px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px">
           <span style="font-size:38px;line-height:1">📷</span>Chụp ảnh</button>
-        <div style="font-size:13px;color:var(--text2);max-width:290px">Chụp ảnh hàng cần hủy trước, sau đó chọn hàng và số lượng.<br>Mỗi mã hàng phải có ảnh riêng.</div>
-        ${laAdmin && xhKho ? `<button class="btn-xs" onclick="chonAnhTuMay('xuat')">🖼 Chọn ảnh từ máy (Admin)</button>` : ''}
+        <div style="font-size:13px;color:var(--text2);max-width:290px">${xhLoai ? 'Chụp ảnh hàng cần hủy trước, sau đó chọn hàng và số lượng.<br>Mỗi mã hàng phải có ảnh riêng.' : '<b style="color:var(--red)">Chọn loại hàng hủy ở ô phía trên trước.</b>'}</div>
+        ${laAdmin && xhKho && xhLoai ? `<button class="btn-xs" onclick="chonAnhTuMay('xuat')">🖼 Chọn ảnh từ máy (Admin)</button>` : ''}
       </div>`;
     return;
   }
@@ -19548,7 +19571,7 @@ function veXuatHuyTao() {
     ${laAdmin ? `<button class="btn-xs" style="margin-top:6px" onclick="chonAnhTuMay('xuat')">🖼 Chọn ảnh từ máy (Admin)</button>` : ''}` : `<p class="info-note">Đã đủ ${XH_TOI_DA_ANH} ảnh — lưu phiếu này rồi tạo phiếu mới.</p>`);
 
   el.innerHTML = theHang + khoiCho;
-  if (xhAnhCho.length) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, false, s => !s.laCombo);
+  if (xhAnhCho.length) makeSKUSearch('xuat-item-ten', 'xuat-sku-drop', null, false, xhHopLoai);
 }
 
 window.removeXuatItem = function(i) {
@@ -19637,6 +19660,7 @@ window.openCamera = async function(mode) {
 // máy chủ chỉ nhận ảnh chọn từ máy khi người lưu là Admin.
 window.chonAnhTuMay = function(mode) {
   if (currentUserData?.role !== 'admin') { showToast('Chỉ chụp ảnh trực tiếp', true); return; }
+  if (mode.startsWith('xuat') && !xhLoai) { showToast('Chọn loại hàng hủy trước', true); return; }
   const input = document.getElementById('anh-chon-file');
   if (!input) return;
   input.dataset.mode = mode;
@@ -25288,7 +25312,7 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-  makeSKUSearch('nhap-item-ten','nhap-sku-drop',null);
+  makeSKUSearch('nhap-item-ten','nhap-sku-drop',null, false, s => !s.laCombo && !s.deleted);
 
   makeSKUSearch('baoca-item-ten','baoca-sku-drop','baoca-dummy-gia');
   makeSKUSearch('edit-item-ten','edit-sku-drop','edit-item-gia', () => editState.collection === 'phieu_huy');
@@ -25927,7 +25951,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v661</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v662</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25985,7 +26009,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v661</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v662</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26035,7 +26059,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v661</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v662</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26044,7 +26068,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v661</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v662</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
@@ -26149,6 +26173,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <!-- Giống Bán hàng: chụp ảnh trước (nút ở giữa), rồi mới chọn MỘT loại hàng + số lượng -->
         <div class="bh-khung" id="xh-khung">
           <div id="xuat-kho-wrap"></div>
+          <div id="xuat-loai-wrap" style="margin-top:6px"></div>
           <div class="bh-o-hang-trong" id="xh-than" style="margin-top:6px"></div>
           <div class="bh-day-duoi">
             <div class="bh-o-tt">
