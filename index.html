@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 659;
+  const APP_VERSION = 660;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -15360,6 +15360,7 @@ window.exportDanhSachHangHoaExcel = async function() {
     nhom_hang: [x.nhom1, x.nhom2, x.nhom3].filter(Boolean).join('>>'),
     dai_cm: x.kichThuoc?.dai || '', rong_cm: x.kichThuoc?.rong || '', cao_cm: x.kichThuoc?.cao || '', can_nang_gram: x.canNang || '',
     ban_truc_tiep: x.banTrucTiep === false ? 'Không' : 'Có',
+    ngung_nhap: x.ngungNhap ? 'Có' : '',
     nha_cung_cap: (x.nccIds || []).map(id => tenNcc.get(id)).filter(Boolean).join('; '),
     canh_bao_so_ngay: x.canhBaoSoNgay || '',
     thanh_phan_combo: x.laCombo ? (x.thanhPhanCombo || []).map(t => `${t.sku}:${t.tyLe}`).join(',') : '',
@@ -15402,7 +15403,7 @@ function hhTheSku(s, trongNhom = false) {
     const cbT = hhCanhBao.get(s.id);
     const canhBaoTon = het ? `<span style="color:var(--red);font-weight:600">⚠️ Hết hàng</span>` : '';
     // Cảnh báo tồn: luôn hiện dưới dòng tồn kho khi mã có đặt số ngày; tồn ≤ mức cảnh báo thì số tồn màu đỏ
-    const nCB = !s.laCombo && coQuyen('hh_canhbao') ? Number(s.canhBaoSoNgay) || 0 : 0;
+    const nCB = !s.laCombo && !s.ngungNhap && coQuyen('hh_canhbao') ? Number(s.canhBaoSoNgay) || 0 : 0;
     const mucCB = cbT ? Math.ceil(cbT.tb * cbT.soNgay) : 0;
     const dongCanhBao = !nCB ? '' : !cbT ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:2px">Cảnh báo ${nCB} ngày: đang tính...</div>`
       : `<div style="font-size:12.5px;margin-bottom:2px;color:${cbT.canhBao ? '#DC2626' : 'var(--text2)'}">${cbT.canhBao ? '⚠️ ' : ''}Tồn <b style="color:${cbT.canhBao ? '#DC2626' : 'var(--text)'};font-size:14px">${cbT.ton}</b> / mức cảnh báo <b>${mucCB}</b>${cbT.tb ? ` · TB ${cbT.tb.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/ngày (${cbT.soNgay} ngày) · ~${cbT.conNgay} ngày bán hết` : ` · chưa bán trong ${cbT.soNgay} ngày qua`}</div>`;
@@ -15413,7 +15414,7 @@ function hhTheSku(s, trongNhom = false) {
           ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
           : `<div style="width:64px;height:64px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3);text-align:center">Không ảnh</div>`}
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:${trongNhom ? 13.5 : 15}px;margin-bottom:2px">${escHtml(s.ten||'')}${s.banTrucTiep === false ? ' <span title="Không hiện ở Bán hàng" style="background:#F1F5F9;color:#64748B;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHÔNG BÁN TRỰC TIẾP</span>' : ''}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}${s.khoChung ? ' <span title="Hàng để ở quầy, bán cả online — tồn tính ở Kho Online" style="background:#CFFAFE;color:#0E7490;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHO CHUNG · Ở QUẦY</span>' : ''}</div>
+          <div style="font-weight:700;font-size:${trongNhom ? 13.5 : 15}px;margin-bottom:2px">${escHtml(s.ten||'')}${s.banTrucTiep === false ? ' <span title="Không hiện ở Bán hàng" style="background:#F1F5F9;color:#64748B;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHÔNG BÁN TRỰC TIẾP</span>' : ''}${s.ngungNhap ? ' <span title="Bán hết tồn rồi thôi, không nhập thêm" style="background:#FEF3C7;color:#92400E;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">NGỪNG NHẬP</span>' : ''}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}${s.khoChung ? ' <span title="Hàng để ở quầy, bán cả online — tồn tính ở Kho Online" style="background:#CFFAFE;color:#0E7490;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHO CHUNG · Ở QUẦY</span>' : ''}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? (s.laCombo ? `Vốn: ${giaVonDonVi(s) != null ? fmt(giaVonDonVi(s)) + 'đ' : '—'} <span style="font-size:11px">(cộng từ thành phần)</span>` : `Vốn: ${fmt(s.giaVon||0)}đ`) : '', hienCH ? (s.laCombo ? (() => { const md = giaMacDinhCombo(s.thanhPhanCombo), g = giaBanHang(s); return `Bán: ${fmt(g)}đ${Number(s.gia) > 0 && md > g ? ` <span style="font-size:11px">(lẻ ${fmt(md)}đ)</span>` : !(Number(s.gia) > 0) ? ' <span style="font-size:11px">(mặc định)</span>' : ''}`; })() : `Bán: ${fmt(s.gia||0)}đ`) : ''].filter(Boolean).join(' - ')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
@@ -15849,6 +15850,9 @@ async function moFormHangHoa(idSua, laComboMoi) {
         <label style="display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
           <input type="checkbox" id="${I('bantt')}" ${s?.banTrucTiep === false ? '' : 'checked'} style="width:19px;height:19px">
           <span style="font-size:13.5px"><b>Bán trực tiếp</b><br><span style="font-size:12px;color:var(--text2)">Bỏ tick thì mã không hiện ở Bán hàng / Đặt cọc (VD combo chỉ để liên kết sàn)</span></span></label>
+        ${!laCombo ? `<label style="display:flex;gap:10px;align-items:center;background:${s?.ngungNhap ? '#FEF3C7' : 'var(--bg)'};border:1px solid ${s?.ngungNhap ? '#FCD34D' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
+          <input type="checkbox" id="${I('ngungnhap')}" ${s?.ngungNhap ? 'checked' : ''} style="width:19px;height:19px">
+          <span style="font-size:13.5px"><b>Ngừng nhập</b><br><span style="font-size:12px;color:var(--text2)">Bán nốt tồn còn lại, hết thì thôi — không báo sắp hết hàng</span></span></label>` : ''}
         ${s && !laCombo && laAdmin ? `<label style="display:flex;gap:10px;align-items:flex-start;background:${s.khoChung ? '#ECFEFF' : 'var(--bg)'};border:1px solid ${s.khoChung ? '#67E8F9' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:10px;cursor:pointer">
           <input type="checkbox" ${s.khoChung ? 'checked' : ''} onchange="hhDoiKhoChung('${id}', this.checked, this)" style="width:19px;height:19px;margin-top:1px">
           <span style="font-size:13.5px"><b>Kho chung — hàng để ở quầy, bán cả online</b><br>
@@ -16242,7 +16246,7 @@ function veChuCanhBao(cb) {
   return `${cb.canhBao ? '⚠ ' : ''}TB ${cb.tb.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}/ngày (bán ${cb.soBan} trong ${cb.ngayCoHang} ngày còn hàng) · mức cảnh báo ${Math.ceil(cb.tb * cb.soNgay)} · còn ${cb.ton} → dự kiến bán hết sau ~${cb.conNgay} ngày`;
 }
 async function hhTinhCanhBaoTatCa(ep) {
-  const ds = allSKUs.filter(s => !s.laCombo && !s.deleted && Number(s.canhBaoSoNgay) > 0);
+  const ds = allSKUs.filter(s => !s.laCombo && !s.deleted && !s.ngungNhap && Number(s.canhBaoSoNgay) > 0);
   if (!ds.length) { hhCanhBao = new Map(); return; }
   if (hhCanhBaoDangTinh || (!ep && Date.now() - hhCanhBaoLuc < 30 * 60000)) return;
   if (!coQuyen('hh_canhbao') || (!coQuyen('hh_kho_ch') && !coQuyen('hh_kho_san'))) return;   // không có quyền xem cảnh báo thì không tính (đỡ đọc thẻ kho)
@@ -16505,6 +16509,7 @@ window.luuHangHoa = async function(laComboParam) {
     thuongHieu: String(V('thuonghieu')?.value || '').trim(),
     nccIds: [...hhFormNcc],
     canhBaoSoNgay: laCombo ? 0 : Math.max(0, Math.min(365, parseInt(V('canhbao')?.value) || 0)),
+    ngungNhap: !laCombo && !!V('ngungnhap')?.checked,
     createdAt: serverTimestamp(),
     createdBy: { uid: currentUser.uid, ten: currentUserData.ten }
   });
@@ -16572,6 +16577,7 @@ window.luuSuaHangHoa = async function(id) {
   const s = allSKUs.find(x => x.id === id);
   const laCombo = document.getElementById(`hhs-la-combo-${id}`)?.value === '1';
   if (!laCombo) updateData.canhBaoSoNgay = Math.max(0, Math.min(365, parseInt(document.getElementById(`hhs-canhbao-${id}`)?.value) || 0));
+  if (!laCombo && document.getElementById(`hhs-ngungnhap-${id}`)) updateData.ngungNhap = !!document.getElementById(`hhs-ngungnhap-${id}`).checked;
   if (laCombo && !comboThanhPhan.length) { showToast('Combo cần ít nhất 1 thành phần', true); return; }
   // Tồn kho: so với số lúc mở form, chỉ ghi phần chênh lệch (cộng/trừ) và ghi thẻ kho —
   // trong lúc sửa có ai bán thì số đó không bị đè mất
@@ -25919,7 +25925,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v659</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v660</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25977,7 +25983,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v659</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v660</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26026,7 +26032,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v659</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v660</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26034,7 +26040,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v659</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v660</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
