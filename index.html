@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 651;
+  const APP_VERSION = 652;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2426,7 +2426,13 @@ window.doLogin = async function() {
   if (!email || !pass) { err.textContent = 'Vui lòng nhập đầy đủ.'; return; }
   btn.disabled = true; btn.textContent = 'Đang đăng nhập...'; err.textContent = '';
   try { window._nkVuaDangNhap = true; await signInWithEmailAndPassword(auth, email, pass); }
-  catch(e) { err.textContent = 'Email hoặc mật khẩu không đúng.'; btn.disabled = false; btn.textContent = 'Đăng nhập'; }
+  catch(e) {
+    // Firebase tự khóa tạm khi sai nhiều lần liên tiếp (chặn dò mật khẩu ngay ở máy chủ) -> báo rõ để khỏi thử tiếp
+    err.textContent = e?.code === 'auth/too-many-requests' ? 'Đăng nhập sai quá nhiều lần — tài khoản tạm bị khóa. Đợi vài phút rồi thử lại, hoặc nhờ quản lý cấp lại mật khẩu.'
+      : e?.code === 'auth/network-request-failed' ? 'Mất kết nối mạng — kiểm tra wifi / 4G rồi thử lại.'
+      : 'Email hoặc mật khẩu không đúng.';
+    btn.disabled = false; btn.textContent = 'Đăng nhập';
+  }
 };
 
 window.doLogout = async function() {
@@ -25725,7 +25731,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v651</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v652</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25782,7 +25788,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v651</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v652</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25831,14 +25837,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v651</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v652</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v651</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v652</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
@@ -26548,5 +26554,49 @@ observer.observe(document.getElementById('user-name') || document.body, { childL
 setTimeout(pushDummyState, 500);
 </script>
 
+<script>
+// ===== NÚT HIỆN / ẨN MẬT KHẨU =====
+// Gắn tự động cho mọi ô mật khẩu (cả ô vẽ sau như form nhân viên, kết nối) — bấm con mắt để xem chữ đang gõ
+(function () {
+  const MAT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const NHAM = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19"/><path d="M1 1l22 22"/></svg>';
+  function gan(o) {
+    if (o.dataset.coMat) return;
+    o.dataset.coMat = '1';
+    const cs = getComputedStyle(o);
+    const bao = document.createElement('span');
+    bao.style.cssText = 'position:relative;display:block';
+    // Ô đang nằm trong hàng ngang (flex) thì khung bọc giữ đúng chỗ của ô
+    if (o.style.flex) bao.style.flex = o.style.flex;
+    if (o.style.minWidth) bao.style.minWidth = o.style.minWidth;
+    bao.style.marginBottom = cs.marginBottom;
+    o.parentNode.insertBefore(bao, o);
+    bao.appendChild(o);
+    o.style.marginBottom = '0';
+    o.style.paddingRight = '42px';
+    if (o.style.flex) { o.style.flex = ''; o.style.width = '100%'; }
+    const n = document.createElement('button');
+    n.type = 'button'; n.tabIndex = -1; n.setAttribute('aria-label', 'Hiện mật khẩu'); n.innerHTML = MAT;
+    n.style.cssText = 'position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;padding:6px;margin:0;cursor:pointer;color:#6B7280;line-height:0;width:auto;box-shadow:none';
+    n.addEventListener('mousedown', e => e.preventDefault());   // giữ con trỏ trong ô
+    n.addEventListener('click', () => {
+      const hien = o.type === 'password';
+      o.type = hien ? 'text' : 'password';
+      n.innerHTML = hien ? NHAM : MAT;
+      n.setAttribute('aria-label', hien ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+    });
+    bao.appendChild(n);
+  }
+  const quet = (goc) => (goc.querySelectorAll ? goc.querySelectorAll('input[type="password"]') : []).forEach(gan);
+  function batDau() {
+    quet(document);
+    new MutationObserver(ds => ds.forEach(m => m.addedNodes.forEach(nd => {
+      if (nd.nodeType !== 1) return;
+      if (nd.matches?.('input[type="password"]')) gan(nd); else quet(nd);
+    }))).observe(document.body, { childList: true, subtree: true });
+  }
+  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', batDau) : batDau();
+})();
+</script>
 </body>
 </html>
