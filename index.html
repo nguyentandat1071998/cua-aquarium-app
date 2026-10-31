@@ -2060,8 +2060,10 @@ onAuthStateChanged(auth, async (user) => {
           }
         });
 
-        // Admin tự vào app luôn, nhân viên phải check-in
-        if (currentUserData.role === 'admin') {
+        // Admin tự vào app luôn; vai trò có quyền "Không cần check-in / check-out" cũng vào thẳng; còn lại phải check-in
+        let khongCanCheckin = false;
+        if (currentUserData.role !== 'admin') { try { khongCanCheckin = !!(await tinhQuyenModuleHienTai())?.cc_khongcheckin; } catch(e) {} }
+        if (currentUserData.role === 'admin' || khongCanCheckin) {
           showApp();
         } else {
           const daResume = await tryResumeShift();
@@ -2177,6 +2179,9 @@ function showApp() {
 
   batDauTheoDoiSKU();
   moModuleMacDinhTheoQuyen();
+  // Không cần check-in / check-out và đang không có ca: ẩn nút Thoát ca
+  const nutThoat = document.getElementById('nut-thoat-ca');
+  if (nutThoat) nutThoat.style.display = (!currentShiftDocId && (currentUserData.role === 'admin' || coQuyen('cc_khongcheckin'))) ? 'none' : '';
 }
 
 function roleLabel(r) {
@@ -16203,7 +16208,8 @@ const DANH_SACH_MODULE = [
   ]},
   { key: 'chamcong', ten: 'Chấm công', con: [
     { key: 'cc_xemtatca', ten: 'Xem chấm công mọi người (không tick: chỉ của mình)' },
-    { key: 'cc_xemanh', ten: 'Xem ảnh quét QR vào / ra ca' }
+    { key: 'cc_xemanh', ten: 'Xem ảnh quét QR vào / ra ca' },
+    { key: 'cc_khongcheckin', ten: 'Không cần check-in / check-out (vào thẳng app, không quét QR)' }
   ]},
   { key: 'luong', ten: 'Bảng lương', con: [
     { key: 'luong_xemtatca', ten: 'Xem lương mọi người (không tick: chỉ của mình)' },
@@ -16279,6 +16285,7 @@ function quyDoiQuyenCu(cu) {
   if (co('hh_canhbao')) them('hh_canhbao');
   if (co('hh_kichthuoc')) them('hh_kichthuoc');
   if (co('cc_xemanh')) them('cc_xemanh');
+  if (co('cc_khongcheckin')) them('cc_khongcheckin');
   if (co('baocao')) them('baocao');
   if (co('quetdonggoi')) them('quetdonggoi');
   if (co('tmdt_donhang')) them('tmdt_donhang', 'tmdt_hoantra');
@@ -25164,7 +25171,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v633</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v634</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25221,7 +25228,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v633</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v634</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25267,7 +25274,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v633</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v634</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -25499,7 +25506,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
               <div id="cl-ca-label" style="font-size:14px;font-weight:600;color:#7C3AED"></div>
               <div id="cl-ngay-label" style="font-size:12px;color:var(--text2)"></div>
             </div>
-            <button onclick="thoatCa()" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">Thoát ca</button>
+            <button id="nut-thoat-ca" onclick="thoatCa()" style="background:var(--red-bg);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer">Thoát ca</button>
           </div>
           <div id="cl-nhac-tat" style="margin-top:10px;padding:8px 10px;background:#FEF3C7;border-radius:6px;font-size:12px;color:#B45309;font-weight:500;display:none">
             TẮT ĐÈN, QUẠT, MÁY LẠNH TRƯỚC KHI VỀ !!!
