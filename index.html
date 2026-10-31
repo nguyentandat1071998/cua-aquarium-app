@@ -14203,6 +14203,34 @@ window.htNhapHDQuay = async function() {
 };
 
 
+// Thẻ kho nhập từ KiotViet: ghi tên nhân viên KiotViet đã làm chứng từ (hóa đơn = người bán)
+async function htDienTenKV(baoTien) {
+  const sn = await getDocs(query(collection(db, 'the_kho'), where('nguon', '==', 'kiotviet')));
+  const nhom = new Map();
+  sn.docs.forEach(d => { const x = d.data(); if (x.kvNguoi) return;
+    const p = d.id.split('_'); const k = p[1] + '_' + p[2];
+    if (!nhom.has(k)) nhom.set(k, { type: Number(p[1]), id: p[2], ma: x.maChungTu || '', ids: [] });
+    nhom.get(k).ids.push(d.id); });
+  const hdSn = await getDocs(query(collection(db, 'don_ban_le'), where('nguon', '==', 'kiotviet')));
+  const nguoiHD = new Map(hdSn.docs.map(d => [d.data().maDon, d.data().nguoiBan?.ten || '']));
+  const sua = [], hoi = [];
+  for (const g of nhom.values()) {
+    const t = g.type === 1 ? nguoiHD.get(g.ma) : '';
+    if (t) sua.push({ ids: g.ids, ten: t }); else hoi.push(g);
+  }
+  let ghi = 0; const loi = [];
+  for (let i = 0; i < sua.length; i += 60) {
+    baoTien?.(`Điền tên hóa đơn ${i}/${sua.length}...`);
+    const r = await htGoiKV('kv-nguoi-tao', { sua: sua.slice(i, i + 60) });
+    if (r.success) ghi += r.ghi; else loi.push(r.error);
+  }
+  for (let i = 0; i < hoi.length; i += 15) {
+    baoTien?.(`Tra người làm chứng từ ${i}/${hoi.length}...`);
+    const r = await htGoiKV('kv-nguoi-tao', { hoi: hoi.slice(i, i + 15).map(g => ({ type: g.type, id: g.id, ids: g.ids })) });
+    if (r.success) { ghi += r.ghi; loi.push(...(r.loi || [])); } else loi.push(r.error);
+  }
+  return { ghi, loi };
+}
 window.htNhapTheKhoKV = async function() {
   const kq = document.getElementById('ht-tk-kq'); const ghi = (t) => { if (kq) kq.innerHTML = t; };
   const tuNgay = document.getElementById('ht-tk-tu')?.value, denNgay = document.getElementById('ht-tk-den')?.value;
@@ -14225,7 +14253,10 @@ window.htNhapTheKhoKV = async function() {
       if (!r.success) { loi.push(`Lô ${i}: ${r.error}`); continue; }
       soDong += r.soDong; loi.push(...(r.loi || []));
     }
-    ghi(`<b style="color:var(--green)">Đã kéo ${soDong} dòng thẻ kho cho ${ds.length} mã (${tuNgay} → ${denNgay}).</b>`
+    ghi(`Đã kéo ${soDong} dòng. Đang điền tên nhân viên...`);
+    const ten = await htDienTenKV((t) => ghi(`Đã kéo ${soDong} dòng. ${t}`));
+    ghi(`<b style="color:var(--green)">Đã kéo ${soDong} dòng thẻ kho cho ${ds.length} mã (${tuNgay} → ${denNgay}).</b> Điền tên nhân viên cho ${ten.ghi} dòng.`
+      + (ten.loi.length ? `<br><span style="color:#D97706">Không rõ người làm ${ten.loi.length} chứng từ: ${escHtml(ten.loi.slice(0, 6).join(', '))}</span>` : '')
       + (loi.length ? `<br><span style="color:var(--red)">${loi.length} lỗi: ${escHtml(loi.slice(0, 8).join(' · '))} — bấm lại để kéo bù (không trùng dòng).</span>` : ''));
   } catch(e) { ghi(`<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`); }
 };
@@ -25027,7 +25058,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v621</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v622</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25081,7 +25112,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v621</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v622</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25127,7 +25158,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v621</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v622</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
