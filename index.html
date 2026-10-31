@@ -10,7 +10,7 @@
 // - Đang dùng (kiểm tra mỗi 5 phút): nếu đang nhập dở / đang quét QR thì hiện thanh báo,
 //   đợi rảnh tay mới tự tải lại. Giỏ bán hàng đã tự lưu nên tải lại không mất.
 (function () {
-  const APP_VERSION = 636;
+  const APP_VERSION = 637;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let lanNhapCuoi = 0, anLuc = 0, dangTai = false, banMoi = 0;
@@ -692,36 +692,65 @@ function locQuyenChuaVaoCa(q) {
   if (!cheDoChuaVaoCa || currentUserData?.role === 'admin' || !q) return q;
   return Object.fromEntries(Object.entries(q).filter(([k]) => KHOA_CHUA_VAO_CA.test(k)));
 }
+// Các khung mượn từ app: [id khung, id panel gốc để trả về]
+const BH_CV_KHUNG = { bh: ['banhang-content', 'panel-banhang-main'], 'dc-tao': ['dc-tao', 'panel-datcoc-tao'], 'dc-ds': ['datcoc-ds-list', 'panel-datcoc-ds'] };
+let bhCvTab = null;   // tab đang mở trong cửa sổ bán hàng chưa vào ca (null = cửa sổ đóng)
 window.banHangChuaVaoCa = async function() {
   cheDoChuaVaoCa = true;
   try { await tinhQuyenModuleHienTai(); } catch(e) {}
-  if (!quyenModuleHienTai?.banhang) { cheDoChuaVaoCa = false; showToast('Tài khoản chưa được cấp quyền Bán hàng', true); return; }
+  if (!quyenModuleHienTai?.banhang && !quyenModuleHienTai?.datcoc) { cheDoChuaVaoCa = false; showToast('Tài khoản chưa được cấp quyền Bán hàng', true); return; }
   apDungHienThiModule(quyenModuleHienTai);
-  // Cửa sổ nổi trên màn hình Vào ca (giống "Xem lịch làm việc"): mượn khung Bán hàng của app đặt vào đây, đóng thì trả về
+  // Cửa sổ nổi trên màn hình Vào ca (giống "Xem lịch làm việc"): mượn khung Bán hàng / Đặt cọc của app đặt vào đây, đóng thì trả về
   let m = document.getElementById('banhang-cv-modal');
   if (!m) {
     m = document.createElement('div'); m.id = 'banhang-cv-modal';
     m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:950;align-items:flex-start;justify-content:center;padding:1rem;overflow-y:auto';
     m.innerHTML = `<div style="background:var(--surface);border-radius:var(--radius);padding:12px;width:100%;max-width:560px;margin-top:1rem">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <h3 style="font-size:15px;font-weight:600">Bán hàng <span style="font-size:12px;font-weight:500;color:#B45309">· chưa vào ca</span></h3>
+        <h3 style="font-size:15px;font-weight:600"><span id="banhang-cv-tieude">Bán hàng</span> <span style="font-size:12px;font-weight:500;color:#B45309">· chưa vào ca</span></h3>
         <button onclick="dongBanHangChuaVaoCa()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1">✕</button>
       </div>
+      <div id="banhang-cv-tabs" style="display:flex;gap:6px;margin-bottom:8px"></div>
       <div id="banhang-cv-than"></div></div>`;
     document.body.appendChild(m);
   }
-  const noiDung = document.getElementById('banhang-content');
-  if (noiDung) document.getElementById('banhang-cv-than').appendChild(noiDung);
+  const q = quyenModuleHienTai || {};
+  const tabs = [q.banhang && ['bh', 'Bán hàng'], q.datcoc && ['dc-tao', 'Đặt cọc'], q.datcoc && ['dc-ds', 'Phiếu cọc']].filter(Boolean);
+  document.getElementById('banhang-cv-tabs').innerHTML = tabs.length > 1 ? tabs.map(([k, ten]) =>
+    `<button id="bhcv-tab-${k}" onclick="bhCvChonTab('${k}')" style="flex:1;padding:8px 6px;border-radius:8px;border:1.5px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;cursor:pointer;color:var(--text2)">${ten}</button>`).join('') : '';
   m.style.display = 'flex';
   try { batDauTheoDoiSKU(); } catch(e) {}
-  await renderBanHang();
+  await bhCvChonTab(tabs[0][0]);
+};
+window.bhCvChonTab = async function(tab) {
+  const than = document.getElementById('banhang-cv-than');
+  if (!than) return;
+  // Trả khung đang mượn về chỗ cũ, mượn khung của tab mới
+  Object.entries(BH_CV_KHUNG).forEach(([k, [idKhung, idPanel]]) => {
+    const el = document.getElementById(idKhung), panel = document.getElementById(idPanel);
+    if (!el) return;
+    if (k === tab) { if (el.parentElement !== than) than.appendChild(el); }
+    else if (panel && el.parentElement !== panel) panel.appendChild(el);
+  });
+  bhCvTab = tab;
+  document.querySelectorAll('#banhang-cv-tabs button').forEach(b => {
+    const on = b.id === 'bhcv-tab-' + tab, mau = tab === 'bh' ? 'var(--green)' : '#0E7490';
+    b.style.borderColor = on ? mau : 'var(--border)'; b.style.color = on ? mau : 'var(--text2)'; b.style.background = on ? (tab === 'bh' ? '#F0FDF4' : '#ECFEFF') : 'var(--surface)';
+  });
+  const tieuDe = document.getElementById('banhang-cv-tieude');
+  if (tieuDe) tieuDe.textContent = tab === 'bh' ? 'Bán hàng' : tab === 'dc-tao' ? 'Đặt cọc' : 'Phiếu cọc';
+  if (tab === 'bh') await renderBanHang();
+  else if (tab === 'dc-tao') await dcVaoTao();
+  else if (tab === 'dc-ds') dcTaiDs();
 };
 window.dongBanHangChuaVaoCa = function() {
   const m = document.getElementById('banhang-cv-modal');
   if (m) m.style.display = 'none';
-  const noiDung = document.getElementById('banhang-content');
-  const panel = document.getElementById('panel-banhang-main');
-  if (noiDung && panel && noiDung.parentElement !== panel) panel.appendChild(noiDung);
+  Object.values(BH_CV_KHUNG).forEach(([idKhung, idPanel]) => {
+    const el = document.getElementById(idKhung), panel = document.getElementById(idPanel);
+    if (el && panel && el.parentElement !== panel) panel.appendChild(el);
+  });
+  bhCvTab = null;
   if (cheDoChuaVaoCa) { cheDoChuaVaoCa = false; apDungQuyenNgayLapTuc(); }   // trả lại đủ quyền theo vai trò
 };
 
@@ -2569,6 +2598,7 @@ window.switchModule = function(mod) {
 // Nhập hàng: ai vào được Nhập hàng thì xem được danh sách (máy chủ chỉ trả phiếu kho mình được nhập)
 function coQuyenDsPhieu(mod) { return mod === 'baoca' || (mod === 'xuat' && coQuyen('xh_duyet')) || ((mod === 'nhaphang' || mod === 'dathang' || mod === 'dungnb' || mod === 'datcoc') ? coQuyen(mod) : coQuyen(mod + '_xemds')); }
 window.switchSub = function(sub) {
+  if (bhCvTab && bhCvTab.startsWith('dc') && (sub === 'tao' || sub === 'ds')) { bhCvChonTab(sub === 'tao' ? 'dc-tao' : 'dc-ds'); return; }
   if (sub === 'thongke' && activeModule !== 'baoca') sub = 'tao';
   if (sub === 'ds' && !coQuyenDsPhieu(activeModule)) {
     showToast('Bạn không có quyền xem danh sách phiếu', true);
@@ -13446,7 +13476,7 @@ function dcTaiDs() {
   el.innerHTML = '<div class="loading">Đang tải...</div>';
   dcHuySnap = onSnapshot(query(collection(db, 'phieu_dat_coc'), orderBy('taoLuc', 'desc'), limit(300)), (snap) => {
     dcDs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (activeModule === 'datcoc') dcVeDs();
+    if (activeModule === 'datcoc' || bhCvTab === 'dc-ds') dcVeDs();
   }, (e) => { dcHuySnap = null; el.innerHTML = `<p class="info-note" style="color:var(--red)">Không tải được: ${escHtml(e.message)}</p>`; });
 }
 function dcVeDs() {
@@ -25301,7 +25331,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v636</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v637</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25358,7 +25388,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v636</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v637</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25404,7 +25434,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v636</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v637</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
