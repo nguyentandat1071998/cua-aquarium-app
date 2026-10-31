@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 662;
+  const APP_VERSION = 663;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -19440,16 +19440,54 @@ let xhAnhCho = [];         // ảnh vừa chụp, chưa chọn hàng
 let xhLoai = '';
 const XH_LOAI = { phukien: 'Phụ kiện', song: 'Cá, tép, cây, ốc' };
 const xhHopLoai = (sp) => !!sp && !sp.laCombo && !sp.deleted && (xhLoai === 'song' ? nhLaHangSong(sp) : xhLoai === 'phukien' ? !nhLaHangSong(sp) : false);
+const XH_LOAI_MO_TA = {
+  phukien: { icon: '🧰', phu: 'Thiết bị, thức ăn, thuốc, hàng khô…' },
+  song: { icon: '🐠', phu: 'Cá cảnh, tép, cây thủy sinh, ốc' }
+};
 function veXhLoai() {
   const el = document.getElementById('xuat-loai-wrap');
   if (!el) return;
-  el.innerHTML = `<select onchange="xhDoiLoai(this.value)" style="width:100%;padding:8px 10px;font-size:14px;font-weight:600;border:1.5px solid ${xhLoai ? 'var(--red)' : '#FCA5A5'};border-radius:8px;color:${xhLoai ? 'var(--red)' : 'var(--text2)'};background:#fff">
-    <option value="" ${xhLoai ? '' : 'selected'} disabled>— Chọn loại hàng hủy —</option>
-    ${Object.entries(XH_LOAI).map(([k, t]) => `<option value="${k}" ${k === xhLoai ? 'selected' : ''}>${t}</option>`).join('')}
-  </select>`;
+  const mo = el.dataset.mo === '1';
+  const m = XH_LOAI_MO_TA[xhLoai];
+  const chevron = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .15s;${mo ? 'transform:rotate(180deg)' : ''}"><path d="M6 9l6 6 6-6"/></svg>`;
+  el.style.position = 'relative';
+  el.innerHTML = `
+    <button type="button" onclick="event.stopPropagation();xhMoLoai()" style="width:100%;display:flex;align-items:center;gap:10px;padding:7px 12px;margin:0;border-radius:8px;cursor:pointer;text-align:left;
+      background:${xhLoai ? '#fff' : '#FEF2F2'};border:1.5px ${xhLoai ? 'solid var(--border)' : 'dashed var(--red)'};color:var(--text);${mo ? 'border-color:var(--red);box-shadow:0 0 0 3px rgba(220,38,38,.12)' : ''}">
+      <span style="width:30px;height:30px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;background:${xhLoai ? '#FEE2E2' : '#fff'}">${m ? m.icon : '🏷️'}</span>
+      <span style="flex:1;min-width:0;line-height:1.25">
+        <span style="display:block;font-size:11px;color:var(--text2);font-weight:500">Loại hàng hủy</span>
+        <span style="display:block;font-size:14px;font-weight:700;color:${xhLoai ? 'var(--text)' : 'var(--red)'}">${xhLoai ? XH_LOAI[xhLoai] : 'Bấm để chọn loại hàng'}</span>
+      </span>
+      <span style="color:var(--text2);display:flex">${chevron}</span>
+    </button>
+    ${mo ? `<div style="position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.16);padding:4px;overflow:hidden">
+      ${Object.entries(XH_LOAI).map(([k, t]) => { const d = XH_LOAI_MO_TA[k], chon = k === xhLoai; return `
+      <button type="button" onclick="event.stopPropagation();xhDoiLoai('${k}')" style="width:100%;display:flex;align-items:center;gap:10px;padding:9px 10px;margin:0;border:none;border-radius:7px;cursor:pointer;text-align:left;background:${chon ? '#FEF2F2' : 'transparent'}"
+        onmouseover="this.style.background='${chon ? '#FEE2E2' : 'var(--bg)'}'" onmouseout="this.style.background='${chon ? '#FEF2F2' : 'transparent'}'">
+        <span style="width:34px;height:34px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;background:${chon ? '#FEE2E2' : 'var(--bg)'}">${d.icon}</span>
+        <span style="flex:1;min-width:0;line-height:1.3">
+          <span style="display:block;font-size:14px;font-weight:700;color:${chon ? 'var(--red)' : 'var(--text)'}">${t}</span>
+          <span style="display:block;font-size:12px;color:var(--text2)">${d.phu}</span>
+        </span>
+        ${chon ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 12l5 5L20 7"/></svg>' : ''}
+      </button>`; }).join('')}
+    </div>` : ''}`;
 }
+window.xhMoLoai = function(dong) {
+  const el = document.getElementById('xuat-loai-wrap');
+  if (!el) return;
+  el.dataset.mo = dong || el.dataset.mo === '1' ? '0' : '1';
+  veXhLoai();
+};
+document.addEventListener('click', e => {
+  const el = document.getElementById('xuat-loai-wrap');
+  if (el?.dataset.mo === '1' && !el.contains(e.target)) xhMoLoai(true);
+});
 window.xhDoiLoai = function(l) {
-  if (!XH_LOAI[l] || l === xhLoai) return;
+  const wrap = document.getElementById('xuat-loai-wrap');
+  if (wrap) wrap.dataset.mo = '0';
+  if (!XH_LOAI[l] || l === xhLoai) { veXhLoai(); return; }
   const khac = currentPhieu.items.filter(i => !xhHopLoaiVoi(allSKUs.find(s => s.id === i.skuId), l));
   if (khac.length) { showToast(`Phiếu đang có hàng ${XH_LOAI[xhLoai] || ''} — lưu phiếu hoặc bỏ các mã đó rồi đổi loại`, true); veXhLoai(); return; }
   xhLoai = l;
@@ -25951,7 +25989,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v662</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v663</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26009,7 +26047,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v662</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v663</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26059,7 +26097,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v662</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v663</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26068,7 +26106,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v662</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v663</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
