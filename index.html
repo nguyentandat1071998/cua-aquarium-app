@@ -3,18 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <script>
-// ===== CHẶN PHIÊN BẢN CŨ =====
+// ===== CẬP NHẬT PHIÊN BẢN MỚI =====
 // App cài trên điện thoại giữ trang cũ trong bộ nhớ nhiều ngày; CDN cũng có thể trả bản cũ.
 // version.json (deploy cùng index.html) cho biết bản mới nhất. Lấy kèm ?t= để vượt mọi lớp cache.
-// - Mở app / quay lại app: thấy bản mới -> che màn hình "Đang cập nhật" rồi tải lại ngay.
-// - Đang dùng (kiểm tra mỗi 5 phút): nếu đang nhập dở / đang quét QR thì hiện thanh báo,
-//   đợi rảnh tay mới tự tải lại. Giỏ bán hàng đã tự lưu nên tải lại không mất.
+// - Đang đăng nhập: KHÔNG tự tải lại — hiện thanh "Cần cập nhật" + nút "Cập nhật ngay".
+// - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
+// - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 637;
+  const APP_VERSION = 638;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
-  let lanNhapCuoi = 0, anLuc = 0, dangTai = false, banMoi = 0;
-  ['input', 'keydown', 'change'].forEach(ev => document.addEventListener(ev, () => { lanNhapCuoi = Date.now(); }, true));
+  let dangTai = false, banMoi = 0;
 
   function ss(k, v) { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) { return null; } }
 
@@ -54,72 +53,67 @@
     setTimeout(() => location.replace(u.toString()), 300);
   }
 
-  function dangBan() {
-    if (Date.now() - lanNhapCuoi < 90000) return true;                       // vừa gõ / nhập dở
-    if ([...document.querySelectorAll('video')].some(v => v.srcObject && !v.paused)) return true; // đang mở camera quét QR
-    return false;
-  }
-
   function thanhBao(v) {
     khiCoBody(() => {
-      if (document.getElementById('cua-ver-thanh')) return;
-      const b = document.createElement('div');
-      b.id = 'cua-ver-thanh';
-      b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99998;background:#1B7A3E;color:#fff;font:600 13px system-ui,sans-serif;padding:8px 12px;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,.2)';
-      b.innerHTML = '<span>Có phiên bản mới v' + v + ' — app sẽ tự cập nhật khi bạn xong thao tác</span>';
-      const n = document.createElement('button');
-      n.textContent = 'Cập nhật ngay';
-      n.style.cssText = 'background:#fff;color:#1B7A3E;border:none;border-radius:6px;padding:5px 10px;font-weight:700;cursor:pointer';
-      n.onclick = () => taiLai(v);
-      b.appendChild(n);
-      document.body.appendChild(b);
+      let b = document.getElementById('cua-ver-thanh');
+      if (!b) {
+        b = document.createElement('div');
+        b.id = 'cua-ver-thanh';
+        b.style.cssText = 'position:fixed;left:0;right:0;top:0;height:36px;box-sizing:border-box;z-index:99998;background:#B45309;color:#fff;font:600 13px system-ui,sans-serif;padding:0 10px;display:flex;align-items:center;justify-content:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+        b.innerHTML = '<span>⚠ Cần cập nhật phiên bản mới <b id="cua-ver-so"></b></span>';
+        const n = document.createElement('button');
+        n.textContent = 'Cập nhật ngay';
+        n.style.cssText = 'background:#fff;color:#B45309;border:none;border-radius:6px;padding:5px 10px;font-weight:700;cursor:pointer;white-space:nowrap';
+        n.onclick = () => taiLai(banMoi);
+        b.appendChild(n);
+        document.body.appendChild(b);
+        document.documentElement.classList.add('co-ban-moi');
+      }
+      document.getElementById('cua-ver-so').textContent = 'v' + v;
     });
   }
 
-  // Bắt buộc = vừa mở app hoặc quay lại sau khi rời app
-  async function kiemTra(batBuoc) {
+  async function kiemTra() {
     if (dangTai) return;
     const v = await layBanMoiNhat();
     if (v <= APP_VERSION) {
-      ss(KHOA, null);
+      ss(KHOA, null); ss('cua_ver_thu', null);
       const c = document.getElementById('cua-ver-che'); if (c) c.remove();
       return;
     }
     banMoi = v;
     // Vừa tải lại để lên bản v mà vẫn nhận bản cũ (máy chủ chưa phát xong) -> thử lại vài lần
-    const daThu = Number(ss('cua_ver_thu') || 0);
-    if (Number(ss(KHOA)) >= v && daThu >= 4) { thanhBao(v); return; }
     if (Number(ss(KHOA)) >= v) {
+      const daThu = Number(ss('cua_ver_thu') || 0);
+      if (daThu >= 4) { ss(KHOA, null); ss('cua_ver_thu', null); thanhBao(v); return; }
       ss('cua_ver_thu', String(daThu + 1));
+      dangTai = true;
       che('Máy chủ đang phát bản v' + v + ', thử lại sau ít giây…');
       setTimeout(() => { dangTai = false; taiLai(v); }, 15000);
-      dangTai = true;
       return;
     }
-    ss('cua_ver_thu', null);
-    if (batBuoc || !dangBan()) taiLai(v); else thanhBao(v);
+    if (window.__dangNhap === false) taiLai(v);   // đang ở màn đăng nhập: không mất gì, cập nhật luôn
+    else thanhBao(v);
   }
 
-  // Lên đúng bản rồi -> xóa dấu vết thử lại
+  // App gọi khi: vừa đăng xuất / màn đăng nhập, vừa kết thúc ca. kiemLai = hỏi máy chủ lại cho chắc.
+  window.__capNhatNeuCo = async function (kiemLai) {
+    if (kiemLai) { const v = await layBanMoiNhat(); if (v > banMoi) banMoi = v; }
+    if (banMoi > APP_VERSION) taiLai(banMoi);
+  };
+
   if (Number(ss(KHOA) || 0) <= APP_VERSION) { ss(KHOA, null); ss('cua_ver_thu', null); }
 
-  kiemTra(true);
-  setInterval(() => {
-    if (document.hidden) return;
-    if (banMoi > APP_VERSION) { if (!dangBan()) taiLai(banMoi); }
-    else kiemTra(false);
-  }, 5 * 60 * 1000);
-  // Đang có thanh báo: rảnh tay thì tự cập nhật (kiểm tra mỗi 20s, không gọi mạng)
-  setInterval(() => { if (banMoi > APP_VERSION && !document.hidden && !dangBan()) taiLai(banMoi); }, 20000);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { anLuc = Date.now(); return; }
-    const roi = anLuc ? Date.now() - anLuc : 0;
-    // Rời app chốc lát để copy gì đó giữa lúc đang nhập -> không ép, chỉ báo
-    kiemTra(!(roi < 120000 && Date.now() - lanNhapCuoi < roi + 60000));
-  });
-  window.addEventListener('pageshow', e => { if (e.persisted) kiemTra(true); });
+  kiemTra();
+  setInterval(() => { if (!document.hidden) kiemTra(); }, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) kiemTra(); });
+  window.addEventListener('pageshow', e => { if (e.persisted) kiemTra(); });
 })();
 </script>
+<style>
+html.co-ban-moi body{padding-top:36px}
+html.co-ban-moi .app-header,html.co-ban-moi .mobile-sticky-top,html.co-ban-moi .sub-tab-bar,html.co-ban-moi .sidebar{top:36px}
+</style>
 <style>
 .ht-nen{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:5000;display:flex;align-items:center;justify-content:center;
   padding:20px;opacity:0;transition:opacity .15s ease}
@@ -2107,6 +2101,7 @@ async function xuLyCheckout(khung) {
   currentShiftDocId = null;
   currentShiftNgay = null;
   showVaoCa();
+  window.__capNhatNeuCo?.(true);   // hết ca: có bản mới thì cập nhật luôn
 }
 
 async function loadBenhDanhSach() {
@@ -2160,8 +2155,10 @@ let unsubscribeUserDoc = null;
 let myLastPwChangeMs = 0; // đánh dấu lần đổi mật khẩu do chính tab này thực hiện, tránh tự đăng xuất mình ngay sau khi đổi
 
 onAuthStateChanged(auth, async (user) => {
+  window.__dangNhap = !!user;
   if (user) {
     currentUser = user;
+    ngheDangXuatTatCa(user);
     try {
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (userDoc.exists()) {
@@ -2229,9 +2226,46 @@ onAuthStateChanged(auth, async (user) => {
     currentUser = null; currentUserData = null;
     if (unsubscribeUserDoc) { unsubscribeUserDoc(); unsubscribeUserDoc = null; }
     if (unsubscribeVaiTroDoc) { unsubscribeVaiTroDoc(); unsubscribeVaiTroDoc = null; }
+    if (huyNgheDXTC) { huyNgheDXTC(); huyNgheDXTC = null; }
     showLogin();
+    window.__capNhatNeuCo?.(true);   // đăng xuất / chưa đăng nhập: có bản mới thì cập nhật luôn
   }
 });
+
+// ===== ĐĂNG XUẤT TẤT CẢ TÀI KHOẢN (Admin) =====
+// Admin bấm -> ghi cau_hinh/dang_xuat_tat_ca {luc}. Máy nào đăng nhập TRƯỚC mốc đó thì tự đăng xuất
+// (đăng nhập lại là lên bản mới nhất). Người bấm không bị đăng xuất. Đăng nhập lại sau mốc thì không bị nữa.
+let huyNgheDXTC = null;
+function ngheDangXuatTatCa(user) {
+  if (huyNgheDXTC) huyNgheDXTC();
+  huyNgheDXTC = onSnapshot(doc(db, 'cau_hinh', 'dang_xuat_tat_ca'), (snap) => {
+    const d = snap.data();
+    const moc = d?.luc?.toMillis ? d.luc.toMillis() : 0;
+    const dangNhapLuc = Date.parse(user.metadata?.lastSignInTime || '') || 0;
+    if (!moc || !dangNhapLuc || d.boQua === user.uid || moc <= dangNhapLuc || currentUser?.uid !== user.uid) return;
+    showToast('Quản lý vừa yêu cầu đăng nhập lại để cập nhật app', true);
+    setTimeout(() => doLogout(), 1500);
+  }, () => {});
+}
+window.htDangXuatTatCa = async function() {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin dùng được', true); return; }
+  if (!await hoiXacNhan('Đăng xuất tất cả tài khoản?\n\nMọi máy đang mở app (trừ máy bạn) sẽ bị đăng xuất ngay, nhân viên đăng nhập lại là lên bản mới nhất.\nCa đang làm không bị mất — đăng nhập lại sẽ vào tiếp ca. Giỏ bán hàng chưa thanh toán vẫn còn.', { nutDongY: 'Đăng xuất tất cả', nguy: true })) return;
+  try {
+    await setDoc(doc(db, 'cau_hinh', 'dang_xuat_tat_ca'), { luc: serverTimestamp(), boQua: currentUser.uid, nguoi: currentUserData?.ten || '' });
+    showToast('Đã đăng xuất tất cả tài khoản khác');
+    htVeDXTC();
+  } catch(e) { showToast('Lỗi: ' + e.message, true); }
+};
+async function htVeDXTC() {
+  const el = document.getElementById('ht-dxtc'); if (!el) return;
+  let dong = '';
+  try {
+    const d = (await getDoc(doc(db, 'cau_hinh', 'dang_xuat_tat_ca'))).data();
+    if (d?.luc?.toDate) dong = `<p style="font-size:12px;color:var(--text2);margin-top:8px">Lần gần nhất: ${d.luc.toDate().toLocaleString('vi-VN')}${d.nguoi ? ' · ' + escHtml(d.nguoi) : ''}</p>`;
+  } catch(e) {}
+  el.innerHTML = `<p style="font-size:13px;margin-bottom:8px">Đăng xuất mọi máy đang mở app (trừ máy bạn). Dùng khi có bản cập nhật quan trọng cần mọi người lên ngay — đăng nhập lại là lên bản mới nhất. Ca đang làm và giỏ bán hàng không bị mất.</p>
+    <button class="btn-outline" style="width:100%;color:var(--red);border-color:var(--red)" onclick="htDangXuatTatCa()">Đăng xuất tất cả tài khoản</button>${dong}`;
+}
 
 // Nếu hôm nay đã check-in rồi mà chưa check-out (chỉ lỡ thoát app/mất kết nối) — vào thẳng app, khỏi quét QR lại
 async function tryResumeShift() {
@@ -13883,7 +13917,7 @@ async function renderHeThong(man = 'hethong') {
       <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;font-size:13px">Từ <input type="date" id="ht-hdq-tu" value="${new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10)}" style="flex:1"> đến <input type="date" id="ht-hdq-den" value="${new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10)}" style="flex:1"></div>
       <button class="btn-outline" style="width:100%" onclick="htNhapHDQuay()">Nhập hóa đơn tại quầy</button>
       <div id="ht-hdq-kq" style="font-size:12.5px;margin-top:8px"></div>`),
-      muc('congcu', 'Công cụ'), htThe('Hàng cùng loại', `
+      muc('congcu', 'Công cụ'), currentUserData?.role === 'admin' ? htThe('Đăng xuất tất cả tài khoản', `<div id="ht-dxtc"><div class="loading">Đang tải...</div></div>`) : '', htThe('Hàng cùng loại', `
       <p style="font-size:13px;margin-bottom:8px">Lấy nhóm hàng cùng loại (cùng mã cha, khác thuộc tính) để Hàng hóa gom vào một khung. Hàng sửa giá sau này tự cập nhật nhóm.</p>
       <button class="btn-outline" style="width:100%" id="ht-nut-cl" onclick="htDongBoCungLoai()">Đồng bộ hàng cùng loại</button>
       <div id="ht-cl-kq" style="font-size:13px;margin-top:8px"></div>`),
@@ -13917,7 +13951,7 @@ async function renderHeThong(man = 'hethong') {
   if (man === 'phanquyen') renderVaiTroList();
   if (man === 'chamcongcd') generateQRCode();
   if (['inhoadon', 'ketnoi', 'thanhtoan', 'hethong'].includes(man)) {
-    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV(); htVeGhiGoc(); htVeKeoBu(); htVePhiSan();
+    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV(); htVeGhiGoc(); htVeKeoBu(); htVePhiSan(); htVeDXTC();
     if (man !== 'hethong') setTimeout(() => document.getElementById('ht-muc-' + man)?.scrollIntoView(), 50);
   }
 }
@@ -25331,7 +25365,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v637</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v638</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25388,7 +25422,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v637</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v638</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25434,7 +25468,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v637</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v638</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
