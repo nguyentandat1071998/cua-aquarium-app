@@ -618,9 +618,10 @@ async function startQRScan() {
       });
       if (code) {
         if (code.data === CHECKIN_QR_SECRET) {
-          document.getElementById('qr-status').textContent = 'QR hợp lệ! Đang xử lý...';
-          clearInterval(qrScanInterval); // Dừng scan, giữ stream để chụp ảnh
-          setTimeout(() => chupAnhQRVaCheckin(), 300);
+          document.getElementById('qr-status').textContent = '✅ QR hợp lệ — đã chụp ảnh. Đang xử lý...';
+          clearInterval(qrScanInterval);
+          const khung = document.createElement('canvas'); khung.width = canvas.width; khung.height = canvas.height; khung.getContext('2d').drawImage(canvas, 0, 0);   // giữ đúng khung hình lúc quét được QR
+          chupAnhQRVaCheckin(khung);
         } else {
           document.getElementById('qr-status').textContent = 'Mã QR không hợp lệ';
         }
@@ -775,7 +776,7 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
 }
 
 // Chụp ảnh timestamp từ camera QR rồi checkin luôn
-async function chupAnhQRVaCheckin() {
+async function chupAnhQRVaCheckin(khung) {
   const statusEl = document.getElementById('qr-status');
   statusEl.textContent = '⏳ Đang xác minh vị trí...';
 
@@ -803,13 +804,15 @@ async function chupAnhQRVaCheckin() {
     return;
   }
 
-  // 2. Chụp frame hiện tại từ camera QR + vẽ timestamp
-  const video = document.getElementById('qr-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth || 640;
-  canvas.height = video.videoHeight || 480;
+  // 2. Ảnh = khung hình đúng lúc quét được QR (chụp trước khi dò GPS — dò GPS mất vài giây, nhân viên đã hạ máy xuống)
+  let canvas = khung;
+  if (!canvas) {
+    const video = document.getElementById('qr-video');
+    canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  }
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
   const now = new Date();
   const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
@@ -1797,9 +1800,10 @@ window.batDauCheckout = async function() {
       });
       if (code) {
         if (code.data === CHECKIN_QR_SECRET) {
-          statusEl.textContent = 'QR hợp lệ! Đang xử lý...';
+          statusEl.textContent = '✅ QR hợp lệ — đã chụp ảnh. Đang xử lý...';
           clearInterval(checkoutScanInterval);
-          setTimeout(() => xuLyCheckout(), 300);
+          const khung = document.createElement('canvas'); khung.width = canvas.width; khung.height = canvas.height; khung.getContext('2d').drawImage(canvas, 0, 0);   // giữ đúng khung hình lúc quét được QR
+          xuLyCheckout(khung);
         } else {
           statusEl.textContent = 'Mã QR không hợp lệ';
         }
@@ -1816,7 +1820,7 @@ window.huyCheckout = function() {
   document.getElementById('checkout-modal').style.display = 'none';
 };
 
-async function xuLyCheckout() {
+async function xuLyCheckout(khung) {
   const statusEl = document.getElementById('checkout-status');
 
   // An toàn: nếu quá trình quét QR kéo dài qua 12h đêm thì chặn lại
@@ -1853,12 +1857,14 @@ async function xuLyCheckout() {
     return;
   }
 
-  const video = document.getElementById('checkout-video');
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth || 640;
-  canvas.height = video.videoHeight || 480;
+  let canvas = khung;   // khung hình đúng lúc quét được QR
+  if (!canvas) {
+    const video = document.getElementById('checkout-video');
+    canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+  }
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
   const now = new Date();
   const ts = `${now.getDate().toString().padStart(2,'0')}/${(now.getMonth()+1).toString().padStart(2,'0')}/${now.getFullYear().toString().slice(-2)} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
@@ -25112,7 +25118,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v629</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v630</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25166,7 +25172,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v629</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v630</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25212,7 +25218,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v629</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v630</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
