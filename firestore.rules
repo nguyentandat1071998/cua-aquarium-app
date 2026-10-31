@@ -315,6 +315,15 @@ service cloud.firestore {
       allow delete: if adm();
     }
 
+    // Ảnh quét QR vào / ra ca — tách khỏi lich_ca để chỉ Admin / quyền cc_xemanh xem được.
+    // Nhân viên chỉ ghi ảnh vào ca của chính mình (mã {ngày}_{uid}), không đọc lại được.
+    match /anh_cham_cong/{id} {
+      allow read: if q('cc_xemanh');
+      allow create, update: if nv() && id.matches('.*_' + toi()) && request.resource.data.uid == toi()
+        && request.resource.data.keys().hasOnly(['uid', 'ngay', 'ten', 'vao', 'vaoLuc', 'vao2', 'vao2Luc', 'ra', 'raLuc', 'ra2', 'ra2Luc']);
+      allow delete: if adm();
+    }
+
     // ===== LƯƠNG =====
     match /phu_cap/{id} {
       // Tài liệu đặt tên {tháng}_{uid}: đọc của mình được cả khi tháng đó chưa có phụ cấp

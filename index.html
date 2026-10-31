@@ -121,7 +121,7 @@ import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, 
 // ===== LỊCH SỬ THAO TÁC: tự ghi mọi thay đổi dữ liệu + thao tác qua máy chủ =====
 // Mọi lệnh ghi Firestore đi qua các hàm bọc dưới đây; các thay đổi xảy ra liền nhau
 // (trong ~2 giây) của cùng một thao tác được gộp thành MỘT dòng lịch sử.
-const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu']);
+const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong']);
 const NK_COL = {
   skus: ['Hàng hóa', 'Kho'], ton_san: ['Tồn Kho Online', 'Kho'], gia_von: ['Giá vốn', 'Kho'], nhom_hang: ['Nhóm hàng', 'Kho'],
   phieu_chuyenkho: ['Phiếu chuyển kho', 'Kho'], phieu_huy: ['Phiếu xuất hủy', 'Kho'], phieu_nhap_san: ['Phiếu nhập kho', 'Kho'], moc_hang_hong: ['Mốc hàng hỏng', 'Kho'],
@@ -681,6 +681,14 @@ function suyCaTuGioVao(caDuoc, phutHienTai) {
   return { ca: xep[0].ca, canHoi };
 }
 
+// Ảnh quét QR vào / ra ca: lưu riêng ở anh_cham_cong/{ngày_uid} — chỉ Admin hoặc người có quyền "Xem ảnh quét QR vào / ra ca" đọc được.
+// lich_ca chỉ giữ cờ photo/photo2/thoatPhoto/thoatPhoto2 = true để biết ca có ảnh.
+async function luuAnhChamCong(shiftId, truong, photoData) {
+  try {
+    await setDoc(doc(db, 'anh_cham_cong', shiftId), { uid: currentUser.uid, ngay: String(shiftId).split('_')[0], ten: currentUserData?.ten || '',
+      [truong]: photoData, [truong + 'Luc']: serverTimestamp() }, { merge: true });
+  } catch(e) { console.warn('[ảnh chấm công] không lưu được:', e.message); }
+}
 let phutTreLanVao = 0;   // số phút trễ của lần quét vào vừa rồi — để báo "Vào ca · trễ …p"
 async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
   if (!allCaLamViec.length) await napCaLamViec();
@@ -700,7 +708,8 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
     caId = data.caId || null;
     // Ca gãy: đã xong khung 1 (đã ra) -> lần quét này là VÀO KHUNG 2
     if (data.vaoLuc && data.thoatLuc && !data.vaoLuc2 && layCa(caId)?.khung2) {
-      await updateDoc(shiftRef, { vaoLuc2: serverTimestamp(), gpsOk2: gpsOk, gpsDist2: gpsInfo, isMock2: isMock, photo2: photoData });
+      await updateDoc(shiftRef, { vaoLuc2: serverTimestamp(), gpsOk2: gpsOk, gpsDist2: gpsInfo, isMock2: isMock, photo2: !!photoData });
+      if (photoData) await luuAnhChamCong(shiftId, 'vao2', photoData);
       phutTreLanVao = Math.max(0, phutBay() - layCa(caId).khung2.batDau);
       currentShiftDocId = shiftId; currentShiftNgay = ngay; currentCa = loaiCa; currentCaId = caId;
       await loadChecklistState(shiftId);
@@ -716,8 +725,9 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
       return;
     }
     await updateDoc(shiftRef, {
-      vaoLuc: serverTimestamp(), gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
+      vaoLuc: serverTimestamp(), gpsOk, gpsDist: gpsInfo, isMock, photo: !!photoData
     });
+    if (photoData) await luuAnhChamCong(shiftId, 'vao', photoData);
     phutTreLanVao = Math.max(0, phutBay() - (layCa(caId) || CA_GIO[loaiCa] || CA_GIO.full).batDau);
   } else {
     // --- Không có lịch xếp trước ---
@@ -748,8 +758,9 @@ async function xuLyCheckinVaoLichCa(gpsOk, gpsInfo, isMock, photoData) {
       ngoaiLich: true, deleted: false,
       xepBoi: null, createdAt: serverTimestamp(),
       vaoLuc: serverTimestamp(), thoatLuc: null,
-      gpsOk, gpsDist: gpsInfo, isMock, photo: photoData
+      gpsOk, gpsDist: gpsInfo, isMock, photo: !!photoData
     });
+    if (photoData) await luuAnhChamCong(shiftId, 'vao', photoData);
     await ghiLichCongKhai(shiftId, {
       ngay, uid: currentUser.uid, ten: currentUserData?.ten || '',
       caId, tenCa: caChon.ten, loaiCa
@@ -1324,6 +1335,8 @@ function ccVeO(s) {
   if (s.gpsOk === false || s.thoatGpsOk === false) ds.push(nhan('GPS lệch', 'var(--red)', 'var(--red-bg)'));
   if (s.ngoaiLich) ds.push(nhan('ngoài lịch', '#5B21B6', '#EDE9FE'));
   if (s.suaGio) ds.push(`<div title="${escHtml((s.suaGio.boi?.ten || '') + ': ' + (s.suaGio.lyDo || ''))}">${nhan('đã sửa', '#1D4ED8', '#DBEAFE')}</div>`);
+  if (coQuyen('cc_xemanh') && (s.photo || s.photo2 || s.thoatPhoto || s.thoatPhoto2))
+    ds.push(`<div onclick="event.stopPropagation();ccXemAnh('${escHtml(s.id)}')" title="Xem ảnh quét QR vào / ra ca" style="cursor:pointer;margin-top:2px;font-size:11px;font-weight:600;color:#1D4ED8;background:#DBEAFE;border-radius:4px;padding:0 5px;display:inline-block">📷 ảnh</div>`);
   const phut = (vao && ra ? (ra - vao) / 60000 : 0) + (vao2 && ra2 ? (ra2 - vao2) / 60000 : 0);
   return { phut: Math.max(0, Math.round(phut)), html: `
     <div style="font-size:11px;font-weight:700;color:${ca.mau || 'var(--green)'}">${escHtml(lcTenCaCuaLich(s))}</div>
@@ -1339,6 +1352,24 @@ function ccOGio(id, phut) {
     <select id="${id}-m" style="flex:1;min-width:0;padding:8px 6px;font-size:15px;font-weight:600;text-align:center">${[...Array(60)].map((_, i) => `<option value="${i}" ${i === p ? 'selected' : ''}>${pad(i)}</option>`).join('')}</select></div>`;
 }
 let ccDang = null;
+// Xem ảnh quét QR vào / ra ca (Admin hoặc quyền cc_xemanh)
+window.ccXemAnh = async function(shiftId) {
+  if (!coQuyen('cc_xemanh')) return;
+  const s = ccShifts.find(x => x.id === shiftId) || {};
+  let a = {};
+  try { const d = await getDoc(doc(db, 'anh_cham_cong', shiftId)); a = d.exists() ? d.data() : {}; } catch(e) { showToast('Không đọc được ảnh: ' + e.message, true); return; }
+  // Ca cũ: ảnh còn nằm trong lich_ca
+  const cu = (k) => typeof s[k] === 'string' && s[k].startsWith('data:') ? s[k] : '';
+  const gio = (ts) => ts?.seconds ? new Date(ts.seconds * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '';
+  const ds = [['Vào ca', a.vao || cu('photo'), gio(s.vaoLuc)], ['Ra ca', a.ra || cu('thoatPhoto'), gio(s.thoatLuc)],
+    ['Vào khung 2', a.vao2 || cu('photo2'), gio(s.vaoLuc2)], ['Ra khung 2', a.ra2 || cu('thoatPhoto2'), gio(s.thoatLuc2)]].filter(x => x[1]);
+  window._ccAnh = ds.map(x => x[1]);
+  ddbMoKhung('cc-anh-modal', 'Ảnh quét QR', `${escHtml(s.ten || '')} · ${String(s.ngay || '').split('-').reverse().join('/')}`,
+    ds.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">${ds.map((x, i) => `
+      <div><img src="${x[1]}" onclick="viewPhoto(window._ccAnh[${i}])" style="width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;cursor:pointer;background:#000">
+      <div style="font-size:12.5px;font-weight:600;margin-top:4px">${x[0]}${x[2] ? ` · ${x[2]}` : ''}</div></div>`).join('')}</div>`
+    : '<p class="info-note">Ca này chưa có ảnh.</p>');
+};
 // Admin sửa / bổ sung giờ vào – ra (quên check-in, quên check-out). Giữ giờ gốc + lý do.
 window.ccSuaGio = async function(ngay, uid) {
   if (currentUserData?.role !== 'admin') return;
@@ -1851,14 +1882,16 @@ async function xuLyCheckout() {
     try { dd = (await getDoc(doc(db, 'lich_ca', currentShiftDocId))).data() || {}; } catch(e) {}
     if (dd.vaoLuc2 && !dd.thoatLuc2) {
       await updateDoc(doc(db, 'lich_ca', currentShiftDocId), {
-        thoatLuc2: serverTimestamp(), thoatGpsOk2: gpsOk, thoatGpsDist2: gpsInfo, thoatIsMock2: isMock, thoatPhoto2: photoData
+        thoatLuc2: serverTimestamp(), thoatGpsOk2: gpsOk, thoatGpsDist2: gpsInfo, thoatIsMock2: isMock, thoatPhoto2: !!photoData
       });
+      if (photoData) await luuAnhChamCong(currentShiftDocId, 'ra2', photoData);
     } else {
       await updateDoc(doc(db, 'lich_ca', currentShiftDocId), {
         thoatLuc: serverTimestamp(),
         thoatGpsOk: gpsOk, thoatGpsDist: gpsInfo, thoatIsMock: isMock,
-        thoatPhoto: photoData
+        thoatPhoto: !!photoData
       });
+      if (photoData) await luuAnhChamCong(currentShiftDocId, 'ra', photoData);
       laKhung1CaGay = !!layCa(dd.caId)?.khung2 && !dd.vaoLuc2;
     }
   } else {
@@ -16119,7 +16152,8 @@ const DANH_SACH_MODULE = [
     { key: 'lichca_xepca', ten: 'Xếp ca, sửa ca' }
   ]},
   { key: 'chamcong', ten: 'Chấm công', con: [
-    { key: 'cc_xemtatca', ten: 'Xem chấm công mọi người (không tick: chỉ của mình)' }
+    { key: 'cc_xemtatca', ten: 'Xem chấm công mọi người (không tick: chỉ của mình)' },
+    { key: 'cc_xemanh', ten: 'Xem ảnh quét QR vào / ra ca' }
   ]},
   { key: 'luong', ten: 'Bảng lương', con: [
     { key: 'luong_xemtatca', ten: 'Xem lương mọi người (không tick: chỉ của mình)' },
@@ -16194,6 +16228,7 @@ function quyDoiQuyenCu(cu) {
   if (co('hh_xuatfile')) them('hh_xuatfile');
   if (co('hh_canhbao')) them('hh_canhbao');
   if (co('hh_kichthuoc')) them('hh_kichthuoc');
+  if (co('cc_xemanh')) them('cc_xemanh');
   if (co('baocao')) them('baocao');
   if (co('quetdonggoi')) them('quetdonggoi');
   if (co('tmdt_donhang')) them('tmdt_donhang', 'tmdt_hoantra');
@@ -25077,7 +25112,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v628</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v629</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25131,7 +25166,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v628</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v629</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25177,7 +25212,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v628</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v629</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
