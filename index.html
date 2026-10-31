@@ -7222,7 +7222,7 @@ let dhDsNcc = null;        // cache nhà cung cấp
 const dhDonMoi = () => ({ id: null, maPhieu: '', ncc: null, kho: null, items: [], ghiChu: '' });
 // "· 250g · 20×10×5cm" — cân nặng (gram), kích thước (cm) lấy từ thông tin hàng hóa
 function dhChuKichThuoc(sp) {
-  if (!sp) return '';
+  if (!sp || !coQuyen('hh_kichthuoc')) return '';
   const kt = sp.kichThuoc || {}, coKT = kt.dai || kt.rong || kt.cao;
   return (sp.canNang ? ` · ${fmt(sp.canNang)}g` : '') + (coKT ? ` · ${kt.dai || 0}×${kt.rong || 0}×${kt.cao || 0}cm` : '');
 }
@@ -7315,7 +7315,7 @@ function dhVeTao() {
   // Ước tính cân nặng / thể tích từ thông tin hàng hóa (chuẩn bị cho tính cước hàng Trung Quốc)
   const uoc = dhUocTinhKien(d.items);
   const oUoc = document.getElementById('dh-uoc-tinh');
-  if (oUoc) { oUoc.style.display = uoc.co ? '' : 'none'; oUoc.textContent = uoc.chu; }
+  if (oUoc) { oUoc.style.display = uoc.co && coQuyen('hh_kichthuoc') ? '' : 'none'; oUoc.textContent = uoc.chu; }
   const dt = document.getElementById('dh-dong-tien'); if (dt) dt.style.display = coGia ? '' : 'none';
   const gc = document.getElementById('dh-ghi-chu'); if (gc && document.activeElement !== gc) gc.value = d.ghiChu || '';
   // Đã thanh toán trước / đặt cọc ngay khi lên đơn (chỉ đơn mới, người có quyền thanh toán)
@@ -14673,7 +14673,8 @@ window.exportDanhSachHangHoaExcel = async function() {
   if (laAdmin && !daNapGiaVon) await napGiaVon();
   const dsNcc = await hhTaiNcc();
   const tenNcc = new Map(dsNcc.map(n => [n.id, n.ten]));
-  const header = HH_COT_FILE.filter(c => laAdmin || c !== 'gia_von');
+  const coKT = coQuyen('hh_kichthuoc');
+  const header = HH_COT_FILE.filter(c => (laAdmin || c !== 'gia_von') && (coKT || !['dai_cm', 'rong_cm', 'cao_cm', 'can_nang_gram'].includes(c)));
   const giaTri = (x) => ({
     sku: x.sku || '', ten: x.ten || '', ten_chung: x.nhomCL ? (x.tenChinh || '') : '', phan_loai: x.nhomCL ? (x.thuocTinh || '') : '', thuong_hieu: x.thuongHieu || '',
     gia: x.gia || 0, gia_von: x.laCombo ? '' : (x.giaVon || 0),
@@ -14746,7 +14747,7 @@ function hhTheSku(s, trongNhom = false) {
             ${canhBaoTon}
           </div>
           ${dongCanhBao}
-          ${(s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
+          ${coQuyen('hh_kichthuoc') && (s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${s.canNang ? `${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.thuongHieu || s.nhom3 || s.nhom2 || s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${s.thuongHieu ? `<b style="color:#0F766E">${escHtml(s.thuongHieu)}</b>${(s.nhom3 || s.nhom2 || s.nhom1) ? ' · ' : ''}` : ''}${escHtml(s.nhom3 || s.nhom2 || s.nhom1 || '')}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
@@ -16052,7 +16053,8 @@ const DANH_SACH_MODULE = [
     { key: 'hh_kho_san', ten: 'Xem Kho Online (tồn, đang đặt)' },
     { key: 'hh_intem', ten: 'In tem giá' },
     { key: 'hh_xuatfile', ten: 'Xuất file Excel' },
-    { key: 'hh_canhbao', ten: 'Xem cảnh báo tồn kho (sắp hết hàng)' }
+    { key: 'hh_canhbao', ten: 'Xem cảnh báo tồn kho (sắp hết hàng)' },
+    { key: 'hh_kichthuoc', ten: 'Xem cân nặng & kích thước' }
   ]},
   // Chuyển kho: tick chiều nào thì chỉ chuyển được chiều đó (tick cả hai = chuyển cả hai chiều)
   { key: 'nhap', ten: 'Chuyển kho', con: [
@@ -16173,6 +16175,7 @@ function quyDoiQuyenCu(cu) {
   }
   if (co('hh_xuatfile')) them('hh_xuatfile');
   if (co('hh_canhbao')) them('hh_canhbao');
+  if (co('hh_kichthuoc')) them('hh_kichthuoc');
   if (co('baocao')) them('baocao');
   if (co('quetdonggoi')) them('quetdonggoi');
   if (co('tmdt_donhang')) them('tmdt_donhang', 'tmdt_hoantra');
@@ -25056,7 +25059,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v624</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v625</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25110,7 +25113,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v624</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v625</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25156,7 +25159,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v624</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v625</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
