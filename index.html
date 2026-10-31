@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 648;
+  const APP_VERSION = 649;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2735,7 +2735,7 @@ window.switchSub = function(sub) {
   }
   activeSubTab = sub;
   // Tạo phiếu chuyển kho: khung vừa màn hình như Bán hàng, chỉ danh sách hàng cuộn
-  const khungVua = ['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc'].includes(activeModule) && sub === 'tao';
+  const khungVua = ['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc', 'dungnb'].includes(activeModule) && sub === 'tao';
   document.documentElement.classList.toggle('khoa-cuon', khungVua);
   if (khungVua) requestAnimationFrame(bhVuaManHinh);
   document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
@@ -12039,7 +12039,7 @@ function bhVuaManHinh() {
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
 }
 const canVuaManHinh = () => document.documentElement.classList.contains('khoa-cuon');
-window.addEventListener('resize', () => { if (canVuaManHinh() || activeModule === 'banhang' || (['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc'].includes(activeModule) && activeSubTab === 'tao')) bhVuaManHinh(); });
+window.addEventListener('resize', () => { if (canVuaManHinh() || activeModule === 'banhang' || (['nhap', 'xuat', 'nhaphang', 'dathang', 'datcoc', 'dungnb'].includes(activeModule) && activeSubTab === 'tao')) bhVuaManHinh(); });
 // iPhone: thanh địa chỉ co giãn / bàn phím bật lên chỉ đổi visualViewport, không bắn resize của window
 window.visualViewport?.addEventListener('resize', () => { if (canVuaManHinh()) requestAnimationFrame(bhVuaManHinh); });
 // iPhone bỏ qua overflow:hidden khi vuốt -> chặn vuốt ở chỗ không có gì để cuộn (danh sách hàng, thanh phiếu, hộp thoại... vẫn cuộn được)
@@ -19712,16 +19712,18 @@ function dnVe() {
   if (!ds.length) { el.innerHTML = '<p class="info-note">Bạn chưa được phân quyền tạo phiếu xuất dùng nội bộ.</p>'; return; }
   const chip = (on, nhan, fn) => `<button class="${on ? '' : 'btn-outline'}" style="flex:1;margin:0;padding:8px;border-radius:8px;font-weight:600;${on ? `background:${DN_MAU};color:#fff;border:1.5px solid ${DN_MAU}` : ''}" onclick="${fn}">${nhan}</button>`;
   const tongSL = P.dong.reduce((a, d) => a + d.sl, 0);
-  el.innerHTML = `
-    <div class="card" style="margin-bottom:10px">
-      <div class="field" style="margin-bottom:0"><label>Kho xuất</label>
-        <button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="dnChonKho()">${DN_KHO[P.kho].ten}</button></div>
+  const cuonCu = document.getElementById('dn-dong')?.scrollTop || 0;   // vẽ lại không nhảy danh sách về đầu
+  // Bố cục giống Bán hàng: khung vừa màn hình, chỉ danh sách hàng cuộn, ghi chú + nút Gửi dính đáy
+  el.innerHTML = `<div class="bh-khung">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-shrink:0">
+      <span style="font-size:13px;color:var(--text2);white-space:nowrap">Kho xuất</span>
+      <button class="bh-chon-tt" style="flex:1;font-weight:600" onclick="dnChonKho()">${DN_KHO[P.kho].ten}</button>
     </div>
-    <div class="field sku-wrap" style="margin-bottom:8px">
+    <div class="field sku-wrap" style="margin-bottom:6px;flex-shrink:0">
       <input type="text" id="dn-tim" placeholder="Gõ tên hoặc mã hàng..." autocomplete="off" value="${escHtml(dnTimChu)}" oninput="dnTim(this.value)" style="border-color:#FCD34D">
-      <div id="dn-kq"></div>
+      <div id="dn-kq" style="position:absolute;left:0;right:0;top:100%;z-index:200"></div>
     </div>
-    <div id="dn-dong">${P.dong.length ? P.dong.map((d, i) => {
+    <div id="dn-dong" class="bh-o-hang-trong">${P.dong.length ? P.dong.map((d, i) => {
       const s = allSKUs.find(x => x.id === d.skuId);
       const ton = layTon(s, DN_KHO[P.kho].maTon);
       return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 10px;margin-bottom:8px">
@@ -19743,9 +19745,13 @@ function dnVe() {
           ${d.anh.length ? '' : '<span style="font-size:11.5px;color:#DC2626">Chưa có ảnh</span>'}
         </div></div>`;
     }).join('') : '<p class="info-note">Chưa có hàng. Tìm và thêm hàng cần xuất dùng.</p>'}</div>
-    <input id="dn-ghichu" maxlength="300" placeholder="Ghi chú (VD: bể 120 quầy thu ngân)" value="${escHtml(P.ghiChu)}" oninput="dnGhiChu(this.value)" style="margin-bottom:8px">
-    <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px"><span>${P.dong.length} mã</span><b>Tổng số lượng ${tongSL}</b></div>
-    <button id="btn-dn-gui" style="width:100%;margin:0;padding:12px;border:none;border-radius:10px;background:${DN_MAU};color:#fff;font-weight:700;font-size:15px;cursor:pointer" onclick="dnGui()">Gửi phiếu</button>`;
+    <div class="bh-day-duoi">
+      <input id="dn-ghichu" maxlength="300" placeholder="Ghi chú (VD: bể 120 quầy thu ngân)" value="${escHtml(P.ghiChu)}" oninput="dnGhiChu(this.value)" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px"><span>${P.dong.length} mã</span><b>Tổng số lượng ${tongSL}</b></div>
+      <button id="btn-dn-gui" style="width:100%;margin:0;padding:12px;border:none;border-radius:10px;background:${DN_MAU};color:#fff;font-weight:700;font-size:15px;cursor:pointer" onclick="dnGui()">Gửi phiếu</button>
+    </div></div>`;
+  const dsDong = document.getElementById('dn-dong'); if (dsDong && cuonCu) dsDong.scrollTop = cuonCu;
+  requestAnimationFrame(bhVuaManHinh);
   if (dnTimChu) dnTim(dnTimChu);
 }
 window.dnChonKho = function() {
@@ -25598,7 +25604,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v648</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v649</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25655,7 +25661,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v648</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v649</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25704,14 +25710,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v648</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v649</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v648</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v649</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
