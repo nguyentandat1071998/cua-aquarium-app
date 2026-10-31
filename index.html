@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 664;
+  const APP_VERSION = 665;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -7003,7 +7003,7 @@ let nhKho = null;            // 'ch' | 'san' — kho nhập của phiếu đang 
 let nhLoai = null;           // 'phukien' (bắt buộc ảnh, như Chuyển kho) | 'song' (Cá/Tép/Cây — chưa cần ảnh, sau gắn AI đếm)
 let nhAnh = [];              // ảnh phiếu Phụ kiện [{dataUrl, thumb, ts, tuFile?}]
 const NH_TOI_DA_ANH = 4;     // ảnh nằm trong phiếu (giới hạn 1MB/tài liệu)
-const NH_LOAI = { phukien: 'Phụ kiện', song: 'Hàng sống' };
+const NH_LOAI = { phukien: 'Phụ kiện', song: 'Hàng tươi' };
 const NH_MO_TA = { phukien: '', song: 'Cá, tép, cây, ốc' };
 window.nhMoChonKho = function() {
   const ds = dsKhoNhapDuocPhep();
@@ -7198,7 +7198,7 @@ function nhVeTao() {
   // Thẻ từng mã hàng — giống Chuyển kho; người duyệt có thêm ô đơn giá
   const xemTon = kn && (kn.ma === 'cuahang' || tonSanUnsub);
   than.innerHTML = !nhDongHang.length
-    ? `<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">${!duocNhap ? 'Chưa có hàng nào.' : !nhLoai ? 'Chọn loại hàng nhập: <b>Phụ kiện</b> hoặc <b>Hàng sống</b> (cá, tép, cây, ốc).' : `Chưa có hàng nào.<br>Gõ tên hoặc quét mã ở ô trên để thêm.${nhLoai === 'phukien' ? '<br>Phụ kiện phải chụp ảnh hàng trước khi lưu.' : ''}`}</div>`
+    ? `<div style="text-align:center;color:var(--text2);font-size:13px;padding:24px 0">${!duocNhap ? 'Chưa có hàng nào.' : !nhLoai ? 'Chọn loại hàng nhập: <b>Phụ kiện</b> hoặc <b>Hàng tươi</b> (cá, tép, cây, ốc).' : `Chưa có hàng nào.<br>Gõ tên hoặc quét mã ở ô trên để thêm.${nhLoai === 'phukien' ? '<br>Phụ kiện phải chụp ảnh hàng trước khi lưu.' : ''}`}</div>`
     : nhDongHang.map((d, i) => {
       const sku = allSKUs.find(s => s.sku === d.sku);
       const ton = xemTon && sku ? layTon(sku, kn.ma) : null;
@@ -7289,7 +7289,7 @@ window.nhXoaDong = function(i) {
 // Chọn từ ô tìm kiếm (selectSKU) hoặc quét mã. Đã có thì +1.
 window.nhThemHang = function(maSku, ten) {
   if (!nhKho || !dsKhoNhapDuocPhep().includes(nhKho)) { showToast('Bạn không có quyền nhập vào kho này', true); return; }
-  if (!nhLoai) { showToast('Chọn loại hàng nhập trước: Phụ kiện hoặc Hàng sống', true); return; }
+  if (!nhLoai) { showToast('Chọn loại hàng nhập trước: Phụ kiện hoặc Hàng tươi', true); return; }
   const spChon = allSKUs.find(s => s.sku === maSku);
   if (spChon?.laCombo) { showToast('Combo không nhập trực tiếp — nhập từng món', true); return; }
   if (!nhSkuHopLoai(spChon)) { showToast(`${spChon?.ten || maSku} không thuộc ${NH_LOAI[nhLoai]} — tạo phiếu ${NH_LOAI[nhLoai === 'song' ? 'phukien' : 'song']} riêng`, true); return; }
@@ -7372,7 +7372,7 @@ window.nhLuuPhieu = async function(luuThat) {
   if (luuThat && nhPhieuHienTai?.donDatHang) { alert(`Phiếu này đã gắn đơn đặt hàng ${nhPhieuHienTai.donDatHang}.
 
 Vào Đặt hàng → mở đơn → "Đối chiếu & nhập kho" để lưu.`); return; }
-  if (!NH_LOAI[nhLoai]) { showToast('Chọn loại hàng nhập: Phụ kiện hoặc Hàng sống', true); return; }
+  if (!NH_LOAI[nhLoai]) { showToast('Chọn loại hàng nhập: Phụ kiện hoặc Hàng tươi', true); return; }
   const saiLoai = nhDongHang.filter(d => !nhSkuHopLoai(allSKUs.find(s => s.sku === d.sku)));
   if (saiLoai.length) { showToast(`Không thuộc ${NH_LOAI[nhLoai]}: ${saiLoai.map(d => d.ten).join(', ')}`, true); return; }
   if (nhLoai === 'phukien' && !nhAnh.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
@@ -19844,7 +19844,7 @@ const PL = {
     dsLoai: [['ch', 'Kho Cửa hàng'], ['san', 'Kho Online']], coGia: () => nhCoDuyet(),
     loaiCuaToi: () => dsKhoNhapDuocPhep(),
     trangThai: (p) => p.trangThai, dsTrangThai: [['tam', 'Phiếu tạm'], ['da_luu', 'Đã lưu']],
-    nhomLoc: { tieuDe: 'LOẠI HÀNG', ds: [['phukien', 'Phụ kiện'], ['song', 'Hàng sống']], lay: (p) => p.loaiHang },
+    nhomLoc: { tieuDe: 'LOẠI HÀNG', ds: [['phukien', 'Phụ kiện'], ['song', 'Hàng tươi']], lay: (p) => p.loaiHang },
     nhan: (p) => (p._goc?.donDatHang ? `<span style="font-size:11px;color:#1D4ED8;background:#DBEAFE;padding:1px 7px;border-radius:4px;font-weight:600">Đơn ${escHtml(p._goc.donDatHang)}</span> ` : '') + (p.loaiHang ? `<span style="font-size:11px;color:#0369A1;background:#E0F2FE;padding:1px 7px;border-radius:4px;font-weight:600">${NH_LOAI[p.loaiHang]}</span> ` : '') + (p.trangThai === 'tam'
       ? '<span style="font-size:11px;color:#fff;background:#D97706;padding:1px 7px;border-radius:4px;font-weight:600">Phiếu tạm</span>'
       : '<span style="font-size:11px;color:#16A34A;font-weight:600">Đã lưu</span>'),
@@ -25989,7 +25989,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v664</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v665</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26047,7 +26047,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v664</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v665</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26097,7 +26097,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v664</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v665</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26106,7 +26106,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v664</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v665</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
