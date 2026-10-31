@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 665;
+  const APP_VERSION = 666;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21075,13 +21075,27 @@ function hhoVeKhung() {
   const tongMat = M.dong ? M.dong.reduce((a, x, i) => a + (M.nhap[i]?.mat || 0), 0) : 0;
   const o = (i, k, v, max) => `<input type="number" inputmode="numeric" min="0" max="${max}" value="${v}" onchange="hhoDat(${i},'${k}',this.value)" style="width:58px;padding:6px;text-align:center;font-size:15px;font-weight:600">`;
   const canGuiDuyet = !M.duyet && (tongHong || tongMat) && !hhoDuocDuyet();
+  // Ảnh từng mã: ảnh hàng hóa trong app, không có thì lấy ảnh sản phẩm trên sàn
+  const anhDong = (x) => {
+    const ma = String(x.ma || '').toLowerCase();
+    const sp = ma && allSKUs.find(k => String(k.sku || '').toLowerCase() === ma);
+    if (sp?.anhFileId) return { nho: anhThumbUrl(sp.anhFileId, 200), lon: anhThumbUrl(sp.anhFileId, 1000) };
+    const h = (d.hang || []).find(h => h.anh && String(h.sku || '').toLowerCase() === ma) || (d.hang?.length === 1 && M.dong.length === 1 ? d.hang[0] : null);
+    return h?.anh ? { nho: h.anh, lon: h.anh } : null;
+  };
   ddbMoKhung('hho-modal', M.duyet ? 'Duyệt đơn hoàn trả' : 'Xác nhận đã nhận hàng hoàn', `${escHtml(san)} · ${escHtml(d.orderId)}${d.vanDonHoan || d.vanDon ? ' · VĐ ' + escHtml(d.vanDonHoan || d.vanDon) : ''}`,
     M.dangTai ? '<div class="loading">Đang lấy hàng trong đơn...</div>'
     : M.loi ? `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(M.loi))}</p>`
     : `${M.dong.map((x, i) => { const n = M.nhap[i]; const lech = n.nhan + n.hong + n.mat !== x.sl;
+        const a = anhDong(x);
         return `<div style="border:1px solid ${n.hong || n.mat ? '#F59E0B' : 'var(--border)'};border-radius:8px;padding:9px 10px;margin-bottom:8px;background:${n.hong || n.mat ? '#FFFBEB' : 'var(--surface)'}">
+          <div style="display:flex;gap:10px;align-items:center">
+          ${a ? `<img src="${escHtml(a.nho)}" loading="lazy" onclick="viewPhoto('${escHtml(a.lon)}')" title="Bấm để xem ảnh lớn" style="width:64px;height:64px;object-fit:cover;border-radius:8px;flex-shrink:0;background:var(--bg);cursor:zoom-in;border:1px solid var(--border)">`
+            : '<div style="width:64px;height:64px;border-radius:8px;flex-shrink:0;background:var(--bg);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--text3);text-align:center">Chưa có ảnh</div>'}
+          <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:13.5px">${escHtml(x.ten)}</div>
           <div style="font-size:11.5px;color:var(--text2)">${escHtml(x.ma)} · số lượng trả về <b>${x.sl}</b></div>
+          </div></div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:7px;font-size:12px;color:var(--text2)">
             <label style="display:flex;flex-direction:column;gap:3px">Nguyên vẹn${o(i, 'nhan', n.nhan, x.sl)}</label>
             <label style="display:flex;flex-direction:column;gap:3px">Hỏng${o(i, 'hong', n.hong, x.sl)}</label>
@@ -25989,7 +26003,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v665</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v666</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26047,7 +26061,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v665</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v666</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26097,7 +26111,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v665</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v666</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26106,7 +26120,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v665</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v666</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
