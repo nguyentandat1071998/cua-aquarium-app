@@ -13632,6 +13632,11 @@ async function renderHeThong(man = 'hethong') {
       <p style="font-size:12.5px;color:var(--text2);margin-bottom:6px">File xuất tồn kho Bigseller (sheet "SKU đơn độc", cột "Mã SKU" + "Tổng số"). App tự trừ hàng của các đơn đã Chuẩn bị mà shipper chưa lấy (app đã trừ những đơn này rồi), và tính lại số "đang đặt" từ các đơn chưa chuẩn bị.</p>
       <input type="file" accept=".xlsx,.xls" onchange="htDocFileBS(this)">
       <div id="ht-cton-kq" style="font-size:12.5px;margin-top:8px"></div>`),
+      htThe('3. Hóa đơn tại quầy từ KiotViet', `
+      <p style="font-size:13px;margin-bottom:8px">Đưa hóa đơn bán tại cửa hàng (Hoàn thành) trên KiotViet vào <b>Đơn đã bán</b> để tra bảo hành theo SĐT / mã hóa đơn / tên hàng. Không ghi sổ quỹ, không trừ tồn. Hóa đơn đã có trong app thì bỏ qua.</p>
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;font-size:13px">Từ <input type="date" id="ht-hdq-tu" value="${(() => { const d = new Date(Date.now() - 30 * 86400000); return d.toISOString().slice(0, 10); })()}" style="flex:1"> đến <input type="date" id="ht-hdq-den" value="${new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10)}" style="flex:1"></div>
+      <button class="btn-outline" style="width:100%" onclick="htNhapHDQuay()">Nhập hóa đơn tại quầy</button>
+      <div id="ht-hdq-kq" style="font-size:12.5px;margin-top:8px"></div>`),
       muc('congcu', 'Công cụ'), htThe('Hàng cùng loại', `
       <p style="font-size:13px;margin-bottom:8px">Lấy nhóm hàng cùng loại (cùng mã cha, khác thuộc tính) để Hàng hóa gom vào một khung. Hàng sửa giá sau này tự cập nhật nhóm.</p>
       <button class="btn-outline" style="width:100%" id="ht-nut-cl" onclick="htDongBoCungLoai()">Đồng bộ hàng cùng loại</button>
@@ -14139,6 +14144,40 @@ window.htApDungTonOnline = async function() {
     if (kq) kq.innerHTML = `<b style="color:var(--green)">Đã chốt tồn Kho Online cho ${n} mã.</b>`;
     htChotOn = null;
   } catch(e) { if (kq) kq.innerHTML = `<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`; }
+};
+
+
+window.htNhapHDQuay = async function() {
+  const kq = document.getElementById('ht-hdq-kq'); const ghi = (t) => { if (kq) kq.innerHTML = t; };
+  const tuNgay = document.getElementById('ht-hdq-tu')?.value, den = document.getElementById('ht-hdq-den')?.value;
+  if (!tuNgay || !den) { showToast('Chọn khoảng ngày', true); return; }
+  const denNgay = den + 'T23:59:59';
+  try {
+    ghi('Đang đọc danh sách hóa đơn để lấy khách...');
+    const khIds = new Set();
+    for (let trang = 0, k = 0; k < 30; k++) {
+      const r = await goiWorkerAdmin('hd-kv-trang', { tuNgay, denNgay, trang, soTrang: 10, chiNhanh: [650302, 634586] });
+      if (!r.success) throw new Error(r.error || 'KiotViet lỗi');
+      r.ds.forEach(v => { if (Number(v.trangThai) === 1 && v.khId) khIds.add(v.khId); });
+      trang += 10; ghi(`Đang đọc hóa đơn... ${Math.min(trang * 100, r.tong)}/${r.tong}`);
+      if (r.het) break;
+    }
+    const khMap = {}; const ids = [...khIds];
+    for (let i = 0; i < ids.length; i += 40) {
+      ghi(`Đang lấy SĐT khách ${i}/${ids.length}...`);
+      const r = await goiWorkerAdmin('kh-kv-theo-id', { ids: ids.slice(i, i + 40) });
+      if (r.success) Object.assign(khMap, r.kq);
+    }
+    let ghiN = 0, boQua = 0, trang = 0;
+    for (let k = 0; k < 40; k++) {
+      const r = await goiWorkerAdmin('nhap-hd-quay-kv', { tuNgay, denNgay, trang, khMap });
+      if (!r.success) throw new Error(r.error || 'Lỗi máy chủ');
+      ghiN += r.ghi; boQua += r.boQua; trang = r.trangKe;
+      ghi(`Đang nhập... đã ghi ${ghiN} hóa đơn`);
+      if (r.het) break;
+    }
+    ghi(`<b style="color:var(--green)">Đã nhập ${ghiN} hóa đơn tại quầy</b>${boQua ? ` · bỏ qua ${boQua} hóa đơn đã có` : ''} · ${Object.keys(khMap).length} khách có thông tin.`);
+  } catch(e) { ghi(`<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`); }
 };
 
 window.htDongBoTonKV = async function() {
@@ -24938,7 +24977,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v618</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v619</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -24992,7 +25031,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v618</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v619</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25038,7 +25077,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         <span id="ten-man-gon">Menu</span>
       </button>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v618</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v619</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
