@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 666;
+  const APP_VERSION = 667;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -13433,7 +13433,7 @@ async function dcGoi(action, body) {
 // Lỗi kỹ thuật từ máy chủ bán hàng -> câu dễ hiểu cho nhân viên (Admin vẫn thấy chi tiết để xử lý)
 function loiDeHieu(msg) {
   const m = String(msg || 'Lỗi máy chủ');
-  if (currentUserData?.role === 'admin') return m;
+  if (currentUserData?.role === 'admin') return m.replace(/(trên |bên |sang |của |vào )?KiotViet/gi, (x, t) => t ? t + 'hệ thống' : 'Hệ thống');
   if (/KiotViet|HTTP \d|\(\d{3}\)|token|web|api/i.test(m)) { console.warn('[lỗi máy chủ]', m); return 'Hệ thống bán hàng đang bận, thử lại sau ít phút. Vẫn lỗi thì báo quản lý.'; }
   return m;
 }
@@ -20364,6 +20364,7 @@ function hhoVe() {
             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${d.anhBC.map(u => `<img src="${escHtml(u)}" loading="lazy" onclick="viewPhoto('${escHtml(u)}')" style="width:58px;height:58px;object-fit:cover;border-radius:6px;cursor:pointer;background:var(--bg)">`).join('')}</div>` : ''}
           ${hhoTab === 'cho' ? hhoVeTrangThaiDuyet(d) : ''}
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
+            ${hhoTab !== 'xong' && hhoDuocDuyet() ? `<button class="btn-outline" title="Đơn đã xử lý xong ở nơi khác — ẩn khỏi danh sách" style="width:auto!important;flex:0 0 auto;margin:0 auto 0 0;padding:8px 12px;color:var(--text2)" onclick="hhoAn('${k}')">Đã xử lý · Ẩn</button>` : ''}
             <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px" onclick="hhoXem('${k}')">Xem chi tiết</button>
             ${hhoTab !== 'cho' ? '' : d.choDuyet ? (hhoDuocDuyet()
                 ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#B91C1C;border-color:#FCA5A5" onclick="hhoTuChoi('${k}')">Từ chối</button>
@@ -21109,6 +21110,18 @@ function hhoVeKhung() {
      ${M.dong ? `<button class="btn-g" id="hho-nut" style="flex:2;margin:0;background:${M.duyet ? '#D97706' : '#EA580C'}" onclick="hhoXacNhan()">${M.duyet ? 'Duyệt & nhập kho' : canGuiDuyet ? 'Gửi duyệt' : 'Xác nhận đã nhận'}</button>` : ''}`);
   ddbCanhGiua?.('hho-modal');
 }
+// Đơn đã xử lý xong ở nơi khác: ẩn khỏi danh sách (không nhập kho, không gửi xác nhận)
+window.hhoAn = async function(khoa) {
+  const d = hhoDs.find(x => hhoKhoa(x) === khoa); if (!d) return;
+  if (!await hoiXacNhan(`Ẩn đơn ${d.orderId} khỏi danh sách hoàn trả?\n\nChỉ dùng khi đơn đã xử lý xong ở nơi khác. App không nhập kho, không gửi xác nhận cho đơn này.`, { nutDongY: 'Ẩn đơn' })) return;
+  try {
+    const kq = await goiWorkerAdmin('hh-hoan-an', { ds: [{ khoa, orderId: d.orderId }], lyDo: 'Đã xử lý ngoài app' });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    hhoDs = hhoDs.filter(x => x !== d);
+    if (hhoDem[hhoNhom]?.[hhoTab]) hhoDem[hhoNhom][hhoTab]--;
+    hhoVe(); showToast(`Đã ẩn đơn ${d.orderId}`);
+  } catch(e) { showToast('Không ẩn được: ' + loiDeHieu(e.message), true); }
+};
 window.hhoDong = function() { const m = document.getElementById('hho-modal'); if (m) m.style.display = 'none'; hhoMoDon = null; };
 // Sửa hỏng / mất thì phần nguyên vẹn tự trừ theo cho đủ số trả về
 window.hhoDat = function(i, k, v) {
@@ -21125,7 +21138,7 @@ window.hhoXacNhan = async function() {
   const guiDuyet = !M.duyet && (hong || mat) && !hhoDuocDuyet();
   const soLuong = `Nguyên vẹn ${nhan}${hong ? ` · hỏng ${hong}` : ''}${mat ? ` · mất ${mat}` : ''}`;
   if (guiDuyet && !String(M.ghiChu || '').trim()) { showToast('Có hàng hỏng / mất — ghi chú lý do để người duyệt nắm', true); document.getElementById('hho-ghichu')?.focus(); return; }
-  const cauHoi = M.duyet ? `Duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nGửi xác nhận sang KiotViet, nhập kho phần nguyên vẹn. Không hoàn tác được.`
+  const cauHoi = M.duyet ? `Duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nGửi xác nhận, nhập kho phần nguyên vẹn. Không hoàn tác được.`
     : guiDuyet ? `Gửi duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nĐơn chưa nhập kho cho tới khi được duyệt.`
     : `Xác nhận đã nhận hàng hoàn đơn ${M.don.orderId}?\n\n${soLuong}\n\nKhông hoàn tác được.`;
   if (!await hoiXacNhan(cauHoi, { nutDongY: M.duyet ? 'Duyệt' : guiDuyet ? 'Gửi duyệt' : 'Xác nhận' })) return;
@@ -21139,6 +21152,13 @@ window.hhoXacNhan = async function() {
           ghiChu: String(M.ghiChu || '').trim(), dong });
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
     hhoDong(); hhoTim = '';
+    if (kq.daXuLyTruoc) {
+      hhoDs = hhoDs.filter(x => x !== d);
+      if (hhoDem[hhoNhom]?.cho) hhoDem[hhoNhom].cho--;
+      hhoVe();
+      alert(`Đơn ${d.orderId} đã được xử lý nhập hàng trả từ trước${kq.phieuTra ? ' (phiếu ' + kq.phieuTra + ')' : ''} — không cần xác nhận nữa.\n\nĐã ẩn đơn khỏi danh sách, tồn kho không thay đổi.`);
+      return;
+    }
     if (kq.choDuyet) {
       d.choDuyet = { nguoi: currentUserData?.ten || '', luc: new Date().toISOString(), ghiChu: String(M.ghiChu || '').trim(),
         dong: M.dong.map((x, i) => ({ ten: x.ten, sl: x.sl, productId: x.productId, invoiceDetailId: x.invoiceDetailId, ...M.nhap[i] })) };
@@ -26003,7 +26023,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v666</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v667</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26061,7 +26081,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v666</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v667</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26111,7 +26131,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v666</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v667</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26120,7 +26140,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v666</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v667</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
