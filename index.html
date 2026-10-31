@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 656;
+  const APP_VERSION = 657;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -15497,10 +15497,11 @@ async function ghiCaDanhSachTem() {
   await setDoc(refGioTem(), { items, capNhat: serverTimestamp(), nguoi: currentUserData?.ten || '' });   // ghi đè: dọn luôn các dòng 0
 }
 
+// Hàng đã tắt "Bán trực tiếp" (không bán tại quầy) không in tem: ẩn khỏi tìm kiếm, danh sách và lệnh in
+const temBiAn = (id) => allSKUs.find(x => x.id === id)?.banTrucTiep === false;
+const dsTemHienThi = () => [...gioTem.entries()].filter(([id, t]) => t.soLuong > 0 && !temBiAn(id));
 function tongSoTem() {
-  let n = 0;
-  gioTem.forEach(t => { n += t.soLuong; });
-  return n;
+  return dsTemHienThi().reduce((n, [, t]) => n + t.soLuong, 0);
 }
 
 function capNhatNutTem(id) {
@@ -15516,6 +15517,7 @@ window.themVaoGioTem = function(id, soThem = 1) {
   if (!coQuyen('hh_intem')) { showToast('Bạn không có quyền in tem giá', true); return; }
   const s = allSKUs.find(x => x.id === id);
   if (!s) return;
+  if (s.banTrucTiep === false && soThem > 0) { showToast('Hàng này đã tắt bán trực tiếp — không in tem', true); return; }
   const t = gioTem.get(id) || { ten: s.ten || '', gia: giaBanHang(s), sku: s.sku || '', soLuong: 0 };
   t.soLuong = Math.max(0, Math.min(500, t.soLuong + soThem));
   // Giá/tên lấy mới nhất mỗi lần bấm — lỡ vừa sửa giá thì tem in theo giá mới
@@ -15560,11 +15562,11 @@ function veGioTem() {
   const nutGui = document.getElementById('tem-gui');
   const n = tongSoTem();
   if (nutGui) { nutGui.textContent = n ? `Gửi in ${n} tem` : 'Gửi in'; nutGui.disabled = !n; }
-  if (!gioTem.size) {
+  if (!dsTemHienThi().length) {
     el.innerHTML = '<p class="info-note">Chưa có tem nào. Gõ tên hoặc mã hàng ở ô phía trên để thêm.</p>';
     return;
   }
-  el.innerHTML = [...gioTem.entries()].map(([id, t]) => `
+  el.innerHTML = dsTemHienThi().map(([id, t]) => `
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
       <canvas class="tem-xem" data-id="${id}" width="280" height="176" style="width:140px;height:88px;flex-shrink:0;border:1px solid #999;border-radius:3px;background:#fff"></canvas>
       <div style="flex:1;min-width:0">
@@ -15663,7 +15665,7 @@ window.timHangChoTem = function(q) {
   if (!el) return;
   q = boDauTim((q || '').trim());
   if (q.length < 2) { el.innerHTML = ''; return; }
-  const kq = allSKUs.filter(s => !s.deleted && (boDauTim(s.ten || '').includes(q) || boDauTim(s.sku || '').includes(q))).slice(0, 8);
+  const kq = allSKUs.filter(s => !s.deleted && s.banTrucTiep !== false && (boDauTim(s.ten || '').includes(q) || boDauTim(s.sku || '').includes(q))).slice(0, 8);
   el.innerHTML = kq.length ? kq.map(s => `
     <div onclick="themVaoGioTem('${s.id}'); veGioTem(); const o=document.getElementById('tem-tim'); o.value=''; timHangChoTem(''); o.focus();"
          style="padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
@@ -15672,7 +15674,7 @@ window.timHangChoTem = function(q) {
 };
 
 window.guiLenhInTem = async function() {
-  const muc = [...gioTem.entries()].filter(([, t]) => t.soLuong > 0);
+  const muc = dsTemHienThi();
   if (!muc.length) return;
   const ds = muc.map(([, t]) => ({ ten: t.ten, gia: t.gia, sku: t.sku, soLuong: t.soLuong }));
   if (!ds.length) return;
@@ -25858,7 +25860,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v656</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v657</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25916,7 +25918,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v656</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v657</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25965,7 +25967,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v656</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v657</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -25973,7 +25975,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v656</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v657</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
