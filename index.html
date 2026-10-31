@@ -10,7 +10,7 @@
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 649;
+  const APP_VERSION = 650;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -801,12 +801,90 @@ window.huyQuetQR = function() {
   document.getElementById('step-bat-dau').style.display = 'block';
 };
 
+// ===== CAMERA DỰ PHÒNG =====
+// Một số máy (iPhone mở app từ màn hình chính, trình duyệt trong app khác...) không có camera trực tiếp
+// (navigator.mediaDevices trống) hoặc bị chặn quyền. Khi đó dùng ô chụp ảnh của hệ thống
+// (<input capture>) — luôn mở được camera gốc của máy — rồi đọc mã / lấy ảnh từ tấm vừa chụp.
+const coCameraTrucTiep = () => !!navigator.mediaDevices?.getUserMedia;
+async function moCamera(rangBuoc) {
+  if (!coCameraTrucTiep()) { const e = new Error('khong-ho-tro'); e.name = 'KhongHoTro'; throw e; }
+  try { return await navigator.mediaDevices.getUserMedia(rangBuoc); }
+  catch (e) {
+    // Máy không đáp ứng yêu cầu camera sau / độ phân giải -> thử lại với yêu cầu tối thiểu
+    if (e.name === 'OverconstrainedError' || e.name === 'NotFoundError') return await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    throw e;
+  }
+}
+function loiCamera(e) {
+  const n = e?.name || '';
+  if (n === 'KhongHoTro') return 'Máy / app này không mở được camera trực tiếp — bấm nút Chụp ảnh bên dưới.';
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'Chưa cho phép dùng camera. iPhone: Cài đặt › Safari (hoặc Chrome) › Camera › Cho phép, rồi mở lại app. Hoặc bấm Chụp ảnh bên dưới.';
+  if (n === 'NotReadableError') return 'Camera đang bị app khác dùng — tắt app đó rồi thử lại, hoặc bấm Chụp ảnh bên dưới.';
+  return 'Không mở được camera (' + (e?.message || n || 'lỗi') + ') — bấm Chụp ảnh bên dưới.';
+}
+// Mở camera gốc của máy chụp 1 tấm -> Promise<HTMLImageElement|null>
+function chupAnhHeThong() {
+  return new Promise((xong) => {
+    const o = document.createElement('input');
+    o.type = 'file'; o.accept = 'image/*'; o.setAttribute('capture', 'environment');
+    o.style.cssText = 'position:fixed;left:-9999px;opacity:0';
+    o.onchange = () => {
+      const f = o.files?.[0]; o.remove();
+      if (!f) return xong(null);
+      const url = URL.createObjectURL(f);
+      const i = new Image();
+      i.onload = () => xong(i); i.onerror = () => { URL.revokeObjectURL(url); xong(null); };
+      i.src = url;
+    };
+    document.body.appendChild(o);
+    o.click();
+  });
+}
+// Vẽ ảnh vào canvas (tối đa `toiDa` px cạnh dài)
+function anhVaoCanvas(anh, toiDa = 1600) {
+  const w0 = anh.naturalWidth || anh.width, h0 = anh.naturalHeight || anh.height;
+  const tl = Math.min(1, toiDa / Math.max(w0, h0));
+  const c = document.createElement('canvas'); c.width = Math.round(w0 * tl); c.height = Math.round(h0 * tl);
+  c.getContext('2d').drawImage(anh, 0, 0, c.width, c.height);
+  return c;
+}
+// Chụp ảnh rồi đọc mã: QR đọc bằng jsQR (nhanh, không cần mạng); mã vạch dùng bộ đọc của màn quét vận đơn
+async function chupAnhDocMa(chiQR) {
+  const anh = await chupAnhHeThong();
+  if (!anh) return null;
+  const canvas = anhVaoCanvas(anh, 1600);
+  const thuQR = (c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height); return jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' })?.data || ''; };
+  let ma = '';
+  try { ma = thuQR(canvas) || thuQR(anhVaoCanvas(anh, 900)); } catch (e) {}
+  if (!ma && !chiQR) { try { await hhoTaoBoDoc(); ma = await hhoDocAnhNhieuLop(anh); } catch (e) {} }
+  return { ma: String(ma || '').trim(), canvas };
+}
+function nutChupDuPhong(id, onclick, nhan) {
+  return `<button id="${id}" class="btn-outline" style="width:100%;margin:8px 0 0;padding:11px;font-weight:600" onclick="${onclick}">📷 ${nhan}</button>`;
+}
+function hienNutDuPhong(sauId, id, onclick, nhan) {   // dùng cho dòng trạng thái nằm thường (không đè lên video)
+  const goc = document.getElementById(sauId); if (!goc || document.getElementById(id)) return;
+  goc.insertAdjacentHTML('afterend', nutChupDuPhong(id, onclick, nhan));
+}
+window.quetQRVaoCaBangAnh = async function() {
+  const st = document.getElementById('qr-status');
+  const kq = await chupAnhDocMa(true);
+  if (!kq) return;
+  if (kq.ma === CHECKIN_QR_SECRET) { st.textContent = '✅ QR hợp lệ — đã chụp ảnh. Đang xử lý...'; document.getElementById('qr-du-phong')?.remove(); chupAnhQRVaCheckin(kq.canvas); }
+  else st.textContent = kq.ma ? 'Mã QR không hợp lệ' : 'Chưa đọc được mã QR — chụp lại gần, thẳng và rõ hơn';
+};
+window.quetQRKetCaBangAnh = async function() {
+  const st = document.getElementById('checkout-status');
+  const kq = await chupAnhDocMa(true);
+  if (!kq) return;
+  if (kq.ma === CHECKIN_QR_SECRET) { st.textContent = '✅ QR hợp lệ — đã chụp ảnh. Đang xử lý...'; document.getElementById('checkout-du-phong')?.remove(); xuLyCheckout(kq.canvas); }
+  else st.textContent = kq.ma ? 'Mã QR không hợp lệ' : 'Chưa đọc được mã QR — chụp lại gần, thẳng và rõ hơn';
+};
+
 // === QUÉT QR ===
 async function startQRScan() {
   try {
-    checkinStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment' }
-    });
+    checkinStream = await moCamera({ video: { facingMode: 'environment' } });
     const video = document.getElementById('qr-video');
     video.srcObject = checkinStream;
     await video.play();
@@ -835,7 +913,8 @@ async function startQRScan() {
       }
     }, 200);
   } catch(e) {
-    document.getElementById('qr-status').textContent = 'Không mở được camera: ' + e.message;
+    document.getElementById('qr-status').textContent = loiCamera(e);
+    hienNutDuPhong('qr-status', 'qr-du-phong', 'quetQRVaoCaBangAnh()', 'Chụp ảnh mã QR để vào ca');
   }
 }
 
@@ -1989,7 +2068,7 @@ window.batDauCheckout = async function() {
   modal.style.display = 'flex';
   statusEl.textContent = 'Đang tìm mã QR...';
   try {
-    checkoutStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    checkoutStream = await moCamera({ video: { facingMode: 'environment' } });
     const video = document.getElementById('checkout-video');
     video.srcObject = checkoutStream;
     await video.play();
@@ -2018,7 +2097,8 @@ window.batDauCheckout = async function() {
       }
     }, 200);
   } catch(e) {
-    statusEl.textContent = 'Không mở được camera: ' + e.message;
+    statusEl.textContent = loiCamera(e);
+    hienNutDuPhong('checkout-status', 'checkout-du-phong', 'quetQRKetCaBangAnh()', 'Chụp ảnh mã QR để kết thúc ca');
   }
 };
 
@@ -6290,7 +6370,7 @@ window.batTatQuet = async function() {
     ghiNhatKyQuet(`BarcodeDetector: ${'BarcodeDetector' in window ? 'CÓ' : 'KHÔNG'}`);
     bao.textContent = 'Đang bật camera...';
 
-    luongCameraQuet = await navigator.mediaDevices.getUserMedia({
+    luongCameraQuet = await moCamera({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     video.srcObject = luongCameraQuet;
@@ -6352,7 +6432,9 @@ window.batTatQuet = async function() {
     bao.textContent = 'Đưa mã vận đơn vào khung';
     vongQuet();
   } catch(e) {
-    bao.textContent = 'Không bật được camera: ' + e.message;
+    bao.textContent = loiCamera(e);
+    const khung = document.getElementById('qdg-video')?.parentElement;
+    if (khung && !document.getElementById('qdg-du-phong')) khung.insertAdjacentHTML('afterend', nutChupDuPhong('qdg-du-phong', 'qdgQuetBangAnh()', 'Chụp ảnh mã vận đơn'));
     ghiNhatKyQuet('LỖI CAMERA: ' + e.name + ' — ' + e.message);
     console.error(e);
   }
@@ -6461,6 +6543,14 @@ async function vongQuet() {
   if (dangQuetDongGoi) setTimeout(vongQuet, kieuBoDoc === 'zxing' ? 330 : 200);
 }
 
+window.qdgQuetBangAnh = async function() {
+  const bao = document.getElementById('qdg-bao');
+  if (bao) bao.textContent = 'Đang đọc mã trong ảnh...';
+  const kq = await chupAnhDocMa(false);
+  if (!kq) return;
+  if (kq.ma && kq.ma.length >= 10) await xuLyMaQuet(kq.ma);
+  else if (bao) bao.textContent = 'Chưa đọc được mã vận đơn — chụp gần, thẳng mã vạch hơn';
+};
 async function xuLyMaQuet(ma) {
   const bao = document.getElementById('qdg-bao');
 
@@ -6646,7 +6736,7 @@ window.ktBatTat = async function() {
   const bao = document.getElementById('kt-bao');
   try {
     bao.textContent = 'Đang bật camera...';
-    ktLuong = await navigator.mediaDevices.getUserMedia({
+    ktLuong = await moCamera({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     video.srcObject = ktLuong;
@@ -6675,8 +6765,17 @@ window.ktBatTat = async function() {
     bao.textContent = 'Đưa mã vận đơn vào khung';
     ktVongQuet();
   } catch(e) {
-    bao.textContent = 'Không bật được camera: ' + e.message;
+    bao.textContent = loiCamera(e);
+    if (!document.getElementById('kt-du-phong')) bao.parentElement.insertAdjacentHTML('afterend', nutChupDuPhong('kt-du-phong', 'ktQuetBangAnh()', 'Chụp ảnh mã đơn'));
   }
+};
+window.ktQuetBangAnh = async function() {
+  const bao = document.getElementById('kt-bao');
+  if (bao) bao.textContent = 'Đang đọc mã trong ảnh...';
+  const kq = await chupAnhDocMa(false);
+  if (!kq) return;
+  if (kq.ma) await ktTraDon(kq.ma);
+  else if (bao) bao.textContent = 'Chưa đọc được mã — chụp gần, thẳng mã vạch hơn';
 };
 
 function ktDung(thongBao) {
@@ -11906,7 +12005,7 @@ window.bhMoQuet = async function() {
   const bao = document.getElementById('bh-quet-bao');
   const video = document.getElementById('bh-quet-video');
   try {
-    bhQuet.luong = await navigator.mediaDevices.getUserMedia({
+    bhQuet.luong = await moCamera({
       video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     video.srcObject = bhQuet.luong;
@@ -11928,8 +12027,18 @@ window.bhMoQuet = async function() {
     bao.textContent = 'Đưa mã vạch trên tem vào khung';
     bhVongQuet();
   } catch(e) {
-    bao.textContent = 'Không bật được camera: ' + e.message;
+    bao.textContent = loiCamera(e);
+    const khungBH = document.getElementById('bh-quet-bao')?.parentElement;
+    if (khungBH && !document.getElementById('bh-quet-du-phong')) khungBH.insertAdjacentHTML('afterend', `<div style="padding:0 12px">${nutChupDuPhong('bh-quet-du-phong', 'bhQuetBangAnh()', 'Chụp ảnh mã vạch')}</div>`);
   }
+};
+window.bhQuetBangAnh = async function() {
+  const bao = document.getElementById('bh-quet-bao');
+  if (bao) bao.textContent = 'Đang đọc mã trong ảnh...';
+  const kq = await chupAnhDocMa(false);
+  if (!kq) { if (bao) bao.textContent = 'Bấm Chụp ảnh mã vạch để quét'; return; }
+  if (kq.ma) { bhXuLyMaQuet(kq.ma); if (bao) bao.textContent = 'Đã đọc: ' + kq.ma + ' — chụp tiếp nếu còn hàng'; }
+  else if (bao) bao.textContent = 'Chưa đọc được mã — chụp gần, thẳng mã vạch hơn';
 };
 
 window.bhDongQuet = function() {
@@ -19305,11 +19414,14 @@ window.openCamera = async function(mode) {
   modal.dataset.mode = mode;
   modal.style.display = 'flex';
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    cameraStream = await moCamera({ video: { facingMode: 'environment' }, audio: false });
     document.getElementById('camera-video').srcObject = cameraStream;
   } catch(e) {
-    showToast('Không mở được camera', true);
+    // Không có camera trực tiếp: mở camera gốc của máy chụp 1 tấm, xử lý y như chụp trong app
     modal.style.display = 'none';
+    if (e.name !== 'KhongHoTro') showToast(loiCamera(e).replace(' Hoặc bấm Chụp ảnh bên dưới.', '').replace(' — bấm Chụp ảnh bên dưới.', ''), true);
+    const anh = await chupAnhHeThong();
+    if (anh) capturePhoto(anh);
   }
 };
 
@@ -19372,9 +19484,12 @@ window.themAnhTuFile = async function(input) {
   input.value = '';
 };
 
-window.capturePhoto = function() {
+window.capturePhoto = function(nguonAnh) {
   const mode = document.getElementById('camera-modal').dataset.mode;
-  const video = document.getElementById('camera-video');
+  // Nguồn: khung hình camera trực tiếp, hoặc ảnh vừa chụp bằng camera gốc của máy (dự phòng)
+  const video = nguonAnh instanceof HTMLImageElement
+    ? { videoWidth: nguonAnh.naturalWidth || nguonAnh.width, videoHeight: nguonAnh.naturalHeight || nguonAnh.height, _anh: nguonAnh }
+    : document.getElementById('camera-video');
   const canvas = document.getElementById('camera-canvas');
   // Thu nhỏ về tối đa 1280px — phiếu nhiều ảnh vẫn nằm gọn trong 1 tài liệu (giới hạn 1MB)
   // Ảnh xuất hủy 1024px — mỗi ảnh lưu riêng nên một phiếu chứa được nhiều ảnh
@@ -19382,7 +19497,7 @@ window.capturePhoto = function() {
   const tlAnh = Math.min(1, (laAnhHuy ? 1024 : 1280) / Math.max(video.videoWidth || 1, video.videoHeight || 1));
   canvas.width = Math.round(video.videoWidth * tlAnh); canvas.height = Math.round(video.videoHeight * tlAnh);
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video._anh || video, 0, 0, canvas.width, canvas.height);
   // Timestamp overlay
   const now = new Date();
   const d2=now.getDate().toString().padStart(2,'0'), m2=(now.getMonth()+1).toString().padStart(2,'0'), y2=now.getFullYear().toString().slice(-2);
@@ -20066,7 +20181,6 @@ let hhoCam = null;   // { luong, boDoc, kieu, chay }
 let hhoGoiLaiQuet = null;
 window.hhoMoCamera = async function(goiLai) {
   hhoGoiLaiQuet = typeof goiLai === 'function' ? goiLai : null;
-  if (!navigator.mediaDevices?.getUserMedia) { showToast('Máy này không mở được camera', true); return; }
   ddbMoKhung('hho-cam-modal', 'Quét mã vận đơn', 'Đưa mã vạch (hoặc QR) trên tem vào khung, giữ máy cách tem khoảng 10–15cm',
     `<div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:200px" onclick="if(hhoCam&&!hhoCam.luong)hhoBatLuong()">
       <video id="hho-video" playsinline muted style="width:100%;display:block;max-height:60vh;object-fit:cover"></video>
@@ -20087,7 +20201,7 @@ window.hhoMoCamera = async function(goiLai) {
 // Bật luồng camera: độ phân giải cao, lấy nét liên tục, phóng nhẹ (máy hỗ trợ thì dùng)
 async function hhoBatLuong() {
   try {
-    const luong = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    const luong = await moCamera({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
     if (!document.getElementById('hho-cam-modal') || document.getElementById('hho-cam-modal').style.display === 'none') { luong.getTracks().forEach(t => t.stop()); return; }
     hhoCam = { ...(hhoCam || {}), luong, chay: true, den: false };
     const track = luong.getVideoTracks()[0];
@@ -20105,7 +20219,7 @@ async function hhoBatLuong() {
     await hhoTaoBoDoc();
     hhoBaoCam('Đưa mã vạch vào khung');
     hhoVongQuet();
-  } catch(e) { hhoBaoCam('Không bật được camera: ' + e.message); }
+  } catch(e) { hhoBaoCam(e.name === 'KhongHoTro' ? 'Máy / app này không có camera trực tiếp — bấm "Chụp ảnh tem để đọc mã" bên dưới' : loiCamera(e).replace('bấm Chụp ảnh bên dưới', 'bấm "Chụp ảnh tem" bên dưới')); }
 }
 // Tạm tắt camera trực tiếp trước khi mở chụp ảnh (iPhone không cho dùng camera 2 nơi cùng lúc)
 window.hhoTamTatLuong = function() {
@@ -25604,7 +25718,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v649</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v650</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25661,7 +25775,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v649</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v650</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25710,14 +25824,14 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v649</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v650</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v649</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v650</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
