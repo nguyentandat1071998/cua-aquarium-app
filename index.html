@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 654;
+  const APP_VERSION = 655;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -254,7 +254,7 @@ import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, 
 // ===== LỊCH SỬ THAO TÁC: tự ghi mọi thay đổi dữ liệu + thao tác qua máy chủ =====
 // Mọi lệnh ghi Firestore đi qua các hàm bọc dưới đây; các thay đổi xảy ra liền nhau
 // (trong ~2 giây) của cùng một thao tác được gộp thành MỘT dòng lịch sử.
-const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong']);
+const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong', 'gio_tem']);
 const NK_COL = {
   skus: ['Hàng hóa', 'Kho'], ton_san: ['Tồn Kho Online', 'Kho'], gia_von: ['Giá vốn', 'Kho'], nhom_hang: ['Nhóm hàng', 'Kho'],
   phieu_chuyenkho: ['Phiếu chuyển kho', 'Kho'], phieu_huy: ['Phiếu xuất hủy', 'Kho'], phieu_nhap_san: ['Phiếu nhập kho', 'Kho'], moc_hang_hong: ['Mốc hàng hỏng', 'Kho'],
@@ -15382,6 +15382,7 @@ function hhTheSku(s, trongNhom = false) {
 }
 
 function renderHangHoaList() {
+  ngheGioTem();   // nạp danh sách tem lưu chung để nút 🏷 hiện đúng số
   const el = document.getElementById('hanghoa-list');
   if (!el) return;
   if (document.getElementById('hh-loc-th')?.options.length !== dsThuongHieu().length + 2) veLocThuongHieu();
@@ -15470,6 +15471,31 @@ window.doiTrangHangHoa = function(p) { hangHoaPage = p; renderHangHoaList(); };
 // máy in tem Xprinter. App chỉ gửi dữ liệu (tên, giá, SKU), không vẽ hình.
 const gioTem = new Map();   // id SKU -> { ten, gia, sku, soLuong }
 const TEM_TOI_DA_MOI_LENH = 80;
+// Danh sách tem LƯU CHUNG (gio_tem/chung): ai có quyền In tem giá cũng thêm vào được, để dồn nhiều mã
+// rồi in một lần — máy in 2 tem/hàng nên in lẻ tẻ từng mã 1 tem sẽ phí nửa hàng giấy.
+const refGioTem = () => doc(db, 'gio_tem', 'chung');
+let huyNgheGioTem = null;
+function ngheGioTem() {
+  if (huyNgheGioTem || !coQuyen('hh_intem')) return;
+  huyNgheGioTem = onSnapshot(refGioTem(), (snap) => {
+    const items = snap.data()?.items || {};
+    const cu = new Set(gioTem.keys());
+    gioTem.clear();
+    Object.entries(items).forEach(([id, t]) => { if (t && Number(t.soLuong) > 0) gioTem.set(id, { ten: t.ten || '', gia: Number(t.gia) || 0, sku: t.sku || '', soLuong: Number(t.soLuong) }); });
+    new Set([...cu, ...gioTem.keys()]).forEach(capNhatNutTem);
+    capNhatNutTem();
+    veGioTem();
+  }, () => { huyNgheGioTem = null; });
+}
+function luuMotTem(id) {
+  const t = gioTem.get(id) || { soLuong: 0 };
+  setDoc(refGioTem(), { items: { [id]: t }, capNhat: serverTimestamp(), nguoi: currentUserData?.ten || '' }, { merge: true })
+    .catch(e => showToast('Chưa lưu được danh sách tem: ' + e.message, true));
+}
+async function ghiCaDanhSachTem() {
+  const items = Object.fromEntries([...gioTem.entries()].filter(([, t]) => t.soLuong > 0));
+  await setDoc(refGioTem(), { items, capNhat: serverTimestamp(), nguoi: currentUserData?.ten || '' });   // ghi đè: dọn luôn các dòng 0
+}
 
 function tongSoTem() {
   let n = 0;
@@ -15493,22 +15519,24 @@ window.themVaoGioTem = function(id, soThem = 1) {
   const t = gioTem.get(id) || { ten: s.ten || '', gia: giaBanHang(s), sku: s.sku || '', soLuong: 0 };
   t.soLuong = Math.max(0, Math.min(500, t.soLuong + soThem));
   // Giá/tên lấy mới nhất mỗi lần bấm — lỡ vừa sửa giá thì tem in theo giá mới
-  t.ten = s.ten || ''; t.gia = Number(s.gia) || 0; t.sku = s.sku || '';
+  t.ten = s.ten || ''; t.gia = giaBanHang(s); t.sku = s.sku || '';
   if (t.soLuong) gioTem.set(id, t); else gioTem.delete(id);
   capNhatNutTem(id);
+  luuMotTem(id);
   if (soThem > 0) showToast(`Đã thêm tem "${t.ten}" (${t.soLuong})`);
 };
 
 window.moGioTem = function() {
+  ngheGioTem();
   document.getElementById('khung-gio-tem')?.remove();
   const nen = document.createElement('div');
   nen.id = 'khung-gio-tem';
-  nen.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:flex-end;justify-content:center';
+  nen.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1350;display:flex;align-items:flex-end;justify-content:center';
   nen.onclick = (e) => { if (e.target === nen) nen.remove(); };
   nen.innerHTML = `
     <div style="background:var(--surface,#fff);width:100%;max-width:560px;max-height:88vh;border-radius:14px 14px 0 0;display:flex;flex-direction:column">
       <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-        <b style="flex:1;font-size:16px">🏷 In tem giá</b>
+        <b style="flex:1;font-size:16px">🏷 Danh sách in tem <span style="font-size:11px;font-weight:500;color:var(--text2)">· lưu chung, in khi đủ</span></b>
         <button class="btn-xs" onclick="document.getElementById('khung-gio-tem').remove()">Đóng</button>
       </div>
       <div style="padding:10px 14px;border-bottom:1px solid var(--border)">
@@ -15516,6 +15544,7 @@ window.moGioTem = function() {
         <div id="tem-goi-y"></div>
       </div>
       <div id="tem-ds" style="overflow:auto;padding:10px 14px;flex:1"></div>
+      <div id="tem-ghichu" style="padding:6px 14px 0;font-size:12px;color:var(--text2)"></div>
       <div style="padding:10px 14px;border-top:1px solid var(--border);display:flex;gap:8px">
         <button class="btn-outline" onclick="xoaHetGioTem()">Xóa hết</button>
         <button class="btn-g" id="tem-gui" style="flex:1" onclick="guiLenhInTem()">Gửi in</button>
@@ -15532,6 +15561,8 @@ function veGioTem() {
   const nutGui = document.getElementById('tem-gui');
   const n = tongSoTem();
   if (nutGui) { nutGui.textContent = n ? `Gửi in ${n} tem` : 'Gửi in'; nutGui.disabled = !n; }
+  const oGhiChu = document.getElementById('tem-ghichu');
+  if (oGhiChu) oGhiChu.innerHTML = n ? `${n} tem = ${Math.ceil(n / 2)} hàng giấy${n % 2 ? ' · <b style="color:#B45309">lẻ 1 tem — hàng cuối thừa 1 ô</b>' : ' · <span style="color:var(--green)">chẵn, không thừa ô</span>'}` : '';
   if (!gioTem.size) {
     el.innerHTML = '<p class="info-note">Chưa có tem nào. Bấm nút <b>🏷 Tem</b> ở từng hàng hóa, hoặc gõ tìm ở ô phía trên.</p>';
     return;
@@ -15565,30 +15596,52 @@ window.datSoTem = function(id, v) {
   themVaoGioTem(id, (Math.max(0, Math.min(500, parseInt(v, 10) || 0))) - t.soLuong);
   veGioTem();
 };
-window.xoaHetGioTem = function() {
+window.xoaHetGioTem = async function(khongHoi) {
+  if (!gioTem.size) return;
+  if (!khongHoi && !await hoiXacNhan(`Xóa hết danh sách in tem (${tongSoTem()} tem)?\n\nDanh sách dùng chung — người khác đã thêm cũng mất.`, { nutDongY: 'Xóa hết', nguy: true })) return;
   const ids = [...gioTem.keys()];
   gioTem.clear();
   ids.forEach(capNhatNutTem);
   capNhatNutTem();
   veGioTem();
+  try { await ghiCaDanhSachTem(); } catch(e) { showToast('Chưa lưu được: ' + e.message, true); }
 };
 
 window.timHangChoTem = function(q) {
   const el = document.getElementById('tem-goi-y');
   if (!el) return;
-  q = (q || '').trim().toLowerCase();
+  q = boDauTim((q || '').trim());
   if (q.length < 2) { el.innerHTML = ''; return; }
-  const kq = allSKUs.filter(s => (s.ten || '').toLowerCase().includes(q) || (s.sku || '').toLowerCase().includes(q)).slice(0, 8);
+  const kq = allSKUs.filter(s => !s.deleted && (boDauTim(s.ten || '').includes(q) || boDauTim(s.sku || '').includes(q))).slice(0, 8);
   el.innerHTML = kq.length ? kq.map(s => `
     <div onclick="themVaoGioTem('${s.id}'); veGioTem();"
          style="padding:7px 4px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
-      <b>${escHtml(s.ten || '')}</b> <span style="color:var(--text2)">· ${escHtml(s.sku || '')} · ${fmt(s.gia || 0)}đ</span>
+      <b>${escHtml(s.ten || '')}</b> <span style="color:var(--text2)">· ${escHtml(s.sku || '')} · ${fmt(giaBanHang(s))}đ</span>
     </div>`).join('') : '<div style="font-size:12px;color:var(--text3);padding:6px 0">Không thấy hàng nào</div>';
 };
 
 window.guiLenhInTem = async function() {
-  const ds = [...gioTem.values()].filter(t => t.soLuong > 0)
-    .map(t => ({ ten: t.ten, gia: t.gia, sku: t.sku, soLuong: t.soLuong }));
+  const muc = [...gioTem.entries()].filter(([, t]) => t.soLuong > 0);
+  if (!muc.length) return;
+  const tongTem = muc.reduce((a, [, t]) => a + t.soLuong, 0);
+  // Máy in 2 tem/hàng: tổng lẻ thì hàng cuối thừa 1 ô -> cho chọn giữ lại 1 tem để lần sau in chung
+  let giuLai = null;   // id SKU giữ lại 1 tem
+  if (tongTem % 2) {
+    const [idCuoi, tCuoi] = muc[muc.length - 1];
+    const chon = await new Promise(xong => {
+      let daChon = false;
+      moBangChon(`Tổng ${tongTem} tem (lẻ) — hàng cuối sẽ thừa 1 ô trống`, [
+        ...(tongTem > 1 ? [{ gt: 'giu', nhan: `In ${tongTem - 1} tem, giữ lại 1 tem`, phu: `Giữ 1 tem "${tCuoi.ten}" trong danh sách cho lần in sau` }] : []),
+        { gt: 'het', nhan: `In cả ${tongTem} tem`, phu: 'Chấp nhận thừa 1 ô trống' }
+      ], '', (v) => { daChon = true; xong(v); });
+      // Đóng bảng chọn mà không chọn -> hủy
+      const cho = setInterval(() => { if (daChon) return clearInterval(cho); if (document.getElementById('bang-chon')?.style.display !== 'flex') { clearInterval(cho); xong(null); } }, 400);
+    });
+    if (!chon) return;
+    if (chon === 'giu') giuLai = idCuoi;
+  }
+  const ds = muc.map(([id, t]) => ({ ten: t.ten, gia: t.gia, sku: t.sku, soLuong: t.soLuong - (id === giuLai ? 1 : 0) }))
+    .filter(t => t.soLuong > 0);
   if (!ds.length) return;
   const nut = document.getElementById('tem-gui');
   if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
@@ -15606,10 +15659,16 @@ window.guiLenhInTem = async function() {
         taoLuc: serverTimestamp()
       });
     }
-    const tong = tongSoTem();
-    xoaHetGioTem();
+    const tong = ds.reduce((a, t) => a + t.soLuong, 0);
+    // Dọn danh sách: chỉ còn lại tem giữ lại (nếu có)
+    const conLai = giuLai ? { ...gioTem.get(giuLai), soLuong: 1 } : null;
+    const ids = [...gioTem.keys()];
+    gioTem.clear();
+    if (conLai) gioTem.set(giuLai, conLai);
+    ids.forEach(capNhatNutTem); capNhatNutTem();
+    try { await ghiCaDanhSachTem(); } catch(e) {}
     document.getElementById('khung-gio-tem')?.remove();
-    showToast(`Đã gửi ${tong} tem tới máy in tem`);
+    showToast(`Đã gửi ${tong} tem tới máy in tem` + (conLai ? ' · giữ lại 1 tem trong danh sách' : ''));
   } catch (e) {
     console.error('[in tem]', e);
     showToast('Không gửi được lệnh in tem — thử lại', true);
@@ -25757,7 +25816,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v654</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v655</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -25815,7 +25874,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v654</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v655</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -25864,7 +25923,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v654</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v655</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -25872,7 +25931,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <span class="user-menu-caret">▾</span>
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v654</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v655</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
