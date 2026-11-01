@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 688;
+  const APP_VERSION = 689;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -6805,6 +6805,8 @@ async function renderKiemTraDonTab() {
 // gốc (mã vạch dài trên tem), có nút chụp ảnh tem và đèn pin. Bộ quét cũ (720p, thu nhỏ còn 800px,
 // không chỉnh lấy nét) nhiều máy không bắt được mã vạch vận đơn.
 window.ktBatTat = function() {
+  const m = document.getElementById('kt-modal');
+  if (m && m.style.display !== 'none') { showToast('Hoàn thành đơn đang mở trước đã', true); return; }
   const b = document.getElementById('kt-bao'); if (b) b.textContent = '';
   hhoMoCamera((ma) => ktTraDon(ma));
 };
@@ -6945,9 +6947,14 @@ async function ktTraDon(maVanDon) {
 // Cửa sổ hàng cần đóng: không tick từng món nữa. Danh sách dài thì phải VUỐT XEM HẾT
 // mới bấm được "Hoàn thành đóng gói" — tránh sót món ở cuối danh sách.
 let ktDaXemHet = false;
-function ktDongCuaSo() { const m = document.getElementById('kt-modal'); if (m) m.style.display = 'none'; }
+// Làm xong từng đơn: đơn còn đóng gói được thì đóng cửa sổ phải xác nhận
+async function ktDongCuaSo(khongHoi) {
+  const m = document.getElementById('kt-modal'); if (!m || m.style.display === 'none') return;
+  const conDang = ktDon && !ktDon.thoiGianDongGoi && !coYeuCauHuy(ktDon) && trangThaiHienThi(ktDon) !== 'da_huy';
+  if (conDang && !khongHoi && !await hoiXacNhan('Đơn này chưa hoàn thành đóng gói.\n\nVẫn đóng cửa sổ?', { nutDongY: 'Đóng', nguy: true })) return;
+  m.style.display = 'none';
+}
 window.ktDongCuaSo = ktDongCuaSo;
-window.ktQuetTiep = function() { ktDongCuaSo(); ktBatTat(); };
 // Kiểm tra đã cuộn tới cuối danh sách chưa -> bật nút, ẩn dòng "Còn sản phẩm"
 window.ktKiemCuon = function() {
   const ds = document.getElementById('kt-ds-hang');
@@ -7021,8 +7028,9 @@ function ktVeDanhSachHang() {
       </div>
 
       <div style="padding:10px 14px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px">
-        ${daDongGoi || biHuy ? '' : `<button id="kt-nut-xong" class="btn-g" style="width:100%;padding:15px;font-size:16px;margin:0" onclick="ktHoanThanhDongGoi()">✓ Hoàn thành đóng gói</button>`}
-        <button class="btn-outline" style="width:100%;margin:0" onclick="ktQuetTiep()">📷 Quét đơn tiếp theo</button>
+        ${daDongGoi || biHuy
+          ? `<button class="btn-outline" style="width:100%;margin:0;padding:13px" onclick="ktDongCuaSo(true)">Đóng</button>`
+          : `<button id="kt-nut-xong" class="btn-g" style="width:100%;padding:15px;font-size:16px;margin:0" onclick="ktHoanThanhDongGoi()">✓ Hoàn thành đóng gói</button>`}
       </div>
     </div>`;
   m.style.display = 'flex';
@@ -7067,8 +7075,8 @@ window.ktHoanThanhDongGoi = async function() {
     const oTien = document.getElementById('kt-tien');
     if (oSoDon) oSoDon.textContent = ktPhien.soDon;
     if (oTien) oTien.textContent = ktPhien.tienThuong.toLocaleString('vi-VN') + 'đ';
-    showToast('Đã ghi nhận đóng gói');   // tạm ẩn số tiền thưởng
-    ktVeDanhSachHang();
+    showToast('✓ Đã đóng gói ' + (ktDon.maDonSan || ''));   // tạm ẩn số tiền thưởng
+    ktDongCuaSo(true);
   } catch(e) {
     bip(400, 350);
     const n = document.getElementById('kt-nut-xong');
@@ -10668,7 +10676,9 @@ window.xacNhanDon = async function(maDon) {
     return;
   }
 
-  showToast('Đang lấy lựa chọn ngày lấy hàng...');
+  if (window._xnDangChay) return;   // đang lấy thông tin đơn khác / bấm 2 lần
+  window._xnDangChay = true;
+  popupDangChay('Chuẩn bị hàng', `${maDon} — đang lấy thông tin lấy hàng...`);
   try {
     const idToken = await currentUser.getIdToken();
     const res = await fetch(WORKER_URL, {
@@ -10685,9 +10695,12 @@ window.xacNhanDon = async function(maDon) {
       await phanLoaiSauKhiLoi(maDon, kq.error);
       return;
     }
+    const mHoi = document.getElementById('hoi-modal'); if (mHoi) mHoi.style.display = 'none';
     veKhungXacNhan(maDon, shopId, kq.thongTin);
   } catch(e) {
     await phanLoaiSauKhiLoi(maDon, e.message);
+  } finally {
+    window._xnDangChay = false;
   }
 };
 
@@ -10755,7 +10768,7 @@ function veKhungXacNhan(maDon, shopId, tt) {
       </div>
 
       <div style="padding:12px 14px;border-top:1px solid var(--border)">
-        <button class="btn-g" style="width:100%"
+        <button class="btn-g" id="xn-nut-gui" style="width:100%"
           onclick="guiXacNhanDon('${escHtml(maDon)}',${shopId})">Xác nhận đơn</button>
       </div>
     </div>`;
@@ -10806,8 +10819,14 @@ window.xnDoiDiaChi = function() {
 // Chuyển popup đang mở sang trạng thái "đang chạy" — giữ nguyên khung, chỉ đổi
 // ruột. Đóng rồi mở popup mới thì màn hình nhấp nháy, nhìn như bị lỗi.
 function popupDangChay(tieuDe, moTa) {
-  const m = document.getElementById('hoi-modal');
-  if (!m) return;
+  // Lớp tiến trình (trước đây thiếu phần tử này nên không hiện gì, chỉ thấy app "đứng")
+  let m = document.getElementById('hoi-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'hoi-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1500;display:none;align-items:center;justify-content:center;padding:20px';
+    document.body.appendChild(m);
+  }
   m.onclick = null;   // đang chạy thì không cho bấm ra ngoài để tắt
   m.innerHTML = `
     <div style="background:var(--surface);width:100%;max-width:360px;border-radius:14px;
@@ -11080,7 +11099,7 @@ async function chuanBiDonRiengLe(d) {
 //   có, thiếu hạn   -> sàn chưa duyệt
 //   có, đủ hạn      -> LỖI HỆ THỐNG (sàn ổn, đơn ổn, mà gọi vẫn hỏng)
 async function phanLoaiSauKhiLoi(maDon, loiGoc) {
-  showToast('Đang kiểm tra vì sao...');
+  popupDangChay('Đang kiểm tra', `${maDon} — đang hỏi sàn vì sao chưa chuẩn bị được...`);
   let tieuDe = '', thongBao = '', loaiTB = 'thuong';
   // Hỏi MÁY CHỦ phân loại lại (quét cả tab "Chưa thanh toán" lẫn "Chờ xử lý" của Bán Online rồi ghi vào đơn)
   // — cùng một cách với lịch 30 phút, nên đơn chuyển đúng nhóm trên mọi máy.
@@ -11115,11 +11134,19 @@ async function phanLoaiSauKhiLoi(maDon, loiGoc) {
 }
 
 window.guiXacNhanDon = async function(maDon, shopId) {
+  if (window._xnDangGui) return;   // chặn bấm 2 lần: lần 2 sẽ báo "đã được chuẩn bị"
   const ngay = document.querySelector('input[name="xn-ngay"]:checked')?.value;
   const i = Number(document.getElementById('xn-diachi')?.value) || 0;
   const diaChi = (window._xnDiaChi || [])[i]?.address_id;
   if (!ngay && window._xnCanNgay) { showToast('Chưa chọn ngày lấy hàng', true); return; }
   if (!diaChi) { showToast('Không xác định được địa chỉ lấy hàng', true); return; }
+
+  window._xnDangGui = true;
+  const nutGui = document.getElementById('xn-nut-gui');
+  if (nutGui) { nutGui.disabled = true; nutGui.textContent = 'Đang gửi...'; }
+  document.getElementById('xn-modal').style.display = 'none';
+  popupDangChay('Đang chuẩn bị hàng', `${maDon} — đang gửi cho sàn...`);
+  const d = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
 
   try {
     const idToken = await currentUser.getIdToken();
@@ -11132,28 +11159,45 @@ window.guiXacNhanDon = async function(maDon, shopId) {
     console.log('[xác nhận đơn]', kq);
 
     if (!kq.success) {
+      // Xem nhanh đơn trên app trước: sàn có khi trả lỗi dù đơn đã chuẩn bị xong
+      // (hoặc vừa có người khác bấm) — khỏi chạy bước quét Bán Online rất lâu.
+      if (d?.id) {
+        try {
+          const moi = await getDoc(doc(db, 'don_hang_san', d.id));
+          const x = moi.exists() ? moi.data() : null;
+          if (x && (x.coHoaDon === true || x.maVanDon)) {
+            Object.assign(d, x);
+            hienPopup({ loai: 'thuong', maDon, tieuDe: 'Đơn đã chuẩn bị xong', noiDung: x.maVanDon ? `Mã vận đơn: ${x.maVanDon}` : '' });
+            veDanhSachDon();
+            return;
+          }
+        } catch(e) {}
+      }
       // KiotViet trả về cùng một câu "có lỗi từ phía sàn" cho mọi trường hợp, nên
       // đọc chuỗi lỗi là đoán mò. Phải HỎI Bán Online mới biết thật sự vì sao.
-      document.getElementById('xn-modal').style.display = 'none';
       await phanLoaiSauKhiLoi(maDon, kq.error);
       return;
     }
 
-    // Xác nhận được rồi thì xóa dấu chờ duyệt
-    const dOk = allDonHangSan.find(x => x.maDonSan === maDon || x.maHoaDon === maDon);
-    if (dOk?.id && dOk.sanTuChoiLuc) {
+    // Đánh dấu ngay để đơn sang Chờ in, không đợi webhook; xóa dấu chờ duyệt nếu có
+    if (d?.id) {
       try {
-        await updateDoc(doc(db, 'don_hang_san', dOk.id), { sanTuChoiLuc: null, sanTuChoiLyDo: null });
-        dOk.sanTuChoiLuc = null;
+        await updateDoc(doc(db, 'don_hang_san', d.id), {
+          daChuanBiHang: true, chuanBiLuc: serverTimestamp(),
+          ...(d.sanTuChoiLuc ? { sanTuChoiLuc: null, sanTuChoiLyDo: null } : {})
+        });
+        d.daChuanBiHang = true; d.sanTuChoiLuc = null;
       } catch(e) {}
+      capNhatTienTrinh(85, 'Đang lấy mã vận đơn...');
+      await ngheDonThayDoi([d.id]).catch(() => {});
     }
-
-    document.getElementById('xn-modal').style.display = 'none';
-
     hienPopup({ loai: 'thuong', maDon, tieuDe: 'Chuẩn bị hàng',
-      soThanhCong: 1, soThatBai: 0, noiDung: '' });
+      soThanhCong: 1, soThatBai: 0, noiDung: kq.maVanDon ? `Mã vận đơn: ${kq.maVanDon}` : '' });
+    veDanhSachDon();
   } catch(e) {
     hienPopup({ loai: 'loi', maDon, tieuDe: 'Không chuẩn bị được', noiDung: e.message });
+  } finally {
+    window._xnDangGui = false;
   }
 };
 
@@ -26193,7 +26237,7 @@ div[style*="display: flex"] > .btn-outline{width:auto;flex:1}
 #photo-viewer button{margin-top:14px;padding:10px 24px;background:rgba(255,255,255,0.15);color:#fff;border:none;border-radius:8px;cursor:pointer}
 
 /* TOAST */
-.toast{position:fixed;bottom:20px;left:50%;transform:translate3d(-50%,0,0);-webkit-transform:translate3d(-50%,0,0);will-change:opacity;background:#1A2340;color:#fff;padding:11px 18px;border-radius:8px;font-size:13px;line-height:1.45;z-index:3000;white-space:normal;word-wrap:break-word;width:calc(100% - 40px);max-width:380px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.2);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s ease}
+.toast{position:fixed;top:calc(12px + env(safe-area-inset-top));bottom:auto;left:50%;transform:translate3d(-50%,0,0);-webkit-transform:translate3d(-50%,0,0);will-change:opacity;background:#1A2340;color:#fff;padding:11px 18px;border-radius:8px;font-size:13px;line-height:1.45;z-index:3000;white-space:normal;word-wrap:break-word;width:calc(100% - 40px);max-width:380px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.2);opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s ease}
 .toast.show{opacity:1;visibility:visible}
 .toast.err{background:var(--red)}
 .empty-msg{padding:20px;text-align:center;color:var(--text3);font-size:13px}
@@ -26267,7 +26311,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v688</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v689</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26325,7 +26369,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v688</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v689</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26375,7 +26419,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v688</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v689</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26384,7 +26428,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v688</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v689</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
