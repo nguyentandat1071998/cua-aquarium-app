@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 676;
+  const APP_VERSION = 677;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -3745,7 +3745,10 @@ function donThieuHang(d) {
   if (thieu.reduce((a, i) => a + i.sl, 0) !== tongSan - tongKV) return san.map(i => ({ ...i, chuaRo: true }));
   return thieu;
 }
-const khopLocGiao = (d) => donFilterGiao === 'all' || (donFilterGiao === 'hethang' ? donThieuHang(d).length > 0 : (donFilterGiao === 'hoatoc') === laHoaToc(d));
+const khopLocGiao = (d) => donFilterGiao === 'all' || (donFilterGiao === 'hoatoc') === laHoaToc(d);
+// Lọc "Hết hàng": đơn chưa đóng gói mà phiếu KiotViet thiếu món so với đơn trên sàn
+const laDonHetHang = (d) => TT_CHUA_DONG_GOI.has(trangThaiHienThi(d)) && donThieuHang(d).length > 0;
+const khopLocTT = (d) => donFilterTrangThai === 'all' || (donFilterTrangThai === 'het_hang' ? laDonHetHang(d) : trangThaiHienThi(d) === donFilterTrangThai);
 // Mặc định mở "Chờ xử lý" — việc cần làm ngay. Mở "Tất cả" mỗi lần vào tab
 // vừa tốn dữ liệu vừa không giúp gì.
 let donFilterTrangThai = 'cho_xu_ly';
@@ -4049,7 +4052,7 @@ function locDon() {
   if (donFilterVanChuyen !== 'all') {
     ds = ds.filter(d => khoaVanChuyen(d) === donFilterVanChuyen);
   }
-  if (donFilterTrangThai !== 'all') ds = ds.filter(d => trangThaiHienThi(d) === donFilterTrangThai);
+  if (donFilterTrangThai !== 'all') ds = ds.filter(khopLocTT);
   const tu = donTimKiem.trim().toLowerCase();
   if (tu) ds = ds.filter(d =>
     String(d.maHoaDon || '').toLowerCase().includes(tu) ||
@@ -4284,7 +4287,7 @@ async function napDonTheoKhoangNgay() {
 }
 
 window.doiFilterGiao = function(ma) {
-  donFilterGiao = ['hoatoc', 'thuong', 'hethang'].includes(ma) ? ma : 'all';
+  donFilterGiao = ['hoatoc', 'thuong'].includes(ma) ? ma : 'all';
   donPage = 1;
   veDanhSachDon();
 };
@@ -4333,8 +4336,7 @@ function nenLocDon(bo) {
   const kNgay = khoangLocNgay();
   return allDonHangSan.filter(d => {
     if (!khopLocNgay(d, kNgay)) return false;
-    if (cap > 0 && donFilterTrangThai !== 'all'
-        && trangThaiHienThi(d) !== donFilterTrangThai) return false;
+    if (cap > 0 && !khopLocTT(d)) return false;
     if (cap > 1 && !khopLocGiao(d)) return false;
     if (cap > 2 && donFilterSan !== 'all' && d.san !== donFilterSan) return false;
     if (cap > 3 && donFilterVanChuyen !== 'all'
@@ -4390,12 +4392,6 @@ function veLocGiao() {
     ${nutLoc('all', 'Tất cả', nen.length, donFilterGiao === 'all', 'doiFilterGiao')}
     ${nutHT}
     ${nutLoc('thuong', 'Giao thường', nen.length - soHT, donFilterGiao === 'thuong', 'doiFilterGiao')}
-    ${(() => { const soHet = nen.filter(d => donThieuHang(d).length).length, chon = donFilterGiao === 'hethang';
-      return `<button onclick="doiFilterGiao('hethang')"
-      style="display:inline-flex;align-items:center;gap:5px;border:1.5px solid ${soHet || chon ? '#B91C1C' : 'var(--border)'};
-             border-radius:6px;padding:6px 10px;font-size:12px;white-space:nowrap;
-             background:${chon ? '#B91C1C' : (soHet ? '#FEF2F2' : '#fff')};color:${chon ? '#fff' : (soHet ? '#B91C1C' : 'var(--text2)')};
-             opacity:${soHet || chon ? '1' : '.5'};font-weight:${soHet || chon ? '700' : '400'}">⛔ Hết hàng (${soHet})</button>`; })()}
   </div>`;
 }
 
@@ -5302,6 +5298,7 @@ function veDanhSachDon() {
         ? ' · <span style="color:#D97706">bấm Kiểm tra để lấy dữ liệu mới</span>' : ''}`, `
       <div style="display:flex;gap:5px;flex-wrap:wrap">
         ${nhomCho.map(([k, v]) => nutTT(k, v.ten, demTT(k), v.mau)).join('')}
+        ${nutTT('het_hang', '⛔ Hết hàng', nenDem.filter(laDonHetHang).length, '#B91C1C')}
       </div>`)}
 
     ${khoiLoc('XỬ LÝ ĐƠN HÀNG', `
@@ -26113,7 +26110,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v676</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v677</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26171,7 +26168,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v676</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v677</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26221,7 +26218,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v676</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v677</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26230,7 +26227,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v676</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v677</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
