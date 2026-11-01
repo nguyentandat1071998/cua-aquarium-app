@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 711;
+  const APP_VERSION = 712;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -5525,10 +5525,10 @@ function giaBanHang(s) {
 function giaVonDonVi(sk) {
   if (!sk) return null;
   // Combo không có giá vốn riêng — luôn cộng từ hàng thành phần
-  if (!sk.laCombo && Number(sk.giaVon) > 0) return Number(sk.giaVon);
+  if (!sk.laCombo && giaVonHieuLuc(sk) > 0) return giaVonHieuLuc(sk);
   if (sk.laCombo && sk.thanhPhanCombo?.length) {
     let t = 0;
-    for (const tp of sk.thanhPhanCombo) { const con = allSKUs.find(x => x.id === tp.skuId); const g = Number(con?.giaVon) || 0; if (!g) return null; t += g * (Number(tp.tyLe) || 1); }
+    for (const tp of sk.thanhPhanCombo) { const con = allSKUs.find(x => x.id === tp.skuId); const g = giaVonHieuLuc(con); if (!g) return null; t += g * (Number(tp.tyLe) || 1); }
     return t;
   }
   return null;
@@ -7425,7 +7425,7 @@ function nhVeTao() {
           <button class="btn-xs" style="width:32px;padding:6px" onclick="nhTangGiam(${i},1)">+</button>` : `<span style="font-size:14px">SL <b>${d.soLuong}</b></span>`}
           <div style="flex:1"></div>
           ${duyet ? `
-          <input type="number" min="0" inputmode="numeric" value="${d.donGia || ''}" placeholder="Đơn giá" ${duocNhap ? '' : 'disabled'}
+          <input type="text" inputmode="numeric" autocomplete="off" value="${d.donGia ? fmt(d.donGia) : ''}" placeholder="Đơn giá" ${duocNhap ? '' : 'disabled'}
             onchange="nhSuaDong(${i},'donGia',this.value)" style="width:96px;padding:6px;text-align:right;font-size:14px${Number(d.donGia) ? '' : ';border-color:#F59E0B'}">
           <b style="min-width:78px;text-align:right;font-size:13.5px">${fmt(tt)}đ</b>` : ''}
         </div>
@@ -7476,7 +7476,7 @@ function nhVeTao() {
 
 window.nhSuaDong = function(i, truong, giaTri) {
   if (!nhDongHang[i]) return;
-  nhDongHang[i][truong] = truong === 'soLuong' ? (slLe(giaTri) > 0 ? slLe(giaTri) : 1) : Math.max(0, parseFloat(giaTri) || 0);
+  nhDongHang[i][truong] = truong === 'soLuong' ? (slLe(giaTri) > 0 ? slLe(giaTri) : 1) : soTien(giaTri);
   nhVeTao();
 };
 window.nhTangGiam = function(i, d) {
@@ -7639,12 +7639,15 @@ Vào Đặt hàng → mở đơn → "Đối chiếu & nhập kho" để lưu.`)
       duLieu.luuThatLuc = serverTimestamp();
     }
 
+    let idPhieu = dangSua?.id || null;
     if (dangSua) {
       await updateDoc(doc(db, 'phieu_nhap_san', dangSua.id), duLieu);
     } else {
       duLieu.taoLuc = serverTimestamp();
-      await addDoc(collection(db, 'phieu_nhap_san'), duLieu);
+      idPhieu = (await addDoc(collection(db, 'phieu_nhap_san'), duLieu)).id;
     }
+    // Giá vốn theo giá nhập: gọi TRƯỚC khi cộng tồn (máy chủ cần tồn cũ để giữ phần giá cũ)
+    if (luuThat && idPhieu) await goiGiaVonNhap([idPhieu], nhDongHang.map(d => ({ sku: d.sku, gia: Number(d.donGia) || 0, sl: Number(d.soLuong) || 0 })));
 
     // CỘNG TỒN KHO ĐÃ CHỌN — chỉ khi lưu thật (phiếu tạm chưa nhập hàng thực sự).
     if (luuThat) {
@@ -7715,6 +7718,26 @@ async function nhTaiDs(L) {
   return ds.sort((a, b) => (a.trangThai === 'tam' ? 0 : 1) - (b.trangThai === 'tam' ? 0 : 1) || b.createdAt.toMillis() - a.createdAt.toMillis());
 }
 async function nhTimDs() { return nhGoiDs({ ganDay: true }); }
+// Nhập kho xong: máy chủ cập nhật giá vốn = giá nhập, giữ phần tồn cũ với giá cũ (2 cột giá)
+async function goiGiaVonNhap(phieuIds, dong) {
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, { method: 'POST',
+      headers: { 'x-action': 'gia-von-nhap', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phieuIds, dong }) });
+    const kq = await res.json().catch(() => ({}));
+    if (!kq.success) throw new Error(kq.error || `Lỗi ${res.status}`);
+    (kq.kq || []).forEach(x => {
+      const k = String(x.sku).trim();
+      bangGiaVon.set(k, x.giaVon); bangGiaVon.set(k.toLowerCase(), x.giaVon);
+      if (x.lo?.length) bangLoGia.set(k, x.lo); else bangLoGia.delete(k);
+      const sp = allSKUs.find(s => s.sku === x.sku); if (sp && daNapGiaVon) sp.giaVon = x.giaVon;
+    });
+  } catch(e) {
+    console.warn('[giá vốn nhập]', e.message);
+    showToast('Đã nhập kho nhưng chưa cập nhật được giá vốn: ' + e.message, true);
+  }
+}
 
 // ===== HỦY PHIẾU NHẬP =====
 // Phiếu tạm: người tạo hoặc người duyệt hủy được (chỉ ẩn phiếu, chưa đụng tồn).
@@ -8080,7 +8103,7 @@ function dhVeTao() {
           <input type="text" inputmode="decimal" autocomplete="off" value="${it.sl}" onchange="dhSuaDong(${i},'sl',this.value)" style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
           <button class="btn-xs" style="width:32px;padding:6px" onclick="dhTangGiam(${i},1)">+</button>
           <div style="flex:1"></div>
-          ${coGia ? `<input type="number" min="0" inputmode="numeric" value="${it.giaVon || ''}" placeholder="Giá vốn" onchange="dhSuaDong(${i},'giaVon',this.value)"
+          ${coGia ? `<input type="text" inputmode="numeric" autocomplete="off" value="${it.giaVon ? fmt(it.giaVon) : ''}" placeholder="Giá vốn" onchange="dhSuaDong(${i},'giaVon',this.value)"
             style="width:96px;padding:6px;text-align:right;font-size:14px${Number(it.giaVon) ? '' : ';border-color:#F59E0B'}">
           <b style="min-width:78px;text-align:right;font-size:13.5px">${fmt((Number(it.sl) || 0) * (Number(it.giaVon) || 0))}đ</b>` : ''}
         </div>
@@ -8130,7 +8153,7 @@ window.dhThemHang = function(maSku) {
 };
 window.dhSuaDong = function(i, truong, v) {
   const it = dhDon?.items[i]; if (!it) return;
-  it[truong] = truong === 'sl' ? (slLe(v) > 0 ? slLe(v) : 1) : Math.max(0, parseFloat(v) || 0);
+  it[truong] = truong === 'sl' ? (slLe(v) > 0 ? slLe(v) : 1) : soTien(v);
   dhVeTao();
 };
 window.dhTangGiam = function(i, d) { const it = dhDon?.items[i]; if (!it) return; it.sl = Math.max(1, r3((Number(it.sl) || 0) + d)); dhVeTao(); };
@@ -9103,17 +9126,25 @@ function dhVeDoiChieu() {
         <div style="font-size:12px;color:var(--text2);margin:2px 0 6px">${escHtml(r.sku)} · Đặt <b style="color:var(--text)">${r.dat}</b>${r.daNhap ? ` (đã nhập ${r.daNhap})` : ''} · Đếm <b style="color:var(--text)">${r.dem}</b></div>
         <div style="display:flex;gap:6px;align-items:center">
           <span style="font-size:12px;color:var(--text2)">Nhập</span>
-          <input type="text" inputmode="decimal" autocomplete="off" value="${r.nhap}" onchange="dhDCSua(${i},'nhap',this.value)" style="width:64px;padding:6px;text-align:center;font-weight:700">
+          <input type="text" inputmode="decimal" autocomplete="off" value="${r.nhap}" onchange="dhDCSua(${i},'nhap',this.value,this)" style="width:64px;padding:6px;text-align:center;font-weight:700">
           <span style="font-size:12px;color:var(--text2);margin-left:6px">Giá vốn</span>
-          <input type="number" min="0" inputmode="numeric" value="${r.gia || ''}" onchange="dhDCSua(${i},'gia',this.value)" style="flex:1;min-width:0;padding:6px;text-align:right${Number(r.gia) || !Number(r.nhap) ? '' : ';border-color:#F59E0B'}">
+          <input type="text" inputmode="numeric" autocomplete="off" id="dhdc-gia-${i}" value="${r.gia ? fmt(r.gia) : ''}" onchange="dhDCSua(${i},'gia',this.value,this)" style="flex:1;min-width:0;padding:6px;text-align:right${Number(r.gia) || !Number(r.nhap) ? '' : ';border-color:#F59E0B'}">
         </div>
       </div>`).join('')}
-    <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;padding:8px 0">Tổng tiền nhập <span style="color:#1D4ED8">${fmt(tongTien)}đ</span></div>`,
+    <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:700;padding:8px 0">Tổng tiền nhập <span id="dhdc-tong" style="color:#1D4ED8">${fmt(tongTien)}đ</span></div>`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('dh-dc-modal').style.display='none'">Đóng</button>
      <button class="btn-g" id="btn-dh-nhap" style="flex:1;margin:0;background:#2563EB" onclick="dhLuuNhapKho()">Lưu nhập kho</button>`);
   ddbCanhGiua('dh-dc-modal');
 }
-window.dhDCSua = function(i, k, v) { const r = dhDC?.dong[i]; if (!r) return; r[k] = Math.max(0, k === 'nhap' ? slLe(v) : (parseFloat(v) || 0)); dhVeDoiChieu(); };
+window.dhDCSua = function(i, k, v, o) {
+  const r = dhDC?.dong[i]; if (!r) return;
+  r[k] = Math.max(0, k === 'nhap' ? slLe(v) : soTien(v));
+  if (!o) { dhVeDoiChieu(); return; }
+  // Sửa tại chỗ — không vẽ lại cả khung để khỏi nhảy lên đầu
+  o.value = k === 'gia' ? (r.gia ? fmt(r.gia) : '') : r.nhap;
+  const g = document.getElementById('dhdc-gia-' + i); if (g) g.style.borderColor = Number(r.gia) || !Number(r.nhap) ? '' : '#F59E0B';
+  const t = document.getElementById('dhdc-tong'); if (t) t.textContent = fmt(dhDC.dong.reduce((s, x) => s + (Number(x.nhap) || 0) * (Number(x.gia) || 0), 0)) + 'đ';
+};
 
 window.dhLuuNhapKho = async function() {
   const { don, phieu, dong } = dhDC || {};
@@ -9146,6 +9177,7 @@ window.dhLuuNhapKho = async function() {
       tongTien: (x.dongHang || []).reduce((s, d) => s + (Number(d.soLuong) || 0) * (giaMap[d.sku] || 0), 0),
       luuThatLuc: serverTimestamp(), suaLuc: serverTimestamp()
     })));
+    await goiGiaVonNhap(phieu.map(x => x.id), items.map(r => ({ sku: r.sku, gia: Number(r.gia) || 0, sl: Number(r.nhap) || 0 })));
     try {
       await dieuChinhTonKhoApp(items.map(r => ({ sku: r.sku, sl: Number(r.nhap) })), +1, KHO_NHAP[don.kho].ma, { loai: 'Nhập kho', ma: kv || don.maPhieu });
     } catch(e) { alert('Đã nhập kho nhưng CHƯA CỘNG được tồn trong app:\n' + e.message + '\n\nVào Tồn kho chỉnh tay cho khớp.'); }
@@ -15936,7 +15968,7 @@ function hhTheSku(s, trongNhom = false) {
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:${trongNhom ? 13.5 : 15}px;margin-bottom:2px">${escHtml(s.ten||'')}${s.banTrucTiep === false ? ' <span title="Không hiện ở Bán hàng" style="background:#F1F5F9;color:#64748B;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHÔNG BÁN TRỰC TIẾP</span>' : ''}${s.ngungNhap ? ' <span title="Bán hết tồn rồi thôi, không nhập thêm" style="background:#FEF3C7;color:#92400E;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">NGỪNG NHẬP</span>' : ''}${s.choBanAm ? ' <span title="Hết tồn vẫn bán được" style="background:#EEF2FF;color:#3730A3;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">BÁN ÂM</span>' : ''}${s.laCombo ? ' <span style="background:#EDE9FE;color:#5B21B6;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">COMBO</span>' : ''}${s.khoChung ? ' <span title="Hàng để ở quầy, bán cả online — tồn tính ở Kho Online" style="background:#CFFAFE;color:#0E7490;font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600">KHO CHUNG · Ở QUẦY</span>' : ''}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${escHtml(s.sku||'—')}</div>
-          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? (s.laCombo ? `Vốn: ${giaVonDonVi(s) != null ? fmt(giaVonDonVi(s)) + 'đ' : '—'} <span style="font-size:11px">(cộng từ thành phần)</span>` : `Vốn: ${fmt(s.giaVon||0)}đ`) : '', hienCH ? (s.laCombo ? (() => { const md = giaMacDinhCombo(s.thanhPhanCombo), g = giaBanHang(s); return `Bán: ${fmt(g)}đ${Number(s.gia) > 0 && md > g ? ` <span style="font-size:11px">(lẻ ${fmt(md)}đ)</span>` : !(Number(s.gia) > 0) ? ' <span style="font-size:11px">(mặc định)</span>' : ''}`; })() : `Bán: ${fmt(s.gia||0)}đ`) : ''].filter(Boolean).join(' - ')}</div>
+          <div style="font-size:13px;color:var(--text2);margin-bottom:2px">${[currentUserData.role === 'admin' ? (s.laCombo ? `Vốn: ${giaVonDonVi(s) != null ? fmt(giaVonDonVi(s)) + 'đ' : '—'} <span style="font-size:11px">(cộng từ thành phần)</span>` : nhanVonHaiCot(s)) : '', hienCH ? (s.laCombo ? (() => { const md = giaMacDinhCombo(s.thanhPhanCombo), g = giaBanHang(s); return `Bán: ${fmt(g)}đ${Number(s.gia) > 0 && md > g ? ` <span style="font-size:11px">(lẻ ${fmt(md)}đ)</span>` : !(Number(s.gia) > 0) ? ' <span style="font-size:11px">(mặc định)</span>' : ''}`; })() : `Bán: ${fmt(s.gia||0)}đ`) : ''].filter(Boolean).join(' - ')}</div>
           <div style="font-size:13px;color:var(--text2);margin-bottom:2px;display:flex;gap:10px;flex-wrap:wrap">
             ${s.khoChung && (hienSan || hienCH) ? `<span>Kho chung: <b style="color:${tonSan <= 0 ? 'var(--red)' : '#0E7490'}">${tonSan}</b>${dat > 0
               ? ` <span style="color:#D97706">(đặt ${dat}, còn ${khaDung})</span>` : ''}</span>`
@@ -16017,7 +16049,7 @@ function renderHangHoaList() {
     const don = list.filter(s => !s.laCombo), soCombo = list.length - don.length;
     const tonCua = (s) => kho === 'ch' ? layTon(s, 'cuahang') : kho === 'san' ? layTon(s, 'san') : layTon(s, 'cuahang') + layTon(s, 'san');
     let tongTon = 0, giaTri = 0, thieuVon = 0;
-    don.forEach(s => { const t = Math.max(0, tonCua(s)); tongTon += t; if (t > 0) { const v = Number(s.giaVon) || 0; if (v > 0) giaTri += t * v; else thieuVon++; } });
+    don.forEach(s => { const t = Math.max(0, tonCua(s)); tongTon += t; if (t > 0) { const v = giaVonTonKho(s); if (v > 0) giaTri += t * v; else thieuVon++; } });
     tomTat = `<div style="font-size:12.5px;color:var(--text2);background:var(--bg);border-radius:8px;padding:7px 10px;margin-bottom:8px;line-height:1.5">`
       + (don.length ? `<b style="color:var(--text)">${don.length}</b> SKU đơn · Tồn <b style="color:var(--text)">${fmt(tongTon)}</b> · Giá trị kho (giá vốn) <b style="color:var(--green)">${fmt(Math.round(giaTri))}đ</b>`
         + (thieuVon ? ` · <span style="color:#D97706">${thieuVon} mã còn tồn chưa có giá vốn</span>` : '') : '')
@@ -16362,7 +16394,7 @@ async function moFormHangHoa(idSua, laComboMoi) {
       <div id="${I('don')}">
         ${truongCoNhan(laCombo ? 'Mã SKU Combo' : 'Mã SKU', `<input type="text" id="${I('sku')}" placeholder="Ô nhập liệu" value="${escHtml(s?.sku || '')}">`)}
         <div style="display:flex;gap:8px">
-          ${laAdmin && !laCombo ? `<div style="flex:1">${truongCoNhan('Giá vốn', `<input type="number" id="${I('giavon')}" placeholder="Ô nhập liệu" value="${s ? (s.giaVon || 0) : ''}">`)}</div>` : ''}
+          ${laAdmin && !laCombo ? `<div style="flex:1">${truongCoNhan('Giá vốn' + (s && giaVonHaiCot(s) ? ' (mới)' : ''), `<input type="number" id="${I('giavon')}" placeholder="Ô nhập liệu" value="${s ? (s.giaVon || 0) : ''}">`)}${s && giaVonHaiCot(s) ? `<div style="font-size:11.5px;color:#D97706;margin-top:3px">Còn ${giaVonHaiCot(s).slCu} cái giá cũ ${fmt(giaVonHaiCot(s).cu)}đ — bán hết thì tự bỏ</div>` : ''}</div>` : ''}
           ${laCombo ? `<div style="flex:1">${truongCoNhan('Giá mặc định (cộng thành phần)', `<input type="text" id="hhs-${id}-gia-md" readonly tabindex="-1" style="background:var(--bg);color:var(--text2)" value="${fmt(giaMacDinhCombo(s?.thanhPhanCombo))}đ">`)}</div>
           <div style="flex:1">${truongCoNhan('Giá bán combo', `<input type="number" id="${I('gia')}" placeholder="Trống = giá mặc định" value="${s && Number(s.gia) > 0 ? s.gia : ''}">`)}</div>`
           : `<div style="flex:1">${truongCoNhan('Giá bán', `<input type="number" id="${I('gia')}" placeholder="Ô nhập liệu" value="${s ? (s.gia || 0) : ''}">`)}</div>`}
@@ -17256,6 +17288,29 @@ async function loadSKUs(epDocLai = false) {
 // Bảng giá vốn đọc MỘT lần mỗi phiên rồi giữ trong bộ nhớ (luuGiaVon cập nhật bảng này khi sửa).
 // Trước đây mỗi lần một mã hàng thay đổi là đọc lại toàn bộ gia_von -> import 1.400 dòng = hơn 2 triệu lượt đọc.
 const bangGiaVon = new Map();
+// Lô giá vốn (nhập kho tự cập nhật): [{gia, sl}] cũ -> mới. Lô cũ còn tồn thì vẫn tính lãi theo giá cũ,
+// bán hết phần tồn cũ thì bỏ giá cũ. Phần đã bán tính theo tồn hiện tại (lô mới nhất giữ trước).
+const bangLoGia = new Map();
+const soTien = (v) => Number(String(v ?? '').replace(/[^\d]/g, '')) || 0;
+function loConLai(s) {
+  const lo = bangLoGia.get(String(s?.sku || '').trim());
+  if (!lo?.length || s?.laCombo) return null;
+  let con = Math.max(0, layTon(s, 'san') + layTon(s, 'cuahang'));
+  const out = [];
+  for (let k = lo.length - 1; k >= 0 && con > 0; k--) {
+    const g = k === 0 ? con : Math.min(Number(lo[k].sl) || 0, con);
+    if (g > 0) out.unshift({ gia: Number(lo[k].gia) || 0, sl: r3(g) });
+    con = r3(con - g);
+  }
+  return out;
+}
+// Giá vốn đang tính lãi: giá của lô cũ nhất còn tồn
+function giaVonHieuLuc(s) { const l = loConLai(s); return l?.length ? l[0].gia : (Number(s?.giaVon) || 0); }
+// Giá vốn bình quân của phần đang tồn (tính giá trị kho)
+function giaVonTonKho(s) { const l = loConLai(s); if (!l?.length) return Number(s?.giaVon) || 0; const sl = l.reduce((a, x) => a + x.sl, 0); return sl ? l.reduce((a, x) => a + x.gia * x.sl, 0) / sl : (Number(s?.giaVon) || 0); }
+// Hai cột giá: { cu, slCu, moi } khi còn lô giá cũ chưa bán hết
+function giaVonHaiCot(s) { const l = loConLai(s); if (!l || l.length < 2) return null; const moi = l[l.length - 1].gia; if (l[0].gia === moi) return null; return { cu: l[0].gia, slCu: l.filter(x => x.gia !== moi).reduce((a, x) => a + x.sl, 0), moi }; }
+function nhanVonHaiCot(s) { const h = giaVonHaiCot(s); return h ? `Vốn cũ: <b>${fmt(h.cu)}đ</b> <span style="font-size:11px">(còn ${h.slCu})</span> · Vốn mới: <b>${fmt(h.moi)}đ</b>` : `Vốn: ${fmt(s.giaVon || 0)}đ`; }
 let daNapGiaVon = false;
 function traGiaVon(k) {
   if (k == null) return null;
@@ -17283,6 +17338,8 @@ async function napGiaVon() {
     snap.docs.forEach(d => {
       const gt = Number(d.data()?.giaVon) || 0;
       const khoa = String(d.id).trim();
+      const lo = d.data()?.lo;
+      if (Array.isArray(lo) && lo.length) bangLoGia.set(khoa, lo); else bangLoGia.delete(khoa);
       bang.set(khoa, gt);
       bang.set(khoa.toLowerCase(), gt);
       bangGiaVon.set(khoa, gt); bangGiaVon.set(khoa.toLowerCase(), gt);
@@ -17304,8 +17361,10 @@ async function napGiaVon() {
 // Ghi giá vốn vào collection riêng. Rules tự chặn nếu không đủ quyền.
 async function luuGiaVon(maSku, giaVon) {
   if (!maSku) return;
+  if (daNapGiaVon && traGiaVon(maSku) != null && Number(traGiaVon(maSku)) === (Number(giaVon) || 0)) return;   // giá không đổi: giữ lô giá cũ/mới
   try {
     await setDoc(doc(db, 'gia_von', maSku), { giaVon: Number(giaVon) || 0, suaLuc: serverTimestamp() });
+    bangLoGia.delete(String(maSku).trim());   // sửa tay giá vốn = bỏ lô giá cũ
     const s = allSKUs.find(x => x.sku === maSku);
     if (s) s.giaVon = Number(giaVon) || 0;
     bangGiaVon.set(String(maSku).trim(), Number(giaVon) || 0); bangGiaVon.set(String(maSku).trim().toLowerCase(), Number(giaVon) || 0);
@@ -26771,7 +26830,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v711</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v712</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26829,7 +26888,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v711</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v712</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26879,7 +26938,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v711</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v712</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26888,7 +26947,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v711</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v712</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
