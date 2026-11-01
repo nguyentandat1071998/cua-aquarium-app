@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 713;
+  const APP_VERSION = 714;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -4100,11 +4100,21 @@ function locDon() {
     String(d.maVanDon || '').toLowerCase().includes(tu) ||
     String(d.maKhachKV || '').toLowerCase() === tu ||
     String(d.khachHang || '').toLowerCase().includes(tu) ||
-    (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu))
+    (d.chiTiet || []).some(c => tenCT(c).toLowerCase().includes(tu))
   );
   return ds;
 }
 
+// Tên hàng trong đơn sàn: hóa đơn KiotViet chỉ trả tên chung (thiếu phân loại), phiếu đặt thì có đủ.
+// Lấy tên đầy đủ từ danh mục hàng hóa của app khi tên trong đơn là phần đầu của tên đó.
+let _tenCTMap = null, _tenCTLen = -1, _tenCTRef = null;
+function tenCT(c) {
+  const t = String(c?.tenHang || '').trim();
+  if (_tenCTRef !== allSKUs || _tenCTLen !== allSKUs.length) { _tenCTMap = new Map(allSKUs.map(s => [String(s.sku || '').trim(), s.ten || ''])); _tenCTLen = allSKUs.length; _tenCTRef = allSKUs; }
+  const tn = String(_tenCTMap.get(String(c?.maHang || '').trim()) || '').trim();
+  if (tn && (!t || (tn.length > t.length && tn.toLowerCase().startsWith(t.toLowerCase())))) return tn;
+  return t || c?.maHang || '';
+}
 async function renderDonHangTab() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
@@ -4723,7 +4733,7 @@ function locDonHoanTra() {
     if (tu && !(String(d.maHoaDon || '').toLowerCase().includes(tu)
       || String(d.maDonSan || '').toLowerCase().includes(tu)
       || String(d.maVanDon || '').toLowerCase().includes(tu)
-      || (d.chiTiet || []).some(c => String(c.tenHang || '').toLowerCase().includes(tu)))) return false;
+      || (d.chiTiet || []).some(c => tenCT(c).toLowerCase().includes(tu)))) return false;
     return true;
   });
 }
@@ -4837,7 +4847,7 @@ function veKhungNhapKho() {
           return `
           <div style="border:1px solid ${hut > 0 ? '#D97706' : 'var(--border)'};border-radius:8px;
                       padding:10px;margin-bottom:8px;background:${hut > 0 ? '#FFFBEB' : '#fff'}">
-            <div style="font-weight:600;font-size:14px">${escHtml(c.tenHang || c.maHang)}</div>
+            <div style="font-weight:600;font-size:14px">${escHtml(tenCT(c))}</div>
             <div style="font-size:11px;color:var(--text2)">
               ${escHtml(c.maHang)} · đã gửi đi ${c.soLuongDon}
               ${hut > 0 ? ` · <b style="color:#D97706">thiếu ${hut}</b>` : ''}
@@ -5225,14 +5235,14 @@ function veDanhSachHoanTra(el) {
               d.nguoiNhapLaiKho ? ` · ${escHtml(d.nguoiNhapLaiKho)}` : ''}</div>` : ''}
           ${xong && !nhapLaiDayDu(d) ? `<div style="font-size:11px;color:#D97706;margin-top:2px">
             ${(d.nhapLaiChiTiet || []).filter(c => c.soLuongNhap < c.soLuongDon)
-              .map(c => `${escHtml(c.tenHang || c.maHang)}: nhập ${c.soLuongNhap}/${c.soLuongDon}`)
+              .map(c => `${escHtml(tenCT(c))}: nhập ${c.soLuongNhap}/${c.soLuongDon}`)
               .join(' · ')}${d.nhapLaiGhiChu ? ` — ${escHtml(d.nhapLaiGhiChu)}` : ''}</div>` : ''}
           ${xong && daXacNhanNhapLai(d) && d.nguoiXacNhanNhapLai
             ? `<div style="font-size:11px;color:var(--text2);margin-top:2px">
                 Xác nhận bởi ${escHtml(d.nguoiXacNhanNhapLai)}</div>` : ''}
           <div style="font-size:12px;margin-top:4px">
             ${(d.chiTiet || []).slice(0, 4).map(c =>
-              `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}${
+              `${escHtml(tenCT(c))} <span style="color:var(--text2)">×${c.soLuong}${
                 Number(c.soLuongTra) ? ` (trả ${c.soLuongTra})` : ''}</span>`).join(' · ')}
             ${(d.chiTiet || []).length > 4
               ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 4} món</span>` : ''}
@@ -5584,7 +5594,7 @@ window.xemLaiDon = function(id) {
       + (Number(c.moiDon) ? dong('Phí cố định mỗi đơn', '−' + f(Number(c.moiDon)), '#D97706') : '');
   } else phiHtml = `<div style="color:var(--text2);font-size:13px;padding:4px 0">Chưa có phí sàn — lợi nhuận bên dưới chưa trừ phí.</div>`;
   const vonHtml = (d.chiTiet || []).map(c => { const g = giaVonDonVi(skuTheoMa.get(c.maHang)); const sl = Number(c.soLuong) || 0;
-    return dong(escHtml(c.tenHang || c.maHang), g == null ? '<span style="color:#B45309">chưa có giá vốn</span>' : '−' + f(g * sl), '', false, g == null ? '' : `${sl} × ${f(g)}`); }).join('');
+    return dong(escHtml(tenCT(c)), g == null ? '<span style="color:#B45309">chưa có giá vốn</span>' : '−' + f(g * sl), '', false, g == null ? '' : `${sl} × ${f(g)}`); }).join('');
   const von = (d.chiTiet || []).reduce((a, c) => a + (giaVonDonVi(skuTheoMa.get(c.maHang)) || 0) * (Number(c.soLuong) || 0), 0);
   ddbMoKhung('lai-don-modal', 'Lợi nhuận ước tính', `${escHtml(d.maDonSan || d.id)} · ${TEN_SAN[d.san] || d.san || ''}`, `
     <div style="font-size:14px">
@@ -5647,7 +5657,7 @@ function veDongHangDon(c, skuTheoMa) {
     ${anh}
     <span style="flex-shrink:0;min-width:34px;text-align:center;font-size:13px;font-weight:700;padding:3px 6px;border-radius:5px;
       background:${sl > 1 ? '#FEF3C7' : 'var(--bg)'};color:${sl > 1 ? '#B45309' : 'var(--text)'}">×${sl}</span>
-    <span style="font-size:12.5px;line-height:1.35;min-width:0">${escHtml(c.tenHang || c.maHang || '')}</span>
+    <span style="font-size:12.5px;line-height:1.35;min-width:0">${escHtml(tenCT(c))}</span>
   </div>`;
 }
 
@@ -6189,7 +6199,7 @@ function veKhungDonHuy() {
                 d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
             <div style="font-size:12px;margin-top:4px">
               ${(d.chiTiet || []).slice(0, 4).map(c =>
-                `${escHtml(c.tenHang)} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
+                `${escHtml(tenCT(c))} <span style="color:var(--text2)">×${c.soLuong}</span>`).join(' · ')}
               ${(d.chiTiet || []).length > 4
                 ? ` <span style="color:var(--text2)">+${d.chiTiet.length - 4} món</span>` : ''}
             </div>
@@ -26836,7 +26846,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v713</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v714</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26894,7 +26904,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v713</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v714</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26944,7 +26954,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v713</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v714</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26953,7 +26963,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v713</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v714</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
