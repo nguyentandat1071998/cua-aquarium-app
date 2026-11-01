@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 674;
+  const APP_VERSION = 675;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -14254,7 +14254,10 @@ async function renderHeThong(man = 'hethong') {
       muc('congcu', 'Công cụ'), htThe('Đối chiếu tồn Cửa hàng với KiotViet', `
       <p style="font-size:13px;margin-bottom:8px">So tồn Cửa hàng trong app với tồn <b>Kho Offline</b> bên KiotViet từng mã, chỉ liệt kê mã lệch. Đơn bán trên app tự tạo hóa đơn bên KiotViet nên hai bên phải khớp — mã lệch là có thao tác chỉ làm ở một bên (bán / nhập / kiểm thẳng trên KiotViet, hoặc phiếu kho trong app khi chưa bật đồng bộ).</p>
       <button class="btn-outline" style="width:100%" onclick="htDoiChieuTonCH()">Đối chiếu ngay</button>
-      <div id="ht-dcton-kq" style="font-size:13px;margin-top:8px"></div>`), currentUserData?.role === 'admin' ? htThe('Đăng xuất tất cả tài khoản', `<div id="ht-dxtc"><div class="loading">Đang tải...</div></div>`) : '', htThe('Hàng cùng loại', `
+      <div id="ht-dcton-kq" style="font-size:13px;margin-top:8px"></div>`), htThe('Lấy giá vốn theo KiotViet', `
+      <p style="font-size:13px;margin-bottom:8px">Đặt giá vốn trong app bằng giá vốn bên KiotViet (Chi nhánh trung tâm) cho mọi mã đang lệch hoặc chưa có. Nhập kho dùng giá vốn này làm đơn giá mặc định.</p>
+      <button class="btn-outline" style="width:100%" onclick="htLayGiaVonKV()">Kiểm tra chênh lệch</button>
+      <div id="ht-gvkv-kq" style="font-size:13px;margin-top:8px"></div>`), currentUserData?.role === 'admin' ? htThe('Đăng xuất tất cả tài khoản', `<div id="ht-dxtc"><div class="loading">Đang tải...</div></div>`) : '', htThe('Hàng cùng loại', `
       <p style="font-size:13px;margin-bottom:8px">Lấy nhóm hàng cùng loại (cùng mã cha, khác thuộc tính) để Hàng hóa gom vào một khung. Hàng sửa giá sau này tự cập nhật nhóm.</p>
       <button class="btn-outline" style="width:100%" id="ht-nut-cl" onclick="htDongBoCungLoai()">Đồng bộ hàng cùng loại</button>
       <div id="ht-cl-kq" style="font-size:13px;margin-top:8px"></div>`),
@@ -14692,6 +14695,49 @@ window.htChotTonCH = async function(apDung) {
       + (khongCo.length ? `<br><span style="color:#D97706">${khongCo.length} mã không có bên KiotViet → đặt 0: ${escHtml(khongCo.slice(0, 15).join(', '))}${khongCo.length > 15 ? '…' : ''}</span>` : '')
       + `<br>${lech.slice(0, 8).map(x => `${escHtml(x.s.sku)}: ${x.cu} → <b>${x.moi}</b>`).join(' · ')}`
       + `<br><button class="btn-g" style="width:100%;margin-top:8px" onclick="htChotTonCH(true)">Chốt tồn Cửa hàng theo KiotViet</button>`);
+  } catch(e) { ghi(`<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`); }
+};
+
+// Giá vốn app <- KiotViet: đọc giá vốn từng mã bên KiotViet (ưu tiên Kho Online / chi nhánh trung tâm, rồi Kho Offline)
+let htGVKV = null;
+window.htLayGiaVonKV = async function(apDung) {
+  const kq = document.getElementById('ht-gvkv-kq'); const ghi = (t) => { if (kq) kq.innerHTML = t; };
+  try {
+    if (apDung && htGVKV) {
+      if (!await hoiXacNhan(`Đặt giá vốn trong app theo KiotViet cho ${htGVKV.length} mã?`)) return;
+      for (let i = 0; i < htGVKV.length; i += 400) {
+        const b = writeBatch(db);
+        htGVKV.slice(i, i + 400).forEach(x => b.set(doc(db, 'gia_von', x.ma), { giaVon: x.kv, suaLuc: serverTimestamp(), nguon: 'kiotviet' }));
+        await b.commit();
+        ghi(`Đang ghi... ${Math.min(i + 400, htGVKV.length)}/${htGVKV.length}`);
+      }
+      htGVKV.forEach(x => { const s = allSKUs.find(k => k.sku === x.ma); if (s) s.giaVon = x.kv; bangGiaVon.set(x.ma, x.kv); bangGiaVon.set(x.ma.toLowerCase(), x.kv); });
+      ghi(`<b style="color:var(--green)">Đã cập nhật giá vốn ${htGVKV.length} mã theo KiotViet.</b>`); htGVKV = null; return;
+    }
+    await loadSKUs(); if (!daNapGiaVon) await napGiaVon();
+    ghi('Đang đọc giá vốn từ KiotViet...');
+    const gvKV = new Map(); let tong = 0;
+    for (let trang = 0; trang < 60; trang++) {
+      const r = await goiWorkerAdmin('ton-kv', { trang });
+      if (!r.success) throw new Error(r.error || 'Lỗi máy chủ');
+      if (!r.ds?.length) break;
+      if (!('gv' in r.ds[0])) throw new Error('Máy chủ chưa cập nhật bản đọc giá vốn');
+      r.ds.forEach(x => { const g = x.gv || {}; const v = Number(g[634586]) || Number(g[650302]) || Math.max(0, ...Object.values(g).map(Number).filter(Number.isFinite)); gvKV.set(x.ma, Math.round(v)); });
+      tong = r.tong || 0; ghi(`Đang đọc giá vốn từ KiotViet... ${gvKV.size}/${tong || '?'} mã`);
+      if (gvKV.size >= tong) break;
+    }
+    const lech = [];
+    for (const s of allSKUs) {
+      if (s.deleted || s.laCombo || !s.sku) continue;
+      const kv = gvKV.get(s.sku); if (!(kv > 0)) continue;
+      const app = Number(traGiaVon(s.sku) ?? traGiaVon(s.id)) || 0;
+      if (Math.abs(kv - app) >= 1) lech.push({ ma: s.sku, kv, app });
+    }
+    htGVKV = lech;
+    ghi(lech.length ? `<b>${lech.length}</b> mã lệch hoặc chưa có giá vốn (${lech.filter(x => !x.app).length} mã chưa có).<br>`
+      + lech.slice(0, 12).map(x => `${escHtml(x.ma)}: ${x.app ? fmt(x.app) : '—'} → <b>${fmt(x.kv)}</b>`).join(' · ') + (lech.length > 12 ? ' …' : '')
+      + `<br><button class="btn-g" style="width:100%;margin-top:8px" onclick="htLayGiaVonKV(true)">Cập nhật giá vốn theo KiotViet</button>`
+      : '<b style="color:var(--green)">Giá vốn app đã khớp KiotViet ✅</b>');
   } catch(e) { ghi(`<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`); }
 };
 
@@ -26035,7 +26081,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v674</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v675</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26093,7 +26139,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v674</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v675</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26143,7 +26189,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v674</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v675</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26152,7 +26198,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v674</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v675</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
