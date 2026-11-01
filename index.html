@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 691;
+  const APP_VERSION = 692;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -12585,7 +12585,8 @@ window.bhMoKhungKhach = function() {
   bhKhTam = k.id ? { id: k.id, ma: k.ma, sdt: k.sdt } : {};
   ddbMoKhung('bh-khach-modal', coKhach ? 'Sửa khách hàng' : 'Thêm khách hàng', '', `
     <div class="field" style="margin-bottom:10px"><label style="font-size:12px;color:var(--text2)">Số điện thoại</label>
-      <input id="bhk-sdt" type="tel" inputmode="tel" value="${escHtml(k.sdt || '')}" oninput="bhKhGoSdt(this.value)" style="width:100%"></div>
+      <input id="bhk-sdt" type="tel" inputmode="tel" autocomplete="off" value="${escHtml(k.sdt || '')}" oninput="bhKhGoSdt(this.value)" onblur="khAnGoiY('bhk-goiy')" style="width:100%">
+      <div id="bhk-goiy" class="kh-goiy"></div></div>
     <div class="field"><label style="font-size:12px;color:var(--text2)">Tên khách hàng</label>
       <input id="bhk-ten" value="${escHtml(k.ten || '')}" style="width:100%" onkeydown="if(event.key==='Enter')bhLuuKhach()"></div>`,
     `${coKhach ? '<button class="btn-outline" style="flex:1" onclick="bhBoKhach()">Bỏ khách</button>' : ''}
@@ -12599,9 +12600,52 @@ window.bhMoKhungKhach = function() {
   }
   setTimeout(() => document.getElementById('bhk-sdt')?.focus(), 50);
 };
+// Gõ từ 3 số trở lên -> xổ danh sách khách có SĐT chứa dãy số đó (tìm bên KiotViet qua máy chủ)
+let khGoiYHen = null, khGoiYLuot = 0;
+function khGoiYSdt(hopId, sdt, chon) {
+  clearTimeout(khGoiYHen);
+  const hop = document.getElementById(hopId);
+  if (!hop) return;
+  if (sdt.length < 3) { hop.style.display = 'none'; return; }
+  const luot = ++khGoiYLuot;
+  khGoiYHen = setTimeout(async () => {
+    hop.innerHTML = '<div class="kh-gy-trong">Đang tìm khách...</div>'; hop.style.display = 'block';
+    try {
+      const kq = await goiKhachKV('kh-tim', { tuKhoa: sdt });
+      if (luot !== khGoiYLuot) return;   // đã gõ tiếp
+      const ds = (kq.ds || []).slice(0, 8);
+      window._khGoiY = { ds, chon };
+      const toSo = (so) => { const c = chuanSdt(so); const i = c.indexOf(sdt); return i < 0 ? escHtml(so || '') : escHtml(c.slice(0, i)) + '<b style="color:#2563EB">' + escHtml(sdt) + '</b>' + escHtml(c.slice(i + sdt.length)); };
+      hop.innerHTML = ds.length ? ds.map((k, i) => `
+        <div class="kh-gy" onmousedown="event.preventDefault()" onclick="khChonGoiY('${hopId}',${i})">
+          <div style="min-width:0"><div style="font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(k.ten || '(chưa có tên)')}</div>
+            <div style="font-size:12.5px;color:var(--text2)">${toSo(k.sdt)}</div></div>
+          <span style="font-size:11px;color:var(--text3);flex-shrink:0">${escHtml(k.ma || '')}</span>
+        </div>`).join('')
+        : `<div class="kh-gy-trong">${sdt.length >= 10 ? 'Khách mới — nhập tên để tạo khách' : 'Chưa thấy khách có số này'}</div>`;
+      hop.style.display = 'block';
+    } catch(e) { if (luot === khGoiYLuot) hop.style.display = 'none'; }
+  }, 300);
+}
+window.khChonGoiY = function(hopId, i) {
+  const g = window._khGoiY, k = g?.ds?.[i];
+  const hop = document.getElementById(hopId); if (hop) hop.style.display = 'none';
+  clearTimeout(khGoiYHen); khGoiYLuot++;
+  if (k && g.chon) g.chon(k);
+};
+window.khAnGoiY = function(hopId) { setTimeout(() => { const h = document.getElementById(hopId); if (h) h.style.display = 'none'; }, 200); };
+
 window.bhKhGoSdt = function(v) {
   clearTimeout(bhKhHen);
   const sdt = chuanSdt(v);
+  khGoiYSdt('bhk-goiy', sdt, (k) => {
+    const so = chuanSdt(k.sdt);
+    const oS = document.getElementById('bhk-sdt'), oT = document.getElementById('bhk-ten');
+    if (oS) oS.value = so;
+    if (oT) oT.value = k.ten || '';
+    bhKhTam = { id: k.id, ma: k.ma, sdt: so };
+    bhLuuKhach();   // chọn khách có sẵn là xong luôn
+  });
   if (bhKhTam.sdt !== sdt) bhKhTam = {};
   if (sdt.length < 10) return;
   bhKhHen = setTimeout(async () => {
@@ -13715,7 +13759,8 @@ function dcVe() {
       ${laSua ? `<div style="background:#ECFEFF;border:1px solid ${DC_MAU};border-radius:8px;padding:5px 10px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:8px;flex-shrink:0">
         <span style="flex:1">Đang sửa phiếu <b>${escHtml(p.ma)}</b></span><button class="btn-xs" onclick="dcBoSua()">Hủy sửa</button></div>` : ''}
       <div style="display:flex;gap:6px;flex-shrink:0">
-        <input id="dc-sdt" type="tel" inputmode="tel" placeholder="SĐT khách *" value="${escHtml(p.khach.sdt || '')}" oninput="dcGoSdt(this.value)" style="flex:1;min-width:0;padding:7px 10px;font-size:14px">
+        <div style="flex:1;min-width:0;position:relative"><input id="dc-sdt" type="tel" inputmode="tel" autocomplete="off" placeholder="SĐT khách *" value="${escHtml(p.khach.sdt || '')}" oninput="dcGoSdt(this.value)" onblur="khAnGoiY('dc-goiy')" style="width:100%;padding:7px 10px;font-size:14px">
+          <div id="dc-goiy" class="kh-goiy noi"></div></div>
         <input id="dc-ten" placeholder="Tên khách *" value="${escHtml(p.khach.ten || '')}" oninput="dcDatKhach('ten',this.value)" style="flex:1;min-width:0;padding:7px 10px;font-size:14px">
       </div>
       <div class="field sku-wrap" style="margin:6px 0;flex-shrink:0">
@@ -13870,6 +13915,14 @@ window.dcDat = function(k, v) {
 window.dcGoSdt = function(v) {
   clearTimeout(dcKhHen);
   const sdt = chuanSdt(v);
+  khGoiYSdt('dc-goiy', sdt, (k) => {
+    const so = chuanSdt(k.sdt);
+    dcPhieu.khach = { ten: k.ten || '', sdt: so, id: k.id, ma: k.ma };
+    const oS = document.getElementById('dc-sdt'), oT = document.getElementById('dc-ten');
+    if (oS) oS.value = so;
+    if (oT) oT.value = k.ten || '';
+    dcLuuNhap();
+  });
   dcPhieu.khach = { ...dcPhieu.khach, sdt, id: null, ma: '' };
   dcLuuNhap();
   if (sdt.length < 10) return;
@@ -18137,7 +18190,7 @@ function makeSKUSearch(inputId, dropdownId, giaId, chiNhom, locSp) {
     const results = pool.filter(s =>
       boDauTim(s.ten).includes(tim) ||
       String(s.sku || '').toLowerCase().includes(tim)
-    ).slice(0, 8);
+    ).slice(0, 25);
     if (!results.length) { box.style.display = 'none'; return; }
     box.innerHTML = results.map(s =>
       `<div class="sku-item" onmousedown="event.preventDefault();selectSKU('${inputId}','${dropdownId}','${giaId}','${s.id}','${escHtml(s.ten || '')}',${s.gia||0},'${escHtml(s.sku||'')}')" style="display:flex;gap:8px;align-items:center">
@@ -26067,7 +26120,12 @@ input[type="checkbox"],input[type="radio"]{width:16px;height:16px;padding:0;flex
 
 /* SKU SEARCH */
 .sku-wrap{position:relative}
-.sku-drop{position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.1);z-index:200;max-height:220px;overflow-y:auto;display:none}
+.sku-drop{position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.1);z-index:200;max-height:min(62vh,560px);overflow-y:auto;display:none;-webkit-overflow-scrolling:touch}
+.kh-goiy{background:#fff;border:1.5px solid var(--border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);max-height:300px;overflow-y:auto;display:none;margin-top:4px}
+.kh-goiy.noi{position:absolute;top:100%;left:0;right:0;z-index:300}
+.kh-gy{padding:9px 11px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:center}
+.kh-gy:last-child{border-bottom:none}.kh-gy:active,.kh-gy:hover{background:#F0F9FF}
+.kh-gy-trong{padding:9px 11px;font-size:12.5px;color:var(--text2)}
 .sku-item{padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)}
 .sku-item:last-child{border-bottom:none}
 .sku-item:hover{background:var(--green-bg)}
@@ -26373,7 +26431,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v691</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v692</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26431,7 +26489,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v691</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v692</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26481,7 +26539,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v691</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v692</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26490,7 +26548,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v691</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v692</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
