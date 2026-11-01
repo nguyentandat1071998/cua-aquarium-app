@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 707;
+  const APP_VERSION = 708;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2621,8 +2621,8 @@ function nhanVaiTro(u) {
 const LA_BAN_DEMO = new URLSearchParams(location.search).has('demo');
 const TINH_NANG_DEMO = {
   nhom: [],                                   // nhóm menu chỉ có ở demo
-  muc: ['dathang'],                           // mục menu chỉ có ở demo
-  mod: ['dathang']                            // màn hình chặn ở link chính
+  muc: [],                                    // mục menu chỉ có ở demo
+  mod: []                                     // màn hình chặn ở link chính
 };
 const chiCoODemo = (mod) => !LA_BAN_DEMO && TINH_NANG_DEMO.mod.includes(mod);
 function veDaiDemo() {
@@ -7715,6 +7715,55 @@ async function nhTaiDs(L) {
   return ds.sort((a, b) => (a.trangThai === 'tam' ? 0 : 1) - (b.trangThai === 'tam' ? 0 : 1) || b.createdAt.toMillis() - a.createdAt.toMillis());
 }
 async function nhTimDs() { return nhGoiDs({ ganDay: true }); }
+
+// ===== HỦY PHIẾU NHẬP =====
+// Phiếu tạm: người tạo hoặc người duyệt hủy được (chỉ ẩn phiếu, chưa đụng tồn).
+// Phiếu đã lưu: Admin / người có quyền duyệt + quyền kho → hủy phiếu bên hệ thống, trừ lại tồn, ghi thẻ kho.
+function nhDuocHuy(p) {
+  if (!p || p.deleted) return false;
+  if (currentUserData?.role === 'admin') return true;
+  const coKho = dsKhoNhapDuocPhep().includes(p.kho);
+  if (p.trangThai === 'tam') return coKho && (nhCoDuyet() || (p._goc?.nguoiTaoUid && p._goc.nguoiTaoUid === currentUser?.uid));
+  return coKho && nhCoDuyet() && !p._goc?.donDatHang;
+}
+let _nhDangHuy = false;
+window.nhHuyPhieu = async function(id) {
+  if (_nhDangHuy) return;
+  const p = plTimPhieu('nhaphang', id);
+  if (!p || !nhDuocHuy(p)) { showToast('Bạn không hủy được phiếu này', true); return; }
+  const tenKho = KHO_NHAP[p.kho]?.ten || '';
+  const loiNhac = p.trangThai === 'tam'
+    ? `Hủy phiếu tạm ${p.maPhieu}?\n\nPhiếu sẽ bị ẩn khỏi danh sách. Tồn kho không thay đổi.\n\nLý do hủy (không bắt buộc):`
+    : `Hủy phiếu nhập ${p.maPhieu}?\n\nTồn ${tenKho} sẽ bị TRỪ LẠI ${p.tongSL} sản phẩm theo phiếu này. Không hoàn tác được.\n\nLý do hủy:`;
+  const lyDo = await hoiNhap(loiNhac, '');
+  if (lyDo === null || lyDo === undefined || lyDo === false) return;
+  if (p.trangThai !== 'tam' && !String(lyDo).trim()) { showToast('Nhập lý do hủy phiếu', true); return; }
+  _nhDangHuy = true;
+  popupDangChay('Đang hủy phiếu', p.maPhieu);
+  try {
+    const idToken = await currentUser.getIdToken();
+    const res = await fetch(WORKER_URL, {
+      method: 'POST',
+      headers: { 'x-action': 'huy-phieu-nhap', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: p.id, lyDo: String(lyDo).trim(), tenNguoi: currentUserData?.ten || currentUser?.email || '',
+        dong: (p.items || []).map(i => ({ sku: i.sku, id: i.skuId || allSKUs.find(s => s.sku === i.sku)?.id || '' })) })
+    });
+    const kq = await res.json().catch(() => ({}));
+    if (!kq.success) throw new Error(kq.error || `Lỗi ${res.status}`);
+    if (!kq.tam) (p.items || []).forEach(i => {
+      const sp = allSKUs.find(s => s.sku === i.sku);
+      if (sp && p.kho === 'ch' && typeof sp.tonCuaHang === 'number') sp.tonCuaHang -= i.sl;
+    });
+    const m = document.getElementById('pl-ct-modal'); if (m) m.style.display = 'none';
+    showToast(kq.tam ? 'Đã hủy phiếu tạm' : 'Đã hủy phiếu nhập và trừ lại tồn kho');
+    plTai('nhaphang');
+  } catch(e) {
+    alert('Không hủy được phiếu:\n\n' + e.message);
+  } finally {
+    _nhDangHuy = false;
+    const hm = document.getElementById('hoi-modal'); if (hm) hm.style.display = 'none';
+  }
+};
 
 // ==========================================================================
 // ===== NHÀ CUNG CẤP (chỉ lưu trong app) =====
@@ -21907,6 +21956,7 @@ window.plXem = function(mod, id) {
     : mod === 'nhaphang'
     ? (p.trangThai === 'tam' && dsKhoNhapDuocPhep().includes(p.kho)
       ? `<button class="btn-g" style="flex:1;margin:0;background:#2563EB" onclick="nhMoPhieu('${p.id}')">${nhCoDuyet() ? 'Mở phiếu · điền giá & lưu' : 'Mở phiếu để sửa'}</button>` : '')
+      + (nhDuocHuy(p) ? `<button class="btn-r" style="flex:${p.trangThai === 'tam' ? '0 0 auto;padding:0 14px' : '1'};margin:0" onclick="nhHuyPhieu('${p.id}')">Hủy phiếu</button>` : '')
     : suaDuoc ? (p.deleted
       ? (mod === 'xuat' ? `<button class="btn-g" style="flex:1;margin:0" onclick="document.getElementById('pl-ct-modal').style.display='none';restoreXuat('${p.id}')">Khôi phục phiếu</button>` : '')
       : `<button class="btn-outline" style="flex:1" onclick="document.getElementById('pl-ct-modal').style.display='none';${mod === 'xuat' ? 'openEditXuat' : 'openEditNhap'}('${p.id}')">Sửa</button>
@@ -26718,7 +26768,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v707</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v708</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26776,7 +26826,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v707</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v708</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26826,7 +26876,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v707</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v708</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26835,7 +26885,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v707</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v708</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
