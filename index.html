@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 689;
+  const APP_VERSION = 690;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -12455,8 +12455,8 @@ function veGioHang() {
           style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:600">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="bhDoiSL(${i},1)">+</button>
         ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá"
-          oninput="dinhDangTien(this)" onchange="bhDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
-        <div style="font-weight:700;font-size:14px;min-width:76px;text-align:right;color:${coGiam ? '#DC2626' : 'var(--text)'}">${fmt(thanhTien)}đ</div>
+          oninput="dinhDangTien(this);bhGoGiam(${i},this)" onchange="bhDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
+        <div id="bh-tt-${i}" style="font-weight:700;font-size:14px;min-width:76px;text-align:right;color:${coGiam ? '#DC2626' : 'var(--text)'}">${fmt(thanhTien)}đ</div>
       </div>
       ${dongKM}
     </div>`;
@@ -12503,12 +12503,12 @@ function veDayDuoi() {
       </div>` : ''}
       <div class="bh-dong-tt">
         <span>Giảm giá</span>
-        ${coQuyen('bh_giamgia') ? oTien('bh-giam-don', tongGiam, 'bhDatGiamDon(docTien(this))', tongGiam ? 'color:#DC2626' : '')
+        ${coQuyen('bh_giamgia') ? oTien('bh-giam-don', tongGiam, 'bhDatGiamDon(docTien(this))', tongGiam ? 'color:#DC2626' : '').replace('oninput="dinhDangTien(this)"', 'oninput="dinhDangTien(this);bhGoGiamDon(this)"')
           : `<b style="color:${tongGiam ? '#DC2626' : 'var(--text)'}">${fmt(tongGiam)}đ</b>`}
       </div>
       <div class="bh-dong-tt" style="border-top:1px solid var(--border);padding-top:5px">
         <span>Khách cần trả</span>
-        <b style="font-size:17px">${fmt(phaiTra)}đ</b>
+        <b id="bh-phai-tra" style="font-size:17px">${fmt(phaiTra)}đ</b>
       </div>
       ${p.cachTra === 'tienmat' ? `
         <div class="bh-dong-tt">
@@ -12638,6 +12638,7 @@ window.bhDatGiamDon = function(v) {
   if (!coQuyen('bh_giamgia')) { showToast('Bạn không có quyền giảm giá', true); return; }
   const p = bhPhieuHienTai();
   if (!p) return;
+  if (Number(p.giamDon || 0) === Math.max(0, Number(v) || 0)) { veTabPhieu(); return; }   // đã cập nhật lúc gõ
   const { tongHang, giamKM } = bhTinhTien(p);
   const giam = Math.min(tongHang - giamKM, Math.max(0, Number(v) || 0));
   p.gio.forEach(d => { d.giamGia = 0; });
@@ -13120,8 +13121,50 @@ function bhSuaDong(f) {
 
 window.bhDoiSL = function(i, d) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, r3((Number(p.gio[i].soLuong) || 1) + d)); }); };
 window.bhDatSL = function(i, v) { bhSuaDong(p => { p.gio[i].soLuong = slLe(v) > 0 ? slLe(v) : 1; }); };
+// Giảm giá cập nhật NGAY khi gõ (trước đây chỉ khi rời ô — điện thoại bấm ra chỗ trống không rời ô,
+// nên tiền không trừ; bấm Thanh toán thì lần chạm đầu bị nuốt do vẽ lại)
+function bhGiamToiDaDong(p, i) {
+  const d = p.gio[i]; if (!d) return 0;
+  const giamKM = bhTinhKM(p).theoSku[d.sku]?.giam || 0;
+  return Math.max(0, (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - giamKM);
+}
+window.bhGoGiam = function(i, o) {
+  const p = bhPhieuHienTai(); if (!p?.gio[i] || !coQuyen('bh_giamgia')) return;
+  const d = p.gio[i];
+  d.giamGia = Math.min(bhGiamToiDaDong(p, i), Math.max(0, docTien(o) || 0));
+  p.giamDon = 0; p.khachDua = null;
+  bhLuu();
+  const k = bhTinhKM(p).theoSku[d.sku] || { giam: 0 };
+  const tt = Math.max(0, (Number(d.gia) || 0) * (Number(d.soLuong) || 0) - (k.giam || 0) - (Number(d.giamGia) || 0));
+  const el = document.getElementById('bh-tt-' + i);
+  if (el) { el.textContent = fmt(tt) + 'đ'; el.style.color = (d.giamGia > 0 || k.giam > 0) ? '#DC2626' : 'var(--text)'; }
+  veDayDuoi();   // khối dưới vẽ lại được: ô đang gõ nằm trong danh sách hàng
+};
+// Ô "Giảm giá" cả đơn nằm TRONG khối dưới -> không vẽ lại khối đó, chỉ sửa các con số
+window.bhGoGiamDon = function(o) {
+  const p = bhPhieuHienTai(); if (!p || !coQuyen('bh_giamgia')) return;
+  const { tongHang, giamKM } = bhTinhTien(p);
+  p.gio.forEach(d => { d.giamGia = 0; });
+  p.giamDon = Math.min(Math.max(0, tongHang - giamKM), Math.max(0, docTien(o) || 0));
+  p.khachDua = null;
+  bhLuu();
+  veGioHang();
+  const { phaiTra } = bhTinhTien(p);
+  const tienMat = p.cachTra === 'ketHop' ? Math.min(phaiTra, Number(p.tienMat) || 0) : 0;
+  const canCK = p.cachTra === 'chuyenkhoan' ? phaiTra : p.cachTra === 'ketHop' ? Math.max(0, phaiTra - tienMat) : 0;
+  const dat = (id, t) => { const e = document.getElementById(id); if (e) e.textContent = t; };
+  dat('bh-phai-tra', fmt(phaiTra) + 'đ');
+  const kd = document.getElementById('bh-khach-dua'); if (kd) kd.value = phaiTra ? phaiTra.toLocaleString('vi-VN') : '';
+  const thua = document.getElementById('bh-thua'); if (thua) { thua.textContent = '0đ'; thua.style.color = 'var(--green)'; }
+  dat('bh-ck-hien', fmt(canCK) + 'đ');
+  dat('bh-nut-xong', canCK <= 0 ? 'Thanh toán' : 'Mã QR thanh toán · ' + fmt(canCK) + 'đ');
+  o.style.color = p.giamDon ? '#DC2626' : '';
+};
 window.bhDatGiam = function(i, v) {
   if (!coQuyen('bh_giamgia')) { showToast('Bạn không có quyền giảm giá', true); return; }
+  const p0 = bhPhieuHienTai();
+  // Đã cập nhật lúc gõ và không bị cắt bớt -> khỏi vẽ lại (giữ cú bấm Thanh toán ngay sau đó)
+  if (p0?.gio[i] && Number(p0.gio[i].giamGia || 0) === Math.max(0, parseFloat(v) || 0) && !p0.giamDon) return;
   bhSuaDong(p => {
     const giamKM = bhTinhKM(p).theoSku[p.gio[i].sku]?.giam || 0;
     const toiDa = Math.max(0, (Number(p.gio[i].gia) || 0) * (Number(p.gio[i].soLuong) || 0) - giamKM);
@@ -13700,8 +13743,8 @@ function dcVeGio() {
         <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},-1)">−</button>
         <input type="text" inputmode="decimal" autocomplete="off" value="${d.soLuong}" onchange="dcDatSL(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:600">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},1)">+</button>
-        ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá" oninput="dinhDangTien(this)" onchange="dcDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
-        <div style="font-weight:700;font-size:14px;min-width:76px;text-align:right;color:${Number(d.giamGia) > 0 ? '#DC2626' : 'var(--text)'}">${fmt(tt)}đ</div>
+        ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá" oninput="dinhDangTien(this);dcGoGiam(${i},this)" onchange="dcDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
+        <div id="dc-tt-${i}" style="font-weight:700;font-size:14px;min-width:76px;text-align:right;color:${Number(d.giamGia) > 0 ? '#DC2626' : 'var(--text)'}">${fmt(tt)}đ</div>
       </div></div>`;
   }).join('');
 }
@@ -13759,7 +13802,20 @@ window.dcThem = function(ma) {
 };
 window.dcDoiSL = (i, d) => { const x = dcPhieu.gio[i]; x.soLuong = Math.max(1, r3((Number(x.soLuong) || 1) + d)); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
 window.dcDatSL = (i, v) => { dcPhieu.gio[i].soLuong = slLe(v) > 0 ? slLe(v) : 1; dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
-window.dcDatGiam = (i, v) => { const x = dcPhieu.gio[i]; x.giamGia = Math.min(x.gia * x.soLuong, Math.max(0, Number(v) || 0)); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
+window.dcDatGiam = (i, v) => {
+  const x = dcPhieu?.gio[i]; if (!x) return;
+  const moi = Math.min(x.gia * x.soLuong, Math.max(0, Number(v) || 0));
+  if (moi === Number(x.giamGia || 0) && moi === Math.max(0, Number(v) || 0)) return;   // đã cập nhật lúc gõ
+  x.giamGia = moi; dcLuuNhap(); dcVeGio(); dcVeDuoi();
+};
+window.dcGoGiam = (i, o) => {
+  const x = dcPhieu?.gio[i]; if (!x || !coQuyen('bh_giamgia')) return;
+  x.giamGia = Math.min((Number(x.gia) || 0) * (Number(x.soLuong) || 0), Math.max(0, docTien(o) || 0));
+  dcLuuNhap();
+  const el = document.getElementById('dc-tt-' + i);
+  if (el) { el.textContent = fmt((Number(x.gia) || 0) * (Number(x.soLuong) || 0) - x.giamGia) + 'đ'; el.style.color = x.giamGia > 0 ? '#DC2626' : 'var(--text)'; }
+  dcVeDuoi();   // ô đang gõ nằm trong danh sách hàng, khối dưới vẽ lại được
+};
 window.dcXoaDong = (i) => { dcPhieu.gio.splice(i, 1); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
 window.dcDatGhiChu = (v) => { dcPhieu.ghiChu = String(v || '').slice(0, 300); dcLuuNhap(); };
 window.dcDatKhach = (k, v) => { dcPhieu.khach = { ...dcPhieu.khach, [k]: String(v || '').slice(0, 80) }; dcLuuNhap(); };
@@ -26311,7 +26367,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v689</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v690</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26369,7 +26425,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v689</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v690</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26419,7 +26475,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v689</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v690</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26428,7 +26484,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v689</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v690</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
