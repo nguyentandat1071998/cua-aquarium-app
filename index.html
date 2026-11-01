@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 685;
+  const APP_VERSION = 686;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -20660,6 +20660,7 @@ window.hhoMoCamera = async function(goiLai) {
     </div>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button id="hho-den" class="btn-outline" style="display:none;margin:0" onclick="hhoBatDen()">🔦 Đèn</button>
+      <button id="hho-doi-cam" class="btn-outline" style="margin:0;width:auto;flex:0 0 auto;padding:0 12px;white-space:nowrap" onclick="hhoDoiCamera()">🔄 Camera ${hhoMatTruoc ? 'sau' : 'trước'}</button>
       <label class="btn-outline" style="margin:0;text-align:center;cursor:pointer" onclick="hhoTamTatLuong()">📸 Chụp ảnh tem để đọc mã
         <input type="file" accept="image/*" capture="environment" style="display:none" onchange="hhoDocAnh(this)"></label>
     </div>
@@ -20669,27 +20670,39 @@ window.hhoMoCamera = async function(goiLai) {
   const m = document.getElementById('hho-cam-modal'); if (m) m.onclick = (e) => { if (e.target === m) hhoDongCamera(); };
   hhoBatLuong();
 };
+// Camera trước / sau — nhớ theo từng máy (bàn đóng gói có khi kê điện thoại quay màn hình lên)
+let hhoMatTruoc = (() => { try { return localStorage.getItem('hho_cam_truoc') === '1'; } catch(e) { return false; } })();
+window.hhoDoiCamera = async function() {
+  hhoMatTruoc = !hhoMatTruoc;
+  try { localStorage.setItem('hho_cam_truoc', hhoMatTruoc ? '1' : '0'); } catch(e) {}
+  const b = document.getElementById('hho-doi-cam'); if (b) b.textContent = `🔄 Camera ${hhoMatTruoc ? 'sau' : 'trước'}`;
+  if (hhoCam) { hhoCam.chay = false; hhoCam.den = false; try { hhoCam.luong?.getTracks().forEach(t => t.stop()); } catch(e) {} hhoCam.luong = null; }
+  hhoBaoCam('Đang đổi camera...');
+  await hhoBatLuong();
+};
 // Bật luồng camera: độ phân giải cao, lấy nét liên tục, phóng nhẹ (máy hỗ trợ thì dùng)
 async function hhoBatLuong() {
   try {
-    const luong = await moCamera({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    const luong = await moCamera({ video: { facingMode: { ideal: hhoMatTruoc ? 'user' : 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
     if (!document.getElementById('hho-cam-modal') || document.getElementById('hho-cam-modal').style.display === 'none') { luong.getTracks().forEach(t => t.stop()); return; }
-    hhoCam = { ...(hhoCam || {}), luong, chay: true, den: false };
+    hhoCam = { ...(hhoCam || {}), luong, chay: true, den: false, luot: (hhoCam?.luot || 0) + 1 };
     const track = luong.getVideoTracks()[0];
     try {
       const cap = track.getCapabilities ? track.getCapabilities() : {};
       const adv = {};
       if ((cap.focusMode || []).includes('continuous')) adv.focusMode = 'continuous';
-      if (cap.zoom && cap.zoom.max >= 1.5) adv.zoom = Math.min(2, cap.zoom.max);
+      if (!hhoMatTruoc && cap.zoom && cap.zoom.max >= 1.5) adv.zoom = Math.min(2, cap.zoom.max);
       if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
       const b = document.getElementById('hho-den'); if (b) b.style.display = cap.torch ? '' : 'none';
     } catch(e) {}
     const v = document.getElementById('hho-video');
     if (!v) { hhoDongCamera(); return; }
-    v.srcObject = luong; v.setAttribute('playsinline', ''); v.muted = true; await v.play();
+    v.srcObject = luong; v.setAttribute('playsinline', ''); v.muted = true;
+    v.style.transform = hhoMatTruoc ? 'scaleX(-1)' : '';   // camera trước hiện như soi gương cho dễ canh tem
+    await v.play();
     await hhoTaoBoDoc();
     hhoBaoCam('Đưa mã vạch vào khung');
-    hhoVongQuet();
+    hhoVongQuet(hhoCam.luot);
   } catch(e) { hhoBaoCam(e.name === 'KhongHoTro' ? 'Máy / app này không có camera trực tiếp — bấm "Chụp ảnh tem để đọc mã" bên dưới' : loiCamera(e).replace('bấm Chụp ảnh bên dưới', 'bấm "Chụp ảnh tem" bên dưới')); }
 }
 // Tạm tắt camera trực tiếp trước khi mở chụp ảnh (iPhone không cho dùng camera 2 nơi cùng lúc)
@@ -20736,9 +20749,9 @@ async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa) {
   try { const kq = c.boDoc.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.RGBLuminanceSource(xam, w, h)))); return kq ? String(kq.getText() || '').trim() : ''; }
   catch(e) { return ''; } finally { try { c.boDoc.reset(); } catch(e) {} }
 }
-async function hhoVongQuet() {
+async function hhoVongQuet(luot) {
   const c = hhoCam, v = document.getElementById('hho-video');
-  if (!c?.chay || !v) return;
+  if (!c?.chay || !v || (luot && c.luot !== luot)) return;   // đổi camera -> vòng cũ tự dừng
   try {
     if (v.videoWidth) {
       c.vong = (c.vong || 0) + 1;
@@ -20747,7 +20760,7 @@ async function hhoVongQuet() {
       if (ma.length >= 6) { hhoDaDocMa(ma); return; }
     }
   } catch(e) {}
-  if (hhoCam?.chay) setTimeout(hhoVongQuet, hhoCam.kieu === 'zxing' ? 300 : 150);
+  if (hhoCam?.chay) setTimeout(() => hhoVongQuet(luot), hhoCam.kieu === 'zxing' ? 300 : 150);
 }
 function hhoDaDocMa(ma) { bip(1800, 120); if (navigator.vibrate) navigator.vibrate(80); hhoDongCamera(); const cb = hhoGoiLaiQuet; hhoGoiLaiQuet = null; if (cb) cb(ma); else hhoQuetMa(ma); }
 // Chụp ảnh tem (ảnh gốc của máy, nét hơn video) rồi đọc mã: cả ảnh, dải giữa, và xoay 90° nếu tem chụp dọc
@@ -26224,7 +26237,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v685</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v686</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26282,7 +26295,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v685</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v686</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26332,7 +26345,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v685</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v686</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26341,7 +26354,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v685</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v686</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
