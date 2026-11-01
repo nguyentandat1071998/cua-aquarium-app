@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 679;
+  const APP_VERSION = 680;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -7711,6 +7711,7 @@ window.nccLuuThanhToanPN = async function(pid, conLai, nccId) {
   const soTien = Number(oTien.replace(/[^0-9]/g, '')) || 0;
   if (!oTien) { showToast('Nhập số tiền thanh toán (nhập 0 nếu đã trả ở nơi khác)', true); return; }
   if (soTien <= 0) {
+    if (!(conLai > 0)) { document.getElementById('ncc-tt-modal').style.display = 'none'; showToast('Phiếu đã thanh toán đủ — không cần ghi thêm'); return; }
     if (!await hoiXacNhan(`Nhập 0đ: phiếu nhập này đã được trả ở nơi khác (VD đã thanh toán trước ở đơn đặt hàng)?\n\nApp ghi phiếu là đã trả đủ ${fmt(conLai)}đ, KHÔNG tạo phiếu chi, không trừ quỹ.`, { nutDongY: 'Ghi đã trả đủ' })) return;
     try {
       await sqGoi('sq-chi-ncc', { loai: 'phieu_nhap', donId: pid, soTien: 0, buTru: true, ghiChu: String(document.getElementById('ncctt-gc')?.value || '').trim().slice(0, 200) || 'Đã trả ở nơi khác (không ghi phiếu chi)' });
@@ -8067,7 +8068,8 @@ window.dhXem = async function(id) {
           <span style="min-width:0">${x.maPC ? `<b style="color:var(--text)">${escHtml(x.maPC)}</b> · ` : ''}${x.buTru ? 'Đã trả ở nơi khác (không phiếu chi)' : `${escHtml(SQ_HANG_MUC[x.hangMuc] || 'Tiền hàng')} · ${escHtml(SQ_CACH[x.cach] || 'Tiền mặt')}`} · ${escHtml(x.lucChu || '')} · ${escHtml(x.nguoi?.ten || '')}${x.ghiChu ? ` · ${escHtml(x.ghiChu)}` : ''}${x.huy ? ' · Đã hủy' : ''}</span>
           <span style="display:flex;gap:6px;align-items:center;flex-shrink:0"><b style="color:var(--text)">${fmt(x.soTien)}đ</b>
           ${dhCoTT() && x.maPC && !x.huy ? `<button class="btn-xs" style="background:transparent;color:var(--text2);padding:2px 6px" title="Hủy phiếu chi" onclick="dhHuyChi('${p.id}','${x.maPC}')">✕</button>` : ''}</span></div>`).join('')}</div>` : ''}
-      ${dhCoTT() && p.trangThai !== 'huy' ? `<button class="btn-g" style="margin-top:8px;background:#2563EB" onclick="dhMoThanhToan('${p.id}',${Math.max(0, tong - daTra)})">Thanh toán</button>` : ''}
+      ${tong > 0 && daTra >= tong ? '<div style="margin-top:8px;text-align:center;font-weight:700;color:#16A34A">✓ Đã thanh toán đủ — không cần trả thêm khi nhập kho</div>'
+        : dhCoTT() && p.trangThai !== 'huy' ? `<button class="btn-g" style="margin-top:8px;background:#2563EB" onclick="dhMoThanhToan('${p.id}',${Math.max(0, tong - daTra)})">Thanh toán</button>` : ''}
     </div>` : '';
   // Phiếu nhập kho đã gắn
   const lk = p.phieuNhap || [];
@@ -8206,6 +8208,7 @@ window.dhLuuThanhToan = async function(id, conLai) {
   const soTien = Number(oTien.replace(/[^0-9]/g, '')) || 0;
   if (!oTien) { showToast('Nhập số tiền thanh toán (nhập 0 nếu đã trả ở nơi khác)', true); return; }
   if (soTien <= 0) {
+    if (!(conLai > 0)) { document.getElementById('dh-tt-modal').style.display = 'none'; showToast('Đơn đã thanh toán đủ — không cần ghi thêm'); return; }
     if (!await hoiXacNhan(`Nhập 0đ: phần còn lại ${fmt(conLai)}đ của đơn này đã được trả ở nơi khác?\n\nApp ghi đơn là đã trả đủ, KHÔNG tạo phiếu chi, không trừ quỹ.`, { nutDongY: 'Ghi đã trả đủ' })) return;
     try {
       await sqGoi('sq-chi-ncc', { donId: id, soTien: 0, buTru: true, ghiChu: String(document.getElementById('dhtt-gc')?.value || '').trim().slice(0, 200) || 'Đã trả ở nơi khác (không ghi phiếu chi)' });
@@ -26138,7 +26141,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v679</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v680</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26196,7 +26199,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v679</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v680</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26246,7 +26249,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v679</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v680</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26255,7 +26258,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v679</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v680</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
