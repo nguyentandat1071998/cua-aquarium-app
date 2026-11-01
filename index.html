@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 701;
+  const APP_VERSION = 702;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -20953,9 +20953,9 @@ let hhoCam = null;   // { luong, boDoc, kieu, chay }
 let hhoGoiLaiQuet = null;
 window.hhoMoCamera = async function(goiLai) {
   hhoGoiLaiQuet = typeof goiLai === 'function' ? goiLai : null;
-  ddbMoKhung('hho-cam-modal', 'Quét mã vận đơn', 'Mã vạch nằm ngang trong khung, giữ máy cách tem khoảng 15–25cm (gần quá máy không lấy nét được)',
-    `<div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:200px" onclick="if(hhoCam&&!hhoCam.luong)hhoBatLuong()">
-      <video id="hho-video" playsinline muted style="width:100%;display:block;max-height:60vh;object-fit:cover"></video>
+  ddbMoKhung('hho-cam-modal', 'Quét mã vận đơn', 'Mã vạch nằm ngang trong khung xanh. Camera sau tự phóng 2x — cầm máy cách tem khoảng 25–30cm cho nét (gần quá sẽ nhòe)',
+    `<div style="position:relative;background:#000;border-radius:10px;overflow:hidden;height:min(52vh,460px)" onclick="if(hhoCam&&!hhoCam.luong)hhoBatLuong()">
+      <video id="hho-video" playsinline muted style="position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover"></video>
       <div style="position:absolute;top:32%;bottom:32%;left:5%;right:5%;border:3px solid #22d3ee;border-radius:8px;pointer-events:none"></div>
       <div id="hho-cam-bao" style="position:absolute;left:0;right:0;bottom:0;padding:8px;background:rgba(0,0,0,.7);color:#fff;font-size:13px;text-align:center">Đang bật camera...</div>
     </div>
@@ -21000,8 +21000,8 @@ window.hhoDoiZoom = async function() {
   const muc = [1, 1.5, 2, 3].filter(z => z >= (cap.zoom.min || 1) && z <= cap.zoom.max);
   const hien = tr.getSettings?.().zoom || 1;
   const ke = muc.find(z => z > hien + 0.01) || muc[0];
-  try { await tr.applyConstraints({ advanced: [{ zoom: ke }] }); } catch(e) {}
-  const b = document.getElementById('hho-zoom'); if (b) b.textContent = ke + 'x';
+  try { await tr.applyConstraints({ zoom: ke }); } catch(e) { try { await tr.applyConstraints({ advanced: [{ zoom: ke }] }); } catch(_) {} }
+  const b = document.getElementById('hho-zoom'); if (b) b.textContent = (Math.round((tr.getSettings?.().zoom || ke) * 10) / 10) + 'x';
 };
 window.hhoDoiCamera = async function() {
   hhoMatTruoc = !hhoMatTruoc;
@@ -21030,13 +21030,14 @@ async function hhoBatLuong() {
     const track = luong.getVideoTracks()[0];
     try {
       const cap = track.getCapabilities ? track.getCapabilities() : {};
-      const adv = {};
-      if ((cap.focusMode || []).includes('continuous')) adv.focusMode = 'continuous';
-      if (!hhoMatTruoc && cap.zoom && cap.zoom.max >= 1.5) adv.zoom = Math.min(2, cap.zoom.max);
-      if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv] });
+      if ((cap.focusMode || []).includes('continuous')) { try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch(e) {} }
+      if (!hhoMatTruoc && cap.zoom && cap.zoom.max >= 1.5) {
+        const z = Math.min(2, cap.zoom.max);
+        try { await track.applyConstraints({ zoom: z }); } catch(e) { try { await track.applyConstraints({ advanced: [{ zoom: z }] }); } catch(_) {} }
+      }
       const b = document.getElementById('hho-den'); if (b) b.style.display = cap.torch ? '' : 'none';
       const bz = document.getElementById('hho-zoom');
-      if (bz) { bz.style.display = cap.zoom && cap.zoom.max >= 1.5 ? '' : 'none'; bz.textContent = (track.getSettings?.().zoom || adv.zoom || 1) + 'x'; }
+      if (bz) { bz.style.display = cap.zoom && cap.zoom.max >= 1.5 ? '' : 'none'; bz.textContent = (Math.round((track.getSettings?.().zoom || 1) * 10) / 10) + 'x'; }
 
     } catch(e) {}
     const v = document.getElementById('hho-video');
@@ -26719,7 +26720,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v701</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v702</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26777,7 +26778,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v701</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v702</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26827,7 +26828,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v701</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v702</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26836,7 +26837,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v701</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v702</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
