@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 714;
+  const APP_VERSION = 715;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -4646,9 +4646,12 @@ function veThanhChon(trang) {
       ${tt === 'cho_dong_goi' && coQuyenHoanTatDG() ? `<button class="btn-g" id="vd-nut-hoantat"
         style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
         onclick="hoanTatDongGoi()">📦 Hoàn tất đóng gói</button>` : ''}
+      <button class="btn-outline" id="vd-nut-soan"
+        style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
+        onclick="moPhieuSoanGop()">📋 Phiếu soạn</button>
       ${hienIn ? `<button class="btn-g" id="vd-nut-in"
         style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
-        onclick="inVanDonHangLoat()">🖨 In vận đơn</button>` : ''}
+        onclick="inVanDonHangLoat()">🖨 In vận đơn${laDienThoai() ? ' → laptop' : ''}</button>` : ''}
     </div>`;
 }
 
@@ -11483,6 +11486,131 @@ const tienDoIn = {
 };
 window.tienDoIn = tienDoIn;   // nút "Dừng lại" trong cửa sổ gọi tới
 
+// Điện thoại / máy tính bảng: màn hình cảm ứng, cạnh ngắn < 820px
+function laDienThoai() {
+  try { return matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820; } catch(e) { return false; }
+}
+async function tramTemTinhTrang() {
+  const kq = await goiWorkerAdmin('tinh-trang-tram-tem', {});
+  if (!kq.success) throw new Error(kq.error || 'Lỗi');
+  const luc = kq.lanCuoi ? Date.parse(kq.lanCuoi) : 0;
+  return { ...kq, song: !!luc && Date.now() - luc < 150000 };
+}
+
+// ===== PHIẾU SOẠN HÀNG GỘP NHIỀU ĐƠN =====
+// Gộp các mã giống nhau (combo tách ra món lẻ), xếp theo nhóm hàng để đi lấy theo kệ.
+// Soạn trên điện thoại: chạm vào dòng để đánh dấu đã lấy. In ra máy quầy khi cần.
+let psGop = null;   // { dong:[{sku, ten, sl, soDon, anh, nhom}], don:[{ma, san}], daLay:Set }
+window.moPhieuSoanGop = function() {
+  const dsDon = [...vdDaChon].map(ma => allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean);
+  if (!dsDon.length) { showToast('Chưa chọn đơn nào', true); return; }
+  const gop = new Map();
+  const them = (sku, ten, sl, maDon) => {
+    const k = String(sku || ten || '').trim(); if (!k || !(sl > 0)) return;
+    const sp = allSKUs.find(s => s.sku === sku);
+    const x = gop.get(k) || { sku: sku || '', ten: sp?.ten || ten || sku, sl: 0, don: new Set(), anh: sp?.anhFileId || '', nhom: sp?.nhomFull || sp?.nhom1 || 'Khác' };
+    x.sl = Math.round((x.sl + sl) * 1000) / 1000; x.don.add(maDon); gop.set(k, x);
+  };
+  dsDon.forEach(d => (d.chiTiet || []).forEach(c => {
+    const sl = Number(c.soLuong) || 0, ma = d.maDonSan || d.maHoaDon;
+    const sp = allSKUs.find(s => s.sku === c.maHang);
+    if (sp?.laCombo && sp.thanhPhanCombo?.length) {
+      sp.thanhPhanCombo.forEach(tp => { const con = allSKUs.find(s => s.id === tp.skuId); them(con?.sku || '', con?.ten || tp.ten || '', sl * (Number(tp.tyLe) || 1), ma); });
+    } else them(c.maHang, tenCT(c), sl, ma);
+  }));
+  const dong = [...gop.values()].map(x => ({ ...x, soDon: x.don.size, don: [...x.don] }))
+    .sort((a, b) => String(a.nhom).localeCompare(String(b.nhom), 'vi') || String(a.ten).localeCompare(String(b.ten), 'vi'));
+  const khoa = 'ps_' + dsDon.map(d => d.maDonSan || d.maHoaDon).sort().join(',').slice(0, 300);
+  let daLay = new Set();
+  try { daLay = new Set(JSON.parse(localStorage.getItem(khoa) || '[]')); } catch(e) {}
+  psGop = { dong, don: dsDon.map(d => ({ ma: d.maDonSan || d.maHoaDon, san: d.san || '' })), daLay, khoa, luc: new Date() };
+  psVe();
+};
+function psTienDo() {
+  const { dong, don, daLay } = psGop;
+  const tong = dong.reduce((a, x) => a + x.sl, 0), xong = dong.filter(x => daLay.has(x.sku || x.ten)).length;
+  return `<div id="ps-tien-do" style="position:sticky;top:0;z-index:2;background:var(--surface);padding:4px 0 8px;font-size:13px">
+      <b>${don.length}</b> đơn · <b>${dong.length}</b> mã · tổng <b>${fmt(tong)}</b> sp ·
+      <span style="color:${xong === dong.length ? '#15803D' : '#B45309'};font-weight:700">đã lấy ${xong}/${dong.length}</span>
+      <div style="height:5px;background:var(--border);border-radius:3px;margin-top:5px;overflow:hidden"><div style="height:100%;width:${dong.length ? Math.round(xong * 100 / dong.length) : 0}%;background:#16A34A"></div></div>
+    </div>`;
+}
+function psVe() {
+  const { dong, don, daLay } = psGop;
+  let nhomTruoc = null;
+  const than = `
+    ${psTienDo()}
+    ${dong.map((x, i) => {
+      const lay = daLay.has(x.sku || x.ten);
+      const tieuDe = x.nhom !== nhomTruoc ? `<div style="font-size:11.5px;font-weight:700;color:var(--text2);margin:10px 0 4px;text-transform:uppercase">${escHtml(x.nhom)}</div>` : '';
+      nhomTruoc = x.nhom;
+      return tieuDe + `<div id="ps-d-${i}" onclick="psDanhDau(${i})" style="display:flex;gap:10px;align-items:center;padding:8px;margin-bottom:5px;border-radius:8px;cursor:pointer;border:1.5px solid ${lay ? '#86EFAC' : 'var(--border)'};background:${lay ? '#F0FDF4' : 'var(--surface)'};${lay ? 'opacity:.6' : ''}">
+        <span style="width:24px;height:24px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;background:${lay ? '#16A34A' : '#fff'};border:2px solid ${lay ? '#16A34A' : '#CBD5E1'}">${lay ? '✓' : ''}</span>
+        ${x.anh ? `<img loading="lazy" src="${anhThumbUrl(x.anh, 120)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;flex-shrink:0">` : '<div style="width:44px;height:44px;border-radius:6px;background:var(--bg);flex-shrink:0"></div>'}
+        <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:14px;${lay ? 'text-decoration:line-through' : ''}">${escHtml(x.ten)}</div>
+          <div style="font-size:11.5px;color:var(--text2)">${escHtml(x.sku)}${x.soDon > 1 ? ` · ${x.soDon} đơn` : ''}</div></div>
+        <b style="font-size:20px;min-width:44px;text-align:right;color:${x.sl > 1 ? '#B45309' : 'var(--text)'}">×${x.sl}</b>
+      </div>`; }).join('')}
+    <details style="margin-top:10px;font-size:12.5px"><summary style="cursor:pointer;color:var(--text2)">Các đơn trong phiếu (${don.length})</summary>
+      <div style="margin-top:6px;line-height:1.7">${don.map(d => escHtml(d.ma)).join(' · ')}</div></details>`;
+  ddbMoKhung('ps-modal', 'Phiếu soạn hàng', `${don.length} đơn · ${psGop.luc.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`, than,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('ps-modal').style.display='none'">Đóng</button>
+     <button class="btn-outline" style="flex:1" onclick="psBoDanhDau()">Bỏ đánh dấu</button>
+     <button class="btn-g" style="flex:1;margin:0" id="ps-nut-in" onclick="psInMayQuay()">🖨 In máy quầy</button>`);
+  ddbCanhGiua?.('ps-modal');
+}
+window.psDanhDau = function(i) {
+  const x = psGop?.dong[i]; if (!x) return;
+  const k = x.sku || x.ten;
+  if (psGop.daLay.has(k)) psGop.daLay.delete(k); else psGop.daLay.add(k);
+  try { localStorage.setItem(psGop.khoa, JSON.stringify([...psGop.daLay])); } catch(e) {}
+  // Sửa tại chỗ — không vẽ lại cả khung để khỏi nhảy lên đầu
+  const lay = psGop.daLay.has(k), o = document.getElementById('ps-d-' + i);
+  if (o) {
+    o.style.borderColor = lay ? '#86EFAC' : 'var(--border)'; o.style.background = lay ? '#F0FDF4' : 'var(--surface)'; o.style.opacity = lay ? '.6' : '1';
+    const o1 = o.children[0]; if (o1) { o1.textContent = lay ? '✓' : ''; o1.style.background = lay ? '#16A34A' : '#fff'; o1.style.borderColor = lay ? '#16A34A' : '#CBD5E1'; }
+    const ten = o.children[2]?.children[0]; if (ten) ten.style.textDecoration = lay ? 'line-through' : 'none';
+  }
+  const td = document.getElementById('ps-tien-do'); if (td) td.outerHTML = psTienDo();
+  if (psGop.dong.every(d => psGop.daLay.has(d.sku || d.ten))) showToast('✓ Đã lấy đủ hàng cho phiếu soạn');
+};
+window.psBoDanhDau = function() { if (!psGop) return; psGop.daLay.clear(); try { localStorage.removeItem(psGop.khoa); } catch(e) {} psVe(); };
+// Vẽ phiếu soạn thành ảnh khổ 80mm, gửi xuống Trạm in máy quầy (POS) như bill
+window.psInMayQuay = async function() {
+  if (!psGop) return;
+  const nut = document.getElementById('ps-nut-in'); if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+  try {
+    const W = typeof BILL_RONG !== 'undefined' ? BILL_RONG : 576, L = 8, R = W - 8;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = 8000;
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, cv.height); g.fillStyle = '#000';
+    const font = (co, dam) => { g.font = `${dam ? 'bold ' : ''}${co}px Arial, sans-serif`; };
+    const ngat = (chu, rong) => { const kq = []; let d = ''; for (const tu of String(chu || '').split(/\s+/).filter(Boolean)) { const t = d ? d + ' ' + tu : tu; if (g.measureText(t).width <= rong) d = t; else { if (d) kq.push(d); d = tu; } } if (d) kq.push(d); return kq.length ? kq : ['']; };
+    let y = 34;
+    font(30, true); g.textAlign = 'center'; g.fillText('PHIẾU SOẠN HÀNG', W / 2, y); y += 30;
+    font(20); g.fillText(`${psGop.don.length} đơn · ${psGop.dong.length} mã · ${psGop.luc.toLocaleString('vi-VN')}`, W / 2, y); y += 16;
+    g.textAlign = 'left'; g.fillRect(L, y, R - L, 2); y += 10;
+    let nhomTruoc = null;
+    for (const x of psGop.dong) {
+      if (x.nhom !== nhomTruoc) { nhomTruoc = x.nhom; y += 8; font(19, true); g.fillText(String(x.nhom).toUpperCase(), L, y + 18); y += 28; }
+      font(24, true); const slTxt = '×' + x.sl; const wSl = g.measureText(slTxt).width;
+      font(23); const dong = ngat('☐ ' + x.ten, R - L - wSl - 16);
+      dong.forEach((d, j) => { font(23); g.fillText(d, L, y + 24); if (!j) { font(26, true); g.textAlign = 'right'; g.fillText(slTxt, R, y + 24); g.textAlign = 'left'; } y += 30; });
+      font(17); g.fillText(`   ${x.sku}${x.soDon > 1 ? ' · ' + x.soDon + ' đơn' : ''}`, L, y + 16); y += 24;
+      g.fillRect(L, y, R - L, 1); y += 6;
+    }
+    y += 10; font(18, true); g.fillText('Đơn trong phiếu:', L, y + 18); y += 26; font(17);
+    ngat(psGop.don.map(d => d.ma).join('  '), R - L).forEach(d => { g.fillText(d, L, y + 17); y += 23; });
+    y += 30;
+    const ra = document.createElement('canvas'); ra.width = W; ra.height = Math.min(y, 8000);
+    ra.getContext('2d').drawImage(cv, 0, 0);
+    const anh = ra.toDataURL('image/png');
+    if (anh.length > 900000) throw new Error('Phiếu quá dài để in — chọn ít đơn hơn');
+    await addDoc(collection(db, 'lenh_in'), { loai: 'hoa_don_ban_le', maDon: `Phiếu soạn ${psGop.don.length} đơn`, anh, trangThai: 'cho_in', nguoiYeuCau: currentUserData?.ten || '', taoLuc: serverTimestamp() });
+    showToast('Đã gửi phiếu soạn xuống máy in quầy');
+  } catch(e) { alert('Không in được phiếu soạn: ' + e.message); }
+  if (nut) { nut.disabled = false; nut.textContent = '🖨 In máy quầy'; }
+};
+
 window.inVanDonHangLoat = async function() {
   if (!vdDaChon.size) return;
   // In hàng loạt chỉ cho cùng MỘT đơn vị vận chuyển — trộn hãng thì tem lẫn lộn, giao nhầm shipper
@@ -11500,7 +11628,11 @@ window.inVanDonHangLoat = async function() {
   // Trình duyệt chặn mở tab mới nếu không mở NGAY lúc bấm (sau khi chờ máy chủ là bị coi như popup).
   // Mở sẵn một tab trống lúc bấm, có link vận đơn thì chuyển tab đó sang file PDF.
   let tabCho = null;
-  try {
+  const quaTram = laDienThoai();   // điện thoại: không mở file, gửi lệnh xuống máy in cắm laptop
+  if (quaTram) {
+    const tt = await tramTemTinhTrang().catch(() => null);
+    if (!tt?.song && !await hoiXacNhan(`Không thấy trạm in tem trên laptop${tt?.lanCuoi ? ` (lần cuối ${new Date(tt.lanCuoi).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })})` : ''}.\n\nVẫn gửi lệnh in? Link vận đơn chỉ sống 10 phút — bật laptop trong lúc đó.`, { nutDongY: 'Vẫn gửi' })) return;
+  } else try {
     tabCho = window.open('', '_blank');
   } catch(e) {}
   const nut = document.getElementById('vd-nut-in');
@@ -11586,6 +11718,21 @@ window.inVanDonHangLoat = async function() {
     }
 
     if (!cacLink.length) throw new Error(loi.join('\n') || 'Không lấy được vận đơn nào');
+
+    if (quaTram) {
+      const maGui = [...vdDaChon].filter(m => !maLoi.has(m) && !maLoi.has(String(m).split('.')[0]));
+      const donIds = maGui.map(m => allDonHangSan.find(x => x.maDonSan === m || x.maHoaDon === m)?.id).filter(Boolean);
+      const kqT = await goiWorkerAdmin('tao-lenh-in-tem', { loai: 'van_don', links: cacLink, maDon: maGui, donIds });
+      if (!kqT.success) throw new Error('Không gửi được lệnh in xuống laptop: ' + (kqT.error || ''));
+      vdDaChon.clear();
+      veDanhSachDon();
+      const thieuMa = maGui.map(m => allDonHangSan.find(x => x.maDonSan === m || x.maHoaDon === m)).filter(d => d && !d.maVanDon).map(d => d.maDonSan).filter(Boolean);
+      if (thieuMa.length) keoMaVanDonTuSan(thieuMa, [0, 15000, 60000]);
+      if (loi.length) hienPopup({ loai: 'cho', tieuDe: 'In vận đơn', soThanhCong: maGui.length, soThatBai: loi.length, noiDung: 'Đã gửi xuống laptop ' + maGui.length + ' đơn.\n' + loi.slice(0, 4).join('\n') });
+      else showToast(`Đã gửi ${maGui.length} đơn xuống máy in laptop — in xong tự chuyển sang Chờ đóng gói`);
+      if (nut) { nut.disabled = false; nut.textContent = '🖨 In vận đơn → laptop'; }
+      return;
+    }
 
     // File đầu mở vào tab đã mở sẵn lúc bấm; file sau (nhiều sàn) thử mở thêm — bị chặn thì bấm trong khung xác nhận
     if (tabCho && !tabCho.closed) { try { tabCho.location.href = cacLink[0]; } catch(e) { window.open(cacLink[0], '_blank'); } }
@@ -14721,6 +14868,7 @@ async function renderHeThong(man = 'hethong') {
         <button class="btn-outline" onclick="htInThuBill()">🖨 In thử bill</button>
       </div>`),
       htThe('Trạm in (máy POS)', `<div id="ht-tramin"><div class="loading">Đang tải...</div></div>`),
+      htThe('Trạm in tem (laptop cắm máy in đơn)', `<div id="ht-tramtem"><div class="loading">Đang tải...</div></div>`),
       muc('thanhtoan', 'Thanh toán'), '<div id="ht-thanhtoan"><div class="loading">Đang tải...</div></div>',
       muc('ketnoi', 'Kết nối'), htThe('Kết nối KiotViet (Bán Online)', `<div id="ht-kol"><div class="loading">Đang tải...</div></div>`),
       htThe('Đồng bộ hàng hóa & tồn kho sang KiotViet', `<div id="ht-ghigoc"></div>`),
@@ -14807,7 +14955,7 @@ async function renderHeThong(man = 'hethong') {
   if (man === 'phanquyen') renderVaiTroList();
   if (man === 'chamcongcd') generateQRCode();
   if (['inhoadon', 'ketnoi', 'thanhtoan', 'hethong'].includes(man)) {
-    htVeTramIn(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV(); htVeGhiGoc(); htVeKeoBu(); htVePhiSan(); htVeDXTC();
+    htVeTramIn(); htVeTramTem(); htVeKetNoiKol(); renderThietLapThanhToan('ht-thanhtoan'); htVeKhoKV(); htVeGhiGoc(); htVeKeoBu(); htVePhiSan(); htVeDXTC();
     if (man !== 'hethong') setTimeout(() => document.getElementById('ht-muc-' + man)?.scrollIntoView(), 50);
   }
 }
@@ -14897,6 +15045,40 @@ window.htInThuBill = async function() {
 };
 
 // ---------- Trạm in ----------
+// ---------- Trạm in tem trên laptop: điện thoại bấm In vận đơn -> laptop tự in ----------
+async function htVeTramTem() {
+  const el = document.getElementById('ht-tramtem'); if (!el) return;
+  let tt = null; try { tt = await tramTemTinhTrang(); } catch(e) { el.innerHTML = `<p class="info-note">Không tải được: ${escHtml(e.message)}</p>`; return; }
+  const gio = (s) => s ? new Date(s).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+  const dongL = (l, coLoi) => `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+      <div style="flex:1;min-width:0">${l.loai === 'van_don' ? `Vận đơn ${l.maDon.length} đơn` : 'Phiếu soạn'}
+        <div style="font-size:11px;color:var(--text2)">${gio(l.taoLuc)} · ${escHtml(l.nguoi)}${coLoi ? ` · <span style="color:#B91C1C">${escHtml(l.loi)}</span>` : ''}</div></div>
+      <button class="btn-xs danger" onclick="htHuyLenhTem('${l.id}')">${coLoi ? 'Bỏ' : 'Hủy'}</button></div>`;
+  el.innerHTML = `
+    <p style="font-size:14px;margin-bottom:8px;color:${tt.song ? '#15803D' : '#B91C1C'};font-weight:600">${tt.song ? '● Trạm in tem đang chạy' : '○ Không thấy trạm in tem'}
+      <span style="font-weight:400;color:var(--text2);font-size:12px"> · ${tt.mayIn ? escHtml(tt.mayIn) + ' · ' : ''}lần cuối ${gio(tt.lanCuoi) || 'chưa có'}</span></p>
+    <p class="info-note" style="margin-bottom:8px">Điện thoại bấm <b>In vận đơn</b> sẽ gửi xuống laptop, laptop tự in rồi chuyển đơn sang Chờ đóng gói.
+      Cài trên laptop Windows: tải bộ cài, giải nén ra thư mục cố định (VD <b>C:\\TramInTem</b>), bấm đúp <b>CAI DAT.bat</b>, chọn máy in đơn và dán mã khóa bên dưới.</p>
+    ${tt.cho.length ? `<div style="font-size:13px;font-weight:600;margin:6px 0">Đang chờ in (${tt.cho.length})</div>${tt.cho.map(l => dongL(l, false)).join('')}` : ''}
+    ${tt.loi.length ? `<div style="font-size:13px;font-weight:600;margin:6px 0;color:#B91C1C">In lỗi gần đây</div>${tt.loi.map(l => dongL(l, true)).join('')}` : ''}
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <a class="btn-outline" style="text-decoration:none;display:inline-flex;align-items:center" href="tram-in-tem.zip" download>⬇ Tải bộ cài (Windows)</a>
+      <button class="btn-outline" onclick="htVeTramTem()">↻ Tải lại</button>
+      ${currentUserData?.role === 'admin' ? '<button class="btn-outline" onclick="htTaoKhoaTramTem()">🔑 Tạo mã khóa</button>' : ''}
+    </div><div id="ht-khoa-tem"></div>`;
+}
+window.htHuyLenhTem = async function(id) { const kq = await goiWorkerAdmin('tao-lenh-in-tem', { huyId: id }); if (!kq.success) showToast(kq.error || 'Lỗi', true); htVeTramTem(); };
+window.htTaoKhoaTramTem = async function() {
+  if (!await hoiXacNhan('Tạo mã khóa mới cho Trạm in tem?\n\nMã cũ (nếu có) sẽ hết dùng — laptop phải cài lại với mã mới.')) return;
+  const el = document.getElementById('ht-khoa-tem'); el.innerHTML = '<div class="loading">Đang tạo...</div>';
+  const kq = await goiWorkerAdmin('tao-khoa-tram-tem', {});
+  if (!kq.success) { el.innerHTML = `<p class="info-note">Không tạo được: ${escHtml(kq.error || '')}</p>`; return; }
+  el.innerHTML = `<div style="margin-top:10px;padding:10px;border:2px dashed #16A34A;border-radius:8px;background:#F0FDF4">
+      <div style="font-size:12px;color:var(--text2)">Mã khóa — dán vào lúc chạy <b>CAI DAT.bat</b> trên laptop. Mã chỉ hiện một lần.</div>
+      <div style="font-family:monospace;font-size:18px;font-weight:700;margin:6px 0;word-break:break-all" id="ht-khoa-tem-ma">${escHtml(kq.khoa)}</div>
+      <button class="btn-xs" onclick="navigator.clipboard?.writeText(document.getElementById('ht-khoa-tem-ma').textContent).then(() => showToast('Đã chép mã khóa'))">Chép</button></div>`;
+};
+
 async function htVeTramIn() {
   const el = document.getElementById('ht-tramin');
   if (!el) return;
@@ -26846,7 +27028,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v714</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v715</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26904,7 +27086,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v714</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v715</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26954,7 +27136,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v714</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v715</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26963,7 +27145,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v714</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v715</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
