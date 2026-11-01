@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 680;
+  const APP_VERSION = 681;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -3747,7 +3747,20 @@ function donThieuHang(d) {
 }
 const khopLocGiao = (d) => donFilterGiao === 'all' || (donFilterGiao === 'hoatoc') === laHoaToc(d);
 // Lọc "Hết hàng": đơn chưa đóng gói mà phiếu KiotViet thiếu món so với đơn trên sàn
-const laDonHetHang = (d) => TT_CHUA_DONG_GOI.has(trangThaiHienThi(d)) && donThieuHang(d).length > 0;
+const laDonHetHang = (d) => !d.boQuaThieuHang && TT_CHUA_DONG_GOI.has(trangThaiHienThi(d)) && donThieuHang(d).length > 0;
+// Admin: đơn thiếu món trong phiếu KiotViet nhưng đã xử lý tay (vẫn gửi đủ hàng) -> bỏ khỏi mục Hết hàng
+window.donBoQuaThieuHang = async function(id, bo) {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  const d = allDonHangSan.find(x => x.id === id); if (!d) return;
+  if (bo && !await hoiXacNhan(`Đơn ${d.maDonSan || id}: phiếu KiotViet thiếu món so với đơn trên sàn.\n\nĐánh dấu đã xử lý tay (vẫn gửi đủ hàng cho khách) để đơn rời mục Hết hàng và về Chờ xử lý?\n\nLưu ý: món thiếu không có trong hóa đơn KiotViet nên tồn của món đó không tự trừ — nhớ trừ tay.`, { nutDongY: 'Đã xử lý tay' })) return;
+  try {
+    await updateDoc(doc(db, 'don_hang_san', id), bo
+      ? { boQuaThieuHang: true, boQuaThieuHangLuc: serverTimestamp(), boQuaThieuHangBoi: currentUserData?.ten || '' }
+      : { boQuaThieuHang: false });
+    d.boQuaThieuHang = !!bo; veDanhSachDon();
+    showToast(bo ? 'Đã chuyển đơn về Chờ xử lý' : 'Đã đưa đơn lại mục Hết hàng');
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
 // Đơn hết hàng tách khỏi Chờ xử lý / Chờ in / Chờ đóng gói (chưa làm được cho tới khi có hàng)
 const TT_KHO_TACH_HET = new Set(['cho_xu_ly', 'cho_in', 'cho_dong_goi']);
 const ttLocDon = (d) => { const tt = trangThaiHienThi(d); return TT_KHO_TACH_HET.has(tt) && laDonHetHang(d) ? 'het_hang' : tt; };
@@ -5398,8 +5411,9 @@ function veDanhSachDon() {
           ${i.anh ? `<img src="${escHtml(i.anh)}" loading="lazy" onclick="event.stopPropagation();viewPhoto('${escHtml(i.anh)}')" style="width:42px;height:42px;object-fit:cover;border-radius:6px;flex-shrink:0;background:var(--bg);cursor:zoom-in">`
             : '<div style="width:42px;height:42px;border-radius:6px;flex-shrink:0;background:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;opacity:.5">📦</div>'}
           <span style="flex-shrink:0;min-width:34px;text-align:center;font-size:13px;font-weight:700;padding:3px 6px;border-radius:5px;background:#FEE2E2;color:#B91C1C">×${Number(i.sl) || 0}</span>
-          <span style="font-size:12.5px;line-height:1.35;min-width:0"><b style="color:#B91C1C;font-size:11px;background:#fff;border:1px solid #FCA5A5;border-radius:4px;padding:0 5px;margin-right:4px" title="${i.chuaRo ? 'Phiếu KiotViet thiếu hàng so với đơn trên sàn — đối chiếu từng món' : 'Hết hàng nên KiotViet chưa đưa vào phiếu'}">${i.chuaRo ? 'TRÊN SÀN' : 'HẾT HÀNG'}</b>${escHtml(i.ten || i.sku || '')}${i.bienThe ? ` <span style="color:var(--text2)">· ${escHtml(i.bienThe)}</span>` : ''}</span>
+          <span style="font-size:12.5px;line-height:1.35;min-width:0"><b style="color:${d.boQuaThieuHang ? '#64748B' : '#B91C1C'};font-size:11px;background:#fff;border:1px solid ${d.boQuaThieuHang ? '#CBD5E1' : '#FCA5A5'};border-radius:4px;padding:0 5px;margin-right:4px" title="${i.chuaRo ? 'Phiếu KiotViet thiếu hàng so với đơn trên sàn — đối chiếu từng món' : 'Phiếu KiotViet không có món này'}">${d.boQuaThieuHang ? 'XỬ LÝ TAY' : i.chuaRo ? 'TRÊN SÀN' : 'HẾT HÀNG'}</b>${escHtml(i.ten || i.sku || '')}${i.bienThe ? ` <span style="color:var(--text2)">· ${escHtml(i.bienThe)}</span>` : ''}</span>
         </div>`).join('')}
+        ${donThieuHang(d).length && currentUserData?.role === 'admin' && TT_CHUA_DONG_GOI.has(trangThaiHienThi(d)) ? `<div style="text-align:right"><button class="btn-xs" onclick="event.stopPropagation();donBoQuaThieuHang('${d.id}', ${!d.boQuaThieuHang})" style="${d.boQuaThieuHang ? '' : 'background:#FEF2F2;color:#B91C1C;border:1px solid #FCA5A5;'}font-size:11.5px">${d.boQuaThieuHang ? '↩ Đưa lại mục Hết hàng' : '✓ Đã xử lý tay — chuyển về Chờ xử lý'}</button></div>` : ''}
       </div>
       <div class="don-khach">
         ${d.khachHang ? `<div style="font-size:12.5px;font-weight:600">👤 ${escHtml(d.khachHang)}</div>` : ''}
@@ -26141,7 +26155,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v680</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v681</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26199,7 +26213,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v680</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v681</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26249,7 +26263,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v680</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v681</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26258,7 +26272,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v680</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v681</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
