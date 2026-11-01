@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 672;
+  const APP_VERSION = 673;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -7203,7 +7203,7 @@ function nhVeTao() {
         <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
           ${duocNhap ? `
           <button class="btn-xs" style="width:32px;padding:6px" onclick="nhTangGiam(${i},-1)">−</button>
-          <input type="number" min="1" inputmode="numeric" value="${d.soLuong || ''}" onchange="nhSuaDong(${i},'soLuong',this.value)"
+          <input type="text" inputmode="decimal" autocomplete="off" value="${d.soLuong || ''}" onchange="nhSuaDong(${i},'soLuong',this.value)"
             style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
           <button class="btn-xs" style="width:32px;padding:6px" onclick="nhTangGiam(${i},1)">+</button>` : `<span style="font-size:14px">SL <b>${d.soLuong}</b></span>`}
           <div style="flex:1"></div>
@@ -7259,12 +7259,12 @@ function nhVeTao() {
 
 window.nhSuaDong = function(i, truong, giaTri) {
   if (!nhDongHang[i]) return;
-  nhDongHang[i][truong] = truong === 'soLuong' ? Math.max(1, parseInt(giaTri) || 1) : Math.max(0, parseFloat(giaTri) || 0);
+  nhDongHang[i][truong] = truong === 'soLuong' ? (slLe(giaTri) > 0 ? slLe(giaTri) : 1) : Math.max(0, parseFloat(giaTri) || 0);
   nhVeTao();
 };
 window.nhTangGiam = function(i, d) {
   if (!nhDongHang[i]) return;
-  nhDongHang[i].soLuong = Math.max(1, (Number(nhDongHang[i].soLuong) || 0) + d);
+  nhDongHang[i].soLuong = Math.max(1, r3((Number(nhDongHang[i].soLuong) || 0) + d));
   nhVeTao();
 };
 window.nhXoaDong = function(i) {
@@ -7798,7 +7798,7 @@ function dhVeTao() {
         </div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
           <button class="btn-xs" style="width:32px;padding:6px" onclick="dhTangGiam(${i},-1)">−</button>
-          <input type="number" min="1" inputmode="numeric" value="${it.sl}" onchange="dhSuaDong(${i},'sl',this.value)" style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
+          <input type="text" inputmode="decimal" autocomplete="off" value="${it.sl}" onchange="dhSuaDong(${i},'sl',this.value)" style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
           <button class="btn-xs" style="width:32px;padding:6px" onclick="dhTangGiam(${i},1)">+</button>
           <div style="flex:1"></div>
           ${coGia ? `<input type="number" min="0" inputmode="numeric" value="${it.giaVon || ''}" placeholder="Giá vốn" onchange="dhSuaDong(${i},'giaVon',this.value)"
@@ -7851,10 +7851,10 @@ window.dhThemHang = function(maSku) {
 };
 window.dhSuaDong = function(i, truong, v) {
   const it = dhDon?.items[i]; if (!it) return;
-  it[truong] = truong === 'sl' ? Math.max(1, parseInt(v) || 1) : Math.max(0, parseFloat(v) || 0);
+  it[truong] = truong === 'sl' ? (slLe(v) > 0 ? slLe(v) : 1) : Math.max(0, parseFloat(v) || 0);
   dhVeTao();
 };
-window.dhTangGiam = function(i, d) { const it = dhDon?.items[i]; if (!it) return; it.sl = Math.max(1, (Number(it.sl) || 0) + d); dhVeTao(); };
+window.dhTangGiam = function(i, d) { const it = dhDon?.items[i]; if (!it) return; it.sl = Math.max(1, r3((Number(it.sl) || 0) + d)); dhVeTao(); };
 window.dhXoaDong = function(i) { dhDon.items.splice(i, 1); dhVeTao(); };
 window.dhDoiGhiChu = function(v) { if (dhDon) { dhDon.ghiChu = String(v || '').slice(0, 300); dhLuuNhap(); } };
 window.dhBoSoan = async function() {
@@ -8809,7 +8809,7 @@ function dhVeDoiChieu() {
         <div style="font-size:12px;color:var(--text2);margin:2px 0 6px">${escHtml(r.sku)} · Đặt <b style="color:var(--text)">${r.dat}</b>${r.daNhap ? ` (đã nhập ${r.daNhap})` : ''} · Đếm <b style="color:var(--text)">${r.dem}</b></div>
         <div style="display:flex;gap:6px;align-items:center">
           <span style="font-size:12px;color:var(--text2)">Nhập</span>
-          <input type="number" min="0" inputmode="numeric" value="${r.nhap}" onchange="dhDCSua(${i},'nhap',this.value)" style="width:64px;padding:6px;text-align:center;font-weight:700">
+          <input type="text" inputmode="decimal" autocomplete="off" value="${r.nhap}" onchange="dhDCSua(${i},'nhap',this.value)" style="width:64px;padding:6px;text-align:center;font-weight:700">
           <span style="font-size:12px;color:var(--text2);margin-left:6px">Giá vốn</span>
           <input type="number" min="0" inputmode="numeric" value="${r.gia || ''}" onchange="dhDCSua(${i},'gia',this.value)" style="flex:1;min-width:0;padding:6px;text-align:right${Number(r.gia) || !Number(r.nhap) ? '' : ';border-color:#F59E0B'}">
         </div>
@@ -8819,7 +8819,7 @@ function dhVeDoiChieu() {
      <button class="btn-g" id="btn-dh-nhap" style="flex:1;margin:0;background:#2563EB" onclick="dhLuuNhapKho()">Lưu nhập kho</button>`);
   ddbCanhGiua('dh-dc-modal');
 }
-window.dhDCSua = function(i, k, v) { const r = dhDC?.dong[i]; if (!r) return; r[k] = Math.max(0, k === 'nhap' ? (parseInt(v) || 0) : (parseFloat(v) || 0)); dhVeDoiChieu(); };
+window.dhDCSua = function(i, k, v) { const r = dhDC?.dong[i]; if (!r) return; r[k] = Math.max(0, k === 'nhap' ? slLe(v) : (parseFloat(v) || 0)); dhVeDoiChieu(); };
 
 window.dhLuuNhapKho = async function() {
   const { don, phieu, dong } = dhDC || {};
@@ -12233,7 +12233,7 @@ function veGioHang() {
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="bhDoiSL(${i},-1)">−</button>
-        <input type="number" min="1" value="${d.soLuong}" onchange="bhDatSL(${i},this.value)"
+        <input type="text" inputmode="decimal" autocomplete="off" value="${d.soLuong}" onchange="bhDatSL(${i},this.value)"
           style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:600">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="bhDoiSL(${i},1)">+</button>
         ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá"
@@ -12892,8 +12892,8 @@ function bhSuaDong(f) {
   veDayDuoi();
 }
 
-window.bhDoiSL = function(i, d) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, (Number(p.gio[i].soLuong) || 1) + d); }); };
-window.bhDatSL = function(i, v) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, parseInt(v) || 1); }); };
+window.bhDoiSL = function(i, d) { bhSuaDong(p => { p.gio[i].soLuong = Math.max(1, r3((Number(p.gio[i].soLuong) || 1) + d)); }); };
+window.bhDatSL = function(i, v) { bhSuaDong(p => { p.gio[i].soLuong = slLe(v) > 0 ? slLe(v) : 1; }); };
 window.bhDatGiam = function(i, v) {
   if (!coQuyen('bh_giamgia')) { showToast('Bạn không có quyền giảm giá', true); return; }
   bhSuaDong(p => {
@@ -13472,7 +13472,7 @@ function dcVeGio() {
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},-1)">−</button>
-        <input type="number" min="1" value="${d.soLuong}" onchange="dcDatSL(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:600">
+        <input type="text" inputmode="decimal" autocomplete="off" value="${d.soLuong}" onchange="dcDatSL(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:600">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="dcDoiSL(${i},1)">+</button>
         ${duocGiam ? `<input type="text" inputmode="numeric" value="${Number(d.giamGia) > 0 ? Number(d.giamGia).toLocaleString('vi-VN') : ''}" placeholder="Giảm giá" oninput="dinhDangTien(this)" onchange="dcDatGiam(${i},docTien(this))" style="flex:1;min-width:60px;padding:6px;text-align:right">` : '<div style="flex:1"></div>'}
         <div style="font-weight:700;font-size:14px;min-width:76px;text-align:right;color:${Number(d.giamGia) > 0 ? '#DC2626' : 'var(--text)'}">${fmt(tt)}đ</div>
@@ -13530,8 +13530,8 @@ window.dcThem = function(ma) {
   dcLuuNhap(); dcVeGio(); dcVeDuoi();
   setTimeout(() => document.getElementById('dc-tim')?.focus(), 30);
 };
-window.dcDoiSL = (i, d) => { const x = dcPhieu.gio[i]; x.soLuong = Math.max(1, (Number(x.soLuong) || 1) + d); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
-window.dcDatSL = (i, v) => { dcPhieu.gio[i].soLuong = Math.max(1, parseInt(v) || 1); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
+window.dcDoiSL = (i, d) => { const x = dcPhieu.gio[i]; x.soLuong = Math.max(1, r3((Number(x.soLuong) || 1) + d)); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
+window.dcDatSL = (i, v) => { dcPhieu.gio[i].soLuong = slLe(v) > 0 ? slLe(v) : 1; dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
 window.dcDatGiam = (i, v) => { const x = dcPhieu.gio[i]; x.giamGia = Math.min(x.gia * x.soLuong, Math.max(0, Number(v) || 0)); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
 window.dcXoaDong = (i) => { dcPhieu.gio.splice(i, 1); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
 window.dcDatGhiChu = (v) => { dcPhieu.ghiChu = String(v || '').slice(0, 300); dcLuuNhap(); };
@@ -17777,6 +17777,11 @@ function tonBanQuay(s) {
   }
   return m === Infinity ? 0 : m;
 }
+// Số lượng cho phép số lẻ (hàng tính theo kg): nhận cả dấu phẩy, làm tròn 3 chữ số
+function slLe(v) { return Math.round((parseFloat(String(v ?? '').replace(',', '.')) || 0) * 1000) / 1000; }
+window.slLe = slLe;
+const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+window.r3 = r3;
 function makeSKUSearch(inputId, dropdownId, giaId, chiNhom, locSp) {
   const input = document.getElementById(inputId);
   const box = document.getElementById(dropdownId);
@@ -19115,12 +19120,12 @@ window.ckThemHang = function(skuId) {
 
 window.removeNhapItem = function(i) { currentNhap.items.splice(i,1); renderNhapItems(); };
 window.adjNhapQty = function(i, d) {
-  currentNhap.items[i].sl = Math.max(1, currentNhap.items[i].sl + d);
+  currentNhap.items[i].sl = Math.max(1, r3(currentNhap.items[i].sl + d));
   currentNhap.items[i].tong = currentNhap.items[i].sl * currentNhap.items[i].gia;
   renderNhapItems();
 };
 window.setNhapQty = function(i, v) {
-  currentNhap.items[i].sl = Math.max(1, parseInt(v)||1);
+  currentNhap.items[i].sl = slLe(v) > 0 ? slLe(v) : 1;
   currentNhap.items[i].tong = currentNhap.items[i].sl * currentNhap.items[i].gia;
   renderNhapItems();
 };
@@ -19156,7 +19161,7 @@ function renderNhapItems() {
       </div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:6px">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="adjNhapQty(${i},-1)">−</button>
-        <input type="number" min="1" value="${d.sl}" onchange="setNhapQty(${i},this.value)"
+        <input type="text" inputmode="decimal" autocomplete="off" value="${d.sl}" onchange="setNhapQty(${i},this.value)"
           style="width:56px;padding:6px;text-align:center;font-size:15px;font-weight:600">
         <button class="btn-xs" style="width:32px;padding:6px" onclick="adjNhapQty(${i},1)">+</button>
         <div style="flex:1"></div>
@@ -19572,7 +19577,7 @@ function veXuatHuyTao() {
           <div style="font-size:11px;color:var(--text2)">${escHtml(it.sku)} · ${fmt(it.gia)}đ${ton !== null ? ` · tồn <b style="color:${it.sl > ton ? 'var(--red)' : 'inherit'}">${ton}</b>` : ''}</div>
         </div>
         <button class="btn-xs" style="width:30px;padding:6px" onclick="adjXuatQty(${i},-1)">−</button>
-        <input type="number" min="1" value="${it.sl}" onchange="setXuatQty(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:700">
+        <input type="text" inputmode="decimal" autocomplete="off" value="${it.sl}" onchange="setXuatQty(${i},this.value)" style="width:48px;padding:6px;text-align:center;font-size:15px;font-weight:700">
         <button class="btn-xs" style="width:30px;padding:6px" onclick="adjXuatQty(${i},1)">+</button>
         <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="removeXuatItem(${i})" title="Bỏ mã này">✕</button>
       </div>
@@ -19612,12 +19617,12 @@ window.removeXuatItem = function(i) {
   renderXuatItems();
 };
 window.adjXuatQty = function(i,d) {
-  currentPhieu.items[i].sl = Math.max(1, currentPhieu.items[i].sl + d);
+  currentPhieu.items[i].sl = Math.max(1, r3(currentPhieu.items[i].sl + d));
   currentPhieu.items[i].tong = currentPhieu.items[i].sl * currentPhieu.items[i].gia;
   renderXuatItems();
 };
 window.setXuatQty = function(i,v) {
-  currentPhieu.items[i].sl = Math.max(1, parseInt(v)||1);
+  currentPhieu.items[i].sl = slLe(v) > 0 ? slLe(v) : 1;
   currentPhieu.items[i].tong = currentPhieu.items[i].sl * currentPhieu.items[i].gia;
   renderXuatItems();
 };
@@ -20108,7 +20113,7 @@ function dnVe() {
             <div style="font-size:11.5px;color:var(--text2)">${escHtml(d.sku)} · tồn ${ton}</div></div>
           <div style="display:flex;align-items:center;gap:4px">
             <button class="btn-xs" onclick="dnDoiSL(${i},-1)">−</button>
-            <input type="number" inputmode="numeric" min="1" value="${d.sl}" onchange="dnNhapSL(${i},this.value)" style="width:56px;text-align:center;padding:5px">
+            <input type="text" inputmode="decimal" autocomplete="off" value="${d.sl}" onchange="dnNhapSL(${i},this.value)" style="width:56px;text-align:center;padding:5px">
             <button class="btn-xs" onclick="dnDoiSL(${i},1)">+</button>
           </div>
           <button class="btn-xs" onclick="dnBo(${i})" title="Bỏ dòng">✕</button>
@@ -20154,8 +20159,8 @@ window.dnThem = function(id) {
   if (co) co.sl++; else dnPhieu.dong.push({ skuId: s.id, sku: s.sku, ten: s.ten || '', sl: 1, anh: [] });
   dnTimChu = ''; dnVe();
 };
-window.dnDoiSL = function(i, d) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.max(1, x.sl + d); dnVe(); };
-window.dnNhapSL = function(i, v) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.max(1, Math.min(9999, parseInt(v) || 1)); dnVe(); };
+window.dnDoiSL = function(i, d) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.max(1, r3(x.sl + d)); dnVe(); };
+window.dnNhapSL = function(i, v) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.min(9999, slLe(v) > 0 ? slLe(v) : 1); dnVe(); };
 window.dnBo = function(i) { dnPhieu.dong.splice(i, 1); dnVe(); };
 window.dnBoAnh = function(i, j) { dnPhieu.dong[i]?.anh.splice(j, 1); dnVe(); };
 function dnNhanAnh(anh, skuId) {
@@ -20849,7 +20854,7 @@ function kkVeChiTiet() {
           <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku)} · Tồn <b style="color:var(--text);font-size:13px">${(g ? d.tonLucDem : d.tonNay) ?? '—'}</b>${kkThayDoiSauDem(d)}</div></div>
         ${khoa ? `<span style="flex:0 0 auto;font-size:12px;color:var(--text2)">🔒</span>` : ''}
         ${choSua ? `<button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>
-          <input class="kk-o" type="number" inputmode="numeric" min="0" placeholder="SL" value="${g && trangThaiDong === 'lech' ? d.thucTe : ''}" onchange="kkNhap('${id}',this.value)" onblur="kkVeLai()"
+          <input class="kk-o" type="text" inputmode="decimal" autocomplete="off" placeholder="SL" value="${g && trangThaiDong === 'lech' ? d.thucTe : ''}" onchange="kkNhap('${id}',this.value)" onblur="kkVeLai()"
             style="flex:0 0 60px;width:60px;padding:8px 4px;text-align:center;font-size:15px;font-weight:700;border:1.5px solid ${trangThaiDong === 'lech' ? '#F59E0B' : 'var(--border)'};border-radius:8px">` : ''}
       </div>
       ${g ? `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;margin-top:5px;color:var(--text2)">
@@ -20926,7 +20931,7 @@ function kkDat(id, v) {
 window.kkKhop = (id) => { bip?.(1600, 60); kkDat(id, 'khop'); };
 window.kkNhap = (id, v) => {
   if (String(v).trim() === '') return;
-  const n = parseInt(v); if (!Number.isFinite(n) || n < 0) { showToast('Số lượng không hợp lệ', true); return; }
+  const n = slLe(v); if (!Number.isFinite(n) || n < 0 || !/\d/.test(String(v))) { showToast('Số lượng không hợp lệ', true); return; }
   kkDat(id, n);
 };
 window.kkBoDem = (id) => kkDat(id, null);
@@ -26017,7 +26022,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v672</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v673</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26075,7 +26080,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v672</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v673</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26125,7 +26130,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v672</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v673</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26134,7 +26139,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v672</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v673</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
