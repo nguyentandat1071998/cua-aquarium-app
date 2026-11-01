@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 695;
+  const APP_VERSION = 696;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -6935,21 +6935,53 @@ async function ktVongQuet() {
   if (ktDangQuet) setTimeout(ktVongQuet, kieuBoDoc === 'zxing' ? 330 : 200);
 }
 
+// Tìm đơn theo mã quét/gõ: mã vận đơn, mã đơn sàn, mã hóa đơn (+ các biến thể tiền tố của hãng)
+async function ktTimDonTheoMa(ma) {
+  const H = ma.toUpperCase();
+  const thu = [['maVanDon', ma], ['maVanDon', H], ['maDonSan', ma], ['maDonSan', H], ['maHoaDon', ma], ['maHoaDon', H]];
+  // Viettel Post qua Shopee lưu "SHOPEEVTPVN…", tem in "VTPVN…"/số trần; mã hóa đơn TikTok "HDTTS_<mã đơn>"
+  if (!H.startsWith('SHOPEE')) thu.push(['maVanDon', 'SHOPEE' + H], ['maVanDon', 'SHOPEEVTPVN' + H.replace(/^VTPVN/, '')]);
+  else thu.push(['maVanDon', H.replace(/^SHOPEE/, '')]);
+  if (/^\d{15,20}$/.test(H)) thu.push(['maHoaDon', 'HDTTS_' + H]);
+  const daThu = new Set();
+  for (const [truong, gt] of thu) {
+    if (!gt || daThu.has(truong + gt)) continue; daThu.add(truong + gt);
+    const kq = await getDocs(query(collection(db, 'don_hang_san'), where(truong, '==', gt), limit(1)));
+    if (!kq.empty) return kq;
+  }
+  return null;
+}
+// Đơn chuẩn bị bên Bigseller / sàn thì app chưa có mã vận đơn -> kéo hóa đơn 2 ngày gần nhất về rồi tìm lại
+async function ktDongBoDonMoi(baoTienDo) {
+  const den = ngayYMD(new Date()), tu = ngayYMD(new Date(Date.now() - 2 * 86400000));
+  const idToken = await currentUser.getIdToken();
+  let viTri = 0, tong = 0;
+  for (let vong = 1; vong <= 6; vong++) {
+    baoTienDo?.(vong);
+    const r = await fetch(WORKER_URL, { method: 'POST',
+      headers: { 'x-action': 'dong-bo-don-thieu', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tuNgay: tu, denNgay: den, viTri }) });
+    const d = await r.json().catch(() => ({}));
+    if (!d.success) break;
+    tong += d.soDonGhi || 0;
+    if (!d.conNua) break;
+    viTri = d.viTriTiepTheo;
+  }
+  return tong;
+}
 async function ktTraDon(maVanDon) {
   const el = document.getElementById('kt-ketqua');
   if (!el) return;
   maVanDon = String(maVanDon || '').trim().replace(/\s+/g, '');
   const oGo = document.getElementById('kt-go'); if (oGo) oGo.value = '';
   el.innerHTML = `<div class="loading">Đang tra đơn ${escHtml(maVanDon)}...</div>`;
-  // Tem có thể in mã vận đơn hoặc mã đơn sàn; máy đọc có khi trả chữ thường
   let snap = null;
   try {
-    const thu = [['maVanDon', maVanDon], ['maVanDon', maVanDon.toUpperCase()], ['maDonSan', maVanDon], ['maDonSan', maVanDon.toUpperCase()], ['maHoaDon', maVanDon]];
-    const daThu = new Set();
-    for (const [truong, gt] of thu) {
-      if (daThu.has(truong + gt)) continue; daThu.add(truong + gt);
-      const kq = await getDocs(query(collection(db, 'don_hang_san'), where(truong, '==', gt), limit(1)));
-      if (!kq.empty) { snap = kq; break; }
+    snap = await ktTimDonTheoMa(maVanDon);
+    if (!snap) {
+      el.innerHTML = `<div class="loading">Chưa có đơn ${escHtml(maVanDon)} trong app — đang lấy đơn mới từ sàn...</div>`;
+      await ktDongBoDonMoi((v) => { const o = el.querySelector('.loading'); if (o) o.textContent = `Đang lấy đơn mới từ sàn (đợt ${v})...`; });
+      snap = await ktTimDonTheoMa(maVanDon);
     }
   } catch(e) {
     bip(400, 350);
@@ -6958,9 +6990,11 @@ async function ktTraDon(maVanDon) {
   }
   if (!snap) {
     bip(400, 350);
+    console.warn('[đóng gói] không tìm thấy mã', maVanDon);
     el.innerHTML = `<div style="background:#FEE2E2;border:1px solid #DC2626;border-radius:10px;padding:14px;text-align:center">
       <b style="color:#DC2626">Không tìm thấy đơn</b>
-      <div style="font-size:12px;color:var(--text2);margin-top:4px">${escHtml(maVanDon)}<br>Vào tab Đơn hàng bấm Đồng bộ rồi quét lại</div></div>`;
+      <div style="font-size:13px;margin-top:4px;font-weight:600">${escHtml(maVanDon)}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:4px">Đã lấy đơn mới từ sàn mà vẫn chưa có. Thử gõ <b>mã đơn hàng</b> in trên tem, hoặc báo quản lý mã này.</div></div>`;
     return;
   }
   ktDon = { id: snap.docs[0].id, ...snap.docs[0].data() };
@@ -26518,7 +26552,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v695</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v696</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26576,7 +26610,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v695</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v696</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26626,7 +26660,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v695</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v696</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26635,7 +26669,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v695</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v696</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
