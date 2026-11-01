@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 700;
+  const APP_VERSION = 701;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21117,7 +21117,7 @@ async function hhoTaoBoDoc() {
 // vung = [x, y, rộng, cao] theo tỉ lệ 0..1; toiDa = bề ngang tối đa sau thu nhỏ
 // Tăng tương phản cho tem in nhiệt mờ: xám -> giãn độ sáng (bỏ 2% hai đầu) -> tách đen/trắng theo Otsu (+lệch).
 // Đã thử với tem TikTok in mờ: ảnh gốc chỉ đọc được khi cắt sát mã; qua bước này đọc được cả dải rộng.
-function lamNetMaVach(id, lech = 0) {
+function lamNetMaVach(id, lech = 0, khe = 0) {
   const d = id.data, n = d.length >> 2, xam = new Uint8ClampedArray(n), hist = new Uint32Array(256);
   for (let i = 0, j = 0; j < n; i += 4, j++) { const v = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000; xam[j] = v; hist[xam[j]]++; }
   let lo = 0, hi = 255, dem = 0;
@@ -21138,9 +21138,25 @@ function lamNetMaVach(id, lech = 0) {
   }
   T += lech;
   for (let i = 0, j = 0; j < n; i += 4, j++) { const v = xam[j] > T ? 255 : 0; d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
+  // Lấp khe trắng hẹp trong vạch đen: đầu in nhiệt hỏng/bẩn để lại đường trắng chạy dọc giữa vạch,
+  // bộ đọc tưởng 1 vạch thành 2 vạch -> sai mã (đúng lỗi của tem TikTok hỏa tốc). Khe <= khe px thì tô đen.
+  if (khe > 0) {
+    const w = id.width, h = id.height;
+    for (let y = 0; y < h; y++) {
+      const goc = y * w;
+      let x = 0;
+      while (x < w && d[(goc + x) * 4] !== 0) x++;   // tới vạch đen đầu tiên
+      while (x < w) {
+        while (x < w && d[(goc + x) * 4] === 0) x++;   // hết vạch đen
+        const batDau = x;
+        while (x < w && d[(goc + x) * 4] !== 0) x++;   // khoảng trắng
+        if (x < w && x - batDau <= khe) for (let t = batDau; t < x; t++) { const i = (goc + t) * 4; d[i] = d[i + 1] = d[i + 2] = 0; }
+      }
+    }
+  }
   return id;
 }
-async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa, nhiPhanToanCuc, tuongPhan) {
+async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa, nhiPhanToanCuc, tuongPhan, kheNhan = 0) {
   const c = hhoCam; if (!c?.boDoc) return '';
   const cv = c.cv || (c.cv = document.createElement('canvas'));
   const [fx, fy, fw, fh] = vung || [0, 0, 1, 1];
@@ -21153,7 +21169,7 @@ async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa, nhiPhanToanCuc, tuo
   if (c.kieu === 'native') { const kq = await c.boDoc.detect(cv); return String(kq[0]?.rawValue || '').trim(); }
   if (c.kieu === 'wasm') {
     let anh = ctx.getImageData(0, 0, w, h);
-    if (tuongPhan != null) anh = lamNetMaVach(anh, tuongPhan);
+    if (tuongPhan != null) anh = lamNetMaVach(anh, tuongPhan, kheNhan ? Math.max(1, Math.round(w / 900 * kheNhan)) : 0);
     const kq = await c.boDoc.readBarcodesFromImageData(anh, {
       tryHarder: true, tryRotate: true, tryDownscale: true, maxNumberOfSymbols: 1,
       binarizer: nhiPhanToanCuc ? 'GlobalHistogram' : 'LocalAverage',
@@ -21161,7 +21177,7 @@ async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa, nhiPhanToanCuc, tuo
     return String(kq[0]?.text || '').trim();
   }
   let anhZ = ctx.getImageData(0, 0, w, h);
-  if (tuongPhan != null) anhZ = lamNetMaVach(anhZ, tuongPhan);
+  if (tuongPhan != null) anhZ = lamNetMaVach(anhZ, tuongPhan, kheNhan ? Math.max(1, Math.round(w / 900 * kheNhan)) : 0);
   const rgba = anhZ.data, xam = new Uint8ClampedArray(w * h);
   for (let i = 0, j = 0; j < xam.length; i += 4, j++) xam[j] = (rgba[i] * 299 + rgba[i + 1] * 587 + rgba[i + 2] * 114) / 1000;
   try {
@@ -21190,17 +21206,18 @@ async function hhoVongQuet(luot) {
       // Toạ độ dải tính trong PHẦN NHÌN THẤY (khung vàng ở 5–95% ngang, 32–68% dọc)
       // [vùng, bề ngang tối đa, GlobalHistogram, tăng tương phản (null = ảnh gốc, số = lệch ngưỡng Otsu)]
       const G = [0.05, 0.42, 0.9, 0.16], RONG = [0.05, 0.32, 0.9, 0.36], TREN = [0.05, 0.33, 0.9, 0.14], DUOI = [0.05, 0.53, 0.9, 0.14];
+      // [vùng, bề ngang tối đa, GlobalHistogram, tương phản (null = ảnh gốc), lấp khe (bội số theo bề ngang)]
       const cach = c.kieu === 'wasm'
-        ? [[G, 4000, false, null], [G, 4000, false, 0], [RONG, 4000, false, 0], [G, 4000, false, 20], [G, 4000, false, -20],
-           [TREN, 4000, false, 0], [DUOI, 4000, false, 0], [RONG, 4000, false, null], [null, 1100, false, null]]
+        ? [[G, 4000, false, 0, 2], [G, 4000, false, 0, 1], [RONG, 4000, false, 0, 2], [G, 4000, false, 20, 2], [G, 4000, false, 0, 3],
+           [TREN, 4000, false, 0, 2], [DUOI, 4000, false, 0, 2], [G, 4000, false, null], [RONG, 4000, false, 0, 1], [G, 4000, false, -20, 2], [null, 1100, false, null]]
         : c.kieu === 'zxing'
-        ? [[RONG, 1400, false, null], [G, 1800, false, 0], [null, 1000, false, null], [G, 1800, true, 20], [RONG, 1400, false, 0]]
+        ? [[G, 1800, false, 0, 2], [RONG, 1400, false, null], [G, 1800, false, 0, 1], [null, 1000, false, null], [G, 1800, true, 20, 2], [RONG, 1400, false, 0, 3]]
         : [[[0.03, 0.28, 0.94, 0.44]], [null]];
-      const [vg0, td, gh, tp] = cach[c.vong % cach.length];
+      const [vg0, td, gh, tp, kn] = cach[c.vong % cach.length];
       const [tx, ty, tw, th] = hhoVungThay(v);
       const [fx, fy, fw, fh] = vg0 || [0, 0, 1, 1];
       const vg = [tx + fx * tw, ty + fy * th, fw * tw, fh * th];
-      const ma = await hhoDocMa(v, v.videoWidth, v.videoHeight, vg, td, gh, tp);
+      const ma = await hhoDocMa(v, v.videoWidth, v.videoHeight, vg, td, gh, tp, kn || 0);
       c.demLuot = (c.demLuot || 0) + 1;
       if (ma.length >= 6) { hhoDaDocMa(ma); return; }
     }
@@ -21226,9 +21243,12 @@ async function hhoDocAnhNhieuLop(anh) {
   const cacVung = [[null, 1600], [[0.15, 0.15, 0.7, 0.7], 2400], [[0.25, 0.3, 0.5, 0.4], 2400], [[0.05, 0.35, 0.9, 0.3], 3000],
     ...(hhoCam?.kieu === 'wasm' ? [0.3, 0.38, 0.46, 0.54, 0.62].map(y => [[0.05, y, 0.9, 0.12], 2400]) : [])];
   const thu = async (ng, w, h) => {
-    for (const [vg, td] of cacVung) { const ma = await hhoDocMa(ng, w, h, vg, td); if (ma) return ma; }
-    if (hhoCam?.kieu === 'native') return '';
-    for (const [vg, td] of cacVung.slice(1)) for (const tp of [0, 20, -20]) { const ma = await hhoDocMa(ng, w, h, vg, Math.max(td, 3000), false, tp); if (ma) return ma; }
+    for (const [vg, td] of cacVung.slice(0, 2)) { const ma = await hhoDocMa(ng, w, h, vg, td); if (ma) return ma; }
+    if (hhoCam?.kieu === 'native') { for (const [vg, td] of cacVung.slice(2)) { const ma = await hhoDocMa(ng, w, h, vg, td); if (ma) return ma; } return ''; }
+    // Quét dải ngang 16% chiều cao khắp ảnh (giống đưa tem lên xuống trước camera), độ phân giải gốc
+    const cacY = []; for (let y = 0.42; y >= 0.14; y -= 0.04) cacY.push(y); for (let y = 0.46; y <= 0.74; y += 0.04) cacY.push(y);
+    for (const kn of [2, 1, 3]) for (const y of cacY) { const ma = await hhoDocMa(ng, w, h, [0.04, y, 0.92, 0.16], 3200, false, 0, kn); if (ma) return ma; }
+    for (const [vg, td] of cacVung.slice(2)) { const ma = await hhoDocMa(ng, w, h, vg, td); if (ma) return ma; }
     return '';
   };
   let ma = await thu(anh, anh.width, anh.height);
@@ -26699,7 +26719,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v700</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v701</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26757,7 +26777,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v700</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v701</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26807,7 +26827,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v700</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v701</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26816,7 +26836,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v700</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v701</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
