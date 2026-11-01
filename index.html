@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 709;
+  const APP_VERSION = 710;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -19652,6 +19652,7 @@ window.ckThemHang = function(skuId) {
   const sp = allSKUs.find(s => s.id === skuId);
   if (!sp) { showToast('Không tìm thấy hàng', true); return; }
   if (sp.laCombo) { showToast('Combo không chuyển kho trực tiếp — chuyển từng món', true); return; }
+  if (sp.khoChung) { showToast(`${sp.sku} là mã kho chung — không chuyển kho (bán tại quầy app tự chuyển)`, true); return; }
   const co = currentNhap.items.find(i => i.skuId === skuId);
   if (co) { co.sl += 1; co.tong = co.sl * (co.gia || 0); }
   else currentNhap.items.unshift({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia: Number(sp.gia) || 0, tong: Number(sp.gia) || 0 });
@@ -19880,6 +19881,8 @@ window.submitNhap = async function() {
   const cc = CHIEU_CHUYEN[chieu];
   const branch = (m) => m === 'san' ? KHO.SAN.branchId : KHO.CUA_HANG.branchId;
   if (!currentNhap.photos.length) { showToast('Chụp ảnh hàng hóa trước khi lưu!!!', true); return; }
+  const kcTrongPhieu = currentNhap.items.filter(i => allSKUs.find(s => s.id === i.skuId || s.sku === i.sku)?.khoChung);
+  if (kcTrongPhieu.length) { alert(`Mã kho chung không chuyển kho được — xóa khỏi phiếu:\n\n${kcTrongPhieu.map(i => '· ' + i.sku).join('\n')}\n\nHàng kho chung để ở quầy nhưng tồn tính ở Kho Online; bán tại quầy app tự chuyển.`); return; }
   if (!await hoiXacNhan(`Lưu phiếu chuyển ${cc.ten}?`, { nutDongY: 'Lưu phiếu' })) return;
   const btn = document.getElementById('btn-nhap-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
@@ -26768,7 +26771,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v709</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v710</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26826,7 +26829,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v709</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v710</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26876,7 +26879,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v709</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v710</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26885,7 +26888,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v709</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v710</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
