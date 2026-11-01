@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 682;
+  const APP_VERSION = 683;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -235,7 +235,7 @@ html.co-ban-moi .app-header,html.co-ban-moi .mobile-sticky-top,html.co-ban-moi .
 </script>
 
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-visual">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="CUA Aquarium">
@@ -7346,8 +7346,8 @@ window.nhThemHang = function(maSku, ten) {
     // Giá vốn chỉ người duyệt mới thấy nên nhân viên vẫn để trống.
     const sku = allSKUs.find(s => s.sku === maSku);
     const giaCu = nhCoDuyet() ? nhGiaVonCua(sku) : 0;
-    nhDongHang.push({ sku: maSku, ten: ten || sku?.ten || '', soLuong: 1, donGia: giaCu, giaVonCu: giaCu });
-    idx = nhDongHang.length - 1;
+    nhDongHang.unshift({ sku: maSku, ten: ten || sku?.ten || '', soLuong: 1, donGia: giaCu, giaVonCu: giaCu });
+    idx = 0;   // hàng mới thêm đứng đầu
   }
   nhVeTao();
   setTimeout(() => document.getElementById('nh-dong-' + idx)?.scrollIntoView({ block: 'nearest' }), 30);
@@ -7917,7 +7917,7 @@ window.dhThemHang = function(maSku) {
   if (sp.laCombo) { showToast('Combo không đặt trực tiếp — đặt từng món', true); return; }
   let i = dhDon.items.findIndex(x => x.sku === maSku);
   if (i >= 0) dhDon.items[i].sl = (Number(dhDon.items[i].sl) || 0) + 1;
-  else { dhDon.items.push({ sku: sp.sku, skuId: sp.id, ten: sp.ten || '', sl: 1, giaVon: dhCoGia() ? (Number(sp.giaVon) || 0) : 0 }); i = dhDon.items.length - 1; }
+  else { dhDon.items.unshift({ sku: sp.sku, skuId: sp.id, ten: sp.ten || '', sl: 1, giaVon: dhCoGia() ? (Number(sp.giaVon) || 0) : 0 }); i = 0; }
   dhVeTao();
   setTimeout(() => document.getElementById('dh-dong-' + i)?.scrollIntoView({ block: 'nearest' }), 30);
 };
@@ -12257,14 +12257,31 @@ function bhXuLyMaQuet(ma) {
 }
 
 // Khung Bán hàng vừa khít màn hình: trang không cuộn, chỉ danh sách hàng cuộn
+// Bàn phím bật lên làm visualViewport thấp đi: KHÔNG co khung theo (co lại thì danh sách
+// hàng bị ép mất, chỉ còn ô tìm và thanh dưới). Giữ chiều cao lúc chưa có bàn phím,
+// bàn phím chỉ đè lên phần dưới như các app khác.
+let bhVhDay = 0, bhVwDay = 0;
+function dangGoChu() {
+  const a = document.activeElement;
+  if (!a) return false;
+  if (a.tagName === 'TEXTAREA' || a.isContentEditable || a.tagName === 'SELECT') return true;
+  return a.tagName === 'INPUT' && !/^(checkbox|radio|button|submit|reset|file|range|color|image|hidden)$/i.test(a.type || '');
+}
 function bhVuaManHinh() {
   const k = [...document.querySelectorAll('.bh-khung')].find(x => x.offsetParent);
   if (!k) return;
-  const vh = window.visualViewport?.height || window.innerHeight;
-  if (window.scrollY) window.scrollTo(0, 0);
+  const vhNay = window.visualViewport?.height || window.innerHeight;
+  if (window.innerWidth !== bhVwDay) { bhVwDay = window.innerWidth; bhVhDay = 0; }   // xoay máy -> đo lại
+  const coBanPhim = bhVhDay > 0 && dangGoChu() && bhVhDay - vhNay > 120;
+  if (coBanPhim && k.style.height) return;   // giữ nguyên khung, không cuộn trang
+  const vh = coBanPhim ? bhVhDay : vhNay;
+  if (!coBanPhim) bhVhDay = vhNay;
   const trongCuaSo = k.closest('#banhang-cv-modal');
-  if (trongCuaSo) trongCuaSo.scrollTop = 0;
-  const tren = k.getBoundingClientRect().top;
+  if (!coBanPhim) {
+    if (window.scrollY) window.scrollTo(0, 0);
+    if (trongCuaSo) trongCuaSo.scrollTop = 0;
+  }
+  const tren = k.getBoundingClientRect().top + (coBanPhim ? (window.scrollY || 0) : 0);
   // Trong cửa sổ "Bán hàng (chưa vào ca)": chừa phần đệm dưới của cửa sổ (12px khung + 16px nền)
   const day = trongCuaSo ? 30 : (parseFloat(getComputedStyle(k.closest('.app-body') || document.body).paddingBottom) || 14);
   k.style.height = Math.max(300, Math.floor(vh - tren - day - 2)) + 'px';
@@ -12966,6 +12983,12 @@ window.bhXoaPhieu = async function(id) {
 };
 
 // makeSKUSearch gọi selectSKU, hàm đó chuyển tiếp vào đây
+// Hàng mới thêm đứng đầu phiếu -> kéo danh sách (và khung cuộn chứa nó) về đầu để thấy ngay
+function cuonVeDau(id) {
+  for (let el = document.getElementById(id); el && el !== document.body; el = el.parentElement) {
+    if (el.scrollTop && el.scrollHeight > el.clientHeight + 1) el.scrollTop = 0;
+  }
+}
 window.bhThemHang = function(maSku, ten) {
   const p = bhPhieuHienTai();
   const sku = allSKUs.find(s => s.sku === maSku);
@@ -12973,10 +12996,11 @@ window.bhThemHang = function(maSku, ten) {
   if (sku.banTrucTiep === false) { bip(400, 250); showToast(`${maSku} không bán trực tiếp (bỏ tick "Bán trực tiếp" ở Hàng hóa)`, true); return; }
   const i = p.gio.findIndex(d => d.sku === maSku);
   if (i >= 0) p.gio[i].soLuong++;
-  else p.gio.push({ sku: maSku, ten, gia: giaBanHang(sku), soLuong: 1, giamGia: 0 });
+  else p.gio.unshift({ sku: maSku, ten, gia: giaBanHang(sku), soLuong: 1, giamGia: 0 });   // hàng mới đứng đầu
   p.khachDua = null;   // giỏ đổi thì số khách đưa tính lại
   bhLuu();
   veManHinhBanHang();
+  if (i < 0) cuonVeDau('bh-gio');
 };
 
 function bhSuaDong(f) {
@@ -13623,8 +13647,9 @@ window.dcThem = function(ma) {
   const s = allSKUs.find(x => x.sku === ma); if (!s || !dcPhieu) return;
   if (s.laCombo) { showToast('Combo — thêm từng món', true); return; }
   const d = dcPhieu.gio.find(x => x.sku === ma);
-  if (d) d.soLuong++; else dcPhieu.gio.push({ sku: ma, ten: s.ten || ma, gia: giaBanHang(s), soLuong: 1, giamGia: 0 });
+  if (d) d.soLuong++; else dcPhieu.gio.unshift({ sku: ma, ten: s.ten || ma, gia: giaBanHang(s), soLuong: 1, giamGia: 0 });
   dcLuuNhap(); dcVeGio(); dcVeDuoi();
+  if (!d) cuonVeDau('dc-gio');
   setTimeout(() => document.getElementById('dc-tim')?.focus(), 30);
 };
 window.dcDoiSL = (i, d) => { const x = dcPhieu.gio[i]; x.soLuong = Math.max(1, r3((Number(x.soLuong) || 1) + d)); dcLuuNhap(); dcVeGio(); dcVeDuoi(); };
@@ -19254,7 +19279,7 @@ window.ckThemHang = function(skuId) {
   if (sp.laCombo) { showToast('Combo không chuyển kho trực tiếp — chuyển từng món', true); return; }
   const co = currentNhap.items.find(i => i.skuId === skuId);
   if (co) { co.sl += 1; co.tong = co.sl * (co.gia || 0); }
-  else currentNhap.items.push({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia: Number(sp.gia) || 0, tong: Number(sp.gia) || 0 });
+  else currentNhap.items.unshift({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia: Number(sp.gia) || 0, tong: Number(sp.gia) || 0 });
   renderNhapItems();
   // Kéo dòng vừa thêm vào tầm nhìn
   const idx = currentNhap.items.findIndex(i => i.skuId === skuId);
@@ -19658,11 +19683,13 @@ window.xhChonHang = function(skuId) {
   if (!skuDuocXuatHuy(sp) && !coQuyen('xh_duyet')) showToast('Hàng ngoài danh mục hủy thẳng — phiếu sẽ chờ duyệt');
   if (!currentPhieu.items.some(i => i.skuId === skuId)) {
     const gia = Number(sp.gia) || 0;
-    currentPhieu.items.push({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia, tong: gia });
+    currentPhieu.items.unshift({ ten: sp.ten || '', sku: sp.sku || '', skuId, sl: 1, gia, tong: gia });
   }
+  const moi = !currentPhieu.photos.some(a => a.skuId === skuId);
   xhAnhCho.forEach(a => currentPhieu.photos.push({ ...a, skuId }));
   xhAnhCho = [];
   veXuatHuyTao();
+  if (moi) cuonVeDau('xh-than');
 };
 window.xhXoaAnhCho = function(i) { xhAnhCho.splice(i, 1); veXuatHuyTao(); };
 window.xhXoaAnh = function(skuId, i) {
@@ -20299,8 +20326,9 @@ window.dnThem = function(id) {
   const s = allSKUs.find(x => x.id === id);
   if (!s) return;
   const co = dnPhieu.dong.find(d => d.skuId === id);
-  if (co) co.sl++; else dnPhieu.dong.push({ skuId: s.id, sku: s.sku, ten: s.ten || '', sl: 1, anh: [] });
+  if (co) co.sl++; else dnPhieu.dong.unshift({ skuId: s.id, sku: s.sku, ten: s.ten || '', sl: 1, anh: [] });
   dnTimChu = ''; dnVe();
+  if (!co) cuonVeDau('dn-dong');
 };
 window.dnDoiSL = function(i, d) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.max(1, r3(x.sl + d)); dnVe(); };
 window.dnNhapSL = function(i, v) { const x = dnPhieu.dong[i]; if (!x) return; x.sl = Math.min(9999, slLe(v) > 0 ? slLe(v) : 1); dnVe(); };
@@ -21550,7 +21578,7 @@ window.themVaoEditPhieu = function() {
     existed.sl += sl;
     existed.tong = existed.sl * (existed.gia || 0);
   } else {
-    editState.items.push({ ten, sku, skuId, sl, gia, tong: sl * gia });
+    editState.items.unshift({ ten, sku, skuId, sl, gia, tong: sl * gia });
   }
   tenEl.value = ''; tenEl.dataset.sku = ''; tenEl.dataset.skuId = '';
   document.getElementById('edit-item-sl').value = '1';
@@ -26165,7 +26193,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v682</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v683</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26223,7 +26251,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v682</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v683</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26273,7 +26301,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v682</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v683</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26282,7 +26310,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v682</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v683</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
