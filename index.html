@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 704;
+  const APP_VERSION = 705;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21157,20 +21157,22 @@ function lamNetMaVach(id, lech = 0, khe = 0) {
   }
   return id;
 }
-async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa, nhiPhanToanCuc, tuongPhan, kheNhan = 0, laVideo = false) {
+async function hhoDocMa(nguon, rongGoc, caoGoc, vung, toiDa, nhiPhanToanCuc, tuongPhan, kheNhan = 0, laVideo = false, phongNgang = 1, kheTuyetDoi = 0) {
   const c = hhoCam; if (!c?.boDoc) return '';
   const cv = c.cv || (c.cv = document.createElement('canvas'));
   const [fx, fy, fw, fh] = vung || [0, 0, 1, 1];
   const sx = rongGoc * fx, sy = caoGoc * fy, sw = rongGoc * fw, sh = caoGoc * fh;
   const tl = Math.min(1, (toiDa || (c.kieu === 'zxing' ? 1400 : 2200)) / sw);
-  const w = Math.round(sw * tl), h = Math.round(sh * tl);
+  // phongNgang: kéo giãn CHIỀU NGANG (mã vạch nhỏ, vạch chỉ 2–3 điểm ảnh) — thử trên video thật đọc được gấp 4 lần
+  const w = Math.round(sw * tl * phongNgang), h = Math.round(sh * tl);
   cv.width = w; cv.height = h;
   const ctx = cv.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(nguon, sx, sy, sw, sh, 0, 0, w, h);
   if (c.kieu === 'native') { const kq = await c.boDoc.detect(cv); return String(kq[0]?.rawValue || '').trim(); }
   if (c.kieu === 'wasm') {
     let anh = ctx.getImageData(0, 0, w, h);
-    if (tuongPhan != null) anh = lamNetMaVach(anh, tuongPhan, kheNhan ? Math.max(1, Math.round(w / 900 * kheNhan)) : 0);
+    if (tuongPhan != null) anh = lamNetMaVach(anh, tuongPhan, kheTuyetDoi || (kheNhan ? Math.max(1, Math.round(w / 900 * kheNhan)) : 0));
     const kq = await c.boDoc.readBarcodesFromImageData(anh, {
       tryHarder: true, tryRotate: !laVideo, tryDownscale: !laVideo || !vung, maxNumberOfSymbols: 1,
       binarizer: nhiPhanToanCuc ? 'GlobalHistogram' : 'LocalAverage',
@@ -21210,19 +21212,21 @@ async function hhoVongQuet(luot) {
       // [vùng, bề ngang tối đa, GlobalHistogram, tương phản (null = ảnh gốc), lấp khe (bội số theo bề ngang)]
       // wasm: đọc CẢ VÙNG KHUNG XANH (zxing-cpp tự dò nhiều dòng quét) — thử trên khung hình quay màn hình thật:
       // ảnh gốc + tăng tương phản/lấp khe 2 mức đủ bắt; chu kỳ ngắn để mỗi kiểu được thử nhiều lần mỗi giây.
+      // Thứ tự rút từ video quay màn hình thật: camera trước (sáng, chói) đọc tốt ảnh gốc; camera sau mã nhỏ
+      // đọc tốt khi giãn ngang 2 lần + tương phản (+20) + lấp khe 1–2 điểm ảnh. [vùng, tối đa, GH, tương phản, kheNhan, giãn ngang, khe tuyệt đối]
       if (!hhoCam.dsQuet) {
-        hhoCam.dsQuet = [[RONG, 4000, false, null], [RONG, 4000, false, 0, 2], [RONG, 4000, false, 20, 2], [RONG, 4000, false, 0, 1],
-          [RONG, 4000, false, null], [RONG, 4000, false, 20, 1], [RONG, 4000, false, 0, 3], [null, 1100, false, null]];
+        hhoCam.dsQuet = [[RONG, 4000, false, null], [RONG, 4000, false, 20, 0, 2, 2], [RONG, 4000, false, null, 0, 2], [RONG, 4000, false, 20, 0, 2, 1],
+          [RONG, 4000, false, null], [RONG, 4000, false, 20, 0, 2, 3], [RONG, 4000, false, 20, 0, 1, 1], [null, 1100, false, null]];
       }
       const cach = c.kieu === 'wasm' ? hhoCam.dsQuet
         : c.kieu === 'zxing'
         ? [[G, 1800, false, 0, 2], [RONG, 1400, false, null], [G, 1800, false, 0, 1], [null, 1000, false, null], [G, 1800, true, 20, 2], [RONG, 1400, false, 0, 3]]
         : [[[0.03, 0.28, 0.94, 0.44]], [null]];
-      const [vg0, td, gh, tp, kn] = cach[c.vong % cach.length];
+      const [vg0, td, gh, tp, kn, pn, kt] = cach[c.vong % cach.length];
       const [tx, ty, tw, th] = hhoVungThay(v);
       const [fx, fy, fw, fh] = vg0 || [0, 0, 1, 1];
       const vg = [tx + fx * tw, ty + fy * th, fw * tw, fh * th];
-      const ma = await hhoDocMa(v, v.videoWidth, v.videoHeight, vg0 ? vg : [tx, ty, tw, th], td, gh, tp, kn || 0, !!vg0);
+      const ma = await hhoDocMa(v, v.videoWidth, v.videoHeight, vg0 ? vg : [tx, ty, tw, th], td, gh, tp, kn || 0, !!vg0, pn || 1, kt || 0);
       c.demLuot = (c.demLuot || 0) + 1;
       if (ma.length >= 6) { hhoDaDocMa(ma); return; }
     }
@@ -26724,7 +26728,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v704</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v705</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26782,7 +26786,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v704</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v705</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26832,7 +26836,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v704</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v705</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26841,7 +26845,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v704</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v705</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
