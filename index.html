@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 712;
+  const APP_VERSION = 713;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -20889,6 +20889,12 @@ let hhoMoDon = null;   // cửa sổ xác nhận: { don, dong, nhap }
 const HHO_SAN = { ShopeeOrder: ['Shopee', '#EE4D2D'], ShopeeReturnRequest: ['Shopee', '#EE4D2D'], TiktokShopOrder: ['TikTok', '#111'], TiktokReturnRequest: ['TikTok', '#111'],
   TiktokShopReturnRequest: ['TikTok', '#111'], LazadaOrder: ['Lazada', '#0F146D'], LazadaReturnRequest: ['Lazada', '#0F146D'] };
 const hhoSan = (k) => HHO_SAN[k] || [String(k || '').replace(/Order|ReturnRequest|Shop/g, '') || 'Sàn', '#6B7280'];
+// Ngày trả = lúc shipper giao hàng về shop: đơn trả hàng lấy mốc "Giao hàng thành công" của hành trình hoàn,
+// đơn giao thất bại lấy mốc "Trả hàng thành công"
+function hhoNgayTraHT(ds, laTra) {
+  const re = laTra ? /giao hàng thành công|giao thành công|đã giao hàng/i : /trả hàng thành công|đã trả hàng|hoàn hàng thành công/i;
+  return (ds || []).filter(x => re.test(String(x?.noiDung || ''))).reduce((m, x) => Math.max(m, Number(x?.luc) || 0), 0);
+}
 const hhoGio = (s) => s ? new Date(s * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
 const hhoKhoa = (d) => d.returnId || d.orderId;
 
@@ -20959,7 +20965,7 @@ function hhoVe() {
           ${d.returnId ? dong('Mã yêu cầu', escHtml(d.returnId)) : ''}
           ${dong('Mã vận đơn', d.vanDon ? `<b>${escHtml(d.vanDon)}</b>${d.donVi ? ' · ' + escHtml(d.donVi) : ''}` : '<span style="color:var(--text2)">—</span>')}
           ${d.loai === 'gtb' ? '' : dong('Vận đơn hoàn', d.vanDonHoan ? `<b>${escHtml(d.vanDonHoan)}</b>${d.donViHoan ? ' · ' + escHtml(d.donViHoan) : ''}` : `<span style="color:var(--text2)">${d.chiHoan ? 'không gửi trả hàng' : 'chưa có'}</span>`)}
-          ${d.loai === 'gtb' ? dong('Ngày đặt', hhoGio(d.luc)) + dong('Ngày trả', hhoGio(d.lucTra)) : dong('Ngày trả', hhoGio(d.luc))}
+          ${dong(d.loai === 'gtb' ? 'Ngày đặt' : 'Ngày yêu cầu', hhoGio(d.luc))}${dong('Ngày trả', d.lucTra ? `<b>${hhoGio(d.lucTra)}</b>` : `<span style="color:var(--text2)">${d.lucTraCho ? 'đang cập nhật — bấm Tải lại' : 'chưa trả về shop'}</span>`)}
           ${d.han ? dong('Hạn xử lý', hhoGio(d.han) + (d.han < bayGio ? ' (đã quá hạn)' : ''), hanGap ? '#DC2626' : '') : ''}
           ${dong(d.loai === 'gtb' ? 'Lý do' : 'Lý do trả hàng', escHtml(d.lyDo || ''))}
           ${d.tien ? dong(d.loai === 'tra' ? 'Số tiền hoàn' : 'Tổng đơn', fmt(d.tien) + 'đ') : ''}
@@ -21402,11 +21408,11 @@ window.hhoXem = async function(khoa) {
       ${muc('Khách hàng', dong('Tên', escHtml(o.khach.ten || '—')) + dong('Số điện thoại', escHtml(o.khach.sdt || '—')) + dong('Tài khoản', escHtml(o.khach.taiKhoan || '')))}
       ${muc('Địa chỉ nhận hàng', `<div style="font-size:13px">${escHtml(o.diaChi || '—')}</div>`)}
       ${muc('Vận chuyển', dong('Mã đơn', `<b>${escHtml(o.orderId)}</b>`) + dong('Mã vận đơn', `<b>${escHtml(o.vanDon || '—')}</b>`) + dong('Đơn vị', escHtml(o.donVi || ''))
-        + dong('Ngày đặt', hhoGio(o.luc)) + dong('Thanh toán', escHtml(o.thanhToan || '')) + dong('Tổng tiền', o.tongTien ? fmt(o.tongTien) + 'đ' : '') + dong('Phí ship', o.phiShip ? fmt(o.phiShip) + 'đ' : '')
+        + dong('Ngày đặt', hhoGio(o.luc)) + (!t && hhoNgayTraHT(o.hanhTrinh, false) ? dong('Ngày trả', `<b>${hhoGio(hhoNgayTraHT(o.hanhTrinh, false))}</b>`) : '') + dong('Thanh toán', escHtml(o.thanhToan || '')) + dong('Tổng tiền', o.tongTien ? fmt(o.tongTien) + 'đ' : '') + dong('Phí ship', o.phiShip ? fmt(o.phiShip) + 'đ' : '')
         + dong('Lời nhắn', escHtml(o.loiNhan || '')) + dong('Lý do hủy / hoàn', escHtml(o.lyDoHuy || '')) + hanhTrinh(o.hanhTrinh))}
       ${t ? muc('Trả hàng / hoàn tiền', dong('Mã yêu cầu', escHtml(t.returnId || '')) + dong('Loại', t.chiHoan ? '<b style="color:#DC2626">Chỉ hoàn tiền</b>' : 'Trả hàng + hoàn tiền')
         + dong('Vận đơn hoàn', t.vanDonHoan ? `<b>${escHtml(t.vanDonHoan)}</b>` : '—') + dong('Đơn vị hoàn', escHtml(t.donViHoan || ''))
-        + dong('Ngày trả', hhoGio(t.luc)) + dong('Hạn xử lý', hhoGio(t.han)) + dong('Số tiền hoàn', t.tien ? fmt(t.tien) + 'đ' : '')
+        + dong('Ngày yêu cầu', hhoGio(t.luc)) + dong('Ngày trả', hhoNgayTraHT(t.hanhTrinh, true) ? `<b>${hhoGio(hhoNgayTraHT(t.hanhTrinh, true))}</b>` : '<span style="color:var(--text2)">chưa trả về shop</span>') + dong('Hạn xử lý', hhoGio(t.han)) + dong('Số tiền hoàn', t.tien ? fmt(t.tien) + 'đ' : '')
         + dong('Lý do', escHtml(t.lyDo || t.maLyDo || ''))
         + ((t.anh || []).length ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">Bằng chứng từ người mua</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">${t.anh.map(u => `<img src="${escHtml(u)}" onclick="viewPhoto('${escHtml(u)}')" style="width:72px;height:72px;object-fit:cover;border-radius:8px;cursor:pointer;background:var(--bg)">`).join('')}</div>` : '')
         + (t.hanhTrinh?.length ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">Hành trình hoàn</div>${hanhTrinh(t.hanhTrinh)}` : '')) : ''}
@@ -26830,7 +26836,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v712</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v713</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -26888,7 +26894,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v712</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v713</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -26938,7 +26944,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v712</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v713</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -26947,7 +26953,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v712</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v713</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
