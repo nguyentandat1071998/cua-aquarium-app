@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 718;
+  const APP_VERSION = 719;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2502,6 +2502,65 @@ function showLogin(msg = '') {
   if (msg) document.getElementById('login-err').textContent = msg;
 }
 
+// ===== THÔNG BÁO (chuông cạnh tên) =====
+// Máy chủ đếm phiếu chờ duyệt / phiếu tạm theo ĐÚNG quyền của người xem (không có quyền duyệt thì không hiện).
+let tbDuLieu = null, tbHen = null, tbDangTai = false;
+async function tbTai() {
+  if (!currentUser || tbDangTai) return;
+  tbDangTai = true;
+  try {
+    const kq = await goiWorkerAdmin('thong-bao', {});
+    if (kq.success) { tbDuLieu = kq; tbVeSo(); if (document.getElementById('tb-khung')) tbVeKhung(); }
+  } catch(e) {} finally { tbDangTai = false; }
+}
+function tbVeSo() {
+  const nut = document.getElementById('tb-nut'), so = document.getElementById('tb-so');
+  if (!nut || !so) return;
+  nut.style.display = 'flex';
+  const n = tbDuLieu?.tong || 0;
+  so.style.display = n ? '' : 'none';
+  so.textContent = n > 99 ? '99+' : String(n);
+  nut.title = n ? `${n} việc cần xử lý` : 'Không có thông báo';
+}
+function tbVeKhung() {
+  const k = document.getElementById('tb-khung'); if (!k) return;
+  const g = tbDuLieu?.nhom || [];
+  const gio = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : ''; };
+  k.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <b style="font-size:15px">Thông báo</b>
+      <button class="btn-xs" onclick="event.stopPropagation();tbTai()">↻ Tải lại</button></div>
+    ${!tbDuLieu ? '<div class="loading">Đang tải...</div>' : !g.length ? '<p style="font-size:13px;color:var(--text2);text-align:center;padding:18px 0">Không có việc nào đang chờ 🎉</p>'
+      : g.map(x => `<div class="tb-nhom" onclick="event.stopPropagation();tbMo('${x.mo}')">
+          <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+            <b style="font-size:13.5px">${escHtml(x.ten)}</b>
+            <span style="background:#DC2626;color:#fff;border-radius:10px;padding:1px 8px;font-size:12px;font-weight:700">${x.so}</span></div>
+          ${(x.ds || []).map(p => `<div style="font-size:12px;color:var(--text2);margin-top:3px;display:flex;gap:6px"><span style="color:var(--text);font-weight:600">${escHtml(p.ma)}</span>
+            <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.nguoi || '')}${p.kho ? ' · ' + (p.kho === 'ch' ? 'Cửa hàng' : 'Kho Online') : ''}</span><span>${gio(p.luc)}</span></div>`).join('')}
+          ${x.so > (x.ds || []).length ? `<div style="font-size:11.5px;color:var(--text2);margin-top:3px">… và ${x.so - x.ds.length} phiếu nữa</div>` : ''}
+        </div>`).join('')}`;
+}
+window.tbBatTat = function() {
+  let k = document.getElementById('tb-khung');
+  if (k) { k.remove(); return; }
+  k = document.createElement('div'); k.id = 'tb-khung'; k.onclick = (e) => e.stopPropagation();
+  document.body.appendChild(k);
+  tbVeKhung();
+  tbTai();
+};
+window.tbMo = function(mo) {
+  document.getElementById('tb-khung')?.remove();
+  location.hash = '#' + mo;
+  if (!moMucTheoDiaChi()) showToast('Bạn chưa có quyền mở mục này', true);
+};
+document.addEventListener('click', () => document.getElementById('tb-khung')?.remove());
+function tbBatDau() {
+  tbVeSo();
+  tbTai();
+  clearInterval(tbHen);
+  tbHen = setInterval(() => { if (document.visibilityState === 'visible') tbTai(); }, 120000);
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && currentUser) tbTai(); });
+
 function showApp() {
   const elLogin = document.getElementById('screen-login');
   const elVaoCa = document.getElementById('screen-vao-ca');
@@ -2514,6 +2573,7 @@ function showApp() {
   if (window._nkVuaDangNhap) { window._nkVuaDangNhap = false; nkGhiSuKien('Đăng nhập' + (LA_BAN_DEMO ? ' (link demo)' : '')); }
   document.getElementById('user-role').textContent = roleLabel(currentUserData.role);
   apMauVaiTro();
+  setTimeout(tbBatDau, 1500);   // chuông thông báo: chạy sau khi app đã hiện
   if (currentUserData.role === 'admin') {
     document.getElementById('mod-admin').style.display = 'flex';
     quyenModuleHienTai = layQuyenFullAdmin();
@@ -26501,6 +26561,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:6px 14px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
 .brand{font-weight:700;font-size:14px;color:var(--green)}
 .header-right{display:flex;align-items:center;gap:10px}
+.tb-nut{position:relative;width:38px;height:38px;flex:0 0 auto;border-radius:50%;border:1.5px solid var(--border);background:var(--surface);color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;margin:0}
+.tb-nut:hover{border-color:var(--green)}
+.tb-so{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#DC2626;color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;box-shadow:0 0 0 2px var(--surface)}
+#tb-khung{position:fixed;top:56px;right:10px;width:min(380px,calc(100vw - 20px));max-height:min(70vh,560px);overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.18);z-index:1400;padding:10px}
+.tb-nhom{border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:8px;cursor:pointer}
+.tb-nhom:hover{border-color:var(--green);background:var(--bg)}
 .uinfo .uname{font-size:13px;font-weight:700;text-align:right}
 .uinfo .urole{display:none}
 .btn-logout{background:none;border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--text2)}
@@ -27107,7 +27173,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v718</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v719</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27165,7 +27231,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v718</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v719</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27215,8 +27281,12 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v718</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v719</span></div>
       <div class="header-right">
+        <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span id="tb-so" class="tb-so" style="display:none"></span>
+        </button>
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
           <div class="urole" id="user-role"></div>
@@ -27224,7 +27294,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v718</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v719</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
