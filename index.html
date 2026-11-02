@@ -13,7 +13,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // - Tự cập nhật khi: chưa đăng nhập / vừa đăng xuất (màn đăng nhập), hoặc vừa kết thúc ca.
 // - Admin có nút "Đăng xuất tất cả tài khoản" (Thiết lập › Công cụ) khi cần ép mọi máy lên bản mới.
 (function () {
-  const APP_VERSION = 717;
+  const APP_VERSION = 718;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -4597,7 +4597,13 @@ function veNutThaoTac(d, maTT) {
       : inLai;
   }
   // Đã đóng gói (sàn chưa lấy): vẫn in lại được tem khi tem rách / mất / in mờ
-  if (maTT === 'da_dong_goi') return nut('In lại', `inMotVanDon('${ma}')`, 'var(--bg)', 'var(--text2)');
+  if (maTT === 'da_dong_goi') {
+    const inLai = nut('In lại', `inMotVanDon('${ma}')`, 'var(--bg)', 'var(--text2)');
+    // Lazada: đóng gói xong còn phải "Sẵn sàng giao" thì shipper mới tới lấy
+    return d.san === 'lazada' && !d.daSanSangGiao
+      ? `<div style="display:flex;flex-direction:column;gap:5px">${nut('🚚 Sẵn sàng giao', `sanSangGiaoLazadaNut(['${ma}'])`, '#DC2626', '#fff')}${inLai}</div>`
+      : inLai;
+  }
   return '';
 }
 
@@ -4648,6 +4654,8 @@ function veThanhChon(trang) {
       ${tt === 'cho_dong_goi' && coQuyenHoanTatDG() ? `<button class="btn-g" id="vd-nut-hoantat"
         style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
         onclick="hoanTatDongGoi()">📦 Hoàn tất đóng gói</button>` : ''}
+      ${dsChonCB.some(d => d.san === 'lazada' && !d.daSanSangGiao && trangThaiHienThi(d) === 'da_dong_goi') ? `<button class="btn-r" id="vd-nut-rts"
+        style="width:auto;padding:6px 12px;font-size:12px;margin:0" onclick="sanSangGiaoLazadaNut()">🚚 Sẵn sàng giao (Lazada)</button>` : ''}
       <button class="btn-outline" id="vd-nut-soan"
         style="width:auto;padding:6px 12px;font-size:12px" ${vdDaChon.size ? '' : 'disabled'}
         onclick="moPhieuSoanGop()">📋 Phiếu soạn</button>
@@ -7180,6 +7188,7 @@ window.ktHoanThanhDongGoi = async function() {
     if (oSoDon) oSoDon.textContent = ktPhien.soDon;
     if (oTien) oTien.textContent = ktPhien.tienThuong.toLocaleString('vi-VN') + 'đ';
     showToast('✓ Đã đóng gói ' + (ktDon.maDonSan || ''));   // tạm ẩn số tiền thưởng
+    if (ktDon.san === 'lazada') sanSangGiaoLazada([ktDon], { imLang: true });
     ktDongCuaSo(true);
     setTimeout(() => ktBatTat(), 350);   // mở lại camera cho đơn kế tiếp
   } catch(e) {
@@ -11972,6 +11981,35 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) hoiY
 // Ghi đúng 4 trường như khi quét đóng gói (firestore.rules chỉ cho đơn CHƯA đóng gói, người ghi là chính mình).
 // Người bấm được tính là người đóng gói (thưởng đóng gói theo người này).
 const coQuyenHoanTatDG = () => currentUserData?.role === 'admin' || coQuyen('tmdt_hoantat_donggoi');
+// ===== LAZADA: SẴN SÀNG GIAO =====
+// Lazada khác Shopee/TikTok: đóng gói xong phải báo "Sẵn sàng giao" thì shipper mới tới lấy.
+// Gọi tự động ngay khi đóng gói xong (quét hoặc Hoàn tất đóng gói); lỗi thì còn nút trên đơn để bấm lại.
+async function sanSangGiaoLazada(dsDon, { imLang = false } = {}) {
+  const ds = (dsDon || []).filter(d => d?.san === 'lazada' && !d.daSanSangGiao);
+  if (!ds.length) return null;
+  try {
+    const kq = await goiWorkerAdmin('san-sang-giao-lazada', { cacDon: ds.map(d => ({ maDon: d.maDonSan || d.maHoaDon, docId: d.id, shopId: d.shopId || '', tenShop: d.tenShop || '', orderItemIds: d.orderItemIds || [] })) });
+    (kq.thanhCong || []).forEach(m => { const d = ds.find(x => String(x.maDonSan || '').split('.')[0] === m); if (d) d.daSanSangGiao = true; });
+    const loi = [...(kq.boQua || []).map(x => `${x.maDon}: ${x.lyDo}`), ...(kq.thatBai || []).map(m => `${m}: sàn từ chối`), ...(kq.error ? [kq.error] : [])];
+    if (loi.length) hienPopup({ loai: 'loi', tieuDe: `Lazada: ${(kq.thanhCong || []).length}/${ds.length} đơn đã Sẵn sàng giao`, noiDung: loi.slice(0, 6).join('\n') + '\n\nBấm "🚚 Sẵn sàng giao" trên đơn để thử lại.' });
+    else if (!imLang || (kq.thanhCong || []).length) showToast(`🚚 Lazada: đã báo Sẵn sàng giao ${(kq.thanhCong || []).length} đơn`);
+    if (typeof veDanhSachDon === 'function' && document.getElementById('tmdt-than')) veDanhSachDon();
+    return kq;
+  } catch(e) {
+    hienPopup({ loai: 'loi', tieuDe: 'Lazada chưa Sẵn sàng giao', noiDung: e.message + '\n\nBấm "🚚 Sẵn sàng giao" trên đơn để thử lại.' });
+    return null;
+  }
+}
+window.sanSangGiaoLazadaNut = async function(cacMa) {
+  if (!Array.isArray(cacMa)) cacMa = [...vdDaChon];
+  const ds = cacMa.map(ma => allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(d => d && d.san === 'lazada' && !d.daSanSangGiao);
+  if (!ds.length) { showToast('Không có đơn Lazada nào cần Sẵn sàng giao', true); return; }
+  const nut = document.getElementById('vd-nut-rts'); if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+  await sanSangGiaoLazada(ds);
+  ds.forEach(d => { if (d.daSanSangGiao) vdDaChon.delete(d.maDonSan || d.maHoaDon); });
+  veDanhSachDon();
+};
+
 window.hoanTatDongGoi = async function(cacMa) {
   if (!coQuyenHoanTatDG()) { showToast('Bạn chưa có quyền Hoàn tất đóng gói', true); return; }
   // Gọi từ thanh "Chọn tất cả" (không truyền mã) -> lấy các đơn đang tick. Biến vdDaChon nằm trong module,
@@ -11999,6 +12037,8 @@ window.hoanTatDongGoi = async function(cacMa) {
   veDanhSachDon();
   if (loi.length) hienPopup({ loai: 'loi', tieuDe: `Hoàn tất ${ok}/${chon.length} đơn`, noiDung: loi.slice(0, 5).join('\n') });
   else { bip(1800, 120); showToast(`✓ Đã hoàn tất đóng gói ${ok} đơn`); }
+  const lzd = chon.filter(d => d.san === 'lazada' && d.thoiGianDongGoi);
+  if (lzd.length) sanSangGiaoLazada(lzd);
 };
 
 // Lấy đơn đang hiện trên màn hình, dùng cho nút chọn tất cả
@@ -27067,7 +27107,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v717</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v718</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27125,7 +27165,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v717</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v718</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27175,7 +27215,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v717</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v718</span></div>
       <div class="header-right">
         <div class="uinfo user-menu-trigger" onclick="toggleUserMenu('mobile')" style="position:relative">
           <div class="uname" id="user-name"></div>
@@ -27184,7 +27224,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v717</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v718</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
