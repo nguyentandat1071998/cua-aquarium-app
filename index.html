@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 722;
+  const APP_VERSION = 723;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -3085,13 +3085,14 @@ async function renderHangHoaTab() {
         <option value="">Mọi nhà cung cấp</option>
       </select>
       <select id="hh-sap-xep" onchange="doiSapXepHangHoa(this.value)" title="Sắp xếp" style="width:auto;padding:5px 8px;font-size:12px">
-        <option value="">Sắp xếp: cùng tên xếp cạnh nhau</option>
+        <option value="">Sắp xếp: mặc định</option>
         <option value="ton_tang">Tồn kho: ít → nhiều</option>
         <option value="ton_giam">Tồn kho: nhiều → ít</option>
         <option value="ten">Tên A → Z</option>
         <option value="moi">Mới → cũ</option>
         ${coQuyen('hh_canhbao') ? '<option value="het_som">Sắp bán hết trước</option>' : ''}
       </select>
+      <button type="button" id="hh-nut-tenchung" class="btn-xs" onclick="doiXepTenChung()" title="Bật: hàng cùng tên chung xếp cạnh nhau, phân loại trong nhóm xếp theo thứ tự (5 → 10 → 20)" style="${hhXepTenChung ? 'background:#0F766E;color:#fff;border-color:#0F766E' : ''}">🔤 Xếp theo tên chung${hhXepTenChung ? ': Bật' : ''}</button>
       <span style="font-size:12px;color:var(--text2)">Hiện mỗi trang:</span>
       <select id="hh-so-trang" onchange="doiSoLuongTrangHangHoa(this.value)" style="width:auto;padding:5px 8px;font-size:12px">
         <option value="30">30</option>
@@ -3118,6 +3119,10 @@ async function renderHangHoaTab() {
   hhTinhCanhBaoTatCa().then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
 }
 
+let hhXepTenChung = (() => { try { return localStorage.getItem('hh_xep_ten_chung') === '1'; } catch(e) { return false; } })();
+window.doiXepTenChung = function() { hhXepTenChung = !hhXepTenChung; try { localStorage.setItem('hh_xep_ten_chung', hhXepTenChung ? '1' : '0'); } catch(e) {}
+  const b = document.getElementById('hh-nut-tenchung'); if (b) { b.textContent = '🔤 Xếp theo tên chung' + (hhXepTenChung ? ': Bật' : ''); b.style.cssText = hhXepTenChung ? 'background:#0F766E;color:#fff;border-color:#0F766E' : ''; }
+  hangHoaPage = 1; renderHangHoaList(); };
 let hangHoaSapXep = '', hangHoaLocNcc = '', hangHoaChiCanhBao = false, hangHoaLocTh = '', hangHoaLocLoai = 'don';   // mặc định chỉ hiện SKU đơn
 // Thương hiệu: danh sách lấy từ chính các mã đang có (không cần quản lý riêng)
 const dsThuongHieu = () => [...new Set(allSKUs.filter(x => !x.deleted && x.thuongHieu).map(x => String(x.thuongHieu).trim()))]
@@ -15913,8 +15918,8 @@ function htVeHangThieuKV(kqDay) {
         const ch = Number(s.tonCuaHang) || 0, on = s.laCombo ? 0 : layTon(s, 'san');
         const k = kqDay?.[s.sku];
         return `<label style="display:flex;gap:8px;align-items:flex-start;padding:7px 10px;border-bottom:1px solid var(--border);font-size:12.5px;cursor:pointer">
-          <input type="checkbox" class="ht-hhkv-chon" data-i="${i}" ${s.laCombo || k?.ok ? 'disabled' : 'checked'} style="width:auto;margin:2px 0 0">
-          <span style="flex:1;min-width:0"><b>${escHtml(s.ten || '')}</b><br><span style="color:var(--text2)">${escHtml(s.sku)} · ${fmt(s.gia || 0)}đ${s.laCombo ? ' · combo (tạo tay bên KiotViet)' : ` · tồn CH ${ch} · Online ${on}`}</span>
+          <input type="checkbox" class="ht-hhkv-chon" data-i="${i}" ${k?.ok ? 'disabled' : 'checked'} style="width:auto;margin:2px 0 0">
+          <span style="flex:1;min-width:0"><b>${escHtml(s.ten || '')}</b><br><span style="color:var(--text2)">${escHtml(s.sku)} · ${fmt(s.gia || 0)}đ${s.laCombo ? ' · combo (' + (s.thanhPhanCombo || []).length + ' thành phần)' : ` · tồn CH ${ch} · Online ${on}`}</span>
           ${k ? `<br><span style="color:${k.ok ? 'var(--green)' : 'var(--red)'}">${escHtml(k.tb)}</span>` : ''}</span>
         </label>`;
       }).join('')}
@@ -16372,8 +16377,8 @@ function renderHangHoaList() {
   const kho = khoHangHoaDangXem();
   // Cùng tên chung xếp cạnh nhau; trong nhóm cùng loại xếp phân loại theo thứ tự (số so như số: 5 < 10 < 20)
   const ssTen = (a, b) => String(a || '').localeCompare(String(b || ''), 'vi', { numeric: true, sensitivity: 'base' });
-  muc.forEach(m => { if (m.ds) m.ds.sort((a, b) => ssTen(a.thuocTinh || a.ten, b.thuocTinh || b.ten) || ssTen(a.ten, b.ten)); });
-  if (!hangHoaSapXep) muc.sort((a, b) => ssTen(a.s ? (a.s.tenChinh || a.s.ten) : a.ten, b.s ? (b.s.tenChinh || b.s.ten) : b.ten) || ssTen(a.s?.ten, b.s?.ten));
+  if (hhXepTenChung) muc.forEach(m => { if (m.ds) m.ds.sort((a, b) => ssTen(a.thuocTinh || a.ten, b.thuocTinh || b.ten) || ssTen(a.ten, b.ten)); });
+  if (hhXepTenChung && !hangHoaSapXep) muc.sort((a, b) => ssTen(a.s ? (a.s.tenChinh || a.s.ten) : a.ten, b.s ? (b.s.tenChinh || b.s.ten) : b.ten) || ssTen(a.s?.ten, b.s?.ten));
   if (hangHoaSapXep) {
     const tonCua = (s) => kho === 'ch' ? layTon(s, 'cuahang') : kho === 'san' ? layTon(s, 'san') : layTon(s, 'cuahang') + layTon(s, 'san');
     const lucTao = (s) => s.createdAt?.toDate ? s.createdAt.toDate().getTime() : (s.createdAt?.seconds ? s.createdAt.seconds * 1000 : 0);
@@ -17351,7 +17356,8 @@ async function dayHangHoaKV(s, tc = {}) {
   const r = await goiWorkerAdmin('kv-luu-hang-hoa', {
     sku: s.sku, skuCu: tc.skuCu || '', ten: s.ten || '', gia: Number(s.gia) || 0, giaVon: Number(tc.giaVon ?? s.giaVon) || 0,
     nhom: [s.nhom1, s.nhom2, s.nhom3].filter(Boolean), canNang: Number(s.canNang) || 0,
-    anh: s.anhFileId ? anhThumbUrl(s.anhFileId, 800) : '', laCombo: !!s.laCombo,
+    anh: s.anhFileId ? anhThumbUrl(s.anhFileId, 800) : '', laCombo: !!s.laCombo, banTrucTiep: s.banTrucTiep !== false,
+    thanhPhan: s.laCombo ? (s.thanhPhanCombo || []).map(t => ({ sku: t.sku || t.skuId, sl: Number(t.tyLe) || 1 })) : [],
     ton: tc.ton || []
   });
   if (!r.success) throw new Error(r.error || 'KiotViet lỗi');
@@ -17425,7 +17431,7 @@ window.luuHangHoa = async function(laComboParam) {
   await luuGiaVon(sku, giaVonMoi);
   showToast(ghiGocKV ? 'Đã thêm hàng hóa — đang tạo bên KiotViet...' : 'Đã thêm hàng hóa');
   try {
-    const kq = await dayHangHoaKV({ ten, sku, gia, anhFileId, canNang, laCombo, ...nhom }, {
+    const kq = await dayHangHoaKV({ ten, sku, gia, anhFileId, canNang, laCombo, ...nhom, thanhPhanCombo: laCombo ? comboThanhPhan : [], banTrucTiep: !!V('bantt')?.checked }, {
       giaVon: giaVonMoi,
       ton: laCombo ? [] : [
         { branchId: branchKhoTheoMa('ch'), sl: tonCH },
@@ -27192,7 +27198,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v722</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v723</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27250,7 +27256,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v722</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v723</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27300,7 +27306,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v722</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v723</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27313,7 +27319,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v722</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v723</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
