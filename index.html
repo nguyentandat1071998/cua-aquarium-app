@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 724;
+  const APP_VERSION = 725;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -16287,6 +16287,53 @@ let hangHoaNhom3Filter = '';
 let hangHoaPage = 1;
 let hangHoaPageSize = 30;
 
+// ----- Chọn nhiều mã để sửa hàng loạt (Admin) — hiện có: số ngày cảnh báo tồn kho -----
+const hhChon = new Set();      // id SKU đang chọn (giữ khi đổi trang / bộ lọc)
+let hhDsLoc = [];              // id các mã (không combo) đang khớp bộ lọc
+const hhNhomIds = new Map();   // khóa nhóm cùng loại -> id các mã trong nhóm (đang hiện)
+const hhCoChon = () => currentUserData?.role === 'admin';
+function hhThanhChonHtml() {
+  if (!hhCoChon()) return '';
+  const n = hhChon.size;
+  if (!n) return `<div id="hh-thanh-chon" style="display:flex;justify-content:flex-end;margin-bottom:6px">${hhDsLoc.length ? `<button class="btn-xs" onclick="hhChonTatCa()" title="Chọn mọi mã đang khớp bộ lọc / tìm kiếm (không gồm combo)">☑ Chọn tất cả ${hhDsLoc.length} mã đang lọc</button>` : ''}</div>`;
+  const conLai = hhDsLoc.filter(id => !hhChon.has(id)).length;
+  return `<div id="hh-thanh-chon" style="position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#ECFDF5;border:1.5px solid #10B981;border-radius:10px;padding:8px 10px;margin-bottom:8px">
+    <b style="font-size:13.5px">Đã chọn ${n} mã</b>
+    <button class="btn-xs" style="background:#0F766E;color:#fff;border-color:#0F766E" onclick="hhSuaCanhBaoLoat()">⏰ Sửa số ngày cảnh báo tồn</button>
+    ${conLai ? `<button class="btn-xs" onclick="hhChonTatCa()">Chọn thêm ${conLai} mã đang lọc</button>` : ''}
+    <button class="btn-xs" onclick="hhBoChon()" style="margin-left:auto">Bỏ chọn</button>
+  </div>`;
+}
+function hhVeThanhChon() { const el = document.getElementById('hh-thanh-chon'); if (el) el.outerHTML = hhThanhChonHtml(); }
+window.hhDoiChon = function(id, on) { on ? hhChon.add(id) : hhChon.delete(id); hhVeThanhChon(); };
+window.hhChonNhom = function(k, on) { (hhNhomIds.get(k) || []).forEach(id => on ? hhChon.add(id) : hhChon.delete(id)); renderHangHoaList(); };
+window.hhChonTatCa = function() { hhDsLoc.forEach(id => hhChon.add(id)); renderHangHoaList(); };
+window.hhBoChon = function() { hhChon.clear(); renderHangHoaList(); };
+window.hhSuaCanhBaoLoat = async function() {
+  const ds = [...hhChon].map(id => allSKUs.find(x => x.id === id)).filter(x => x && !x.laCombo && !x.deleted);
+  if (!ds.length) { showToast('Chưa chọn mã nào', true); return; }
+  const giaTriCu = [...new Set(ds.map(x => Number(x.canhBaoSoNgay) || 0))];
+  const v = await hoiNhap(`Số ngày cảnh báo tồn kho\n\nÁp dụng cho ${ds.length} mã đã chọn${giaTriCu.length === 1 ? ` (hiện ${giaTriCu[0] || 'chưa đặt'})` : ''}. Nhập 0 để tắt cảnh báo.`, giaTriCu.length === 1 && giaTriCu[0] ? String(giaTriCu[0]) : '');
+  if (v === null || v === undefined || String(v).trim() === '') return;
+  const n = Number(String(v).trim());
+  if (!Number.isInteger(n) || n < 0 || n > 365) { showToast('Nhập số ngày nguyên từ 0 đến 365', true); return; }
+  const canDoi = ds.filter(x => (Number(x.canhBaoSoNgay) || 0) !== n);
+  if (!canDoi.length) { showToast('Các mã đã chọn đều đang là ' + n + ' ngày'); hhChon.clear(); renderHangHoaList(); return; }
+  showToast(`Đang lưu ${canDoi.length} mã...`);
+  try {
+    for (let i = 0; i < canDoi.length; i += 400) {
+      const b = writeBatch(db);
+      canDoi.slice(i, i + 400).forEach(x => b.update(doc(db, 'skus', x.id), { canhBaoSoNgay: n }));
+      await b.commit();
+    }
+    canDoi.forEach(x => { x.canhBaoSoNgay = n; });
+    hhChon.clear();
+    showToast(n ? `Đã đặt cảnh báo ${n} ngày cho ${canDoi.length} mã` : `Đã tắt cảnh báo cho ${canDoi.length} mã`);
+    renderHangHoaList();
+    hhTinhCanhBaoTatCa(true).then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
+  } catch(e) { showToast('Chưa lưu được: ' + e.message, true); }
+};
+
 // Gom hàng cùng loại (chung mã cha bên KiotViet) vào một khung có tên chính
 const hhNhomDong = new Set();   // nhóm đang thu gọn
 window.hhDoiNhom = function(k) { hhNhomDong.has(k) ? hhNhomDong.delete(k) : hhNhomDong.add(k); renderHangHoaList(); };
@@ -16313,6 +16360,7 @@ function hhTheSku(s, trongNhom = false) {
     return `
     <div style="background:var(--surface);border-radius:8px;padding:10px;margin-bottom:8px;border:1px solid var(--border)">
       <div style="display:flex;gap:10px;align-items:center">
+        ${hhCoChon() && !s.laCombo ? `<input type="checkbox" ${hhChon.has(s.id) ? 'checked' : ''} onchange="hhDoiChon('${s.id}', this.checked)" title="Chọn để sửa hàng loạt" style="width:18px;height:18px;margin:0;flex-shrink:0;cursor:pointer">` : ''}
         ${s.anhFileId
           ? `<img loading="lazy" src="${anhThumbUrl(s.anhFileId,150)}" onclick="viewPhoto('${anhThumbUrl(s.anhFileId,900)}')" style="width:64px;height:64px;object-fit:cover;border-radius:6px;flex-shrink:0;cursor:pointer">`
           : `<div style="width:64px;height:64px;border-radius:6px;background:var(--bg);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text3);text-align:center">Không ảnh</div>`}
@@ -16411,7 +16459,8 @@ function renderHangHoaList() {
       + (soCombo ? `${don.length ? '<br>' : ''}<b style="color:#7C3AED">${soCombo}</b> SKU combo — không tính tồn, không tính giá trị kho (tồn hiển thị là số bộ ghép được từ hàng thành phần)` : '')
       + `</div>`;
   }
-  el.innerHTML = tomTat + trang.map(m => {
+  hhDsLoc = list.filter(x => !x.laCombo).map(x => x.id);
+  el.innerHTML = hhThanhChonHtml() + tomTat + trang.map(m => {
     if (m.s) return hhTheSku(m.s);
     const dong = hhNhomDong.has(m.nhom);
     const tongCH = m.ds.reduce((t, s) => t + layTon(s, 'cuahang'), 0);
@@ -16419,6 +16468,7 @@ function renderHangHoaList() {
     return `
     <div style="border:1.5px solid #CBD5E1;border-radius:10px;background:#F8FAFC;margin-bottom:10px">
       <div onclick="hhDoiNhom('${escHtml(m.nhom)}')" style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer">
+        ${(() => { if (!hhCoChon()) return ''; const ids = m.ds.filter(x => !x.laCombo).map(x => x.id); hhNhomIds.set(m.nhom, ids); if (!ids.length) return ''; const du = ids.every(id => hhChon.has(id)); return `<input type="checkbox" ${du ? 'checked' : ''} onclick="event.stopPropagation()" onchange="hhChonNhom('${escHtml(m.nhom)}', this.checked)" title="Chọn cả nhóm" style="width:18px;height:18px;margin:0;flex-shrink:0;cursor:pointer">`; })()}
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:17px">${escHtml(m.ten)}</div>
           <div style="font-size:12px;color:var(--text2)">${m.ds.length} loại${kho !== 'san' ? ` · Cửa hàng: ${tongCH}` : ''}${kho !== 'ch' ? ` · Kho Online: ${tongSan}` : ''}</div>
@@ -27203,7 +27253,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v724</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v725</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27261,7 +27311,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v724</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v725</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27311,7 +27361,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v724</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v725</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27324,7 +27374,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v724</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v725</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
