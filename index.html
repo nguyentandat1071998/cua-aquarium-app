@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 723;
+  const APP_VERSION = 724;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21253,6 +21253,8 @@ function hhoNgayTraHT(ds, laTra) {
 }
 const hhoGio = (s) => s ? new Date(s * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
 const hhoKhoa = (d) => d.returnId || d.orderId;
+// Tab "Đã xử lý": đơn sàn đã xong nhưng app chưa nhập kho, hàng về shop trong 7 ngày qua -> vẫn cho xác nhận
+const hhoChuaNK = (d) => hhoTab === 'xong' && !!d.chuaNhapKho && Number(d.lucTra) > 0 && (Date.now() / 1000 - Number(d.lucTra)) < 7 * 86400;
 
 async function renderHangHoan() {
   const el = document.getElementById('hanghoan-content'); if (!el) return;
@@ -21333,9 +21335,10 @@ function hhoVe() {
             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${d.anhBC.map(u => `<img src="${escHtml(u)}" loading="lazy" onclick="viewPhoto('${escHtml(u)}')" style="width:58px;height:58px;object-fit:cover;border-radius:6px;cursor:pointer;background:var(--bg)">`).join('')}</div>` : ''}
           ${hhoTab === 'cho' ? hhoVeTrangThaiDuyet(d) : ''}
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
-            ${hhoTab !== 'xong' && hhoDuocDuyet() ? `<button class="btn-outline" title="Đơn đã xử lý xong ở nơi khác — ẩn khỏi danh sách" style="width:auto!important;flex:0 0 auto;margin:0 auto 0 0;padding:8px 12px;color:var(--text2)" onclick="hhoAn('${k}')">Đã xử lý · Ẩn</button>` : ''}
+            ${hhoChuaNK(d) ? `<span style="align-self:center;font-size:12px;font-weight:700;color:#B45309;margin-right:auto">⚠ Chưa nhập kho trong app</span>` : ''}
+            ${(hhoTab !== 'xong' || hhoChuaNK(d)) && hhoDuocDuyet() ? `<button class="btn-outline" title="Đơn đã xử lý xong ở nơi khác — ẩn khỏi danh sách" style="width:auto!important;flex:0 0 auto;margin:0 auto 0 0;padding:8px 12px;color:var(--text2)" onclick="hhoAn('${k}')">Đã xử lý · Ẩn</button>` : ''}
             <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px" onclick="hhoXem('${k}')">Xem chi tiết</button>
-            ${hhoTab !== 'cho' ? '' : d.choDuyet ? (hhoDuocDuyet()
+            ${hhoChuaNK(d) ? `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>` : hhoTab !== 'cho' ? '' : d.choDuyet ? (hhoDuocDuyet()
                 ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#B91C1C;border-color:#FCA5A5" onclick="hhoTuChoi('${k}')">Từ chối</button>
                    <button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#D97706" onclick="hhoMo('${k}', true)">Duyệt</button>`
                 : `<span style="align-self:center;font-size:12.5px;font-weight:700;color:#B45309">⏳ Đang chờ duyệt</span>`)
@@ -21398,6 +21401,8 @@ window.hhoQuetMa = async function(ma) {
         if (!don) continue;
         hhoNhom = nhom; hhoTab = tab; hhoSoNgay = 90; hhoDs = kq.ds || []; hhoDem = kq.dem || hhoDem; hhoTong = kq.tong || hhoDs.length;
         hhoVe();
+        // Sàn đã chuyển sang "Đã xử lý" mà app chưa nhập kho (VD Shopee hoàn tiền xong trước khi hàng về) -> vẫn cho xác nhận
+        if (tab === 'xong' && don.chuaNhapKho) { showToast('Đơn đã xong trên sàn nhưng chưa nhập kho — xác nhận hàng nhận về'); hhoMo(hhoKhoa(don)); return; }
         const tenTab = (HHO_TABS[nhom].find(x => x[0] === tab) || [])[1] || tab;
         const loi = { dangve: 'sàn chưa báo hàng về kho nên chưa xác nhận được — chờ đơn chuyển sang "Chờ xác nhận hoàn"',
           xong: 'đơn đã xử lý xong (đã xác nhận / đã hoàn tiền) — không cần xác nhận nữa', khieunai: 'đơn đang khiếu nại trên sàn',
@@ -27198,7 +27203,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v723</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v724</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27256,7 +27261,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v723</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v724</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27306,7 +27311,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v723</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v724</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27319,7 +27324,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v723</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v724</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
