@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 728;
+  const APP_VERSION = 729;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -22107,12 +22107,13 @@ function kkVeChiTiet() {
         <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;line-height:1.3">${escHtml(s.ten)}</div>
           <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku)} · Tồn <b style="color:var(--text);font-size:13px">${(g ? d.tonLucDem : d.tonNay) ?? '—'}</b>${kkThayDoiSauDem(d)}</div></div>
         ${khoa ? `<span style="flex:0 0 auto;font-size:12px;color:var(--text2)">🔒</span>` : ''}
-        ${choSua ? `<button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>
+        ${choSua ? `<button onclick="kkAnhChup('${id}')" title="Đếm bằng ảnh: chụp rồi chạm chấm từng con" style="flex:0 0 auto;border:1.5px solid #93C5FD;background:#EFF6FF;border-radius:8px;padding:7px 9px;font-size:16px;line-height:1;cursor:pointer">📷</button><button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>
           <input class="kk-o" type="text" inputmode="decimal" autocomplete="off" placeholder="SL" value="${g && trangThaiDong === 'lech' ? d.thucTe : ''}" onchange="kkNhap('${id}',this.value)" onblur="kkVeLai()"
             style="flex:0 0 60px;width:60px;padding:8px 4px;text-align:center;font-size:15px;font-weight:700;border:1.5px solid ${trangThaiDong === 'lech' ? '#F59E0B' : 'var(--border)'};border-radius:8px">` : ''}
       </div>
       ${g ? `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12px;margin-top:5px;color:var(--text2)">
         <span>Đếm được <b style="color:var(--text);font-size:13px">${d.thucTe ?? '—'}</b></span>
+        ${kkAnhCua(p, s.id) ? `<button onclick="kkAnhXem('${id}')" style="border:none;background:#DBEAFE;color:#1D4ED8;border-radius:10px;padding:3px 9px;font-size:12px;font-weight:600;cursor:pointer">📷 Xem ảnh đếm</button>` : ''}
         ${d.lech ? `<b style="color:${d.lech > 0 ? '#15803D' : '#B91C1C'}">Lệch ${d.lech > 0 ? '+' : ''}${d.lech}</b>` : '<b style="color:#15803D">Khớp</b>'}
         ${g.tam ? '<span>· đang lưu...</span>' : g.nguoi ? `<span style="color:#1D4ED8">👤 ${escHtml(g.nguoi)} · ${kkNgay(g.luc)}</span>` : ''}
         ${choSua ? `<button onclick="kkBoDem('${id}')" style="margin-left:auto;border:none;background:none;color:var(--text2);font-size:12px;cursor:pointer;text-decoration:underline">Bỏ đếm</button>` : ''}
@@ -22178,6 +22179,7 @@ window.kkDatTim = (v) => { kkTim = v || ''; const o = document.getElementById('k
 
 // ----- Ghi số đếm (gom lại gửi một lượt) -----
 function kkDat(id, v) {
+  if (!kkAnhDoi[id]) delete kkAnhTam[id];   // nhập tay / Khớp sau khi đếm ảnh -> bỏ ảnh
   kkTam[id] = v; kkHangDoi[id] = v;
   clearTimeout(kkHenGui); kkHenGui = setTimeout(kkGuiNgay, 700);
   kkVe();
@@ -22195,16 +22197,205 @@ async function kkGuiNgay() {
   const goi = kkHangDoi; if (!Object.keys(goi).length) return;
   kkHangDoi = {}; kkDangGui = true;
   const id = kkMoId;
+  const anh = {}; Object.keys(goi).forEach(k => { if (kkAnhDoi[k]) { anh[k] = kkAnhDoi[k]; delete kkAnhDoi[k]; } });
   try {
-    const kq = await goiWorkerAdmin('kk-dem', { id, dem: goi });
+    const kq = await goiWorkerAdmin('kk-dem', { id, dem: goi, anh });
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
   } catch(e) {
-    Object.keys(goi).forEach(k => { if (kkMoId === id) delete kkTam[k]; });
+    Object.keys(goi).forEach(k => { if (kkMoId === id) { delete kkTam[k]; delete kkAnhTam[k]; } });
     showToast('Chưa lưu được số đếm: ' + loiDeHieu(e.message), true);
     kkVe();
   }
   kkDangGui = false;
   if (Object.keys(kkHangDoi).length) kkGuiNgay();
+}
+
+// ===== ĐẾM BẰNG ẢNH (kiểu Sigma) — chụp trực tiếp, chạm chấm từng con, lưu ảnh gốc + tọa độ chấm =====
+// Ảnh gốc giữ đủ độ phân giải (không vẽ chấm vào ảnh) -> phóng to vẫn nét; chấm vẽ đè, cỡ cố định trên màn hình.
+// Số đếm = số chấm. Máy chủ chỉ nhận ảnh khi số chấm đúng bằng số đếm; nhập tay / bấm Khớp sau đó thì ảnh bị bỏ.
+let kkAnhDoi = {};          // ảnh chờ gửi kèm số đếm: { skuId: { f, w, h, c } }
+const kkAnhTam = {};        // ảnh vừa lưu (hiện ngay khi phiếu chưa cập nhật): { skuId: { f, w, h, c, url } }
+let kkCoCham = (() => { try { return Number(localStorage.getItem('kk_co_cham')) || 9; } catch(e) { return 9; } })();
+function kkAnhCua(p, id) {
+  if (kkAnhTam[id]) return kkAnhTam[id];
+  if (id in kkTam) return null;          // vừa sửa số tay -> ảnh cũ không còn đúng
+  return p?.anhDem?.[id] || null;
+}
+// Chấm nghi trùng: 2 chấm quá sát nhau so với khoảng cách thường gặp giữa các con
+function kkChamTrung(c, w, h) {
+  const n = c.length / 2, nn = new Array(n).fill(Infinity), cap = [];
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+    const d = Math.hypot(c[2 * i] - c[2 * j], c[2 * i + 1] - c[2 * j + 1]);
+    if (d < nn[i]) nn[i] = d; if (d < nn[j]) nn[j] = d; cap.push([i, j, d]);
+  }
+  if (n < 2) return new Set();
+  const ds = nn.slice().sort((a, b) => a - b), trungVi = ds[Math.floor(ds.length / 2)];
+  const nguong = Math.max(0.004 * Math.max(w, h), Math.min(0.35 * trungVi, 0.012 * Math.max(w, h)));
+  const kq = new Set();
+  cap.forEach(([i, j, d]) => { if (d < nguong) { kq.add(i); kq.add(j); } });
+  return kq;
+}
+window.kkAnhChup = function(id) {
+  const s = (kkPhieu?.dsSku || []).find(x => x.id === id); if (!s) return;
+  const o = document.createElement('input'); o.type = 'file'; o.accept = 'image/*'; o.setAttribute('capture', 'environment');
+  o.onchange = async () => {
+    const f = o.files?.[0]; if (!f) return;
+    if (f.lastModified && Date.now() - f.lastModified > 15 * 60 * 1000) { showToast('Phải chụp trực tiếp bằng camera — không dùng ảnh cũ trong máy', true); return; }
+    showToast('Đang mở ảnh...');
+    try {
+      const url = URL.createObjectURL(f);
+      const img = await new Promise((ok, loi) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => loi(new Error('Không đọc được ảnh')); i.src = url; });
+      // Giữ độ phân giải gốc (tối đa 4096px cạnh dài), đóng dấu giờ chụp + người chụp ở góc dưới
+      const k = Math.min(1, 4096 / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, w, h); URL.revokeObjectURL(url);
+      const chu = `CUA Aquarium · ${currentUserData?.ten || ''} · ${new Date().toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit', year: '2-digit' })} · ${s.sku}`;
+      const fs = Math.max(14, Math.round(w / 55)); cx.font = `600 ${fs}px monospace`;
+      const tw = cx.measureText(chu).width; cx.fillStyle = 'rgba(0,0,0,.55)'; cx.fillRect(fs * 0.5, h - fs * 2.1, tw + fs, fs * 1.6);
+      cx.fillStyle = '#FDE047'; cx.fillText(chu, fs, h - fs * 0.85);
+      const blob = await new Promise(ok => cv.toBlob(ok, 'image/jpeg', 0.9));
+      const xem = URL.createObjectURL(blob);
+      const anh = await new Promise((ok, loi) => { const i = new Image(); i.onload = () => ok(i); i.onerror = loi; i.src = xem; });
+      kkMoKhungDem({ anh, w, h, cham: [], sua: true, tieuDe: `${s.ten} · ${s.sku}`,
+        onXong: async (c, nut) => {
+          nut.disabled = true; nut.textContent = 'Đang tải ảnh lên...';
+          try {
+            const up = await uploadAnhSanPham(blob, 'kk ' + s.sku);
+            const n = c.length / 2;
+            kkAnhTam[id] = { f: up.fileId, w, h, c, url: xem };
+            kkAnhDoi[id] = { f: up.fileId, w, h, c };
+            kkDat(id, n);
+            showToast(`Đã lưu ${n} con kèm ảnh`);
+            return true;
+          } catch(e) { showToast('Tải ảnh lỗi: ' + e.message, true); nut.disabled = false; nut.textContent = 'Lưu số đếm'; return false; }
+        } });
+    } catch(e) { showToast(e.message, true); }
+  };
+  o.click();
+};
+window.kkAnhXem = async function(id) {
+  const a = kkAnhCua(kkPhieu, id); if (!a) return;
+  const s = (kkPhieu?.dsSku || []).find(x => x.id === id) || {};
+  showToast('Đang tải ảnh gốc...');
+  const src = a.url || `https://drive.google.com/thumbnail?id=${a.f}&sz=w${Math.max(a.w, a.h) || 4000}`;
+  try {
+    const anh = await new Promise((ok, loi) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => loi(new Error('Không tải được ảnh')); i.src = src; });
+    const ten = a.nguoi ? ` · chấm bởi ${a.nguoi}` : '';
+    kkMoKhungDem({ anh, w: a.w || anh.naturalWidth, h: a.h || anh.naturalHeight, cham: (a.c || []).slice(), sua: false, tieuDe: `${s.ten || ''} · ${s.sku || id}${ten}` });
+  } catch(e) { showToast(e.message, true); }
+};
+// Khung chấm / xem: chụm 2 ngón phóng to, kéo 1 ngón để di chuyển, chạm nhanh = thêm chấm (chạm vào chấm = xóa),
+// giữ ngón ~0,35s = kính lúp (chấm đặt ở tâm kính, phía trên ngón tay) cho cá nhỏ.
+function kkMoKhungDem({ anh, w, h, cham, sua, tieuDe, onXong }) {
+  document.getElementById('kk-khung-dem')?.remove();
+  const m = document.createElement('div'); m.id = 'kk-khung-dem';
+  m.style.cssText = 'position:fixed;inset:0;z-index:2000;background:#0B0F14;display:flex;flex-direction:column;touch-action:none;user-select:none;-webkit-user-select:none';
+  m.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;color:#fff;background:#111827;flex-wrap:wrap">
+      <div style="flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(tieuDe || '')}</div>
+      <div id="kkd-so" style="font-size:22px;font-weight:800;color:#4ADE80;min-width:70px;text-align:right">🐟 0</div>
+    </div>
+    <div style="flex:1;position:relative;overflow:hidden"><canvas id="kkd-cv" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none"></canvas>
+      <div id="kkd-canh" style="position:absolute;left:8px;right:8px;top:8px;display:none;background:#7F1D1D;color:#fff;font-size:12.5px;border-radius:8px;padding:6px 9px"></div></div>
+    <div style="display:flex;gap:6px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#111827;flex-wrap:wrap;align-items:center">
+      ${sua ? '<button id="kkd-hoan" class="btn-xs" style="background:#374151;color:#fff;border-color:#4B5563">↶ Hoàn tác</button>' : ''}
+      <button id="kkd-an" class="btn-xs" style="background:#374151;color:#fff;border-color:#4B5563">👁 Ẩn chấm</button>
+      <button id="kkd-stt" class="btn-xs" style="background:#374151;color:#fff;border-color:#4B5563">#</button>
+      <button id="kkd-nho" class="btn-xs" style="background:#374151;color:#fff;border-color:#4B5563">●−</button>
+      <button id="kkd-to" class="btn-xs" style="background:#374151;color:#fff;border-color:#4B5563">●+</button>
+      <div style="flex:1"></div>
+      <button id="kkd-dong" class="btn-xs" style="background:#374151;color:#fff;border-color:#4B5563">${sua ? 'Hủy' : 'Đóng'}</button>
+      ${sua ? '<button id="kkd-xong" class="btn-g" style="width:auto!important;margin:0;padding:8px 16px;background:#16A34A">Lưu số đếm</button>' : ''}
+    </div>`;
+  document.body.appendChild(m);
+  const cv = m.querySelector('#kkd-cv'), cx = cv.getContext('2d');
+  let s = 1, tx = 0, ty = 0, anCham = false, hienStt = false, lichSu = [], trung = new Set(), lup = null;
+  const dpr = () => window.devicePixelRatio || 1;
+  const vua = () => { const r = cv.getBoundingClientRect(); s = Math.min(r.width / w, r.height / h); tx = (r.width - w * s) / 2; ty = (r.height - h * s) / 2; };
+  const kichThuoc = () => { const r = cv.getBoundingClientRect(); cv.width = Math.round(r.width * dpr()); cv.height = Math.round(r.height * dpr()); };
+  const capNhatSo = () => { m.querySelector('#kkd-so').textContent = '🐟 ' + (cham.length / 2); };
+  const ve = () => {
+    const r = dpr(); cx.setTransform(r, 0, 0, r, 0, 0);
+    cx.fillStyle = '#0B0F14'; cx.fillRect(0, 0, cv.width, cv.height);
+    cx.imageSmoothingQuality = 'high'; cx.drawImage(anh, tx, ty, w * s, h * s);
+    if (!anCham) for (let i = 0; i < cham.length / 2; i++) {
+      const x = cham[2 * i] * s + tx, y = cham[2 * i + 1] * s + ty;
+      cx.lineWidth = 3.5; cx.strokeStyle = 'rgba(0,0,0,.75)'; cx.beginPath(); cx.arc(x, y, kkCoCham, 0, 7); cx.stroke();
+      cx.lineWidth = 2; cx.strokeStyle = trung.has(i) ? '#F87171' : '#4ADE80'; cx.beginPath(); cx.arc(x, y, kkCoCham, 0, 7); cx.stroke();
+      if (hienStt) { cx.font = '700 11px sans-serif'; cx.fillStyle = '#FDE047'; cx.fillText(String(i + 1), x + kkCoCham + 2, y - kkCoCham + 2); }
+    }
+    if (lup) {   // kính lúp: phóng to 3x vùng quanh điểm đặt chấm, có tâm ngắm
+      const R = 62, z = 3, cxL = lup.x, cyL = Math.max(R + 4, lup.y - 90);
+      cx.save(); cx.beginPath(); cx.arc(cxL, cyL, R, 0, 7); cx.clip();
+      cx.fillStyle = '#000'; cx.fillRect(cxL - R, cyL - R, 2 * R, 2 * R);
+      const ix = (lup.x - tx) / s, iy = (lup.y - ty) / s;
+      cx.drawImage(anh, cxL - ix * s * z, cyL - iy * s * z, w * s * z, h * s * z);
+      cx.restore(); cx.lineWidth = 2; cx.strokeStyle = '#fff'; cx.beginPath(); cx.arc(cxL, cyL, R, 0, 7); cx.stroke();
+      cx.strokeStyle = '#4ADE80'; cx.beginPath(); cx.moveTo(cxL - 10, cyL); cx.lineTo(cxL + 10, cyL); cx.moveTo(cxL, cyL - 10); cx.lineTo(cxL, cyL + 10); cx.stroke();
+    }
+  };
+  const tinhTrung = () => { trung = kkChamTrung(cham, w, h); const canh = m.querySelector('#kkd-canh');
+    canh.style.display = trung.size ? '' : 'none'; canh.textContent = trung.size ? `⚠ ${trung.size} chấm đỏ nằm quá sát nhau — có thể chấm trùng 1 con. Chạm vào chấm để xóa nếu trùng.` : ''; };
+  const veLai = () => { capNhatSo(); ve(); };
+  const doiCho = () => { kichThuoc(); ve(); };
+  kichThuoc(); vua(); tinhTrung(); veLai();
+  const onResize = () => doiCho(); window.addEventListener('resize', onResize);
+  const dong = () => { window.removeEventListener('resize', onResize); m.remove(); };
+  // ----- cảm ứng / chuột -----
+  const ptr = new Map(); let bd = null, hen = null, keo = false, chum = null;
+  const diemAnh = (x, y) => [(x - tx) / s, (y - ty) / s];
+  const themHoacXoa = (x, y) => {
+    for (let i = cham.length / 2 - 1; i >= 0; i--) {
+      if (Math.hypot(cham[2 * i] * s + tx - x, cham[2 * i + 1] * s + ty - y) <= kkCoCham + 6) { lichSu.push(['xoa', i, cham[2 * i], cham[2 * i + 1]]); cham.splice(2 * i, 2); tinhTrung(); veLai(); return; }
+    }
+    const [ix, iy] = diemAnh(x, y); if (ix < 0 || iy < 0 || ix > w || iy > h) return;
+    cham.push(Math.round(ix), Math.round(iy)); lichSu.push(['them']); bip?.(1800, 25); tinhTrung(); veLai();
+  };
+  const toaDo = (e) => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  cv.addEventListener('pointerdown', (e) => {
+    cv.setPointerCapture(e.pointerId); const [x, y] = toaDo(e); ptr.set(e.pointerId, { x, y });
+    if (ptr.size === 1) { bd = { x, y, t: Date.now(), tx, ty }; keo = false; clearTimeout(hen); if (sua) hen = setTimeout(() => { if (!keo && ptr.size === 1) { lup = { x, y }; ve(); } }, 350); }
+    else if (ptr.size === 2) { clearTimeout(hen); lup = null; const [a, b] = [...ptr.values()]; chum = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, s, tx, ty }; keo = true; }
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!ptr.has(e.pointerId)) return; const [x, y] = toaDo(e); ptr.set(e.pointerId, { x, y });
+    if (ptr.size === 2 && chum) {
+      const [a, b] = [...ptr.values()], d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const s2 = Math.min(40, Math.max(0.05, chum.s * d / chum.d));
+      tx = mx - (chum.mx - chum.tx) * s2 / chum.s; ty = my - (chum.my - chum.ty) * s2 / chum.s; s = s2; ve(); return;
+    }
+    if (ptr.size === 1 && bd) {
+      if (lup) { lup = { x, y }; ve(); return; }
+      if (Math.hypot(x - bd.x, y - bd.y) > 8) { keo = true; clearTimeout(hen); tx = bd.tx + (x - bd.x); ty = bd.ty + (y - bd.y); ve(); }
+    }
+  });
+  const len = (e) => {
+    if (!ptr.has(e.pointerId)) return; ptr.delete(e.pointerId); clearTimeout(hen);
+    if (lup && ptr.size === 0) { const p0 = lup, cyL = Math.max(62 + 4, p0.y - 90); lup = null; themHoacXoaTai(p0.x, p0.y); return; }
+    if (ptr.size === 0 && bd && !keo && sua && Date.now() - bd.t < 600) themHoacXoa(bd.x, bd.y);
+    if (ptr.size < 2) chum = null;
+    if (ptr.size === 0) bd = null;
+    ve();
+  };
+  // kính lúp: chấm đặt đúng điểm dưới tâm ngắm (ứng với vị trí ngón tay trên ảnh)
+  const themHoacXoaTai = (x, y) => themHoacXoa(x, y);
+  cv.addEventListener('pointerup', len); cv.addEventListener('pointercancel', len);
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); const [x, y] = toaDo(e); const k = e.deltaY < 0 ? 1.15 : 1 / 1.15; const s2 = Math.min(40, Math.max(0.05, s * k)); tx = x - (x - tx) * s2 / s; ty = y - (y - ty) * s2 / s; s = s2; ve(); }, { passive: false });
+  // ----- nút -----
+  m.querySelector('#kkd-hoan')?.addEventListener('click', () => { const b = lichSu.pop(); if (!b) return; if (b[0] === 'them') cham.splice(cham.length - 2, 2); else cham.splice(2 * b[1], 0, b[2], b[3]); tinhTrung(); veLai(); });
+  m.querySelector('#kkd-an').addEventListener('click', (e) => { anCham = !anCham; e.target.textContent = anCham ? '👁 Hiện chấm' : '👁 Ẩn chấm'; ve(); });
+  m.querySelector('#kkd-stt').addEventListener('click', () => { hienStt = !hienStt; ve(); });
+  const doiCo = (d) => { kkCoCham = Math.min(30, Math.max(4, kkCoCham + d)); try { localStorage.setItem('kk_co_cham', String(kkCoCham)); } catch(e) {} ve(); };
+  m.querySelector('#kkd-nho').addEventListener('click', () => doiCo(-2));
+  m.querySelector('#kkd-to').addEventListener('click', () => doiCo(2));
+  m.querySelector('#kkd-dong').addEventListener('click', async () => { if (sua && cham.length && !await hoiXacNhan('Bỏ các chấm vừa đếm?', { nutDongY: 'Bỏ' })) return; dong(); });
+  m.querySelector('#kkd-xong')?.addEventListener('click', async (e) => {
+    const n = cham.length / 2;
+    if (trung.size && !await hoiXacNhan(`Có ${trung.size} chấm đỏ nằm quá sát nhau (có thể chấm trùng).\n\nVẫn lưu ${n} con?`, { nutDongY: 'Vẫn lưu' })) return;
+    if (!n && !await hoiXacNhan('Chưa chấm con nào — lưu số đếm = 0?', { nutDongY: 'Lưu 0' })) return;
+    if (await onXong(cham.slice(), e.currentTarget)) dong();
+  });
 }
 
 // ----- Lưu tạm / trả lại / hủy / duyệt -----
@@ -27288,7 +27479,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v728</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v729</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27346,7 +27537,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v728</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v729</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27396,7 +27587,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v728</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v729</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27409,7 +27600,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v728</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v729</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
