@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 729;
+  const APP_VERSION = 730;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -22097,6 +22097,7 @@ function kkVeChiTiet() {
     const khoa = suaDuoc && !g?.tam && kkCuaNguoiKhac(p.dem?.[s.id]);
     const choSua = suaDuoc && !khoa;
     const trangThaiDong = !g ? '' : d.lech === 0 ? 'khop' : 'lech';
+    const daDemAnh = !!kkAnhCua(p, s.id);   // đã đếm bằng ảnh -> khoá nút Khớp tránh bấm nhầm
     const nenDong = trangThaiDong === 'khop' ? '#F0FDF4' : trangThaiDong === 'lech' ? '#FFFBEB' : 'var(--surface)';
     const vien = trangThaiDong === 'khop' ? '#86EFAC' : trangThaiDong === 'lech' ? '#FCD34D' : 'var(--border)';
     const anh = sk?.anhFileId ? `<img src="${anhThumbUrl(sk.anhFileId, 120)}" loading="lazy" onclick="viewPhoto('${anhThumbUrl(sk.anhFileId, 900)}')" onerror="this.style.visibility='hidden'" style="width:46px;height:46px;object-fit:cover;border-radius:7px;flex-shrink:0;background:var(--bg);cursor:pointer">`
@@ -22107,7 +22108,7 @@ function kkVeChiTiet() {
         <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;line-height:1.3">${escHtml(s.ten)}</div>
           <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku)} · Tồn <b style="color:var(--text);font-size:13px">${(g ? d.tonLucDem : d.tonNay) ?? '—'}</b>${kkThayDoiSauDem(d)}</div></div>
         ${khoa ? `<span style="flex:0 0 auto;font-size:12px;color:var(--text2)">🔒</span>` : ''}
-        ${choSua ? `<button onclick="kkAnhChup('${id}')" title="Đếm bằng ảnh: chụp rồi chạm chấm từng con" style="flex:0 0 auto;border:1.5px solid #93C5FD;background:#EFF6FF;border-radius:8px;padding:7px 9px;font-size:16px;line-height:1;cursor:pointer">📷</button><button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>
+        ${choSua ? `<button onclick="kkAnhChup('${id}')" title="Đếm bằng ảnh: chụp rồi chạm chấm từng con" style="flex:0 0 auto;border:1.5px solid #93C5FD;background:#EFF6FF;border-radius:8px;padding:7px 9px;font-size:16px;line-height:1;cursor:pointer">📷</button>${daDemAnh ? `<button disabled title="Đã đếm bằng ảnh — khoá nút Khớp để tránh bấm nhầm" style="flex:0 0 auto;border:1.5px solid #D1D5DB;background:#F3F4F6;color:#9CA3AF;font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:not-allowed">✓ Khớp</button>` : `<button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>`}
           <input class="kk-o" type="text" inputmode="decimal" autocomplete="off" placeholder="SL" value="${g && trangThaiDong === 'lech' ? d.thucTe : ''}" onchange="kkNhap('${id}',this.value)" onblur="kkVeLai()"
             style="flex:0 0 60px;width:60px;padding:8px 4px;text-align:center;font-size:15px;font-weight:700;border:1.5px solid ${trangThaiDong === 'lech' ? '#F59E0B' : 'var(--border)'};border-radius:8px">` : ''}
       </div>
@@ -22184,7 +22185,10 @@ function kkDat(id, v) {
   clearTimeout(kkHenGui); kkHenGui = setTimeout(kkGuiNgay, 700);
   kkVe();
 }
-window.kkKhop = (id) => { bip?.(1600, 60); kkDat(id, 'khop'); };
+window.kkKhop = (id) => {
+  if (kkPhieu && kkAnhCua(kkPhieu, id)) { showToast('Mã này đã đếm bằng ảnh — nút Khớp bị khoá. Muốn đổi số thì gõ số hoặc chụp đếm lại.', true); return false; }
+  bip?.(1600, 60); kkDat(id, 'khop'); return true;
+};
 window.kkNhap = (id, v) => {
   if (String(v).trim() === '') return;
   const n = slLe(v); if (!Number.isFinite(n) || n < 0 || !/\d/.test(String(v))) { showToast('Số lượng không hợp lệ', true); return; }
@@ -22468,7 +22472,7 @@ function kkVeTheQuet(sp, trong) {
       <div style="display:flex;gap:9px;align-items:center">${anh}<div style="font-weight:700;font-size:14.5px">${escHtml(sp.ten)}</div></div>
       <div style="font-size:12.5px;color:var(--text2)">${escHtml(sp.sku)} · Tồn hiện tại <b style="color:var(--text);font-size:15px">${ton}</b>${g ? ` · <span style="color:#15803D">đã đếm ${g.khop && g.tt === null ? ton : g.tt}</span>` : ''}</div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button onclick="kkQuetKhop('${id}')" style="flex:1;border:none;background:#16A34A;color:#fff;font-weight:700;border-radius:8px;padding:11px;font-size:15px;cursor:pointer">✓ Khớp</button>
+        ${kkAnhCua(p, sp.id) ? `<button disabled title="Đã đếm bằng ảnh" style="flex:1;border:none;background:#E5E7EB;color:#9CA3AF;font-weight:700;border-radius:8px;padding:11px;font-size:15px;cursor:not-allowed">✓ Khớp</button>` : `<button onclick="kkQuetKhop('${id}')" style="flex:1;border:none;background:#16A34A;color:#fff;font-weight:700;border-radius:8px;padding:11px;font-size:15px;cursor:pointer">✓ Khớp</button>`}
         <input id="kk-q-sl" type="number" inputmode="numeric" min="0" placeholder="Số thực tế" style="flex:1;min-width:0;padding:10px;text-align:center;font-size:16px;font-weight:700;border:1.5px solid var(--border);border-radius:8px">
         <button onclick="kkQuetLuu('${id}')" style="flex:0 0 auto;border:none;background:#F59E0B;color:#fff;font-weight:700;border-radius:8px;padding:0 14px;font-size:14px;cursor:pointer">Lưu</button>
       </div></div>`
@@ -22477,7 +22481,7 @@ function kkVeTheQuet(sp, trong) {
       ${sp.laCombo ? '<div style="font-size:12.5px;color:var(--text2)">Combo tự tính tồn — kiểm từng hàng thành phần.</div>'
         : `<button onclick="kkQuetThem('${id}')" style="width:100%;border:none;background:#2563EB;color:#fff;font-weight:700;border-radius:8px;padding:11px;font-size:14.5px;cursor:pointer">+ Thêm vào phiếu để kiểm</button>`}</div>`;
 }
-window.kkQuetKhop = (id) => { kkKhop(id); kkSauQuet('✓ Khớp'); };
+window.kkQuetKhop = (id) => { if (kkKhop(id)) kkSauQuet('✓ Khớp'); };
 window.kkQuetLuu = (id) => { const v = document.getElementById('kk-q-sl')?.value; if (String(v || '').trim() === '') { showToast('Nhập số thực tế', true); return; } kkNhap(id, v); kkSauQuet(`Đã lưu ${v}`); };
 window.kkQuetThem = async function(id) {
   try {
@@ -27479,7 +27483,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v729</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v730</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27537,7 +27541,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v729</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v730</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27587,7 +27591,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v729</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v730</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27600,7 +27604,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v729</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v730</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
