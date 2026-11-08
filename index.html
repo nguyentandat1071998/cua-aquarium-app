@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 732;
+  const APP_VERSION = 733;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21923,6 +21923,18 @@ let kkHangDoi = {}, kkHenGui = null, kkDangGui = false;
 let kkCanVe = false;
 let kkTao = null;        // { kho, nhom: [], coTon0 }
 const kkDuocDuyet = () => coQuyen('kk_duyet');
+// Bỏ mã khỏi phiếu (mã chưa ai kiểm): người tạo phiếu, người có quyền tạo phiếu hoặc duyệt
+const kkDuocBoMa = (p) => kkDuocDuyet() || coQuyen('kk_tao') || p?.uidTao === currentUser?.uid;
+window.kkBoMa = async function(id) {
+  const s = (kkPhieu?.dsSku || []).find(x => x.id === id); if (!s || !kkMoId) return;
+  if (!await hoiXacNhan(`Bỏ mã khỏi phiếu?\n\n${s.ten}\n\nMã này sẽ không cần kiểm, tồn kho giữ nguyên.`, { nutDongY: 'Bỏ khỏi phiếu', nutHuy: 'Thôi' })) return;
+  try {
+    const kq = await goiWorkerAdmin('kk-bo', { id: kkMoId, skuId: id });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    if (kkPhieu) kkPhieu.dsSku = (kkPhieu.dsSku || []).filter(x => x.id !== id);
+    kkVe(); showToast('Đã bỏ mã khỏi phiếu');
+  } catch(e) { showToast('Không bỏ được: ' + loiDeHieu(e.message), true); }
+};
 const kkDuocTao = () => coQuyen('kk_tao');
 // Mã đã có người kiểm: chỉ người đó (hoặc người có quyền kk_suakhac) được sửa
 function kkCuaNguoiKhac(d) {
@@ -22026,11 +22038,13 @@ window.kkMoTao = function() {
 function kkVeTao() {
   const T = kkTao; const chon = new Set(T.nhom);
   const chaDaChon = (n) => [...chon].some(c => n !== c && n.startsWith(c + ' > '));
-  const ds = kkSkuTheoNhom(T.nhom, T.kho, T.coTon0);
+  const bo = new Set(T.bo || []);
+  const dsDu = kkSkuTheoNhom(T.nhom, T.kho, T.coTon0), ds = dsDu.filter(s => !bo.has(s.id));
+  const soBo = dsDu.length - ds.length;
   const nutKho = (k) => `<button onclick="kkTaoDat('kho','${k}')" style="flex:1;padding:9px;border-radius:8px;font-size:14px;cursor:pointer;border:1.5px solid ${T.kho === k ? '#2563EB' : 'var(--border)'};background:${T.kho === k ? '#EFF6FF' : 'var(--surface)'};color:${T.kho === k ? '#1D4ED8' : 'var(--text)'};font-weight:${T.kho === k ? 700 : 500}">${kkTenKho(k)}</button>`;
   ddbMoKhung('kk-tao-modal', 'Tạo phiếu kiểm kho', 'Chọn kho và nhóm hàng cần kiểm',
     `<div style="display:flex;gap:8px;margin-bottom:10px">${nutKho('ch')}${coQuyen('hh_kho_san') ? nutKho('san') : ''}</div>
-     <div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 8px" id="kk-cay">
+     <div style="max-height:${T.xemMa ? '26vh' : '46vh'};overflow:auto;border:1px solid var(--border);border-radius:8px;padding:6px 8px" id="kk-cay">
       ${kkCacNhom().map(n => { const cap = n.split(' > ').length - 1, cha = chaDaChon(n);
         return `<label style="display:flex;gap:8px;align-items:center;padding:5px 0 5px ${cap * 18}px;cursor:pointer;font-size:13.5px;${cap ? '' : 'font-weight:600;'}${cha ? 'opacity:.55' : ''}">
           <input type="checkbox" ${chon.has(n) || cha ? 'checked' : ''} ${cha ? 'disabled' : ''} data-n="${escHtml(n)}" onchange="kkTaoTick(this)" style="width:18px;height:18px;margin:0"> ${escHtml(n.split(' > ').pop())}</label>`; }).join('') || '<span style="font-size:12px;color:var(--text2)">Chưa có nhóm hàng</span>'}
@@ -22038,7 +22052,18 @@ function kkVeTao() {
      <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13.5px;cursor:pointer">
       <input type="checkbox" ${T.coTon0 ? 'checked' : ''} onchange="kkTaoDat('coTon0',this.checked)" style="width:18px;height:18px;margin:0"> Gồm cả mã đang tồn = 0</label>
      <div style="font-size:12px;color:var(--text2);margin-top:4px">Mã tồn = 0 mà vẫn còn hàng trên kệ: lúc kiểm cứ quét tem, app cho thêm vào phiếu.</div>
-     <div style="margin-top:10px;font-size:14px">Phiếu gồm <b>${ds.length}</b> mã hàng</div>`,
+     <div style="margin-top:10px;font-size:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+       <span>Phiếu gồm <b id="kk-tao-so">${ds.length}</b> mã hàng<span id="kk-tao-bo" style="color:#B45309">${soBo ? ` · đã bỏ ${soBo}` : ''}</span></span>
+       ${dsDu.length ? `<button class="btn-xs" style="margin-left:auto" onclick="kkTaoDat('xemMa', !kkTao.xemMa)">${T.xemMa ? 'Ẩn danh sách mã' : '☑ Xem / bỏ bớt mã'}</button>` : ''}</div>
+     ${T.xemMa && dsDu.length ? `<div style="font-size:12px;color:var(--text2);margin:6px 0 4px">Bỏ tick mã không cần kiểm.</div>
+       <div style="display:flex;gap:6px;margin-bottom:6px">
+         <input type="text" placeholder="Tìm tên / mã..." oninput="kkTaoLocMa(this.value)" style="flex:1;min-width:0;padding:7px 9px;font-size:13.5px;border:1.5px solid var(--border);border-radius:8px">
+         <button class="btn-xs" onclick="kkTaoChonHet(true)">Chọn hết</button><button class="btn-xs" onclick="kkTaoChonHet(false)">Bỏ hết</button></div>
+       <div id="kk-tao-ma" style="max-height:30vh;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:2px 8px">
+        ${[...dsDu].sort((a, b) => (nhomCuoiCuaSku(a) || '').localeCompare(nhomCuoiCuaSku(b) || '', 'vi') || String(a.ten || '').localeCompare(String(b.ten || ''), 'vi')).map(sp => `<label data-t="${escHtml((String(sp.ten || '') + ' ' + String(sp.sku || '')).toLowerCase())}" style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px">
+          <input type="checkbox" ${bo.has(sp.id) ? '' : 'checked'} data-id="${escHtml(sp.id)}" onchange="kkTaoBoMa(this)" style="width:18px;height:18px;margin:0;flex-shrink:0">
+          <span style="flex:1;min-width:0">${escHtml(sp.ten || '')}<span style="display:block;font-size:11.5px;color:var(--text2)">${escHtml(sp.sku || '')} · tồn ${kkTonSku(sp, T.kho)}</span></span></label>`).join('')}
+       </div>` : ''}`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('kk-tao-modal').style.display='none'">Thoát</button>
      <button class="btn-g" id="kk-nut-tao" style="flex:2;margin:0" ${ds.length ? '' : 'disabled'} onclick="kkTaoPhieu()">Tạo phiếu (${ds.length} mã)</button>`);
   ddbCanhGiua?.('kk-tao-modal');
@@ -22049,8 +22074,30 @@ window.kkTaoTick = function(o) {
   if (o.checked) ds = [...ds.filter(x => !x.startsWith(n + ' > ')), n];
   kkTaoDat('nhom', ds);
 };
+// Bỏ / chọn lại từng mã trong danh sách lúc tạo (không vẽ lại cả khung để giữ chỗ cuộn và ô tìm)
+function kkTaoCapNhatSo() {
+  const T = kkTao; if (!T) return;
+  const bo = new Set(T.bo || []), dsDu = kkSkuTheoNhom(T.nhom, T.kho, T.coTon0), n = dsDu.filter(s => !bo.has(s.id)).length, soBo = dsDu.length - n;
+  const o = document.getElementById('kk-tao-so'); if (o) o.textContent = n;
+  const b = document.getElementById('kk-tao-bo'); if (b) b.textContent = soBo ? ` · đã bỏ ${soBo}` : '';
+  const nut = document.getElementById('kk-nut-tao'); if (nut) { nut.disabled = !n; nut.textContent = `Tạo phiếu (${n} mã)`; }
+}
+window.kkTaoBoMa = function(o) {
+  const id = o.dataset.id, bo = new Set(kkTao.bo || []);
+  o.checked ? bo.delete(id) : bo.add(id);
+  kkTao.bo = [...bo]; kkTaoCapNhatSo();
+};
+window.kkTaoChonHet = function(chon) {
+  const bo = new Set(kkTao.bo || []);
+  document.querySelectorAll('#kk-tao-ma label').forEach(l => { if (l.style.display === 'none') return; const c = l.querySelector('input'); c.checked = chon; chon ? bo.delete(c.dataset.id) : bo.add(c.dataset.id); });
+  kkTao.bo = [...bo]; kkTaoCapNhatSo();
+};
+window.kkTaoLocMa = function(v) {
+  const t = String(v || '').trim().toLowerCase();
+  document.querySelectorAll('#kk-tao-ma label').forEach(l => { l.style.display = !t || l.dataset.t.includes(t) ? '' : 'none'; });
+};
 window.kkTaoPhieu = async function() {
-  const T = kkTao, ds = kkSkuTheoNhom(T.nhom, T.kho, T.coTon0);
+  const T = kkTao, bo = new Set(T.bo || []), ds = kkSkuTheoNhom(T.nhom, T.kho, T.coTon0).filter(s => !bo.has(s.id));
   await kkTaoTuDs(ds.map(s => s.id), T.kho, T.nhom, '');
 };
 async function kkTaoTuDs(ids, kho, nhom, tieuDe) {
@@ -22135,6 +22182,7 @@ function kkVeChiTiet() {
     const { s, g } = d, id = escHtml(s.id), sk = skuMap.get(s.id);
     const khoa = suaDuoc && !g?.tam && kkCuaNguoiKhac(p.dem?.[s.id]);
     const choSua = suaDuoc && !khoa;
+    const boDuoc = !g && p.trangThai === 'dang_kiem' && kkDuocBoMa(p);
     const trangThaiDong = !g ? '' : d.lech === 0 ? 'khop' : 'lech';
     const daDemAnh = !!kkAnhCua(p, s.id);   // đã đếm bằng ảnh -> khoá nút Khớp tránh bấm nhầm
     const nenDong = trangThaiDong === 'khop' ? '#F0FDF4' : trangThaiDong === 'lech' ? '#FFFBEB' : 'var(--surface)';
@@ -22145,7 +22193,7 @@ function kkVeChiTiet() {
       <div style="display:flex;gap:9px;align-items:center">
         ${anh}
         <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;line-height:1.3">${escHtml(s.ten)}</div>
-          <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku)} · Tồn <b style="color:var(--text);font-size:13px">${(g ? d.tonLucDem : d.tonNay) ?? '—'}</b>${kkThayDoiSauDem(d)}</div></div>
+          <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku)} · Tồn <b style="color:var(--text);font-size:13px">${(g ? d.tonLucDem : d.tonNay) ?? '—'}</b>${kkThayDoiSauDem(d)}${boDuoc ? ` <button onclick="kkBoMa('${id}')" title="Bỏ mã này khỏi phiếu — không cần kiểm" style="border:none;background:none;color:#9CA3AF;font-size:12px;padding:0 0 0 6px;cursor:pointer;text-decoration:underline">✕ Bỏ mã</button>` : ''}</div></div>
         ${khoa ? `<span style="flex:0 0 auto;font-size:12px;color:var(--text2)">🔒</span>` : ''}
         ${choSua ? `<button onclick="kkAnhChup('${id}')" title="Đếm bằng ảnh: chụp rồi chạm chấm từng con" style="flex:0 0 auto;border:1.5px solid #93C5FD;background:#EFF6FF;border-radius:8px;padding:7px 9px;font-size:16px;line-height:1;cursor:pointer">📷</button>${daDemAnh ? `<button disabled title="Đã đếm bằng ảnh — khoá nút Khớp để tránh bấm nhầm" style="flex:0 0 auto;border:1.5px solid #D1D5DB;background:#F3F4F6;color:#9CA3AF;font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:not-allowed">✓ Khớp</button>` : `<button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>`}
           <input class="kk-o" type="text" inputmode="decimal" autocomplete="off" placeholder="SL" value="${g && trangThaiDong === 'lech' ? d.thucTe : ''}" onchange="kkNhap('${id}',this.value)" onblur="kkVeLai()"
@@ -27522,7 +27570,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v732</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v733</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27580,7 +27628,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v732</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v733</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27630,7 +27678,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v732</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v733</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27643,7 +27691,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v732</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v733</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
