@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 733;
+  const APP_VERSION = 734;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -3101,6 +3101,7 @@ async function renderHangHoaTab() {
       <button onclick="moFormThemHangCombo()">Thêm combo hàng hóa</button>
     </div>
     <div id="hanghoa-form"></div>` : ''}
+    ${coQuyen('hh_layout') ? `<button class="btn-outline" style="width:100%;margin-bottom:8px;border-color:#10B981;color:#047857;font-weight:700" onclick="loMoTao()">🪨 Thêm layout</button>` : ''}
     ${qHH.hh_xuatfile ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="exportDanhSachHangHoaExcel()">Xuất Excel danh sách hàng hóa</button>` : ''}
     ${currentUserData.role === 'admin' ? `<button class="btn-outline" style="width:100%;margin-bottom:8px" onclick="moFormImportExcel()">Import Excel / CSV hàng loạt</button>
     <div id="hanghoa-import-form"></div>` : ''}
@@ -16440,6 +16441,7 @@ function hhTheSku(s, trongNhom = false) {
           </div>
           ${dongCanhBao}
           ${hhXemGhiChu() && String(s.ghiChu || '').trim() ? `<div onclick="${coQuyen('hh_ghichu_sua') ? `hhSuaGhiChu('${s.id}')` : ''}" title="${s.ghiChuBoi ? 'Ghi chú bởi ' + escHtml(s.ghiChuBoi) : ''}" style="font-size:13px;background:#FEF9C3;color:#713F12;border:1px solid #FDE68A;border-radius:6px;padding:4px 8px;margin-top:4px;white-space:pre-wrap;word-break:break-word;${coQuyen('hh_ghichu_sua') ? 'cursor:pointer' : ''}">📝 ${escHtml(String(s.ghiChu).trim())}</div>` : ''}
+          ${s.laLayout ? `<div style="font-size:12.5px;background:#ECFDF5;color:#065F46;border:1px solid #A7F3D0;border-radius:6px;padding:4px 8px;margin-top:4px">🪨 Layout · làm bởi <b>${escHtml(s.layoutNguoiLam?.ten || '')}</b>${Number(s.layoutThuong) ? ` · thưởng ${fmt(s.layoutThuong)}đ khi bán` : ''}${(s.layoutNL || []).length ? `<div style="color:#047857;margin-top:2px">${s.layoutNL.map(x => `${escHtml(x.ten || x.sku)} ×${x.sl}`).join(' · ')}</div>` : ''}</div>` : ''}
           ${coQuyen('hh_kichthuoc') && (s.canNang || s.kichThuoc?.dai || s.kichThuoc?.rong || s.kichThuoc?.cao) ? `<div style="font-size:13.5px;color:var(--text2);font-weight:600;margin-top:3px">${s.canNang ? `⚖️ ${s.canNang}g` : ''}${(s.canNang && (s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao)) ? ' · ' : ''}${(s.kichThuoc?.dai||s.kichThuoc?.rong||s.kichThuoc?.cao) ? `📦 ${s.kichThuoc?.dai||0}×${s.kichThuoc?.rong||0}×${s.kichThuoc?.cao||0}cm` : ''}</div>` : ''}
           ${(s.thuongHieu || s.nhom3 || s.nhom2 || s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${s.thuongHieu ? `<b style="color:#0F766E">${escHtml(s.thuongHieu)}</b>${(s.nhom3 || s.nhom2 || s.nhom1) ? ' · ' : ''}` : ''}${escHtml(s.nhom3 || s.nhom2 || s.nhom1 || '')}</div>` : ''}
         </div>
@@ -17565,6 +17567,129 @@ window.luuHangHoa = async function(laComboParam) {
   hhTinhCanhBaoTatCa(true).then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
 };
 
+// ===== THÊM LAYOUT (Tồn kho) =====
+// Layout = 1 bể làm sẵn, mỗi cái 1 mã LAYOUTxxx (tồn 1, Kho Cửa hàng). Lưu: máy chủ trừ kho nguyên liệu (phiếu xuất dùng
+// nội bộ), tạo mã + phiếu nhập 1 cái với giá nhập = giá vốn (= Σ SL × giá vốn nguyên liệu + tiền công).
+// Bán được: người làm nhận "thưởng layout" (bảng lương, mục Thưởng); người bán vẫn ăn hoa hồng doanh thu như thường.
+let loTao = null, loDsNV = null;
+const loCacNhom = () => [...new Set(allSKUs.filter(s => !s.deleted).map(nhomCuoiCuaSku).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'vi'));
+const loLaAdmin = () => currentUserData?.role === 'admin';
+const loGiaVon = (s) => loLaAdmin() && daNapGiaVon ? Number(traGiaVon(s.sku)) || 0 : null;
+window.loMoTao = async function() {
+  if (!coQuyen('hh_layout')) { showToast('Bạn chưa có quyền thêm layout', true); return; }
+  if (!loTao) loTao = { ten: '', gia: 0, nhom: loCacNhom().find(n => /layout/i.test(n.split(' > ').pop())) || '', nguoiLam: currentUser.uid, thuong: 0, tienCong: 0, ghiChu: '', nl: [], anhBlob: null, anhUrl: '' };
+  loVe();
+  if (!loDsNV) {
+    try { const kq = await goiWorkerAdmin('layout-tao', { dsNV: true }); if (kq.success) { loDsNV = kq.ds || []; loVe(); } } catch(e) {}
+  }
+};
+function loVe() {
+  const T = loTao; if (!T) return;
+  const tien = (k, nhan, goiY) => `<label style="display:block;font-size:12.5px;color:var(--text2);margin-top:8px">${nhan}
+    <input type="text" inputmode="numeric" value="${T[k] ? Number(T[k]).toLocaleString('vi-VN') : ''}" placeholder="${goiY || '0'}" oninput="dinhDangTien(this);loDat('${k}',docTien(this))" style="width:100%;box-sizing:border-box;margin-top:3px;font-size:15px;padding:8px 10px"></label>`;
+  const nv = loDsNV || [{ uid: currentUser.uid, ten: currentUserData?.ten || 'Tôi' }];
+  ddbMoKhung('lo-modal', '🪨 Thêm layout', 'Mỗi layout một mã riêng (LAYOUT001…), tồn 1 ở Kho Cửa hàng', `
+    <div style="display:flex;gap:10px;align-items:flex-start">
+      <label style="flex:0 0 84px;height:84px;border:1.5px dashed var(--border);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;background:var(--bg);font-size:12px;color:var(--text2);text-align:center">
+        ${T.anhUrl ? `<img src="${T.anhUrl}" style="width:100%;height:100%;object-fit:cover">` : '📷<br>Ảnh'}
+        <input type="file" accept="image/*" style="display:none" onchange="loChonAnh(this)"></label>
+      <div style="flex:1;min-width:0">
+        <label style="display:block;font-size:12.5px;color:var(--text2)">Tên layout *
+          <input type="text" value="${escHtml(T.ten)}" maxlength="200" placeholder="VD: Layout Iwagumi 60cm" oninput="loDat('ten',this.value)" style="width:100%;box-sizing:border-box;margin-top:3px;font-size:15px;padding:8px 10px"></label>
+        ${tien('gia', 'Giá bán', 'Giá bán')}
+      </div></div>
+    <label style="display:block;font-size:12.5px;color:var(--text2);margin-top:8px">Nhóm hàng *
+      <select onchange="loDat('nhom',this.value)" style="width:100%;margin-top:3px;font-size:14.5px;padding:8px">
+        <option value="">— Chọn nhóm —</option>${loCacNhom().map(n => `<option value="${escHtml(n)}" ${n === T.nhom ? 'selected' : ''}>${escHtml(n)}</option>`).join('')}</select></label>
+    <div style="display:flex;gap:8px">
+      <label style="flex:1;display:block;font-size:12.5px;color:var(--text2);margin-top:8px">Nhân viên làm *
+        <select onchange="loDat('nguoiLam',this.value)" style="width:100%;margin-top:3px;font-size:14.5px;padding:8px">
+          ${nv.map(u => `<option value="${escHtml(u.uid)}" ${u.uid === T.nguoiLam ? 'selected' : ''}>${escHtml(u.ten)}</option>`).join('')}</select></label>
+      <div style="flex:1">${tien('thuong', 'Thưởng khi bán được', '0')}</div></div>
+    ${tien('tienCong', 'Tiền công (cộng vào giá vốn)', '0')}
+    <div style="font-weight:700;font-size:14px;margin:14px 0 6px">Nguyên liệu (trừ Kho Cửa hàng)</div>
+    <input type="text" id="lo-tim" placeholder="🔍 Tìm đá, lũa, nền, cây, keo... để thêm" oninput="loTim(this.value)" autocomplete="off" style="width:100%;box-sizing:border-box;font-size:14.5px;padding:9px 10px">
+    <div id="lo-kq"></div>
+    <div id="lo-nl" style="margin-top:6px"></div>
+    <label style="display:block;font-size:12.5px;color:var(--text2);margin-top:10px">Ghi chú
+      <textarea rows="2" maxlength="500" oninput="loDat('ghiChu',this.value)" style="width:100%;box-sizing:border-box;margin-top:3px;font-size:14px;padding:8px">${escHtml(T.ghiChu)}</textarea></label>
+    <div id="lo-tong" style="margin-top:10px"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('lo-modal').style.display='none'">Đóng</button>
+     <button class="btn-g" id="lo-nut-luu" style="flex:2;margin:0" onclick="loLuu()">Tạo layout</button>`);
+  ddbCanhGiua?.('lo-modal');
+  loVeNL();
+}
+window.loDat = function(k, v) { if (!loTao) return; loTao[k] = v; if (['gia', 'thuong', 'tienCong'].includes(k)) loVeTong(); };
+window.loChonAnh = async function(o) {
+  const f = o.files?.[0]; if (!f) return;
+  try { loTao.anhBlob = await nenAnhSanPham(f); loTao.anhUrl = URL.createObjectURL(loTao.anhBlob); loVe(); }
+  catch(e) { showToast('Lỗi ảnh: ' + e.message, true); }
+};
+window.loTim = function(v) {
+  const o = document.getElementById('lo-kq'); if (!o) return;
+  const t = String(v || '').trim().toLowerCase();
+  if (!t) { o.innerHTML = ''; return; }
+  const co = new Set(loTao.nl.map(x => x.id));
+  const ds = allSKUs.filter(s => !s.deleted && !s.laCombo && !s.laLayout && !co.has(s.id) && ((s.ten || '') + ' ' + (s.sku || '')).toLowerCase().includes(t)).slice(0, 30);
+  o.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:34vh;overflow:auto">${ds.map(s => `<div onclick="loThem('${escHtml(s.id)}')" style="padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13.5px">
+      ${escHtml(s.ten || '')}<div style="font-size:11.5px;color:var(--text2)">${escHtml(s.sku || '')} · tồn CH ${kkTonSku(s, 'ch')}</div></div>`).join('') || '<div style="padding:8px 10px;font-size:13px;color:var(--text2)">Không thấy mã nào</div>'}</div>`;
+};
+window.loThem = function(id) {
+  if (!loTao.nl.some(x => x.id === id)) loTao.nl.push({ id, sl: 1 });
+  const o = document.getElementById('lo-tim'); if (o) { o.value = ''; o.focus(); }
+  loTim(''); loVeNL();
+};
+window.loBo = function(id) { loTao.nl = loTao.nl.filter(x => x.id !== id); loVeNL(); };
+window.loDatSL = function(id, v) { const x = loTao.nl.find(y => y.id === id); if (x) x.sl = Math.max(0, Number(String(v).replace(',', '.')) || 0); loVeTong(); };
+function loVeNL() {
+  const o = document.getElementById('lo-nl'); if (!o) return;
+  o.innerHTML = loTao.nl.length ? loTao.nl.map(x => { const s = allSKUs.find(y => y.id === x.id) || { ten: x.id, sku: x.id }; const ton = kkTonSku(s, 'ch');
+    return `<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;min-width:0;font-size:13.5px">${escHtml(s.ten || '')}<div style="font-size:11.5px;color:${ton < x.sl ? '#B91C1C' : 'var(--text2)'}">${escHtml(s.sku || '')} · tồn ${ton}${loGiaVon(s) != null ? ` · vốn ${fmt(loGiaVon(s))}đ` : ''}</div></div>
+      <input type="text" inputmode="decimal" value="${x.sl}" onchange="loDatSL('${escHtml(x.id)}',this.value)" oninput="loDatSL('${escHtml(x.id)}',this.value)" style="flex:0 0 64px;width:64px;text-align:center;font-size:15px;font-weight:700;padding:7px 4px">
+      <button onclick="loBo('${escHtml(x.id)}')" style="flex:0 0 auto;border:none;background:none;color:#9CA3AF;font-size:18px;cursor:pointer;padding:4px">✕</button></div>`; }).join('')
+    : '<div style="font-size:12.5px;color:var(--text2);padding:6px 0">Chưa có nguyên liệu. Gõ tên ở ô trên để thêm (keo, phân nền... nhập số lẻ được, VD 0,5).</div>';
+  loVeTong();
+}
+window.loVeTong = function() {
+  const o = document.getElementById('lo-tong'); if (!o || !loTao) return;
+  const coGV = loLaAdmin() && daNapGiaVon;
+  const nl = coGV ? Math.round(loTao.nl.reduce((a, x) => { const s = allSKUs.find(y => y.id === x.id); return a + (s ? x.sl * (loGiaVon(s) || 0) : 0); }, 0)) : 0;
+  o.innerHTML = `<div style="background:var(--bg);border-radius:10px;padding:10px 12px;font-size:13.5px">
+    ${coGV ? `<div style="display:flex;justify-content:space-between"><span>Nguyên liệu</span><b>${fmt(nl)}đ</b></div>
+    <div style="display:flex;justify-content:space-between"><span>Tiền công</span><b>${fmt(loTao.tienCong || 0)}đ</b></div>
+    <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:4px;border-top:1px solid var(--border);padding-top:4px"><span>Giá vốn layout</span><b style="color:#1D4ED8">${fmt(nl + (loTao.tienCong || 0))}đ</b></div>`
+    : '<div style="color:var(--text2)">Giá vốn = nguyên liệu × giá vốn + tiền công — máy chủ tự tính khi lưu.</div>'}
+    ${loTao.gia && coGV ? `<div style="display:flex;justify-content:space-between;color:var(--text2);font-size:12.5px;margin-top:2px"><span>Lãi gộp dự kiến</span><span>${fmt(loTao.gia - nl - (loTao.tienCong || 0))}đ</span></div>` : ''}</div>`;
+};
+window.loLuu = async function() {
+  const T = loTao; if (!T) return;
+  if (!T.ten.trim()) { showToast('Nhập tên layout', true); return; }
+  if (!T.nhom) { showToast('Chọn nhóm hàng', true); return; }
+  if (!T.nguoiLam) { showToast('Chọn nhân viên làm', true); return; }
+  const nl = T.nl.filter(x => x.sl > 0);
+  if (!nl.length) { showToast('Thêm ít nhất 1 nguyên liệu', true); return; }
+  const thieu = nl.map(x => ({ x, s: allSKUs.find(y => y.id === x.id) })).filter(({ x, s }) => s && kkTonSku(s, 'ch') < x.sl);
+  if (thieu.length) { showToast('Không đủ tồn: ' + thieu.map(({ s }) => s.ten).join(', '), true); return; }
+  const tenNV = (loDsNV || []).find(u => u.uid === T.nguoiLam)?.ten || currentUserData?.ten || '';
+  if (!await hoiXacNhan(`Tạo layout "${T.ten.trim()}"?\n\nTrừ Kho Cửa hàng ${nl.length} nguyên liệu:\n${nl.map(x => '· ' + (allSKUs.find(y => y.id === x.id)?.ten || x.id) + ' ×' + x.sl).join('\n')}\n\nNgười làm: ${tenNV}${T.thuong ? ` · thưởng ${fmt(T.thuong)}đ khi bán được` : ''}`, { nutDongY: 'Tạo layout', nutHuy: 'Xem lại' })) return;
+  const nut = document.getElementById('lo-nut-luu'); if (nut) { nut.disabled = true; nut.textContent = 'Đang tạo...'; }
+  try {
+    let anhFileId = '';
+    if (T.anhBlob) { try { anhFileId = (await uploadAnhSanPham(T.anhBlob, T.ten)).fileId || ''; } catch(e) { showToast('Tải ảnh lỗi — tạo không ảnh, thêm ảnh sau', true); } }
+    const kq = await goiWorkerAdmin('layout-tao', { ten: T.ten.trim(), gia: T.gia || 0, nhom: T.nhom.split(' > '), nguoiLam: T.nguoiLam, thuong: T.thuong || 0, tienCong: T.tienCong || 0,
+      ghiChu: T.ghiChu || '', anhFileId, branchId: branchKhoTheoMa('ch'), nguyenLieu: nl.map(x => ({ id: x.id, sl: x.sl })) });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    document.getElementById('lo-modal').style.display = 'none';
+    loTao = null;
+    if (loLaAdmin()) { try { bangGiaVon.set(kq.sku, Number(kq.giaVon) || 0); } catch(e) {} }
+    alert(`Đã tạo ${kq.sku}${loLaAdmin() ? `\nGiá vốn: ${fmt(kq.giaVon)}đ (nguyên liệu ${fmt(kq.giaVonNL)}đ + công ${fmt(kq.tienCong)}đ)` : ''}${kq.maDN ? `\nPhiếu xuất nguyên liệu: ${kq.maDN}` : ''}${kq.maPN ? `\nPhiếu nhập layout: ${kq.maPN}` : ''}`);
+  } catch(e) {
+    alert('Không tạo được layout: ' + loiDeHieu(e.message));
+    if (nut) { nut.disabled = false; nut.textContent = 'Tạo layout'; }
+  }
+};
+
 let hangHoaSuaAnhBlob = null;
 
 window.xemTruocAnhSuaHangHoa = async function(input, id) {
@@ -17893,7 +18018,8 @@ const DANH_SACH_MODULE = [
     { key: 'hh_canhbao', ten: 'Xem cảnh báo tồn kho (sắp hết hàng)' },
     { key: 'hh_kichthuoc', ten: 'Xem cân nặng & kích thước' },
     { key: 'hh_ghichu', ten: 'Xem ghi chú hàng hóa' },
-    { key: 'hh_ghichu_sua', ten: 'Thêm / sửa ghi chú hàng hóa' }
+    { key: 'hh_ghichu_sua', ten: 'Thêm / sửa ghi chú hàng hóa' },
+    { key: 'hh_layout', ten: 'Thêm layout (trừ kho nguyên liệu, tạo mã layout)' }
   ]},
   // Chuyển kho: tick chiều nào thì chỉ chuyển được chiều đó (tick cả hai = chuyển cả hai chiều)
   { key: 'nhap', ten: 'Chuyển kho', con: [
@@ -24005,6 +24131,7 @@ async function tinhLuongThang(thang) {
 
   // Điều chỉnh: loai 'thuong' thì cộng vào cột Thưởng, còn lại trừ vào Điều chỉnh
   for (const kt of cacKhauTru) {
+    if (kt.huy) continue;   // thưởng layout của hóa đơn đã hủy / trả hàng
     const n = layNgay(kt.ngay);
     const tien = Number(kt.soTien) || 0;
     if (kt.loai === 'thuong') {
@@ -24259,6 +24386,7 @@ async function tinhLuongTatCa(thang) {
   // Điều chỉnh tay: loại "thưởng" cộng, còn lại trừ
   for (const d of sKT.docs) {
     const kt = d.data();
+    if (kt.huy) continue;
     const n = kt.uid && lay(kt.uid);
     if (!n) continue;
     if (kt.loai === 'thuong') n.thuongThem += Number(kt.soTien) || 0; else n.khauTru += Number(kt.soTien) || 0;
@@ -27570,7 +27698,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v733</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v734</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27628,7 +27756,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v733</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v734</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27678,7 +27806,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v733</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v734</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27691,7 +27819,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v733</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v734</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
