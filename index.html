@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 737;
+  const APP_VERSION = 738;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -17601,8 +17601,9 @@ function loVe() {
   const tien = (k, nhan, goiY) => `<label style="display:block;font-size:12.5px;color:var(--text2);margin-top:8px">${nhan}
     <input type="text" inputmode="numeric" value="${T[k] ? Number(T[k]).toLocaleString('vi-VN') : ''}" placeholder="${goiY || '0'}" oninput="dinhDangTien(this);loDat('${k}',docTien(this))" style="width:100%;box-sizing:border-box;margin-top:3px;font-size:15px;padding:8px 10px"></label>`;
   const nv = loDsNV || [{ uid: T.nguoiLam, ten: T.phieuNguoi || currentUserData?.ten || 'Tôi' }];
-  const tieuDe = T.phieuId ? `🪨 Duyệt phiếu ${escHtml(T.phieuMa)}` : day ? '🪨 Thêm layout' : '🪨 Phiếu thêm layout';
-  const phuDe = T.phieuId ? `Gửi bởi ${escHtml(T.phieuNguoi)} — điền giá, thưởng, tiền công rồi duyệt` : day ? 'Mỗi layout một mã riêng (LAYOUT001…), tồn 1 ở Kho Cửa hàng' : '';
+  const duyetPhieu = T.phieuId && day;   // người duyệt mở phiếu; còn lại là nhân viên sửa phiếu của mình
+  const tieuDe = duyetPhieu ? `🪨 Duyệt phiếu ${escHtml(T.phieuMa)}` : T.phieuId ? `🪨 Sửa phiếu ${escHtml(T.phieuMa)}` : day ? '🪨 Thêm layout' : '🪨 Phiếu thêm layout';
+  const phuDe = duyetPhieu ? `Gửi bởi ${escHtml(T.phieuNguoi)} — điền giá, thưởng, tiền công rồi duyệt` : T.phieuId ? '' : day ? 'Mỗi layout một mã riêng (LAYOUT001…), tồn 1 ở Kho Cửa hàng' : '';
   ddbMoKhung('lo-modal', tieuDe, phuDe, `
     <div style="display:flex;gap:10px;align-items:flex-start">
       <div style="flex:0 0 84px;display:flex;flex-direction:column;gap:4px">
@@ -17632,19 +17633,31 @@ function loVe() {
     <label style="display:block;font-size:12.5px;color:var(--text2);margin-top:10px">Ghi chú
       <textarea rows="2" maxlength="500" oninput="loDat('ghiChu',this.value)" style="width:100%;box-sizing:border-box;margin-top:3px;font-size:14px;padding:8px">${escHtml(T.ghiChu)}</textarea></label>
     <div id="lo-tong" style="margin-top:10px"></div>`,
-    T.phieuId
+    duyetPhieu
       ? `<button class="btn-outline" style="flex:1;color:var(--red);border-color:var(--red)" onclick="loTuChoi()">Từ chối</button>
          <button class="btn-g" id="lo-nut-luu" style="flex:2;margin:0" onclick="loLuu()">Duyệt & tạo layout</button>`
       : `<button class="btn-outline" style="flex:1" onclick="document.getElementById('lo-modal').style.display='none'">Đóng</button>
-         <button class="btn-g" id="lo-nut-luu" style="flex:2;margin:0" onclick="loLuu()">${day ? 'Tạo layout' : 'Gửi phiếu'}</button>`);
+         <button class="btn-g" id="lo-nut-luu" style="flex:2;margin:0" onclick="loLuu()">${day ? 'Tạo layout' : T.phieuId ? 'Lưu phiếu' : 'Gửi phiếu'}</button>`);
   ddbCanhGiua?.('lo-modal');
   loVeNL();
 }
 window.loDat = function(k, v) { if (!loTao) return; loTao[k] = v; if (['gia', 'thuong', 'tienCong'].includes(k)) loVeTong(); };
+// Ảnh layout luôn vuông: cắt phần giữa ảnh (cạnh = cạnh ngắn), tối đa 1200px
+async function loCatVuong(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const im = new Image(); im.src = url; await im.decode();
+    const c = Math.min(im.naturalWidth, im.naturalHeight), S = Math.min(1200, c);
+    const cv = document.createElement('canvas'); cv.width = cv.height = S;
+    cv.getContext('2d').drawImage(im, (im.naturalWidth - c) / 2, (im.naturalHeight - c) / 2, c, c, 0, 0, S, S);
+    return await new Promise((ok, loi) => cv.toBlob(b => b ? ok(b) : loi(new Error('Không nén được ảnh')), 'image/jpeg', 0.85));
+  } finally { URL.revokeObjectURL(url); }
+}
 window.loChonAnh = async function(o) {
   const f = o.files?.[0]; if (!f) return;
-  try { loTao.anhBlob = await nenAnhSanPham(f); loTao.anhUrl = URL.createObjectURL(loTao.anhBlob); loVe(); }
+  try { loTao.anhBlob = await loCatVuong(f); loTao.anhUrl = URL.createObjectURL(loTao.anhBlob); loVe(); }
   catch(e) { showToast('Lỗi ảnh: ' + e.message, true); }
+  o.value = '';
 };
 window.loTim = function(v) {
   const o = document.getElementById('lo-kq'); if (!o) return;
@@ -17696,16 +17709,16 @@ window.loLuu = async function() {
   if (!nl.length) { showToast('Thêm ít nhất 1 nguyên liệu', true); return; }
   const dsNL = nl.map(x => '· ' + (allSKUs.find(y => y.id === x.id)?.ten || x.id) + ' ×' + x.sl).join('\n');
   const nut = document.getElementById('lo-nut-luu');
-  const xong = () => { if (nut) { nut.disabled = false; nut.textContent = T.phieuId ? 'Duyệt & tạo layout' : day ? 'Tạo layout' : 'Gửi phiếu'; } };
+  const xong = () => { if (nut) { nut.disabled = false; nut.textContent = T.phieuId && day ? 'Duyệt & tạo layout' : day ? 'Tạo layout' : T.phieuId ? 'Lưu phiếu' : 'Gửi phiếu'; } };
   if (!day) {   // nhân viên: gửi phiếu chờ duyệt
-    if (!await hoiXacNhan(`Gửi phiếu layout "${T.ten.trim()}"?\n\n${dsNL}\n\nQuản lý duyệt xong mới trừ kho nguyên liệu.`, { nutDongY: 'Gửi phiếu', nutHuy: 'Xem lại' })) return;
-    if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
+    if (!await hoiXacNhan(`${T.phieuId ? 'Lưu phiếu ' + T.phieuMa : 'Gửi phiếu layout'} "${T.ten.trim()}"?\n\n${dsNL}\n\nQuản lý duyệt xong mới trừ kho nguyên liệu.`, { nutDongY: T.phieuId ? 'Lưu phiếu' : 'Gửi phiếu', nutHuy: 'Xem lại' })) return;
+    if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
     try {
       const anhFileId = await loTaiAnh(T);
-      const kq = await goiWorkerAdmin('layout-phieu', { lam: 'gui', ten: T.ten.trim(), anhFileId, ghiChu: T.ghiChu || '', nguyenLieu: nl.map(x => ({ id: x.id, sl: x.sl })) });
+      const kq = await goiWorkerAdmin('layout-phieu', { lam: 'gui', ...(T.phieuId ? { id: T.phieuId } : {}), ten: T.ten.trim(), anhFileId, ghiChu: T.ghiChu || '', nguyenLieu: nl.map(x => ({ id: x.id, sl: x.sl })) });
       if (!kq.success) throw new Error(kq.error || 'Lỗi');
       document.getElementById('lo-modal').style.display = 'none'; loTao = null;
-      showToast(`Đã gửi phiếu ${kq.ma} — chờ quản lý duyệt`);
+      showToast(kq.sua ? `Đã lưu phiếu ${kq.ma} — chờ quản lý duyệt` : `Đã gửi phiếu ${kq.ma} — chờ quản lý duyệt`);
     } catch(e) { alert('Không gửi được: ' + loiDeHieu(e.message)); xong(); }
     return;
   }
@@ -17741,7 +17754,7 @@ window.loTuChoi = async function() {
 };
 // Danh sách phiếu layout: người duyệt thấy tất cả, nhân viên thấy phiếu của mình
 window.loMoDs = async function() {
-  ddbMoKhung('lo-ds-modal', '📋 Phiếu layout', loDuyet() ? 'Bấm phiếu chờ duyệt để mở, điền giá rồi duyệt' : 'Phiếu bạn đã gửi', '<div id="lo-ds"><div class="loading">Đang tải...</div></div>',
+  ddbMoKhung('lo-ds-modal', '📋 Phiếu layout', loDuyet() ? 'Bấm phiếu chờ duyệt để mở, điền giá rồi duyệt' : 'Phiếu bạn đã gửi — chưa duyệt thì bấm vào để sửa', '<div id="lo-ds"><div class="loading">Đang tải...</div></div>',
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('lo-ds-modal').style.display='none'">Đóng</button>`);
   ddbCanhGiua?.('lo-ds-modal');
   try {
@@ -17754,13 +17767,15 @@ function loVeDs() {
   const o = document.getElementById('lo-ds'); if (!o) return;
   const gio = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : ''; };
   o.innerHTML = loDsPhieu.length ? loDsPhieu.map(p => { const [tt, mau] = LO_TT[p.trangThai] || [p.trangThai, '#6B7280'];
-    const moDuoc = loDuyet() && p.trangThai === 'cho_duyet';
+    const suaDuoc = !loDuyet() && p.nguoiTao?.uid === currentUser.uid && ['cho_duyet', 'tu_choi'].includes(p.trangThai);
+    const moDuoc = (loDuyet() && p.trangThai === 'cho_duyet') || suaDuoc;
     return `<div ${moDuoc ? `onclick="loMoPhieu('${escHtml(p.id)}')"` : ''} style="${moDuoc ? 'cursor:pointer;' : ''}border:1px solid var(--border);border-left:4px solid ${mau};border-radius:10px;padding:9px 11px;margin-bottom:8px;display:flex;gap:10px;align-items:center">
       ${p.anhFileId ? `<img src="${anhThumbUrl(p.anhFileId, 120)}" style="width:46px;height:46px;object-fit:cover;border-radius:7px;flex-shrink:0">` : ''}
       <div style="flex:1;min-width:0">
         <div style="display:flex;justify-content:space-between;gap:8px"><b style="font-size:14px">${escHtml(p.ten || '')}</b><span style="font-size:11.5px;font-weight:700;color:${mau};white-space:nowrap">${tt}</span></div>
         <div style="font-size:12px;color:var(--text2)">${escHtml(p.ma || '')} · ${escHtml(p.nguoiTao?.ten || '')} · ${gio(p.taoLuc)} · ${(p.nguyenLieu || []).length} nguyên liệu${p.sku ? ` · <b style="color:#15803D">${escHtml(p.sku)}</b>` : ''}</div>
         ${p.trangThai === 'tu_choi' && p.lyDo ? `<div style="font-size:12px;color:#B91C1C">Lý do: ${escHtml(p.lyDo)}</div>` : ''}
+        ${suaDuoc ? `<div style="font-size:11.5px;color:#2563EB;margin-top:2px">Bấm để sửa${p.trangThai === 'tu_choi' ? ' và gửi lại' : ''}</div>` : ''}
         ${p.trangThai === 'cho_duyet' && (p.nguoiTao?.uid === currentUser.uid || loDuyet()) ? `<button class="btn-xs" style="margin-top:4px" onclick="event.stopPropagation();loHuyPhieu('${escHtml(p.id)}')">Hủy phiếu</button>` : ''}
       </div></div>`; }).join('') : '<p class="info-note">Chưa có phiếu layout nào.</p>';
 }
@@ -27788,7 +27803,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v737</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v738</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27846,7 +27861,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v737</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v738</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27896,7 +27911,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v737</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v738</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27909,7 +27924,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v737</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v738</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
