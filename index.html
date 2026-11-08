@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 740;
+  const APP_VERSION = 741;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -17573,7 +17573,7 @@ window.luuHangHoa = async function(laComboParam) {
 
 // ===== THÊM LAYOUT (Tồn kho) =====
 // Layout = 1 bể làm sẵn, mỗi cái 1 mã LAYOUTxxx (tồn 1, Kho Cửa hàng). Tạo: máy chủ trừ kho nguyên liệu (phiếu xuất dùng
-// nội bộ), tạo mã + phiếu nhập 1 cái với giá nhập = giá vốn (= Σ SL × giá vốn nguyên liệu + tiền công).
+// nội bộ), tạo mã + phiếu nhập 1 cái với giá nhập = giá vốn (= Σ SL × giá vốn nguyên liệu; tiền công chỉ cộng vào giá bán).
 // Nhân viên (quyền hh_layout): gửi PHIẾU LAYOUT (ảnh, tên, nguyên liệu, ghi chú) -> người duyệt (hh_layout_duyet) mở phiếu,
 // điền giá bán / nhóm / người làm / thưởng / tiền công rồi duyệt = tạo layout. Chưa duyệt thì chưa trừ kho.
 // Bán được: người làm nhận "thưởng layout" (bảng lương, mục Thưởng); người bán vẫn ăn hoa hồng doanh thu như thường.
@@ -17585,7 +17585,7 @@ const loGiaVon = (s) => loLaAdmin() && daNapGiaVon ? Number(traGiaVon(s.sku)) ||
 const LO_TT = { cho_duyet: ['Chờ duyệt', '#D97706'], dang_duyet: ['Đang duyệt', '#2563EB'], da_duyet: ['Đã duyệt', '#16A34A'], tu_choi: ['Từ chối', '#DC2626'], da_huy: ['Đã hủy', '#9CA3AF'] };
 window.loMoTao = async function(phieu) {
   if (!coQuyen('hh_layout') && !loDuyet()) { showToast('Bạn chưa có quyền thêm layout', true); return; }
-  if (phieu || !loTao || loTao.phieuId) loTao = { ten: phieu?.ten || '', gia: 0, giaTay: false, nhom: loCacNhom().find(n => /layout/i.test(n.split(' > ').pop())) || '',
+  if (phieu || !loTao || loTao.phieuId) loTao = { ten: phieu?.ten || '', gia: 0, giaTay: false, thuongTay: false, nhom: loCacNhom().find(n => /layout/i.test(n.split(' > ').pop())) || '',
     nguoiLam: phieu?.nguoiTao?.uid || currentUser.uid, thuong: 0, tienCong: 0, ghiChu: phieu?.ghiChu || '',
     nl: (phieu?.nguyenLieu || []).map(x => ({ id: x.id, sl: Number(x.sl) || 0 })), anhBlob: null,
     anhFileId: phieu?.anhFileId || '', anhUrl: phieu?.anhFileId ? anhThumbUrl(phieu.anhFileId, 400) : '',
@@ -17626,8 +17626,8 @@ function loVe() {
       <label style="flex:1;display:block;font-size:12.5px;color:var(--text2);margin-top:8px">Người làm *
         <select onchange="loDat('nguoiLam',this.value)" style="width:100%;margin-top:3px;font-size:14.5px;padding:8px">
           ${nv.map(u => `<option value="${escHtml(u.uid)}" ${u.uid === T.nguoiLam ? 'selected' : ''}>${escHtml(u.ten)}</option>`).join('')}</select></label>
-      <div style="flex:1">${tien('thuong', 'Thưởng khi bán được', '0')}</div></div>
-    ${tien('tienCong', 'Tiền công (cộng vào giá vốn)', '0')}` : ''}
+      <div style="flex:1">${tien('thuong', `Thưởng khi bán <span id="lo-thuong-tt" style="font-size:11.5px"></span>`, '0')}</div></div>
+    ${tien('tienCong', 'Tiền công (cộng vào giá bán)', '0')}` : ''}
     <div style="font-weight:700;font-size:14px;margin:14px 0 6px">Nguyên liệu</div>
     <input type="text" id="lo-tim" placeholder="🔍 Tìm đá, lũa, nền, cây, keo... để thêm" oninput="loTim(this.value)" autocomplete="off" style="width:100%;box-sizing:border-box;font-size:14.5px;padding:9px 10px">
     <div id="lo-kq"></div>
@@ -17643,10 +17643,13 @@ function loVe() {
   ddbCanhGiua?.('lo-modal');
   loVeNL();
 }
-window.loDat = function(k, v) { if (!loTao) return; loTao[k] = v; if (k === 'gia') loTao.giaTay = true; if (['gia', 'thuong', 'tienCong'].includes(k)) loVeTong(); };
+window.loDat = function(k, v) { if (!loTao) return; loTao[k] = v; if (k === 'gia') loTao.giaTay = true; if (k === 'thuong') loTao.thuongTay = true; if (['gia', 'thuong', 'tienCong'].includes(k)) loVeTong(); };
 // Giá bán tự tính = Σ SL × giá bán nguyên liệu + tiền công (gõ tay thì giữ số gõ, bấm "tự tính" để quay lại)
 const loGiaTuTinh = () => Math.round(loTao.nl.reduce((a, x) => { const s = allSKUs.find(y => y.id === x.id); return a + (s ? x.sl * (Number(s.gia) || 0) : 0); }, 0) + (Number(loTao.tienCong) || 0));
 window.loGiaTuDong = function() { if (!loTao) return; loTao.giaTay = false; loVeTong(); };
+window.loThuongTuDong = function() { if (!loTao) return; loTao.thuongTay = false; loVeTong(); };
+// Thưởng mặc định = 50% tiền công (trả qua bảng lương khi layout bán được — là chi phí lương, KHÔNG cộng vào giá vốn)
+const loThuongTuTinh = () => Math.round((Number(loTao.tienCong) || 0) * 0.5);
 // Ảnh layout luôn vuông: cắt phần giữa ảnh (cạnh = cạnh ngắn), tối đa 1200px
 async function loCatVuong(file) {
   const url = URL.createObjectURL(file);
@@ -17698,14 +17701,19 @@ window.loVeTong = function() {
   if (!loTao.giaTay) { loTao.gia = giaTT; const og = document.getElementById('lo-o-gia'); if (og) og.value = giaTT ? giaTT.toLocaleString('vi-VN') : ''; }
   const nhan = document.getElementById('lo-gia-tt');
   if (nhan) nhan.innerHTML = loTao.giaTay ? `· tự nhập <a href="javascript:void(0)" onclick="loGiaTuDong()" style="color:#2563EB">↺ tự tính (${fmt(giaTT)}đ)</a>` : '· tự tính = giá bán nguyên liệu + tiền công';
+  const thTT = loThuongTuTinh();
+  if (!loTao.thuongTay) { loTao.thuong = thTT; const ot = document.getElementById('lo-o-thuong'); if (ot) ot.value = thTT ? thTT.toLocaleString('vi-VN') : ''; }
+  const nhanTh = document.getElementById('lo-thuong-tt');
+  if (nhanTh) nhanTh.innerHTML = loTao.thuongTay ? `<a href="javascript:void(0)" onclick="loThuongTuDong()" style="color:#2563EB">↺ 50% công</a>` : '· 50% tiền công';
+  // Giá vốn = CHỈ nguyên liệu. Tiền công là phần thu thêm của khách (nằm trong giá bán); chi phí công thật là khoản thưởng.
   const coGV = loLaAdmin() && daNapGiaVon;
   const nl = coGV ? Math.round(loTao.nl.reduce((a, x) => { const s = allSKUs.find(y => y.id === x.id); return a + (s ? x.sl * (loGiaVon(s) || 0) : 0); }, 0)) : 0;
+  const dong = (t, v, st = '') => `<div style="display:flex;justify-content:space-between;${st}"><span>${t}</span><b>${v}</b></div>`;
   o.innerHTML = `<div style="background:var(--bg);border-radius:10px;padding:10px 12px;font-size:13.5px">
-    ${coGV ? `<div style="display:flex;justify-content:space-between"><span>Nguyên liệu</span><b>${fmt(nl)}đ</b></div>
-    <div style="display:flex;justify-content:space-between"><span>Tiền công</span><b>${fmt(loTao.tienCong || 0)}đ</b></div>
-    <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:4px;border-top:1px solid var(--border);padding-top:4px"><span>Giá vốn layout</span><b style="color:#1D4ED8">${fmt(nl + (loTao.tienCong || 0))}đ</b></div>`
-    : '<div style="color:var(--text2)">Giá vốn = nguyên liệu × giá vốn + tiền công — máy chủ tự tính khi lưu.</div>'}
-    ${loTao.gia && coGV ? `<div style="display:flex;justify-content:space-between;color:var(--text2);font-size:12.5px;margin-top:2px"><span>Lãi gộp dự kiến</span><span>${fmt(loTao.gia - nl - (loTao.tienCong || 0))}đ</span></div>` : ''}</div>`;
+    ${coGV ? dong('Giá vốn (nguyên liệu)', fmt(nl) + 'đ') : '<div style="color:var(--text2)">Giá vốn = SL × giá vốn nguyên liệu — máy chủ tự tính khi lưu.</div>'}
+    ${dong('Giá bán', fmt(loTao.gia || 0) + 'đ')}
+    ${dong('Thưởng người làm (khi bán)', fmt(loTao.thuong || 0) + 'đ')}
+    ${coGV ? dong('Lãi dự kiến', `<span style="color:#1D4ED8">${fmt((loTao.gia || 0) - nl - (loTao.thuong || 0))}đ</span>`, 'font-size:15px;margin-top:4px;border-top:1px solid var(--border);padding-top:4px') : ''}</div>`;
 };
 async function loTaiAnh(T) {
   if (!T.anhBlob) return T.anhFileId || '';
@@ -17749,7 +17757,7 @@ window.loLuu = async function() {
     loTao = null;
     if (loLaAdmin()) { try { bangGiaVon.set(kq.sku, Number(kq.giaVon) || 0); } catch(e) {} }
     tbTai?.();
-    alert(`Đã tạo ${kq.sku}${loLaAdmin() ? `\nGiá vốn: ${fmt(kq.giaVon)}đ (nguyên liệu ${fmt(kq.giaVonNL)}đ + công ${fmt(kq.tienCong)}đ)` : ''}${kq.maDN ? `\nPhiếu xuất nguyên liệu: ${kq.maDN}` : ''}${kq.maPN ? `\nPhiếu nhập layout: ${kq.maPN}` : ''}`);
+    alert(`Đã tạo ${kq.sku}${loLaAdmin() ? `\nGiá vốn (nguyên liệu): ${fmt(kq.giaVon)}đ` : ''}${kq.maDN ? `\nPhiếu xuất nguyên liệu: ${kq.maDN}` : ''}${kq.maPN ? `\nPhiếu nhập layout: ${kq.maPN}` : ''}`);
   } catch(e) { alert('Không tạo được layout: ' + loiDeHieu(e.message)); xong(); }
 };
 window.loTuChoi = async function() {
@@ -27813,7 +27821,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v740</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v741</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27871,7 +27879,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v740</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v741</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27921,7 +27929,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v740</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v741</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27934,7 +27942,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v740</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v741</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
