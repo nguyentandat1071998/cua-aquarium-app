@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 742;
+  const APP_VERSION = 743;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -5585,7 +5585,7 @@ function veDanhSachDon() {
             ${gio}${(() => { const h = tenHangVanChuyen(d); return h ? ` · <span style="color:#0EA5E9;font-weight:600">${escHtml(h)}</span>` : ''; })()}${d.maVanDon ? ` · VĐ: <b>${escHtml(d.maVanDon)}</b>` : ''}
             ${(() => { const t = veHanXacNhan(d); return t ? ' · ' + t : ''; })()}
           </div>
-          ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}</div>` : ''}
+          ${gioDG ? `<div style="font-size:11px;color:#0891B2;margin-top:2px">📦 Đóng gói lúc <b>${gioDG}</b>${d.banDongGoi ? ` · ${escHtml(d.banDongGoi)}` : ''}${d.dgVideo && coQuyen('tmdt_video') ? ` <button onclick="event.stopPropagation();dgXemVideo('${escHtml(d.id)}')" style="border:1px solid #67E8F9;background:#ECFEFF;color:#0E7490;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:4px">🎥 Xem video</button>` : ''}</div>` : ''}
       </div>
       <div class="don-hang">
         ${(d.chiTiet || []).map(c => veDongHangDon(c, skuTheoMaDon)).join('')}
@@ -6956,6 +6956,7 @@ function veLichSuQuet() {
 let ktDangQuet = false;
 let ktLuong = null;
 let ktDon = null;
+let ktBatDauLuc = 0;   // lúc quét mở đơn — mốc bắt đầu video đóng gói
 let ktPhien = { soDon: 0, tienThuong: 0 };   // số liệu ca làm hiện tại
 
 async function renderKiemTraDonTab() {
@@ -7154,6 +7155,7 @@ async function ktTraDon(maVanDon) {
     return;
   }
   ktDon = { id: snap.docs[0].id, ...snap.docs[0].data() };
+  ktBatDauLuc = Date.now();
   ktDaXemHet = false;
   ktVeDanhSachHang();
 }
@@ -7291,6 +7293,8 @@ window.ktHoanThanhDongGoi = async function() {
     ktDon.thoiGianDongGoi = new Date();
     ktDon.trangThaiNoiBo = 'da_dong_goi';
     ktDon.banDongGoi = currentUserData?.ten || '';
+    // Mốc video đóng gói: lần quét này -> lúc bấm hoàn thành (máy chủ ghi, không chặn việc đóng gói)
+    if (ktBatDauLuc) { const idDG = ktDon.id, bdDG = ktBatDauLuc; ktBatDauLuc = 0; goiWorkerAdmin('dg-video', { lam: 'moc', donId: idDG, bd: bdDG }).catch(() => {}); }
     bip(1800, 150);
     if (navigator.vibrate) navigator.vibrate(120);
     // Chỉ cộng phần CỐ ĐỊNH vào con số hiện trên màn hình. Phần trăm doanh thu
@@ -17812,6 +17816,145 @@ window.loHuyPhieu = async function(id) {
   } catch(e) { showToast('Không hủy được: ' + loiDeHieu(e.message), true); }
 };
 
+// ===== VIDEO ĐÓNG GÓI (camera Imou, thẻ nhớ) =====
+// Quét đơn ở "Kiểm tra đơn" = mốc bắt đầu, bấm "Hoàn thành đóng gói" = mốc kết thúc (lưu dgVideo ở máy chủ).
+// Xem: máy chủ xin Imou link HLS đúng đoạn (mặc định bắt đầu + 10 giây -> lúc hoàn thành), camera theo nhân viên đóng gói.
+// Video H.265 -> phát bằng hls.js (bản đầy đủ, 1.6+). Tải: gom chính các đoạn MP4 hls.js đã chuyển đổi -> file .mp4 (hình, không tiếng).
+// Imou phát lại gần như theo thời gian thực nên đoạn dài bao nhiêu thì gom mất chừng ấy.
+let dgV = null;   // { donId, ma, tu, den, bd, kt, nguoi, hls, init, parts, giay, xong, nhe }
+const dgGio = (ms) => new Date(ms).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const dgPhut = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function dgTaiHls() {
+  if (window.Hls) return Promise.resolve();
+  return new Promise((ok, loi) => { const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.6.15/hls.min.js'; s.onload = ok; s.onerror = () => loi(new Error('Không tải được trình phát video')); document.head.appendChild(s); });
+}
+function dgHuyPhat() {
+  try { dgV?.hls?.destroy(); } catch(e) {}
+  const v = document.getElementById('dg-video'); if (v) { try { v.pause(); v.removeAttribute('src'); v.load(); } catch(e) {} }
+  if (dgV) dgV.hls = null;
+}
+window.dgDong = function() { dgHuyPhat(); dgV = null; const m = document.getElementById('dg-modal'); if (m) m.style.display = 'none'; };
+window.dgXemVideo = async function(donId, tu, den) {
+  const d = (typeof allDonHangSan !== 'undefined' ? allDonHangSan : []).find(x => x.id === donId) || {};
+  const ma = d.maDonSan || d.maHoaDon || donId;
+  dgHuyPhat();
+  dgV = { donId, ma, nhe: dgV?.donId === donId ? dgV.nhe : false };
+  ddbMoKhung('dg-modal', `🎥 Video đóng gói · ${escHtml(ma)}`, '', `<div id="dg-than"><div class="loading">Đang xin video từ camera...</div></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="dgDong()">Đóng</button>
+     ${currentUserData?.role === 'admin' ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:0 12px" onclick="dgMoGanCamera()">⚙ Gán camera</button>` : ''}
+     <button class="btn-g" id="dg-nut-tai" style="flex:2;margin:0" disabled onclick="dgTaiVe()">⬇ Tải video</button>`);
+  const m = document.getElementById('dg-modal'); if (m) m.onclick = (e) => { if (e.target === m) dgDong(); };
+  ddbCanhGiua?.('dg-modal');
+  try {
+    const [kq] = await Promise.all([goiWorkerAdmin('dg-video', { lam: 'xem', donId, ...(tu ? { tu } : {}), ...(den ? { den } : {}), nhe: dgV.nhe }), dgTaiHls()]);
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    Object.assign(dgV, { tu: kq.tu, den: kq.den, bd: kq.bd, kt: kq.kt, nguoi: kq.nguoi, init: null, parts: [], giay: 0, xong: false });
+    dgVeThan();
+    dgPhat(kq.url);
+  } catch(e) {
+    const o = document.getElementById('dg-than');
+    if (o) o.innerHTML = `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(e.message))}</p>`;
+  }
+};
+function dgVeThan() {
+  const o = document.getElementById('dg-than'); if (!o || !dgV) return;
+  const nut = (txt, f) => `<button class="btn-xs" onclick="${f}">${txt}</button>`;
+  o.innerHTML = `
+    <video id="dg-video" controls muted playsinline style="width:100%;max-height:52vh;background:#000;border-radius:8px"></video>
+    <div style="font-size:12px;color:var(--text2);margin:6px 0">Đóng gói: ${escHtml(dgV.nguoi || '')} · quét ${dgGio(dgV.bd)} → hoàn thành ${dgGio(dgV.kt)}</div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:6px">
+      <b style="min-width:62px">Bắt đầu</b><span id="dg-tu" style="font-variant-numeric:tabular-nums;min-width:66px">${dgGio(dgV.tu)}</span>
+      ${nut('−10s', "dgChinh('tu',-10)")}${nut('+10s', "dgChinh('tu',10)")}</div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
+      <b style="min-width:62px">Kết thúc</b><span id="dg-den" style="font-variant-numeric:tabular-nums;min-width:66px">${dgGio(dgV.den)}</span>
+      ${nut('−10s', "dgChinh('den',-10)")}${nut('+10s', "dgChinh('den',10)")}
+      <button class="btn-xs" id="dg-nut-ap" style="margin-left:auto;display:none;background:#2563EB;color:#fff" onclick="dgApDung()">↻ Xem lại đoạn đã chỉnh</button></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;background:var(--bg);border-radius:8px;padding:7px 10px">
+      <span id="dg-tiendo">Đang ghi lại để tải: 0:00 / ${dgPhut((dgV.den - dgV.tu) / 1000)}</span>
+      <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" ${dgV.nhe ? 'checked' : ''} onchange="dgDoiNhe(this.checked)"> Bản nhẹ</label></div>
+    <div style="font-size:11.5px;color:var(--text2);margin-top:4px">Camera phát lại gần đúng tốc độ thật — đoạn dài bao nhiêu thì cần để mở chừng ấy rồi mới tải đủ. Muốn tải sớm thì bấm Tải để lấy phần đã ghi.</div>`;
+}
+function dgPhat(url) {
+  const v = document.getElementById('dg-video'); if (!v || !dgV) return;
+  const nutTai = document.getElementById('dg-nut-tai');
+  if (!window.Hls || !Hls.isSupported()) {   // Safari cũ: phát thẳng, không tải được
+    v.src = url; v.play().catch(() => {});
+    if (nutTai) { nutTai.disabled = true; nutTai.textContent = 'Máy này chỉ xem được'; }
+    return;
+  }
+  const hls = new Hls({ startPosition: 0, maxBufferLength: 1800, maxMaxBufferLength: 1800, backBufferLength: Infinity, liveSyncDurationCount: 1, manifestLoadingMaxRetry: 6, levelLoadingMaxRetry: 6 });
+  dgV.hls = hls;
+  const tong = (dgV.den - dgV.tu) / 1000;
+  const capNhat = () => {
+    const o = document.getElementById('dg-tiendo'); if (o) o.textContent = dgV.xong ? `✓ Đã ghi đủ ${dgPhut(dgV.giay)} — bấm Tải video` : `Đang ghi lại để tải: ${dgPhut(dgV.giay)} / ${dgPhut(tong)}`;
+    if (nutTai) { nutTai.disabled = !dgV.parts.length; nutTai.textContent = dgV.xong ? '⬇ Tải video' : (dgV.parts.length ? `⬇ Tải phần đã ghi (${dgPhut(dgV.giay)})` : '⬇ Tải video'); }
+  };
+  hls.on(Hls.Events.FRAG_PARSING_INIT_SEGMENT, (e, d) => { const t = d.tracks?.video || d.tracks?.audiovideo; if (t?.initSegment && !dgV.init) dgV.init = t.initSegment.slice(); });
+  hls.on(Hls.Events.BUFFER_APPENDING, (e, d) => { if ((d.type === 'video' || d.type === 'audiovideo') && d.data?.byteLength) dgV.parts.push(d.data.slice()); });
+  hls.on(Hls.Events.FRAG_BUFFERED, (e, d) => {
+    if (d.frag?.type !== 'main') return;
+    dgV.giay += Number(d.frag.duration) || 0;
+    if (dgV.giay >= tong - 2) dgV.xong = true;
+    capNhat();
+  });
+  hls.on(Hls.Events.LEVEL_UPDATED, (e, d) => { if (d.details && !d.details.live && dgV.parts.length) { dgV.xong = true; capNhat(); } });
+  hls.on(Hls.Events.ERROR, (e, d) => {
+    if (!d.fatal) return;
+    const o = document.getElementById('dg-tiendo');
+    if (o && !dgV.xong) o.textContent = dgV.parts.length ? `Camera ngừng gửi ở ${dgPhut(dgV.giay)} — có thể tải phần đã ghi` : 'Không phát được — camera có thể đang bận hoặc mất mạng, thử lại sau ít phút';
+    capNhat();
+  });
+  hls.loadSource(url);
+  hls.attachMedia(v);
+  v.play().catch(() => {});
+}
+window.dgChinh = function(k, giay) {
+  if (!dgV) return;
+  dgV[k] += giay * 1000;
+  if (dgV.den <= dgV.tu + 5000) { if (k === 'tu') dgV.tu = dgV.den - 5000; else dgV.den = dgV.tu + 5000; }
+  const o = document.getElementById('dg-' + k); if (o) o.textContent = dgGio(dgV[k]);
+  const ap = document.getElementById('dg-nut-ap'); if (ap) ap.style.display = '';
+};
+window.dgApDung = function() { if (dgV) dgXemVideo(dgV.donId, dgV.tu, dgV.den); };
+window.dgDoiNhe = function(nhe) { if (!dgV) return; dgV.nhe = nhe; dgXemVideo(dgV.donId, dgV.tu, dgV.den); };
+window.dgTaiVe = function() {
+  if (!dgV?.parts?.length) { showToast('Chưa có đoạn video nào để tải', true); return; }
+  const blob = new Blob([...(dgV.init ? [dgV.init] : []), ...dgV.parts], { type: 'video/mp4' });
+  const a = document.createElement('a');
+  const gio = new Date(dgV.tu + 7 * 3600000).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  a.href = URL.createObjectURL(blob); a.download = `donggoi_${String(dgV.ma).replace(/[^A-Za-z0-9_-]/g, '')}_${gio}.mp4`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  showToast(`Đã tải ${(blob.size / 1048576).toFixed(1)} MB${dgV.xong ? '' : ' (phần đã ghi)'}`);
+};
+// Admin: gán camera cho từng nhân viên đóng gói
+window.dgMoGanCamera = async function() {
+  ddbMoKhung('dg-cam-modal', '⚙ Camera đóng gói', 'Mỗi nhân viên đóng gói ở bàn nào thì chọn camera bàn đó', '<div id="dg-cam-than"><div class="loading">Đang tải danh sách camera...</div></div>',
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('dg-cam-modal').style.display='none'">Đóng</button>
+     <button class="btn-g" style="flex:2;margin:0" onclick="dgLuuCamera()">Lưu</button>`);
+  const m = document.getElementById('dg-cam-modal'); if (m) m.style.zIndex = '1500';
+  ddbCanhGiua?.('dg-cam-modal');
+  try {
+    const kq = await goiWorkerAdmin('dg-video', { lam: 'cam' });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    const camDG = [...kq.cams].sort((a, b) => (/đóng gói/i.test(b.ten) - /đóng gói/i.test(a.ten)) || a.ten.localeCompare(b.ten, 'vi'));
+    const o = document.getElementById('dg-cam-than'); if (!o) return;
+    o.innerHTML = kq.nvs.map(u => `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1;min-width:0;font-size:14px">${escHtml(u.ten)}</span>
+      <select data-uid="${escHtml(u.uid)}" class="dg-cam-chon" style="flex:0 0 52%;font-size:14px;padding:7px">
+        <option value="">— Không gán —</option>${camDG.map(c => `<option value="${escHtml(c.id)}" ${kq.theoNV[u.uid] === c.id ? 'selected' : ''}>${escHtml(c.ten)}${c.online ? '' : ' (offline)'}</option>`).join('')}</select></div>`).join('');
+  } catch(e) { const o = document.getElementById('dg-cam-than'); if (o) o.innerHTML = `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(e.message))}</p>`; }
+};
+window.dgLuuCamera = async function() {
+  const theoNV = {}; document.querySelectorAll('.dg-cam-chon').forEach(s => { if (s.value) theoNV[s.dataset.uid] = s.value; });
+  try {
+    const kq = await goiWorkerAdmin('dg-video', { lam: 'luucam', theoNV });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    document.getElementById('dg-cam-modal').style.display = 'none';
+    showToast(`Đã lưu camera cho ${kq.soNV} nhân viên`);
+  } catch(e) { showToast('Không lưu được: ' + loiDeHieu(e.message), true); }
+};
+
 let hangHoaSuaAnhBlob = null;
 
 window.xemTruocAnhSuaHangHoa = async function(input, id) {
@@ -18208,6 +18351,7 @@ const DANH_SACH_MODULE = [
     { key: 'tmdt_hoantra_duyet', ten: 'Duyệt đơn hoàn trả nhập kho không đủ (có hàng hỏng / mất)' },
     { key: 'quetdonggoi', ten: 'Đóng gói' },
     { key: 'tmdt_hoantat_donggoi', ten: 'Hoàn tất đóng gói (bấm nút ở Chờ đóng gói, không cần quét)' },
+    { key: 'tmdt_video', ten: 'Xem & tải video đóng gói (camera)' },
     { key: 'tmdt_xuly_huy', ten: 'Xử lý yêu cầu hủy của khách (Đồng ý / Từ chối)' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
@@ -18647,7 +18791,7 @@ let unsubscribeVaiTroDoc = null;
 // ===== CÔNG TẮC TÍNH NĂNG (cau_hinh/tinh_nang, Admin bật/tắt ở Thiết lập › Hệ thống) =====
 // Sàn TMĐT: nhân viên thấy mục nào là theo quyền tick trong Vai trò.
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'tmdt_xuly_huy', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'tmdt_video', 'tmdt_xuly_huy', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -27821,7 +27965,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v742</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v743</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -27879,7 +28023,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v742</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v743</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -27929,7 +28073,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v742</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v743</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -27942,7 +28086,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v742</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v743</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
