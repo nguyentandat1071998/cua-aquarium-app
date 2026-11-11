@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 751;
+  const APP_VERSION = 752;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2520,13 +2520,23 @@ function showLogin(msg = '') {
 
 // ===== THÔNG BÁO (chuông cạnh tên) =====
 // Máy chủ đếm phiếu chờ duyệt / phiếu tạm theo ĐÚNG quyền của người xem (không có quyền duyệt thì không hiện).
-let tbDuLieu = null, tbHen = null, tbDangTai = false;
+let tbDuLieu = null, tbHen = null, tbDangTai = false, tbSoKN = null;
 async function tbTai() {
   if (!currentUser || tbDangTai) return;
   tbDangTai = true;
   try {
     const kq = await goiWorkerAdmin('thong-bao', {});
-    if (kq.success) { tbDuLieu = kq; tbVeSo(); if (document.getElementById('tb-khung')) tbVeKhung(); }
+    if (kq.success) {
+      // Video mở hàng trả mới (chỉ Admin nhận): báo nổi khi có thêm
+      const kn = (kq.nhom || []).find(x => x.khoa === 'knvideo'), soKN = kn?.so || 0;
+      if (tbSoKN !== null && soKN > tbSoKN && kn?.ds?.[0]) {
+        const p = kn.ds[0], nd = `Đơn ${p.ma}${p.nguoi ? ' · ' + p.nguoi : ''}`;
+        showToast(`🎬 Có video mở hàng trả mới — ${nd}`);
+        try { if (window.Notification && Notification.permission === 'granted') new Notification('🎬 Video mở hàng trả mới', { body: nd, tag: 'knvideo-' + p.ma }); } catch(e) {}
+      }
+      tbSoKN = soKN;
+      tbDuLieu = kq; tbVeSo(); if (document.getElementById('tb-khung')) tbVeKhung();
+    }
   } catch(e) {} finally { tbDangTai = false; }
 }
 function tbVeSo() {
@@ -2546,15 +2556,16 @@ function tbVeKhung() {
       <b style="font-size:15px">Thông báo</b>
       <button class="btn-xs" onclick="event.stopPropagation();tbTai()">↻ Tải lại</button></div>
     ${!tbDuLieu ? '<div class="loading">Đang tải...</div>' : !g.length ? '<p style="font-size:13px;color:var(--text2);text-align:center;padding:18px 0">Không có việc nào đang chờ 🎉</p>'
-      : g.map(x => `<div class="tb-nhom" onclick="event.stopPropagation();tbMo('${x.mo}')">
+      : g.map(x => `<div class="tb-nhom" onclick="event.stopPropagation();${x.khoa === 'knvideo' ? `tbMoKN('${escHtml(x.ds?.[0]?.ma || '')}')` : `tbMo('${x.mo}')`}">
           <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
             <b style="font-size:13.5px">${escHtml(x.ten)}</b>
             <span style="background:#DC2626;color:#fff;border-radius:10px;padding:1px 8px;font-size:12px;font-weight:700">${x.so}</span></div>
-          ${(x.ds || []).map(p => `<div style="font-size:12px;color:var(--text2);margin-top:3px;display:flex;gap:6px"><span style="color:var(--text);font-weight:600">${escHtml(p.ma)}</span>
+          ${(x.ds || []).map(p => `<div style="font-size:12px;color:var(--text2);margin-top:3px;display:flex;gap:6px${x.khoa === 'knvideo' ? ';cursor:pointer' : ''}"${x.khoa === 'knvideo' ? ` onclick="event.stopPropagation();tbMoKN('${escHtml(p.ma)}')"` : ''}><span style="color:var(--text);font-weight:600">${escHtml(p.ma)}</span>
             <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.nguoi || '')}${p.kho ? ' · ' + (p.kho === 'ch' ? 'Cửa hàng' : 'Kho Online') : ''}</span><span>${gio(p.luc)}</span></div>`).join('')}
           ${x.so > (x.ds || []).length ? `<div style="font-size:11.5px;color:var(--text2);margin-top:3px">… và ${x.so - x.ds.length} phiếu nữa</div>` : ''}
         </div>`).join('')}`;
 }
+window.tbMoKN = function(ma) { document.getElementById('tb-khung')?.remove(); if (ma) knMoHoSo(ma, ma); };
 window.tbBatTat = function() {
   let k = document.getElementById('tb-khung');
   if (k) { k.remove(); return; }
@@ -17958,7 +17969,7 @@ window.dgXemVideo = async function(donId, tu, den, opt = {}) {
   ddbMoKhung('dg-modal', `🎥 Video đóng gói · ${escHtml(ma)}`, '', `<div id="dg-than"><div class="loading">Đang xin video từ camera...</div></div>`,
     `<button class="btn-outline" style="flex:1" onclick="dgDong()">Đóng</button>
      ${currentUserData?.role === 'admin' ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:0 12px" onclick="dgMoGanCamera()">⚙ Gán camera</button>` : ''}
-     ${dgV.kn && coQuyen('kn_donggoi') ? `<button class="btn-outline" id="dg-nut-kn" style="flex:2;margin:0;color:#1D4ED8;border-color:#93C5FD" disabled onclick="dgLuuKN()">☁ Lưu vào hồ sơ</button>` : ''}
+     ${dgV.kn && coQuyen('kn_donggoi') ? `<button class="btn-outline" id="dg-nut-kn" style="flex:2;margin:0;color:#1D4ED8;border-color:#93C5FD" disabled onclick="dgLuuKN()">☁ Lưu vào Thư mục Video</button>` : ''}
      <button class="btn-g" id="dg-nut-tai" style="flex:2;margin:0" disabled onclick="dgTaiVe()">⬇ Tải video</button>`);
   const m = document.getElementById('dg-modal'); if (m) { m.style.zIndex = '1400'; m.onclick = (e) => { if (e.target === m) dgDong(); }; }
   ddbCanhGiua?.('dg-modal');
@@ -18008,7 +18019,7 @@ function dgPhat(url) {
   const capNhat = () => {
     const o = document.getElementById('dg-tiendo'); if (o) o.textContent = dgV.xong ? `✓ Đã ghi đủ ${dgPhut(dgV.giay)} — bấm Tải video` : `Đang ghi lại để tải: ${dgPhut(dgV.giay)} / ${dgPhut(tong)}`;
     if (nutTai) { nutTai.disabled = !dgV.parts.length; nutTai.textContent = dgV.xong ? '⬇ Tải video' : (dgV.parts.length ? `⬇ Tải phần đã ghi (${dgPhut(dgV.giay)})` : '⬇ Tải video'); }
-    const nutKN = document.getElementById('dg-nut-kn'); if (nutKN && !nutKN.dataset.dangTai) { nutKN.disabled = !dgV.parts.length; nutKN.textContent = dgV.xong ? '☁ Lưu vào hồ sơ' : (dgV.parts.length ? `☁ Lưu phần đã ghi (${dgPhut(dgV.giay)})` : '☁ Lưu vào hồ sơ'); }
+    const nutKN = document.getElementById('dg-nut-kn'); if (nutKN && !nutKN.dataset.dangTai) { nutKN.disabled = !dgV.parts.length; nutKN.textContent = dgV.xong ? '☁ Lưu vào Thư mục Video' : (dgV.parts.length ? `☁ Lưu phần đã ghi (${dgPhut(dgV.giay)})` : '☁ Lưu vào hồ sơ'); }
   };
   hls.on(Hls.Events.FRAG_PARSING_INIT_SEGMENT, (e, d) => { const t = d.tracks?.video || d.tracks?.audiovideo; if (t?.initSegment && !dgV.init) dgV.init = t.initSegment.slice(); });
   hls.on(Hls.Events.BUFFER_APPENDING, (e, d) => { if ((d.type === 'video' || d.type === 'audiovideo') && d.data?.byteLength) dgV.parts.push(d.data.slice()); });
@@ -18066,23 +18077,23 @@ window.dgTaiVe = function() {
 };
 window.dgLuuKN = async function() {
   if (!dgV?.parts?.length || !dgV.kn) return;
-  if (!coQuyen('kn_donggoi')) { showToast('Bạn chưa có quyền lưu video đóng gói vào hồ sơ', true); return; }
+  if (!coQuyen('kn_donggoi')) { showToast('Bạn chưa có quyền lưu video đóng gói vào Thư mục Video', true); return; }
   const nut = document.getElementById('dg-nut-kn');
   const blob = new Blob([...(dgV.init ? [dgV.init] : []), ...dgV.parts], { type: 'video/mp4' });
   const ma = dgV.kn, xong = dgV.xong;
-  if (!xong && !await hoiXacNhan(`Video mới ghi được ${dgPhut(dgV.giay)} / ${dgPhut((dgV.den - dgV.tu) / 1000)}.\n\nLưu phần đã ghi vào hồ sơ? (Để mở tới khi báo "Đã ghi đủ" rồi lưu sẽ đủ cả đoạn.)`, { nutDongY: 'Lưu phần này' })) return;
+  if (!xong && !await hoiXacNhan(`Video mới ghi được ${dgPhut(dgV.giay)} / ${dgPhut((dgV.den - dgV.tu) / 1000)}.\n\nLưu phần đã ghi vào Thư mục Video? (Để mở tới khi báo "Đã ghi đủ" rồi lưu sẽ đủ cả đoạn.)`, { nutDongY: 'Lưu phần này' })) return;
   if (nut) { nut.disabled = true; nut.dataset.dangTai = '1'; }
   try {
     await knTaiBlob(blob, `VideoDongGoi_${ma}.mp4`, ma, 'video/mp4', (pct) => { if (nut) nut.textContent = `☁ Đang lưu ${pct}%`; });
     showToast(`Đã lưu VideoDongGoi_${ma}.mp4 vào thư mục ${ma}`);
-    if (nut) nut.textContent = '✓ Đã lưu vào hồ sơ';
+    if (nut) nut.textContent = '✓ Đã lưu vào Thư mục Video';
     if (knMo?.ma === ma) knTai();
-  } catch(e) { alert('Chưa lưu được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = '☁ Lưu vào hồ sơ'; } }
+  } catch(e) { alert('Chưa lưu được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = '☁ Lưu vào Thư mục Video'; } }
   finally { if (nut) delete nut.dataset.dangTai; }
 };
 
-// ===== HỒ SƠ KHIẾU NẠI (Đơn hoàn trả) =====
-// Google Drive / Khiếu nại / <mã đơn>: VideoMoHangTra_<mã>, VideoDongGoi_<mã>.
+// ===== THƯ MỤC VIDEO (Đơn hoàn trả) =====
+// Google Drive / Thư mục Video / <mã đơn>: AnhMaDon_<mã> (chụp trước khi khui), VideoMoHangTra_<mã>, VideoDongGoi_<mã>.
 // Quyền: kn_quay (quay video mở hàng + ghi chú), kn_donggoi (xem & lưu video đóng gói), kn_link (thấy / sao chép link thư mục).
 //
 // VIDEO MỞ HÀNG KHÔNG ĐƯỢC MẤT (kiện đã khui thì không quay lại được):
@@ -18092,9 +18103,14 @@ window.dgLuuKN = async function() {
 const knCoQuyen = () => coQuyen('kn_quay') || coQuyen('kn_donggoi') || coQuyen('kn_link');
 const KN_PHAN = 5 * 1024 * 1024;   // bội số 256KB theo yêu cầu của Drive
 const knNgu = (ms) => new Promise(r => setTimeout(r, ms));
-const knDuoi = (loai) => /mp4/.test(loai) ? 'mp4' : /quicktime|mov/.test(loai) ? 'mov' : 'webm';
+const knDuoi = (loai) => /jpe?g/.test(loai) ? 'jpg' : /png/.test(loai) ? 'png' : /hei[cf]/.test(loai) ? 'heic' : /webp/.test(loai) ? 'webp'
+  : /mp4/.test(loai) ? 'mp4' : /quicktime|mov/.test(loai) ? 'mov' : 'webm';
+// Phiên trên máy: kieu 'anh' (ảnh mã đơn) hoặc mặc định là video mở hàng
+const knLaAnh = (p) => p?.kieu === 'anh';
+const knTenFile = (p) => `${knLaAnh(p) ? 'AnhMaDon_' : 'VideoMoHangTra_'}${p.ma}.${knDuoi(p.loai)}`;
+const knNhan = (p) => knLaAnh(p) ? 'Ảnh mã đơn' : 'Video mở hàng';
 const knMB = (b) => (b / 1048576).toFixed(1) + ' MB';
-let knMo = null;         // cửa sổ hồ sơ đang mở: { ma, donId, thuMuc, files, ghiChu, dangTai, loi }
+let knMo = null;         // cửa sổ Thư mục Video đang mở: { ma, donId, thuMuc, files, ghiChu, dangTai, loi, anhTam }
 let knQ = null;          // phiên đang quay
 const knDangTai = new Map();   // id phiên -> { ma, pct, trangThai }
 
@@ -18183,13 +18199,13 @@ const knTaiBlob = (blob, ten, ma, loai, tienDo) => knDayLen(blob, ma, ten, loai,
 async function knTaiPhien(id) {
   if (knDangTai.has(id)) return;
   let p = await knDocPhien(id); if (!p) return;
-  knDangTai.set(id, { ma: p.ma, pct: 0, trangThai: 'dang_tai' }); knVeThanhTai(); knVe();
+  knDangTai.set(id, { ma: p.ma, pct: 0, trangThai: 'dang_tai', nhan: knNhan(p) }); knVeThanhTai(); knVe();
   try {
     const doan = await knDocDoan(id);
     const blob = new Blob(doan, { type: p.loai });
-    if (!blob.size) throw new Error('Video trên máy bị trống');
+    if (!blob.size) throw new Error(knNhan(p) + ' trên máy bị trống');
     p = { ...p, trangThai: 'dang_tai', size: blob.size, soDoan: doan.length, loi: '' }; await knLuuPhien(p);
-    const ten = `VideoMoHangTra_${p.ma}.${knDuoi(p.loai)}`;
+    const ten = knTenFile(p);
     await knDayLen(blob, p.ma, ten, p.loai, (pct) => { const x = knDangTai.get(id); if (x) { x.pct = pct; knVeThanhTai(); knVeTienDoMo(); } }, p.uploadUrl,
       async (url, off) => { p = { ...p, uploadUrl: url, offset: off }; await knLuuPhien(p).catch(() => {}); });
     // Kiểm lại trên Drive: có file đúng tên, đúng kích thước mới xóa bản trên máy
@@ -18199,25 +18215,26 @@ async function knTaiPhien(id) {
     await knXoaPhienMay(id);
     knDangTai.delete(id);
     showToast(`✓ Đã lưu ${ten} lên Drive (${knMB(blob.size)})`);
+    if (!knLaAnh(p)) goiWorkerAdmin('dg-video', { lam: 'knvideo', ma: p.ma }).catch(() => {});   // báo Admin (chuông thông báo)
     if (knMo?.ma === p.ma) await knTai();
   } catch(e) {
     p = { ...(await knDocPhien(id).catch(() => null) || p), trangThai: 'loi', loi: String(e.message || e).slice(0, 300) };
     await knLuuPhien(p).catch(() => {});
     knDangTai.delete(id);
-    alert(`Chưa tải được video mở hàng ${p.ma} lên Drive:\n${loiDeHieu(p.loi)}\n\nVideo VẪN LƯU TRÊN MÁY NÀY — mở lại Hồ sơ khiếu nại để bấm "Tải lên tiếp" hoặc "Lưu về máy".`);
+    alert(`Chưa tải được ${knNhan(p).toLowerCase()} ${p.ma} lên Drive:\n${loiDeHieu(p.loi)}\n\n${knLaAnh(p) ? 'Ảnh' : 'Video'} VẪN LƯU TRÊN MÁY NÀY — mở lại Thư mục Video của đơn để bấm "Tải lên tiếp" hoặc "Lưu về máy".`);
   }
   knVeThanhTai(); knVe();
 }
-// Thanh nhỏ dưới màn hình: video đang tải lên (vẫn chạy khi đóng cửa sổ hồ sơ)
+// Thanh nhỏ dưới màn hình: ảnh / video đang tải lên (vẫn chạy khi đóng cửa sổ Thư mục Video)
 function knVeThanhTai() {
   let el = document.getElementById('kn-thanh-tai');
   const ds = [...knDangTai.values()];
   if (!ds.length) { if (el) el.remove(); return; }
   if (!el) { el = document.createElement('div'); el.id = 'kn-thanh-tai'; el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:1700;background:#1E3A8A;color:#fff;border-radius:20px;padding:8px 16px;font-size:13px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.3);max-width:92vw'; document.body.appendChild(el); }
-  el.textContent = ds.map(x => `⬆ Video mở hàng ${x.ma}: ${x.pct}%`).join(' · ') + ' — đừng đóng app';
+  el.textContent = ds.map(x => `⬆ ${x.nhan || 'Video mở hàng'} ${x.ma}: ${x.pct}%`).join(' · ') + ' — đừng đóng app';
 }
 function knVeTienDoMo() { document.querySelectorAll('.kn-pt').forEach(e => { const x = knDangTai.get(e.dataset.id); if (x) e.textContent = `Đang tải lên ${x.pct}%...`; }); const o = document.getElementById('kn-tien-do'); if (!o || !knMo) return; const x = [...knDangTai.values()].find(v => v.ma === knMo.ma); o.textContent = x ? `Đang tải lên Drive: ${x.pct}%` : ''; }
-// Phiên còn trên máy (chưa lên Drive) — tự tải tiếp khi mở Đơn hoàn trả / hồ sơ
+// Phiên còn trên máy (chưa lên Drive) — tự tải tiếp khi mở Đơn hoàn trả / Thư mục Video
 async function knPhienCho(ma) {
   const ds = await knDsPhien().catch(() => []);
   return ds.filter(p => (!ma || p.ma === ma) && !(knQ && knQ.id === p.id));
@@ -18230,19 +18247,19 @@ window.knTaiTiep = (id) => knTaiPhien(id);
 window.knLuuVeMay = async function(id) {
   const p = await knDocPhien(id); if (!p) return;
   const blob = new Blob(await knDocDoan(id), { type: p.loai });
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `VideoMoHangTra_${p.ma}.${knDuoi(p.loai)}`;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = knTenFile(p);
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 120000);
   showToast(`Đã lưu về máy ${knMB(blob.size)}`);
 };
 window.knBoPhien = async function(id) {
   const p = await knDocPhien(id); if (!p) return;
-  if (!await hoiXacNhan(`Xóa video mở hàng ${p.ma} (${knMB(p.size || 0)}) CHƯA lên Drive khỏi máy này?\n\nXóa rồi là mất hẳn — chỉ xóa khi đã Lưu về máy hoặc chắc chắn không cần.`, { nutDongY: 'Xóa khỏi máy' })) return;
+  if (!await hoiXacNhan(`Xóa ${knNhan(p).toLowerCase()} ${p.ma} (${knMB(p.size || 0)}) CHƯA lên Drive khỏi máy này?\n\nXóa rồi là mất hẳn — chỉ xóa khi đã Lưu về máy hoặc chắc chắn không cần.`, { nutDongY: 'Xóa khỏi máy' })) return;
   await knXoaPhienMay(id); showToast('Đã xóa bản trên máy'); knVe();
 };
 
 window.knMoHoSo = async function(ma, donId) {
   ma = String(ma || '').trim(); if (!ma) return;
-  if (!knCoQuyen()) { showToast('Bạn chưa có quyền hồ sơ khiếu nại', true); return; }
+  if (!knCoQuyen()) { showToast('Bạn chưa có quyền Thư mục Video', true); return; }
   knMo = { ma, donId: donId || ma, files: [], dangTai: true, cho: [] };
   knVe();
   await knTai();
@@ -18256,7 +18273,7 @@ async function knTai() {
     if (knMo?.ma !== ma) return;
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
     Object.assign(knMo, { thuMuc: { id: kq.id, link: kq.link || '' }, files: kq.files || [], ghiChu: kq.ghiChu || '', nguoiGhiChu: kq.nguoiGhiChu || '', cho });
-    if (knMo.ghiChuSua === undefined) knMo.ghiChuSua = knMo.ghiChu;
+    if (currentUserData?.role === 'admin') setTimeout(() => tbTai?.(), 1000);   // Admin mở xem -> tắt thông báo video mới
   } catch(e) { if (knMo?.ma === ma) knMo.loi = e.message; }
   if (knMo?.ma === ma) { knMo.dangTai = false; knVe(); }
   if (coQuyen('kn_quay')) for (const p of (knMo?.cho || [])) if (!knDangTai.has(p.id) && p.trangThai !== 'loi') knTaiPhien(p.id);
@@ -18270,28 +18287,36 @@ function knVe() {
       <span style="font-size:18px">${f ? '✅' : '⬜'}</span>
       <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${nhan}</div>
         <div style="font-size:12px;color:var(--text2);word-break:break-all">${f ? `${f.xem ? `<a href="${escHtml(f.xem)}" target="_blank" rel="noopener">${escHtml(f.ten)}</a>` : escHtml(f.ten)} · ${knMB(f.size)}` : 'Chưa có'}</div></div></div>`; };
-  const choHtml = (M.cho || []).map(p => { const t = knDangTai.get(p.id);
+  const choHtml = (anh) => (M.cho || []).filter(p => knLaAnh(p) === anh).map(p => { const t = knDangTai.get(p.id);
     return `<div style="border:1.5px solid #F59E0B;background:#FFFBEB;border-radius:8px;padding:8px 10px;margin:8px 0;font-size:12.5px">
-      <b>⚠ Video mở hàng còn trên máy này, chưa lên Drive</b> · ${knMB(p.size || 0)} · quay lúc ${new Date(p.batDau).toLocaleString('vi-VN')}
+      <b>⚠ ${knNhan(p)} còn trên máy này, chưa lên Drive</b> · ${knMB(p.size || 0)} · ${anh ? 'chụp' : 'quay'} lúc ${new Date(p.batDau).toLocaleString('vi-VN')}
       ${p.loi && !t ? `<div style="color:#B91C1C;margin-top:3px">Lỗi lần trước: ${escHtml(loiDeHieu(p.loi))}</div>` : ''}
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
         ${t ? `<b class="kn-pt" data-id="${p.id}" style="color:#1D4ED8">Đang tải lên ${t.pct}%...</b>` : `<button class="btn-xs" style="background:#2563EB;color:#fff;border-color:#2563EB" onclick="knTaiTiep('${p.id}')">⬆ Tải lên tiếp</button>`}
         <button class="btn-xs" onclick="knLuuVeMay('${p.id}')">💾 Lưu về máy</button>
         ${t ? '' : `<button class="btn-xs danger" onclick="knBoPhien('${p.id}')">Xóa khỏi máy</button>`}</div></div>`; }).join('');
-  ddbMoKhung('kn-modal', `📁 Hồ sơ khiếu nại · ${escHtml(M.ma)}`, 'Google Drive / Khiếu nại / ' + escHtml(M.ma),
+  const fAnh = coFile('AnhMaDon_');
+  const anhSrc = M.anhTam || (fAnh?.xem ? `https://drive.google.com/thumbnail?id=${encodeURIComponent(fAnh.id)}&sz=w480` : '');
+  ddbMoKhung('kn-modal', `📁 Thư mục Video · ${escHtml(M.ma)}`, 'Google Drive / Thư mục Video / ' + escHtml(M.ma),
     M.dangTai && !M.thuMuc ? '<div class="loading">Đang mở thư mục trên Google Drive...</div>'
     : M.loi && !M.thuMuc ? `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(M.loi))}</p>`
-    : `${dongFile('VideoMoHangTra_', '🎬 Video mở hàng trả')}
-      ${choHtml}
+    : `${dongFile('AnhMaDon_', '📷 Ảnh mã đơn <span style="font-weight:400;color:var(--text2)">· chụp trước khi khui hàng</span>')}
+      ${anhSrc ? `<div style="margin:6px 0"><img src="${escHtml(anhSrc)}" alt="Ảnh mã đơn" style="max-width:100%;max-height:170px;border-radius:8px;border:1px solid var(--border)" onerror="this.parentNode.remove()"></div>` : ''}
+      ${choHtml(true)}
+      ${qQuay ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
+        <label class="btn-g" style="flex:2;margin:0;text-align:center;cursor:pointer;background:#2563EB">📷 Chụp ảnh mã đơn<input type="file" accept="image/*" capture="environment" style="display:none" onchange="knChonAnh(this)"></label>
+        <label class="btn-outline" style="flex:1;margin:0;text-align:center;cursor:pointer">🖼 Chọn ảnh có sẵn<input type="file" accept="image/*" style="display:none" onchange="knChonAnh(this)"></label></div>` : ''}
+      ${dongFile('VideoMoHangTra_', '🎬 Video mở hàng trả')}
+      ${choHtml(false)}
       ${qQuay ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
         <button class="btn-g" style="flex:2;margin:0;background:#DC2626" onclick="knQuay()">⏺ Quay video mở hàng</button>
         <label class="btn-outline" style="flex:1;margin:0;text-align:center;cursor:pointer">📂 Chọn video có sẵn<input type="file" accept="video/*" style="display:none" onchange="knChonVideo(this)"></label></div>` : ''}
       <div id="kn-tien-do" style="font-size:12.5px;font-weight:600;color:#1D4ED8"></div>
-      <div style="margin:6px 0 12px">
-        <div style="font-size:12.5px;font-weight:600;margin-bottom:3px">📝 Ghi chú video mở hàng${M.nguoiGhiChu ? ` <span style="font-weight:400;color:var(--text2)">· ${escHtml(M.nguoiGhiChu)}</span>` : ''}</div>
-        ${qQuay ? `<textarea id="kn-ghichu" rows="2" placeholder="VD: thiếu 1 bóng đèn, hộp móp, cá chết 2 con..." oninput="if(knMo)knMo.ghiChuSua=this.value" style="width:100%;box-sizing:border-box;padding:8px;font-size:13.5px;border:1px solid var(--border);border-radius:8px">${escHtml(M.ghiChuSua ?? M.ghiChu ?? '')}</textarea>
-          <div style="text-align:right;margin-top:4px"><button class="btn-xs" id="kn-nut-gc" onclick="knLuuGhiChu()">Lưu ghi chú</button></div>`
-          : `<div style="font-size:13px;white-space:pre-wrap">${M.ghiChu ? escHtml(M.ghiChu) : '<span style="color:var(--text2)">Chưa có</span>'}</div>`}</div>
+      <div style="margin:8px 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b style="font-size:13.5px">📝 Ghi chú video mở hàng</b>${M.nguoiGhiChu ? `<span style="font-size:12px;color:var(--text2)">${escHtml(M.nguoiGhiChu)}</span>` : ''}</div>
+        <div style="font-size:13.5px;white-space:pre-wrap;word-break:break-word;margin-top:6px">${M.ghiChu ? escHtml(M.ghiChu) : '<span style="color:var(--text2)">Chưa có ghi chú</span>'}</div>
+        ${qQuay ? `<button class="btn-outline" style="width:100%;margin:10px 0 0;padding:11px;font-size:14.5px;font-weight:600;background:var(--surface)" onclick="knMoGhiChu()">${M.ghiChu ? '✏️ Sửa ghi chú' : '➕ Thêm ghi chú'}</button>` : ''}</div>
       ${dongFile('VideoDongGoi_', '📦 Video đóng gói')}
       ${qDG ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
         <button class="btn-outline" style="flex:1;margin:0" onclick="dgXemVideo('${escHtml(M.donId)}', null, null, { kn: '${escHtml(M.ma)}' })">🎥 Xem & lưu video đóng gói</button></div>` : ''}
@@ -18303,24 +18328,81 @@ function knVe() {
   const m = document.getElementById('kn-modal'); if (m) { m.style.display = 'flex'; m.onclick = (e) => { if (e.target === m) knDong(); }; }
   knVeTienDoMo();
 }
-window.knDong = function() { const m = document.getElementById('kn-modal'); if (m) m.style.display = 'none'; knMo = null; };
+window.knDong = function() {
+  const m = document.getElementById('kn-modal'); if (m) m.style.display = 'none';
+  const g = document.getElementById('kn-gc-modal'); if (g) g.style.display = 'none';
+  try { if (knMo?.anhTam) URL.revokeObjectURL(knMo.anhTam); } catch(e) {}
+  knMo = null;
+};
 window.knChepLink = async function() {
   const l = knMo?.thuMuc?.link; if (!l) return;
   try { await navigator.clipboard.writeText(l); showToast('Đã sao chép link thư mục'); } catch(e) { prompt('Sao chép link:', l); }
 };
+// Ghi chú video mở hàng: cửa sổ riêng, ô nhập lớn + nút Lưu to
+window.knMoGhiChu = function() {
+  if (!knMo) return;
+  if (!coQuyen('kn_quay')) { showToast('Bạn chưa có quyền ghi chú video mở hàng', true); return; }
+  ddbMoKhung('kn-gc-modal', `📝 Ghi chú video mở hàng · ${escHtml(knMo.ma)}`, 'Ghi rõ tình trạng kiện khi khui: thiếu / sai / hỏng gì',
+    `<textarea id="kn-gc-o" rows="7" placeholder="VD: thiếu 1 bóng đèn, hộp móp góc, cá chết 2 con..." style="width:100%;box-sizing:border-box;padding:10px;font-size:15px;line-height:1.45;border:1px solid var(--border);border-radius:10px;resize:vertical">${escHtml(knMo.ghiChu || '')}</textarea>`,
+    `<button class="btn-outline" style="flex:1;margin:0" onclick="knDongGhiChu()">Hủy</button>
+     <button class="btn-g" id="kn-nut-gc" style="flex:2;margin:0;padding:13px;font-size:16px;font-weight:700" onclick="knLuuGhiChu()">💾 Lưu ghi chú</button>`);
+  ddbCanhGiua?.('kn-gc-modal');
+  const m = document.getElementById('kn-gc-modal');
+  if (m) { m.style.zIndex = '1450'; m.style.display = 'flex'; m.onclick = (e) => { if (e.target === m) knDongGhiChu(); }; }
+  const o = document.getElementById('kn-gc-o'); if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+};
+window.knDongGhiChu = function() { const m = document.getElementById('kn-gc-modal'); if (m) m.style.display = 'none'; };
 window.knLuuGhiChu = async function() {
   if (!knMo) return;
+  const o = document.getElementById('kn-gc-o'); const ghiChu = String(o?.value ?? '').trim();
   const nut = document.getElementById('kn-nut-gc'); if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
   try {
-    const ghiChu = String(knMo.ghiChuSua ?? '').trim();
     const kq = await goiWorkerAdmin('dg-video', { lam: 'knghichu', ma: knMo.ma, ghiChu });
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
-    knMo.ghiChu = ghiChu; knMo.nguoiGhiChu = currentUserData?.ten || ''; showToast('Đã lưu ghi chú'); knVe();
-  } catch(e) { showToast('Chưa lưu được ghi chú: ' + loiDeHieu(e.message), true); if (nut) { nut.disabled = false; nut.textContent = 'Lưu ghi chú'; } }
+    knMo.ghiChu = ghiChu; knMo.nguoiGhiChu = currentUserData?.ten || '';
+    knDongGhiChu(); showToast('Đã lưu ghi chú'); knVe();
+  } catch(e) { showToast('Chưa lưu được ghi chú: ' + loiDeHieu(e.message), true); if (nut) { nut.disabled = false; nut.textContent = '💾 Lưu ghi chú'; } }
 };
+// Ảnh mã đơn: chụp TRƯỚC khi khui. Cất vào bộ nhớ máy trước rồi mới tải lên (giống video), lưu tên AnhMaDon_<mã>.jpg
+async function knNenAnh(f) {
+  const bm = await createImageBitmap(f, { imageOrientation: 'from-image' }).catch(() => createImageBitmap(f));
+  const k = Math.min(1, 2560 / Math.max(bm.width, bm.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bm.width * k); c.height = Math.round(bm.height * k);
+  c.getContext('2d').drawImage(bm, 0, 0, c.width, c.height); try { bm.close?.(); } catch(e) {}
+  const b = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.9));
+  if (!b?.size) throw new Error('Không nén được ảnh');
+  return b;
+}
+window.knChonAnh = async function(inp) {
+  const f = inp.files?.[0]; inp.value = ''; if (!f || !knMo) return;
+  if (!coQuyen('kn_quay')) { showToast('Bạn chưa có quyền chụp ảnh / quay video mở hàng', true); return; }
+  if (knMo.files.some(x => x.ten.startsWith('AnhMaDon_')) && !await hoiXacNhan('Đơn này đã có ảnh mã đơn trên Drive.\n\nLưu ảnh mới sẽ THAY ảnh cũ (ảnh cũ vào thùng rác Drive, khôi phục được 30 ngày). Tiếp tục?', { nutDongY: 'Thay ảnh' })) return;
+  const ma = knMo.ma;
+  let blob = f; try { blob = await knNenAnh(f); } catch(e) {}
+  const loai = (blob.type || f.type || 'image/jpeg').split(';')[0];
+  try { if (knMo.anhTam) URL.revokeObjectURL(knMo.anhTam); knMo.anhTam = URL.createObjectURL(blob); } catch(e) {}
+  const id = 'a' + Date.now();
+  try {
+    await knLuuDoan(id, 0, blob);
+    await knLuuPhien({ id, ma, kieu: 'anh', loai, batDau: Date.now(), ketThuc: Date.now(), trangThai: 'cho_tai', size: blob.size, soDoan: 1, nguoi: currentUserData?.ten || '' });
+  } catch(e) {   // không cất được vào máy -> tải thẳng
+    try { await knTaiBlob(blob, `AnhMaDon_${ma}.${knDuoi(loai)}`, ma, loai); showToast('Đã lưu ảnh mã đơn lên Drive'); if (knMo?.ma === ma) knTai(); }
+    catch(e2) { alert('Chưa tải được ảnh mã đơn: ' + loiDeHieu(e2.message) + '\n\nChụp lại rồi thử lại.'); }
+    return;
+  }
+  if (knMo?.ma === ma) { knMo.cho = await knPhienCho(ma); knVe(); }
+  knTaiPhien(id);
+};
+// Nhắc chụp ảnh mã đơn trước khi quay video mở hàng
+async function knHoiChuaCoAnh() {
+  if (!knMo) return false;
+  if (knMo.files.some(f => f.ten.startsWith('AnhMaDon_')) || (knMo.cho || []).some(knLaAnh)) return true;
+  return hoiXacNhan('Chưa có ảnh mã đơn.\n\nNên chụp ảnh mã đơn (tem vận đơn trên kiện) TRƯỚC khi khui hàng.\n\nVẫn quay video luôn?', { nutDongY: 'Vẫn quay video' });
+}
 // Video quay sẵn bằng app camera của điện thoại: cũng cất vào bộ nhớ máy trước rồi mới tải lên (mất mạng không mất)
 window.knChonVideo = async function(inp) {
   const f = inp.files?.[0]; inp.value = ''; if (!f || !knMo) return;
+  if (!await knHoiChuaCoAnh()) return;
   if (!await knHoiThayVideoCu()) return;
   const id = 'c' + Date.now();
   try {
@@ -18348,6 +18430,7 @@ window.knQuay = async function() {
   if (!knMo || knQ) return;
   if (!coQuyen('kn_quay')) { showToast('Bạn chưa có quyền quay video mở hàng trả', true); return; }
   if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { alert('Máy này không quay được trong app — dùng app Camera của điện thoại rồi bấm "Chọn video có sẵn".'); return; }
+  if (!await knHoiChuaCoAnh()) return;
   if (!await knHoiThayVideoCu()) return;
   try { await knDB(); } catch(e) { if (!await hoiXacNhan('Không mở được bộ nhớ máy để giữ video an toàn (có thể đang ở chế độ ẩn danh).\n\nVẫn quay? Nếu sập app giữa chừng sẽ mất video — nên dùng app Camera của điện thoại rồi bấm "Chọn video có sẵn".', { nutDongY: 'Vẫn quay' })) return; }
   const ma = knMo.ma;
@@ -18875,9 +18958,9 @@ const DANH_SACH_MODULE = [
     { key: 'quetdonggoi', ten: 'Đóng gói' },
     { key: 'tmdt_hoantat_donggoi', ten: 'Hoàn tất đóng gói (bấm nút ở Chờ đóng gói, không cần quét)' },
     { key: 'tmdt_video', ten: 'Xem & tải video đóng gói (camera)' },
-    { key: 'kn_quay', ten: 'Khiếu nại: quay / tải video mở hàng trả + ghi chú' },
-    { key: 'kn_donggoi', ten: 'Khiếu nại: xem & lưu video đóng gói vào hồ sơ' },
-    { key: 'kn_link', ten: 'Khiếu nại: xem / sao chép link thư mục Drive' },
+    { key: 'kn_quay', ten: 'Thư mục Video: chụp ảnh mã đơn, quay / tải video mở hàng trả + ghi chú' },
+    { key: 'kn_donggoi', ten: 'Thư mục Video: xem & lưu video đóng gói' },
+    { key: 'kn_link', ten: 'Thư mục Video: xem / sao chép link thư mục Drive' },
     { key: 'tmdt_xuly_huy', ten: 'Xử lý yêu cầu hủy của khách (Đồng ý / Từ chối)' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
     { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
@@ -22386,7 +22469,7 @@ function hhoVe() {
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
             ${hhoChuaNK(d) ? `<span style="align-self:center;font-size:12px;font-weight:700;color:#B45309;margin-right:auto">⚠ Chưa nhập kho trong app</span>` : ''}
             ${(hhoTab !== 'xong' || hhoChuaNK(d)) && hhoDuocDuyet() ? `<button class="btn-outline" title="Đơn đã xử lý xong ở nơi khác — ẩn khỏi danh sách" style="width:auto!important;flex:0 0 auto;margin:0 auto 0 0;padding:8px 12px;color:var(--text2)" onclick="hhoAn('${k}')">Đã xử lý · Ẩn</button>` : ''}
-            ${knCoQuyen() ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 12px;color:#1D4ED8;border-color:#93C5FD" onclick="knMoHoSo('${escHtml(d.orderId)}','${escHtml(d.orderId)}')">📁 Khiếu nại</button>` : ''}
+            ${knCoQuyen() ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 12px;color:#1D4ED8;border-color:#93C5FD" onclick="knMoHoSo('${escHtml(d.orderId)}','${escHtml(d.orderId)}')">📁 Thư mục Video</button>` : ''}
             <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px" onclick="hhoXem('${k}')">Xem chi tiết</button>
             ${hhoChuaNK(d) ? `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>` : hhoTab === 'dangve' && !d.choDuyet ? '' : hhoTab !== 'cho' && hhoTab !== 'dangve' ? '' : d.choDuyet ? (hhoDuocDuyet()
                 ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#B91C1C;border-color:#FCA5A5" onclick="hhoTuChoi('${k}')">Từ chối</button>
@@ -28513,7 +28596,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v751</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v752</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28571,7 +28654,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v751</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v752</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28621,7 +28704,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v751</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v752</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28634,7 +28717,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v751</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v752</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
