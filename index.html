@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 743;
+  const APP_VERSION = 744;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -16370,6 +16370,7 @@ function hhThanhChonHtml() {
   return `<div id="hh-thanh-chon" style="position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#ECFDF5;border:1.5px solid #10B981;border-radius:10px;padding:8px 10px;margin-bottom:8px">
     <b style="font-size:13.5px">Đã chọn ${n} mã</b>
     <button class="btn-xs" style="background:#0F766E;color:#fff;border-color:#0F766E" onclick="hhSuaCanhBaoLoat()">⏰ Sửa số ngày cảnh báo tồn</button>
+    <button class="btn-xs" style="background:#2563EB;color:#fff;border-color:#2563EB" onclick="hhSuaNccLoat()">🏭 Sửa nhà cung cấp</button>
     ${conLai ? `<button class="btn-xs" onclick="hhChonTatCa()">Chọn thêm ${conLai} mã đang lọc</button>` : ''}
     <button class="btn-xs" onclick="hhBoChon()" style="margin-left:auto">Bỏ chọn</button>
   </div>`;
@@ -16402,6 +16403,82 @@ window.hhSuaCanhBaoLoat = async function() {
     renderHangHoaList();
     hhTinhCanhBaoTatCa(true).then(() => { if (document.getElementById('hanghoa-list') && !dangThaoTacHangHoa()) renderHangHoaList(); });
   } catch(e) { showToast('Chưa lưu được: ' + e.message, true); }
+};
+
+// ----- Sửa nhà cung cấp hàng loạt cho các mã đang chọn -----
+let hhNccLoat = { chon: new Set(), cach: 'them' };   // cach: them | thay | bo
+window.hhSuaNccLoat = async function() {
+  const ds = [...hhChon].map(id => allSKUs.find(x => x.id === id)).filter(x => x && !x.laCombo && !x.deleted);
+  if (!ds.length) { showToast('Chưa chọn mã nào', true); return; }
+  await hhTaiNcc(true);
+  hhNccLoat = { chon: new Set(), cach: 'them' };
+  ddbMoKhung('hh-ncc-loat-modal', 'Sửa nhà cung cấp', `${ds.length} mã đã chọn`, `<div id="hh-ncc-loat-than"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('hh-ncc-loat-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" id="hh-ncc-loat-nut" style="flex:2;margin:0" onclick="hhLuuNccLoat()">Lưu</button>`);
+  ddbCanhGiua('hh-ncc-loat-modal');
+  const m = document.getElementById('hh-ncc-loat-modal'); if (m) { m.style.display = 'flex'; m.style.zIndex = '1350'; }
+  hhVeNccLoat();
+};
+function hhVeNccLoat() {
+  const el = document.getElementById('hh-ncc-loat-than'); if (!el) return;
+  const ds = [...hhChon].map(id => allSKUs.find(x => x.id === id)).filter(x => x && !x.laCombo && !x.deleted);
+  const dsNcc = hhDsNccCache || [];
+  // Đếm số mã đang gắn từng nhà cung cấp để người dùng thấy hiện trạng
+  const dem = new Map(); let chuaGan = 0;
+  ds.forEach(x => { const ids = x.nccIds || []; if (!ids.length) chuaGan++; ids.forEach(i => dem.set(i, (dem.get(i) || 0) + 1)); });
+  const cach = hhNccLoat.cach;
+  const nutCach = (k, nhan) => `<button type="button" onclick="hhDoiCachNccLoat('${k}')" style="flex:1;border:1.5px solid ${cach === k ? '#2563EB' : 'var(--border)'};background:${cach === k ? '#EFF6FF' : '#fff'};color:${cach === k ? '#1D4ED8' : 'var(--text)'};font-weight:${cach === k ? 700 : 500};border-radius:8px;padding:7px 6px;font-size:13px;cursor:pointer">${nhan}</button>`;
+  const moTa = cach === 'them' ? 'Thêm các nhà cung cấp đã chọn vào mỗi mã, giữ nguyên nhà cung cấp đang có.'
+    : cach === 'thay' ? 'Mỗi mã chỉ còn đúng các nhà cung cấp đã chọn (không chọn gì = xóa hết).'
+    : 'Gỡ các nhà cung cấp đã chọn khỏi mỗi mã, giữ các nhà cung cấp khác.';
+  el.innerHTML = `
+    <div style="display:flex;gap:6px;margin-bottom:6px">${nutCach('them', '➕ Thêm vào')}${nutCach('thay', '🔁 Thay bằng')}${nutCach('bo', '➖ Gỡ ra')}</div>
+    <div style="font-size:12.5px;color:var(--text2);margin-bottom:10px">${moTa}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${dsNcc.map(n => { const co = hhNccLoat.chon.has(n.id); const d = dem.get(n.id) || 0; return `<button type="button" onclick="hhDoiNccLoat('${n.id}')"
+        style="border:1.5px solid ${co ? '#2563EB' : 'var(--border)'};background:${co ? '#2563EB' : '#fff'};color:${co ? '#fff' : 'var(--text)'};border-radius:16px;padding:5px 11px;font-size:12.5px;cursor:pointer">${co ? '✓ ' : ''}${escHtml(n.ten)}${d ? ` <span style="opacity:.75">(${d})</span>` : ''}</button>`; }).join('')}
+      <button type="button" onclick="hhThemNccLoatNhanh()" style="border:1.5px dashed #2563EB;background:#fff;color:#2563EB;border-radius:16px;padding:5px 11px;font-size:12.5px;cursor:pointer">+ Nhà cung cấp mới</button>
+    </div>
+    ${!dsNcc.length ? '<div style="font-size:12px;color:var(--text2);margin-top:4px">Chưa có nhà cung cấp nào.</div>' : ''}
+    <div style="font-size:12px;color:var(--text2);margin-top:10px">Số trong ngoặc = số mã đang chọn đã gắn nhà cung cấp đó${chuaGan ? ` · ${chuaGan} mã chưa gắn nhà cung cấp nào` : ''}.</div>`;
+}
+window.hhDoiCachNccLoat = function(k) { hhNccLoat.cach = k; hhVeNccLoat(); };
+window.hhDoiNccLoat = function(id) { hhNccLoat.chon.has(id) ? hhNccLoat.chon.delete(id) : hhNccLoat.chon.add(id); hhVeNccLoat(); };
+window.hhThemNccLoatNhanh = async function() {
+  const ten = String(await hoiNhap('Tên nhà cung cấp mới:', '') || '').trim();
+  if (!ten) return;
+  const trung = (hhDsNccCache || []).find(n => boDauTim(n.ten) === boDauTim(ten));
+  if (trung) { hhNccLoat.chon.add(trung.id); hhVeNccLoat(); showToast('Đã có nhà cung cấp này — đã chọn'); return; }
+  try {
+    const r = await addDoc(collection(db, 'nha_cung_cap'), { ten, sdt: '', ghiChu: '', nguoiTao: { uid: currentUser.uid, ten: currentUserData.ten || '' }, createdAt: serverTimestamp() });
+    await hhTaiNcc(true); hhNccLoat.chon.add(r.id); hhVeNccLoat(); showToast('Đã thêm nhà cung cấp');
+  } catch(e) { showToast('Chưa thêm được: ' + e.message, true); }
+};
+window.hhLuuNccLoat = async function() {
+  const ds = [...hhChon].map(id => allSKUs.find(x => x.id === id)).filter(x => x && !x.laCombo && !x.deleted);
+  const chon = [...hhNccLoat.chon], cach = hhNccLoat.cach;
+  if (!chon.length && cach !== 'thay') { showToast('Chọn ít nhất một nhà cung cấp', true); return; }
+  const tinh = (x) => { const cu = Array.isArray(x.nccIds) ? x.nccIds : [];
+    if (cach === 'thay') return [...chon];
+    if (cach === 'them') return [...new Set([...cu, ...chon])];
+    return cu.filter(i => !chon.includes(i)); };
+  const giong = (a, b) => a.length === b.length && a.every(i => b.includes(i));
+  const canDoi = ds.map(x => ({ x, moi: tinh(x) })).filter(o => !giong(o.moi, Array.isArray(o.x.nccIds) ? o.x.nccIds : []));
+  if (!canDoi.length) { showToast('Các mã đã chọn không có gì thay đổi'); return; }
+  if (cach === 'thay' && !chon.length && !await hoiXacNhan(`Xóa hết nhà cung cấp của ${canDoi.length} mã?`, { nutDongY: 'Xóa hết' })) return;
+  const nut = document.getElementById('hh-ncc-loat-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
+  try {
+    for (let i = 0; i < canDoi.length; i += 400) {
+      const b = writeBatch(db);
+      canDoi.slice(i, i + 400).forEach(o => b.update(doc(db, 'skus', o.x.id), { nccIds: o.moi }));
+      await b.commit();
+    }
+    canDoi.forEach(o => { o.x.nccIds = o.moi; });
+    document.getElementById('hh-ncc-loat-modal').style.display = 'none';
+    hhChon.clear();
+    showToast(`Đã cập nhật nhà cung cấp cho ${canDoi.length} mã`);
+    renderHangHoaList();
+  } catch(e) { showToast('Chưa lưu được: ' + e.message, true); if (nut) { nut.disabled = false; nut.textContent = 'Lưu'; } }
 };
 
 // Gom hàng cùng loại (chung mã cha bên KiotViet) vào một khung có tên chính
@@ -27965,7 +28042,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v743</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v744</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28023,7 +28100,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v743</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v744</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28073,7 +28150,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v743</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v744</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28086,7 +28163,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v743</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v744</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
