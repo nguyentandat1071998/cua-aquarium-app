@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 753;
+  const APP_VERSION = 754;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -22933,6 +22933,7 @@ window.hhoXem = async function(khoa) {
 let kkDs = [], kkDsUnsub = null, kkDsLoi = '';
 let kkMoId = null, kkPhieu = null, kkPhieuUnsub = null;
 let kkLoc = 'tat', kkTim = '', kkTabDs = 'dang', kkGioiHan = 300;
+let kkChonMa = null;     // trong phiếu đang mở: đang tick chọn mã để bỏ khỏi phiếu (Set skuId)
 let kkChon = null;       // đang tick chọn phiếu để xóa khỏi danh sách: Set id (null = không ở chế độ chọn)
 let kkThuGon = new Set();   // nhóm hàng đang thu gọn trong phiếu đang mở
 let kkTam = {};          // số vừa đếm chưa lên máy chủ: { skuId: số | 'khop' | null }
@@ -23178,7 +23179,7 @@ async function kkTaoTuDs(ids, kho, nhom, tieuDe) {
 window.kkMo = function(id) {
   if (kkPhieuUnsub) { kkPhieuUnsub(); kkPhieuUnsub = null; }
   if (kkDsUnsub) { kkDsUnsub(); kkDsUnsub = null; }   // phiếu lớn: đang mở phiếu thì không theo dõi cả danh sách
-  kkMoId = id; kkPhieu = kkDs.find(p => p.id === id) || null; kkTam = {}; kkLoc = 'tat'; kkTim = ''; kkGioiHan = 300; kkThuGon = new Set();
+  kkMoId = id; kkPhieu = kkDs.find(p => p.id === id) || null; kkTam = {}; kkChonMa = null; kkLoc = 'tat'; kkTim = ''; kkGioiHan = 300; kkThuGon = new Set();
   kkPhieuUnsub = onSnapshot(doc(db, 'phieu_kiem_kho', id), (sn) => {
     if (kkMoId !== id) return;
     kkPhieu = sn.exists() ? { id: sn.id, ...sn.data() } : null;
@@ -23193,7 +23194,7 @@ window.kkMo = function(id) {
 window.kkDongPhieu = async function() {
   await kkGuiNgay();
   if (kkPhieuUnsub) { kkPhieuUnsub(); kkPhieuUnsub = null; }
-  kkMoId = null; kkPhieu = null; kkTam = {};
+  kkMoId = null; kkPhieu = null; kkTam = {}; kkChonMa = null;
   renderKiemKho();
 };
 // Rời màn Kiểm kho: gửi nốt số đếm, thôi theo dõi
@@ -23227,6 +23228,10 @@ function kkVeChiTiet() {
   });
   const da = dong.filter(d => d.g), lechDs = da.filter(d => d.lech !== 0);
   const t = kkTim.trim().toLowerCase();
+  const boMaDuoc = p.trangThai === 'dang_kiem' && kkDuocBoMa(p);
+  if (!boMaDuoc) kkChonMa = null;
+  const cheDoChon = !!kkChonMa;
+  if (cheDoChon) [...kkChonMa].forEach(id => { if (!kkMaChonDuoc(p, id)) kkChonMa.delete(id); });
   let hien = dong.filter(d => kkLoc === 'chua' ? !d.g : kkLoc === 'da' ? !!d.g : kkLoc === 'lech' ? (d.g && d.lech !== 0) : true)
     .filter(d => !t || (d.s.ten + ' ' + d.s.sku).toLowerCase().includes(t));
   hien.sort((a, b) => (a.nhom || '').localeCompare(b.nhom || '', 'vi') || a.s.ten.localeCompare(b.s.ten, 'vi'));
@@ -23241,20 +23246,22 @@ function kkVeChiTiet() {
   const veDong = (d) => {
     const { s, g } = d, id = escHtml(s.id), sk = skuMap.get(s.id);
     const khoa = suaDuoc && !g?.tam && kkCuaNguoiKhac(p.dem?.[s.id]);
-    const choSua = suaDuoc && !khoa;
-    const boDuoc = !g && p.trangThai === 'dang_kiem' && kkDuocBoMa(p);
+    const choSua = suaDuoc && !khoa && !cheDoChon;
+    const boDuoc = !g && p.trangThai === 'dang_kiem' && kkDuocBoMa(p) && !cheDoChon;
+    const chonDuoc = cheDoChon && kkMaChonDuoc(p, s.id), daTick = chonDuoc && kkChonMa.has(s.id);
     const trangThaiDong = !g ? '' : d.lech === 0 ? 'khop' : 'lech';
     const daDemAnh = !!kkAnhCua(p, s.id);   // đã đếm bằng ảnh -> khoá nút Khớp tránh bấm nhầm
     const nenDong = trangThaiDong === 'khop' ? '#F0FDF4' : trangThaiDong === 'lech' ? '#FFFBEB' : 'var(--surface)';
     const vien = trangThaiDong === 'khop' ? '#86EFAC' : trangThaiDong === 'lech' ? '#FCD34D' : 'var(--border)';
-    const anh = sk?.anhFileId ? `<img src="${anhThumbUrl(sk.anhFileId, 120)}" loading="lazy" onclick="viewPhoto('${anhThumbUrl(sk.anhFileId, 900)}')" onerror="this.style.visibility='hidden'" style="width:46px;height:46px;object-fit:cover;border-radius:7px;flex-shrink:0;background:var(--bg);cursor:pointer">`
+    const anh = sk?.anhFileId ? `<img src="${anhThumbUrl(sk.anhFileId, 120)}" loading="lazy" ${cheDoChon ? '' : `onclick="viewPhoto('${anhThumbUrl(sk.anhFileId, 900)}')"`} onerror="this.style.visibility='hidden'" style="width:46px;height:46px;object-fit:cover;border-radius:7px;flex-shrink:0;background:var(--bg);cursor:pointer">`
       : '<div style="width:46px;height:46px;border-radius:7px;flex-shrink:0;background:var(--bg)"></div>';
-    return `<div id="kk-d-${id}" style="background:${nenDong};border:1px solid ${vien};border-radius:9px;padding:8px 10px;margin-bottom:6px">
+    return `<div id="kk-d-${id}" ${chonDuoc ? `onclick="kkTickMa('${id}')"` : ''} style="background:${daTick ? '#EFF6FF' : nenDong};border:${daTick ? '1.5px solid #2563EB' : `1px solid ${vien}`};border-radius:9px;padding:8px 10px;margin-bottom:6px${chonDuoc ? ';cursor:pointer' : cheDoChon ? ';opacity:.45' : ''}">
       <div style="display:flex;gap:9px;align-items:center">
+        ${cheDoChon ? `<input type="checkbox" ${daTick ? 'checked' : ''} ${chonDuoc ? '' : 'disabled title="Mã do người khác kiểm — không bỏ được"'} style="flex:0 0 auto;width:20px;height:20px;margin:0;pointer-events:none;accent-color:#2563EB">` : ''}
         ${anh}
         <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;line-height:1.3">${escHtml(s.ten)}</div>
           <div style="font-size:12px;color:var(--text2)">${escHtml(s.sku)} · Tồn <b style="color:var(--text);font-size:13px">${(g ? d.tonLucDem : d.tonNay) ?? '—'}</b>${kkThayDoiSauDem(d)}${boDuoc ? ` <button onclick="kkBoMa('${id}')" title="Bỏ mã này khỏi phiếu — không cần kiểm" style="border:none;background:none;color:#9CA3AF;font-size:12px;padding:0 0 0 6px;cursor:pointer;text-decoration:underline">✕ Bỏ mã</button>` : ''}</div></div>
-        ${khoa ? `<span style="flex:0 0 auto;font-size:12px;color:var(--text2)">🔒</span>` : ''}
+        ${khoa && !cheDoChon ? `<span style="flex:0 0 auto;font-size:12px;color:var(--text2)">🔒</span>` : ''}
         ${choSua ? `<button onclick="kkAnhChup('${id}')" title="Đếm bằng ảnh: chụp rồi chạm chấm từng con" style="flex:0 0 auto;border:1.5px solid #93C5FD;background:#EFF6FF;border-radius:8px;padding:7px 9px;font-size:16px;line-height:1;cursor:pointer">📷</button>${daDemAnh ? `<button disabled title="Đã đếm bằng ảnh — khoá nút Khớp để tránh bấm nhầm" style="flex:0 0 auto;border:1.5px solid #D1D5DB;background:#F3F4F6;color:#9CA3AF;font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:not-allowed">✓ Khớp</button>` : `<button onclick="kkKhop('${id}')" style="flex:0 0 auto;border:1.5px solid ${trangThaiDong === 'khop' ? '#16A34A' : '#86EFAC'};background:${trangThaiDong === 'khop' ? '#16A34A' : '#fff'};color:${trangThaiDong === 'khop' ? '#fff' : '#15803D'};font-weight:700;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer">✓ Khớp</button>`}
           <input class="kk-o" type="text" inputmode="decimal" autocomplete="off" placeholder="SL" value="${g && trangThaiDong === 'lech' ? d.thucTe : ''}" onchange="kkNhap('${id}',this.value)" onblur="kkVeLai()"
             style="flex:0 0 60px;width:60px;padding:8px 4px;text-align:center;font-size:15px;font-weight:700;border:1.5px solid ${trangThaiDong === 'lech' ? '#F59E0B' : 'var(--border)'};border-radius:8px">` : ''}
@@ -23272,8 +23279,10 @@ function kkVeChiTiet() {
     const gon = !moHet && kkThuGon.has(ten);
     let than = '';
     if (!gon) { const conLai = Math.max(0, kkGioiHan - daVe); than = n.hien.slice(0, conLai).map(veDong).join(''); daVe += Math.min(n.hien.length, conLai); }
+    const chonN = cheDoChon ? n.hien.filter(d => kkMaChonDuoc(p, d.s.id)) : [], tickN = chonN.filter(d => kkChonMa.has(d.s.id)).length;
     return `<div style="margin-bottom:6px">
       <div data-n="${escHtml(ten)}" onclick="kkGon(this.dataset.n)" style="cursor:pointer;display:flex;gap:8px;align-items:center;background:${xongN ? '#F0FDF4' : 'var(--bg)'};border:1px solid ${xongN ? '#86EFAC' : 'var(--border)'};border-radius:9px;padding:9px 11px;margin:${gon ? '0' : '0 0 6px'}">
+        ${chonN.length ? `<input type="checkbox" data-n="${escHtml(ten)}" ${tickN === chonN.length ? 'checked' : ''} onclick="event.stopPropagation();kkTickNhom(this.dataset.n,this.checked)" title="Chọn cả nhóm" style="flex:0 0 auto;width:20px;height:20px;margin:0;accent-color:#2563EB">` : ''}
         <span style="font-size:12px;color:var(--text2);width:12px">${gon ? '▸' : '▾'}</span>
         <div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700">${escHtml(ten.split(' > ').pop())}${xongN ? ' ✓' : ''}</div>
 </div>
@@ -23310,7 +23319,14 @@ function kkVeChiTiet() {
     ${nkTat.length ? `<div style="font-size:12.5px;margin:-2px 0 8px">👤 Người kiểm: ${nkTat.map(x => `<b>${escHtml(x.ten)}</b> (${x.so} mã)`).join(', ')}</div>` : ''}
     <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:4px;align-items:center">
       ${chip('tat', 'Tất cả', dong.length)}${chip('chua', 'Chưa kiểm', dong.length - da.length)}${chip('da', 'Đã kiểm', da.length)}${chip('lech', 'Lệch', lechDs.length)}
-      ${theoNhom.size > 1 ? `<button onclick="kkGonHet()" style="margin-left:auto;white-space:nowrap;border:none;background:none;color:#2563EB;font-size:12.5px;font-weight:600;cursor:pointer">${kkThuGon.size >= theoNhom.size ? 'Mở tất cả' : 'Thu gọn tất cả'}</button>` : ''}</div>
+      ${theoNhom.size > 1 ? `<button onclick="kkGonHet()" style="margin-left:auto;white-space:nowrap;border:none;background:none;color:#2563EB;font-size:12.5px;font-weight:600;cursor:pointer">${kkThuGon.size >= theoNhom.size ? 'Mở tất cả' : 'Thu gọn tất cả'}</button>` : ''}
+      ${boMaDuoc && !cheDoChon ? `<button onclick="kkBatChonMa()" style="${theoNhom.size > 1 ? '' : 'margin-left:auto;'}white-space:nowrap;border:1px solid var(--border);background:var(--surface);border-radius:14px;padding:4px 10px;font-size:12.5px;cursor:pointer">☑ Chọn mã để bỏ</button>` : ''}</div>
+    ${cheDoChon ? (() => { const chonHien = hien.filter(d => kkMaChonDuoc(p, d.s.id)), nC = kkChonMa.size, het = chonHien.length && chonHien.every(d => kkChonMa.has(d.s.id));
+      return `<div style="position:sticky;top:0;z-index:20;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1.5px solid #2563EB;border-radius:10px;padding:8px 10px;margin-bottom:8px;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13.5px;cursor:pointer;margin:0"><input type="checkbox" ${het ? 'checked' : ''} onchange="kkTickHetMa(this.checked)" style="width:18px;height:18px;margin:0;accent-color:#2563EB">${t || kkLoc !== 'tat' ? 'Tất cả đang lọc' : 'Tất cả'} (${chonHien.length})</label>
+        <span style="flex:1;font-size:13px;color:var(--text2)">Đã chọn <b style="color:var(--text)">${nC}</b></span>
+        <button class="btn-outline" style="width:auto;margin:0;padding:7px 12px" onclick="kkTatChonMa()">Thôi</button>
+        <button class="btn-g" style="width:auto;margin:0;padding:7px 14px;background:#DC2626${nC ? '' : ';opacity:.5'}" ${nC ? '' : 'disabled'} onclick="kkBoMaDaChon(this)">✕ Bỏ khỏi phiếu${nC ? ` (${nC})` : ''}</button></div>`; })() : ''}
     ${hang || `<p class="info-note">${kkLoc === 'chua' && !t ? 'Đã kiểm hết các mã trong phiếu 👍' : 'Không có mã nào.'}</p>`}
     ${daVe >= kkGioiHan && tongHien > kkGioiHan ? `<button class="btn-outline" style="width:100%" onclick="kkGioiHan+=300;kkVe()">Hiện thêm mã</button>` : ''}
     ${nutDuoi.length ? `<div style="position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:10px 12px calc(10px + env(safe-area-inset-bottom));z-index:900">
@@ -23318,6 +23334,53 @@ function kkVeChiTiet() {
   </div>`;
 }
 window.kkDatLoc = (k) => { kkLoc = k; kkGioiHan = 300; kkVe(); };
+// ----- Tick chọn nhiều mã trong phiếu rồi bỏ khỏi phiếu -----
+// Bỏ được: phiếu đang kiểm + người tạo / quyền tạo / quyền duyệt. Mã đã kiểm: chỉ người đếm (hoặc quyền sửa số người khác) — bỏ luôn số đếm.
+function kkMaChonDuoc(p, id) {
+  if (!p || p.trangThai !== 'dang_kiem' || !kkDuocBoMa(p)) return false;
+  if (id in kkTam) return false;   // số đang lưu dở
+  const d = p.dem?.[id];
+  return !d || !kkCuaNguoiKhac(d);
+}
+// Mã đang hiện theo bộ lọc / ô tìm (không giới hạn 300 dòng đang vẽ)
+function kkMaDangHien(p) {
+  const t = kkTim.trim().toLowerCase();
+  const lech = (s) => { const g = kkGiaTri(p, s.id); if (!g) return false; const sk = allSKUs.find(x => x.id === s.id); const tonNay = sk ? kkTonSku(sk, p.kho) : null;
+    const tt = g.khop && g.tt === null ? tonNay : g.tt; const ton = Number.isFinite(g.ton) ? g.ton : tonNay; return Number(tt) !== Number(ton); };
+  return (p?.dsSku || []).filter(s => { const g = kkGiaTri(p, s.id); return kkLoc === 'chua' ? !g : kkLoc === 'da' ? !!g : kkLoc === 'lech' ? lech(s) : true; })
+    .filter(s => !t || (s.ten + ' ' + s.sku).toLowerCase().includes(t));
+}
+window.kkBatChonMa = () => { kkChonMa = new Set(); kkVe(); };
+window.kkTatChonMa = () => { kkChonMa = null; kkVe(); };
+window.kkTickMa = (id) => { if (!kkChonMa || !kkMaChonDuoc(kkPhieu, id)) return; kkChonMa.has(id) ? kkChonMa.delete(id) : kkChonMa.add(id); kkVe(); };
+window.kkTickHetMa = (bat) => {
+  if (!kkChonMa) return;
+  kkMaDangHien(kkPhieu).filter(s => kkMaChonDuoc(kkPhieu, s.id)).forEach(s => bat ? kkChonMa.add(s.id) : kkChonMa.delete(s.id)); kkVe();
+};
+window.kkTickNhom = (ten, bat) => {
+  if (!kkChonMa) return;
+  kkMaDangHien(kkPhieu).filter(s => (s.nhom || 'Chưa có nhóm') === ten && kkMaChonDuoc(kkPhieu, s.id)).forEach(s => bat ? kkChonMa.add(s.id) : kkChonMa.delete(s.id));
+  kkVe();
+};
+window.kkBoMaDaChon = async function(nut) {
+  const p = kkPhieu; if (!p || !kkChonMa?.size) return;
+  const ids = [...kkChonMa], tong = (p.dsSku || []).length;
+  if (ids.length >= tong) { showToast('Phiếu phải còn ít nhất 1 mã — bỏ chọn bớt, hoặc Hủy phiếu', true); return; }
+  const daDem = ids.filter(id => p.dem?.[id]).length;
+  const ten = ids.slice(0, 6).map(id => '• ' + ((p.dsSku.find(s => s.id === id) || {}).ten || id)).join('\n') + (ids.length > 6 ? `\n… và ${ids.length - 6} mã nữa` : '');
+  if (!await hoiXacNhan(`Bỏ ${ids.length} mã khỏi phiếu ${p.ma || ''}?\n\n${ten}\n\nCác mã này sẽ không cần kiểm, tồn kho giữ nguyên.${daDem ? `\n\n⚠ ${daDem} mã đã kiểm — số đã đếm của các mã này cũng bị bỏ.` : ''}`, { nutDongY: `Bỏ ${ids.length} mã`, nutHuy: 'Thôi', nguy: true })) return;
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang bỏ...'; }
+  try {
+    await kkGuiNgay();
+    const kq = await goiWorkerAdmin('kk-bo', { id: kkMoId, skuIds: ids });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    const khong = kq.khongDuoc || [];
+    const bo = new Set(ids);
+    if (kkPhieu && !khong.length) kkPhieu.dsSku = (kkPhieu.dsSku || []).filter(s => !bo.has(s.id));   // máy chủ báo về sẽ vẽ lại đúng
+    kkChonMa = null; kkVe();
+    showToast(`Đã bỏ ${kq.daBo} mã khỏi phiếu` + (khong.length ? ` · ${khong.length} mã do người khác kiểm nên giữ lại` : ''), !!khong.length);
+  } catch(e) { alert('Chưa bỏ được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; kkVe(); } }
+};
 window.kkGon = (ten) => { kkThuGon.has(ten) ? kkThuGon.delete(ten) : kkThuGon.add(ten); kkVe(); };
 window.kkGonHet = () => {
   const tat = [...new Set((kkPhieu?.dsSku || []).map(s => s.nhom || 'Chưa có nhóm'))];
@@ -28640,7 +28703,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v753</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v754</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28698,7 +28761,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v753</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v754</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28748,7 +28811,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v753</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v754</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28761,7 +28824,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v753</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v754</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
