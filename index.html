@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 745;
+  const APP_VERSION = 746;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -4188,7 +4188,15 @@ function trangThaiHienThi(d) {
   return 'cho_xu_ly';
 }
 
+// Gõ đúng mã đơn / mã hóa đơn / mã vận đơn -> hiện đơn đó, bỏ qua bộ lọc ngày, trạng thái, sàn
+function donKhopMaChinhXac(tu) {
+  const t = String(tu || '').trim().toLowerCase();
+  if (t.length < 6) return [];
+  return allDonHangSan.filter(d => [d.maDonSan, d.maHoaDon, d.maVanDon, d.id].some(x => String(x || '').toLowerCase() === t));
+}
 function locDon() {
+  const khopMa = donKhopMaChinhXac(donTimKiem);
+  if (khopMa.length) return khopMa;
   const kNgay = khoangLocNgay();
   let ds = kNgay ? allDonHangSan.filter(d => khopLocNgay(d, kNgay)) : allDonHangSan;
   if (donFilterGiao !== 'all') ds = ds.filter(khopLocGiao);
@@ -4504,8 +4512,36 @@ window.timKiemDon = function(v) {
   donPage = 1;
   // Gõ tới đâu vẽ lại tới đó thì giật, nên chờ ngừng gõ 250ms mới vẽ
   clearTimeout(hnTimKiemDon);
-  hnTimKiemDon = setTimeout(() => veDanhSachDon(), 250);
+  hnTimKiemDon = setTimeout(() => { veDanhSachDon(); timDonCuTheoMa(v); }, 250);
 };
+// Danh sách chỉ nạp ~300 đơn gần nhất. Gõ mã đơn / mã vận đơn / mã hóa đơn của đơn cũ hơn
+// thì hỏi thẳng máy chủ rồi thêm vào danh sách.
+const donDaTimMa = new Set();
+async function timDonCuTheoMa(v) {
+  const ma = String(v || '').trim();
+  if (ma.length < 6 || !/^[A-Za-z0-9_.-]+$/.test(ma) || donKhopMaChinhXac(ma).length || donDaTimMa.has(ma.toLowerCase())) return;
+  donDaTimMa.add(ma.toLowerCase());
+  try {
+    const c = collection(db, 'don_hang_san');
+    const bien = [...new Set([ma, ma.toUpperCase()])];
+    const [theoId, ...ketQua] = await Promise.all([
+      getDoc(doc(db, 'don_hang_san', ma)).catch(() => null),
+      ...bien.flatMap(b => [
+        getDocs(query(c, where('maVanDon', '==', b), limit(5))).catch(() => null),
+        getDocs(query(c, where('maHoaDon', '==', b), limit(5))).catch(() => null),
+        getDocs(query(c, where('maDonSan', '==', b), limit(5))).catch(() => null)])
+    ]);
+    const tim = [];
+    if (theoId?.exists?.()) tim.push({ id: theoId.id, ...theoId.data() });
+    ketQua.forEach(sn => sn?.docs.forEach(d => tim.push({ id: d.id, ...d.data() })));
+    let them = 0;
+    tim.forEach(x => { if (allDonHangSan.some(y => y.id === x.id)) return; donNapThemNgay.set(x.id, x); allDonHangSan.push(x); them++; });
+    if (!them) return;
+    const t = (x) => ngayCua(x.ngayDat)?.getTime() || 0;
+    allDonHangSan.sort((a, b) => t(b) - t(a));
+    if (String(donTimKiem).trim() === ma) veDanhSachDon();
+  } catch(e) {}
+}
 
 // ===== BỘ LỌC PHÂN CẤP =====
 // Thứ tự: trạng thái -> sàn -> đơn vị vận chuyển. Mỗi cấp chỉ đếm và hiện những
@@ -21844,7 +21880,10 @@ function hhoNgayTraHT(ds, laTra) {
 const hhoGio = (s) => s ? new Date(s * 1000).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
 const hhoKhoa = (d) => d.returnId || d.orderId;
 // Tab "Đã xử lý": đơn sàn đã xong nhưng app chưa nhập kho, hàng về shop trong 7 ngày qua -> vẫn cho xác nhận
-const hhoChuaNK = (d) => hhoTab === 'xong' && !!d.chuaNhapKho && Number(d.lucTra) > 0 && (Date.now() / 1000 - Number(d.lucTra)) < 7 * 86400;
+// Đơn trả hàng sàn tự duyệt hoàn tiền khi kiện còn trên đường về (chưa có mốc giao về shop): vẫn cho xác nhận trong 14 ngày kể từ lúc khách yêu cầu
+const hhoChuaNK = (d) => hhoTab === 'xong' && !!d.chuaNhapKho && (Number(d.lucTra) > 0
+  ? (Date.now() / 1000 - Number(d.lucTra)) < 7 * 86400
+  : d.loai === 'tra' && !!d.vanDonHoan && Number(d.luc) > 0 && (Date.now() / 1000 - Number(d.luc)) < 14 * 86400);
 
 async function renderHangHoan() {
   const el = document.getElementById('hanghoan-content'); if (!el) return;
@@ -28044,7 +28083,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v745</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v746</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28102,7 +28141,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v745</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v746</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28152,7 +28191,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v745</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v746</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28165,7 +28204,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v745</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v746</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
