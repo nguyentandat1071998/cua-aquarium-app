@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 748;
+  const APP_VERSION = 749;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -17949,22 +17949,25 @@ function dgHuyPhat() {
   if (dgV) dgV.hls = null;
 }
 window.dgDong = function() { dgHuyPhat(); dgV = null; const m = document.getElementById('dg-modal'); if (m) m.style.display = 'none'; };
-window.dgXemVideo = async function(donId, tu, den) {
+window.dgXemVideo = async function(donId, tu, den, opt = {}) {
   const d = (typeof allDonHangSan !== 'undefined' ? allDonHangSan : []).find(x => x.id === donId) || {};
   const ma = d.maDonSan || d.maHoaDon || donId;
   dgHuyPhat();
-  dgV = { donId, ma, nhe: dgV?.donId === donId ? dgV.nhe : false };
+  const cu = dgV?.donId === donId ? dgV : null;
+  dgV = { donId, ma, nhe: cu ? cu.nhe : false, cam: opt.cam !== undefined ? opt.cam : (cu?.cam || ''), kn: opt.kn !== undefined ? opt.kn : (cu?.kn || '') };
   ddbMoKhung('dg-modal', `🎥 Video đóng gói · ${escHtml(ma)}`, '', `<div id="dg-than"><div class="loading">Đang xin video từ camera...</div></div>`,
     `<button class="btn-outline" style="flex:1" onclick="dgDong()">Đóng</button>
      ${currentUserData?.role === 'admin' ? `<button class="btn-outline" style="flex:0 0 auto;width:auto;margin:0;padding:0 12px" onclick="dgMoGanCamera()">⚙ Gán camera</button>` : ''}
+     ${dgV.kn ? `<button class="btn-outline" id="dg-nut-kn" style="flex:2;margin:0;color:#1D4ED8;border-color:#93C5FD" disabled onclick="dgLuuKN()">☁ Lưu vào hồ sơ</button>` : ''}
      <button class="btn-g" id="dg-nut-tai" style="flex:2;margin:0" disabled onclick="dgTaiVe()">⬇ Tải video</button>`);
-  const m = document.getElementById('dg-modal'); if (m) m.onclick = (e) => { if (e.target === m) dgDong(); };
+  const m = document.getElementById('dg-modal'); if (m) { m.style.zIndex = '1400'; m.onclick = (e) => { if (e.target === m) dgDong(); }; }
   ddbCanhGiua?.('dg-modal');
   try {
-    const [kq] = await Promise.all([goiWorkerAdmin('dg-video', { lam: 'xem', donId, ...(tu ? { tu } : {}), ...(den ? { den } : {}), nhe: dgV.nhe }), dgTaiHls()]);
+    const [kq] = await Promise.all([goiWorkerAdmin('dg-video', { lam: 'xem', donId, ...(tu ? { tu } : {}), ...(den ? { den } : {}), nhe: dgV.nhe, ...(dgV.cam ? { cam: dgV.cam } : {}) }), dgTaiHls()]);
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
-    Object.assign(dgV, { tu: kq.tu, den: kq.den, bd: kq.bd, kt: kq.kt, nguoi: kq.nguoi, init: null, parts: [], giay: 0, xong: false });
+    Object.assign(dgV, { tu: kq.tu, den: kq.den, bd: kq.bd, kt: kq.kt, nguoi: kq.nguoi, camDung: kq.cam, camGoc: kq.camGoc || '', init: null, parts: [], giay: 0, xong: false });
     dgVeThan();
+    dgNapCam();
     dgPhat(kq.url);
   } catch(e) {
     const o = document.getElementById('dg-than');
@@ -17977,6 +17980,8 @@ function dgVeThan() {
   o.innerHTML = `
     <video id="dg-video" controls muted playsinline style="width:100%;max-height:52vh;background:#000;border-radius:8px"></video>
     <div style="font-size:12px;color:var(--text2);margin:6px 0">Đóng gói: ${escHtml(dgV.nguoi || '')} · quét ${dgGio(dgV.bd)} → hoàn thành ${dgGio(dgV.kt)}</div>
+    <div style="display:flex;gap:6px;align-items:center;font-size:13px;margin-bottom:6px"><b style="min-width:62px">Camera</b>
+      <select id="dg-cam" onchange="dgDoiCam(this.value)" style="flex:1;min-width:0;padding:5px 8px;font-size:13px">${dgCamOpts()}</select></div>
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:6px">
       <b style="min-width:62px">Bắt đầu</b><span id="dg-tu" style="font-variant-numeric:tabular-nums;min-width:66px">${dgGio(dgV.tu)}</span>
       ${nut('−10s', "dgChinh('tu',-10)")}${nut('+10s', "dgChinh('tu',10)")}</div>
@@ -18003,6 +18008,7 @@ function dgPhat(url) {
   const capNhat = () => {
     const o = document.getElementById('dg-tiendo'); if (o) o.textContent = dgV.xong ? `✓ Đã ghi đủ ${dgPhut(dgV.giay)} — bấm Tải video` : `Đang ghi lại để tải: ${dgPhut(dgV.giay)} / ${dgPhut(tong)}`;
     if (nutTai) { nutTai.disabled = !dgV.parts.length; nutTai.textContent = dgV.xong ? '⬇ Tải video' : (dgV.parts.length ? `⬇ Tải phần đã ghi (${dgPhut(dgV.giay)})` : '⬇ Tải video'); }
+    const nutKN = document.getElementById('dg-nut-kn'); if (nutKN && !nutKN.dataset.dangTai) { nutKN.disabled = !dgV.parts.length; nutKN.textContent = dgV.xong ? '☁ Lưu vào hồ sơ' : (dgV.parts.length ? `☁ Lưu phần đã ghi (${dgPhut(dgV.giay)})` : '☁ Lưu vào hồ sơ'); }
   };
   hls.on(Hls.Events.FRAG_PARSING_INIT_SEGMENT, (e, d) => { const t = d.tracks?.video || d.tracks?.audiovideo; if (t?.initSegment && !dgV.init) dgV.init = t.initSegment.slice(); });
   hls.on(Hls.Events.BUFFER_APPENDING, (e, d) => { if ((d.type === 'video' || d.type === 'audiovideo') && d.data?.byteLength) dgV.parts.push(d.data.slice()); });
@@ -18031,6 +18037,22 @@ window.dgChinh = function(k, giay) {
   const ap = document.getElementById('dg-nut-ap'); if (ap) ap.style.display = '';
 };
 window.dgApDung = function() { if (dgV) dgXemVideo(dgV.donId, dgV.tu, dgV.den); };
+// Chọn camera khác (VD hôm đó đóng gói ở bàn khác). Danh sách camera nạp 1 lần.
+let dgDsCam = null;
+function dgCamOpts() {
+  const ds = dgDsCam || [];
+  const dang = dgV?.camDung || '';
+  const co = ds.some(c => c.id === dang);
+  return (co || !dang ? '' : `<option value="${escHtml(dang)}" selected>${escHtml(dang)}</option>`)
+    + ds.map(c => `<option value="${escHtml(c.id)}" ${c.id === dang ? 'selected' : ''}>${escHtml(c.ten || c.id)}${c.id === dgV?.camGoc ? ' (camera của người đóng gói)' : ''}${c.online ? '' : ' · offline'}</option>`).join('')
+    + (!ds.length ? '<option disabled>Đang tải danh sách camera...</option>' : '');
+}
+async function dgNapCam() {
+  if (dgDsCam) return;
+  try { const kq = await goiWorkerAdmin('dg-video', { lam: 'dscam' }); if (kq.success) dgDsCam = kq.cams || []; } catch(e) {}
+  const o = document.getElementById('dg-cam'); if (o) o.innerHTML = dgCamOpts();
+}
+window.dgDoiCam = function(cam) { if (!dgV || !cam || cam === dgV.camDung) return; dgXemVideo(dgV.donId, dgV.tu, dgV.den, { cam }); };
 window.dgDoiNhe = function(nhe) { if (!dgV) return; dgV.nhe = nhe; dgXemVideo(dgV.donId, dgV.tu, dgV.den); };
 window.dgTaiVe = function() {
   if (!dgV?.parts?.length) { showToast('Chưa có đoạn video nào để tải', true); return; }
@@ -18042,6 +18064,144 @@ window.dgTaiVe = function() {
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   showToast(`Đã tải ${(blob.size / 1048576).toFixed(1)} MB${dgV.xong ? '' : ' (phần đã ghi)'}`);
 };
+window.dgLuuKN = async function() {
+  if (!dgV?.parts?.length || !dgV.kn) return;
+  const nut = document.getElementById('dg-nut-kn');
+  const blob = new Blob([...(dgV.init ? [dgV.init] : []), ...dgV.parts], { type: 'video/mp4' });
+  const ma = dgV.kn, xong = dgV.xong;
+  if (!xong && !await hoiXacNhan(`Video mới ghi được ${dgPhut(dgV.giay)} / ${dgPhut((dgV.den - dgV.tu) / 1000)}.\n\nLưu phần đã ghi vào hồ sơ? (Để mở tới khi báo "Đã ghi đủ" rồi lưu sẽ đủ cả đoạn.)`, { nutDongY: 'Lưu phần này' })) return;
+  if (nut) { nut.disabled = true; nut.dataset.dangTai = '1'; }
+  try {
+    await knTaiLen(blob, `VideoDongGoi_${ma}.mp4`, ma, 'video/mp4', (pct) => { if (nut) nut.textContent = `☁ Đang lưu ${pct}%`; });
+    showToast(`Đã lưu VideoDongGoi_${ma}.mp4 vào thư mục ${ma}`);
+    if (nut) nut.textContent = '✓ Đã lưu vào hồ sơ';
+    if (knMo?.ma === ma) knTai();
+  } catch(e) { alert('Chưa lưu được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = '☁ Lưu vào hồ sơ'; } }
+  finally { if (nut) delete nut.dataset.dangTai; }
+};
+
+// ===== HỒ SƠ KHIẾU NẠI (Đơn hoàn trả) =====
+// Google Drive / Khiếu nại / <mã đơn>: VideoMoHangTra_<mã>, VideoDongGoi_<mã>. Thư mục ai có link đều xem được -> gửi link cho sàn.
+let knMo = null;   // { ma, donId, thuMuc, files, dangTai, loi, tienDo }
+async function knTaiLen(blob, ten, ma, loai, tienDo) {
+  const init = await (await fetch(WORKER_URL, { method: 'POST', headers: { ...(await hdrDangNhap()), 'x-action': 'init', 'x-filename': ten, 'x-kn-ma': ma, 'x-content-type': loai, 'Content-Type': 'application/json' }, body: '{}' })).json();
+  if (!init.success) throw new Error(init.error || 'Không tạo được phiên tải lên');
+  const CHUNK = 5 * 1024 * 1024, tong = blob.size;
+  let off = 0;
+  while (off < tong) {
+    const end = Math.min(off + CHUNK, tong);
+    tienDo?.(Math.round(off / tong * 100));
+    let d = null;
+    for (let lan = 0; lan < 3; lan++) {
+      try {
+        d = await (await fetch(WORKER_URL, { method: 'POST', headers: { ...(await hdrDangNhap()), 'x-action': 'chunk', 'x-upload-url': init.uploadUrl, 'x-range-start': String(off), 'x-total-size': String(tong),
+          'x-is-last': end >= tong ? 'true' : 'false', 'x-content-type': loai, 'Content-Type': loai }, body: blob.slice(off, end) })).json();
+        break;
+      } catch(e) { if (lan === 2) throw e; await new Promise(r => setTimeout(r, 1500)); }
+    }
+    if (d?.status === 'done') { tienDo?.(100); return d; }
+    if (d?.status === 'continue') { off = d.nextOffset !== undefined ? d.nextOffset : end; continue; }
+    throw new Error(d?.error || 'Tải lên lỗi');
+  }
+}
+window.knMoHoSo = async function(ma, donId) {
+  ma = String(ma || '').trim(); if (!ma) return;
+  knMo = { ma, donId: donId || ma, files: [], dangTai: true };
+  knVe();
+  await knTai();
+};
+async function knTai() {
+  if (!knMo) return;
+  const ma = knMo.ma;
+  knMo.dangTai = true; knMo.loi = ''; knVe();
+  try {
+    const kq = await goiWorkerAdmin('dg-video', { lam: 'kn', ma });
+    if (knMo?.ma !== ma) return;
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    knMo.thuMuc = { id: kq.id, link: kq.link }; knMo.files = kq.files || [];
+  } catch(e) { if (knMo?.ma === ma) knMo.loi = e.message; }
+  if (knMo?.ma === ma) { knMo.dangTai = false; knVe(); }
+}
+window.knTai = knTai;
+function knVe() {
+  const M = knMo; if (!M) return;
+  const coFile = (tien) => M.files.find(f => f.ten.startsWith(tien));
+  const mb = (b) => b ? (b / 1048576).toFixed(1) + ' MB' : '';
+  const dongFile = (tien, nhan) => { const f = coFile(tien); return `<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:18px">${f ? '✅' : '⬜'}</span>
+      <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13.5px">${nhan}</div>
+        <div style="font-size:12px;color:var(--text2);word-break:break-all">${f ? `<a href="${escHtml(f.xem)}" target="_blank" rel="noopener">${escHtml(f.ten)}</a> · ${mb(f.size)}` : 'Chưa có'}</div></div></div>`; };
+  ddbMoKhung('kn-modal', `📁 Hồ sơ khiếu nại · ${escHtml(M.ma)}`, 'Lưu vào Google Drive / Khiếu nại / ' + escHtml(M.ma),
+    M.dangTai && !M.thuMuc ? '<div class="loading">Đang mở thư mục trên Google Drive...</div>'
+    : M.loi && !M.thuMuc ? `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(M.loi))}</p>`
+    : `${dongFile('VideoMoHangTra_', '🎬 Video mở hàng trả')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
+        <button class="btn-g" style="flex:2;margin:0;background:#DC2626" onclick="knQuay()">⏺ Quay video mở hàng</button>
+        <label class="btn-outline" style="flex:1;margin:0;text-align:center;cursor:pointer">📂 Chọn video có sẵn<input type="file" accept="video/*" style="display:none" onchange="knChonVideo(this)"></label></div>
+      ${dongFile('VideoDongGoi_', '📦 Video đóng gói')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 12px">
+        ${coQuyen('tmdt_video') ? `<button class="btn-outline" style="flex:1;margin:0" onclick="dgXemVideo('${escHtml(M.donId)}', null, null, { kn: '${escHtml(M.ma)}' })">🎥 Xem & lưu video đóng gói</button>` : '<span style="font-size:12px;color:var(--text2)">Cần quyền xem video đóng gói</span>'}</div>
+      ${M.tienDo ? `<div class="info-note" style="font-size:12.5px">${escHtml(M.tienDo)}</div>` : ''}
+      <div style="background:var(--bg);border-radius:8px;padding:8px 10px;font-size:12.5px;word-break:break-all">Link thư mục gửi sàn:<br><a href="${escHtml(M.thuMuc.link)}" target="_blank" rel="noopener">${escHtml(M.thuMuc.link)}</a></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('kn-modal').style.display='none';knMo=null">Đóng</button>
+     ${M.thuMuc ? `<button class="btn-outline" style="flex:1;margin:0" onclick="knTai()">↻</button>
+     <button class="btn-g" style="flex:2;margin:0" onclick="knChepLink()">📋 Sao chép link</button>` : ''}`);
+  ddbCanhGiua?.('kn-modal');
+}
+window.knChepLink = async function() {
+  const l = knMo?.thuMuc?.link; if (!l) return;
+  try { await navigator.clipboard.writeText(l); showToast('Đã sao chép link thư mục'); } catch(e) { prompt('Sao chép link:', l); }
+};
+async function knTaiVideoMoHang(blob, loai) {
+  const ma = knMo?.ma; if (!ma) return;
+  const duoi = /mp4/.test(loai) ? 'mp4' : /quicktime|mov/.test(loai) ? 'mov' : 'webm';
+  try {
+    knMo.tienDo = `Đang tải lên video mở hàng (${(blob.size / 1048576).toFixed(1)} MB)...`; knVe();
+    await knTaiLen(blob, `VideoMoHangTra_${ma}.${duoi}`, ma, loai || 'video/webm', (pct) => { if (knMo?.ma === ma) { knMo.tienDo = `Đang tải lên video mở hàng ${pct}% (${(blob.size / 1048576).toFixed(1)} MB)...`; knVe(); } });
+    if (knMo?.ma === ma) { knMo.tienDo = ''; showToast(`Đã lưu VideoMoHangTra_${ma}.${duoi}`); await knTai(); }
+  } catch(e) { if (knMo?.ma === ma) { knMo.tienDo = 'Lỗi tải lên: ' + loiDeHieu(e.message) + ' — thử lại'; knVe(); } }
+}
+window.knChonVideo = function(inp) { const f = inp.files?.[0]; inp.value = ''; if (f) knTaiVideoMoHang(f, f.type || 'video/mp4'); };
+// Quay video mở hàng ngay trong app (camera sau), dừng là tự tải lên thư mục
+let knQ = null;   // { stream, rec, chunks, giay, hen, loai }
+window.knQuay = async function() {
+  if (!knMo) return;
+  let m = document.getElementById('kn-quay');
+  if (!m) { m = document.createElement('div'); m.id = 'kn-quay'; m.style.cssText = 'position:fixed;inset:0;background:#000;z-index:1600;display:flex;flex-direction:column'; document.body.appendChild(m); }
+  m.innerHTML = `<video id="kn-quay-v" playsinline muted style="flex:1;min-height:0;width:100%;object-fit:contain;background:#000"></video>
+    <div style="position:absolute;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;color:#fff;font-size:14px;font-weight:700;text-shadow:0 1px 3px #000">
+      <span>${escHtml(knMo.ma)}</span><span id="kn-quay-gio">● 0:00</span></div>
+    <div style="display:flex;gap:12px;padding:14px;background:#111;justify-content:center">
+      <button onclick="knHuyQuay()" style="flex:1;max-width:160px;padding:12px;border-radius:10px;border:1px solid #555;background:#222;color:#fff;font-size:15px">Hủy</button>
+      <button id="kn-quay-nut" onclick="knDungQuay()" style="flex:2;max-width:260px;padding:12px;border-radius:10px;border:none;background:#DC2626;color:#fff;font-size:16px;font-weight:700">■ Dừng & lưu</button></div>`;
+  m.style.display = 'flex';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true });
+    const v = document.getElementById('kn-quay-v'); v.srcObject = stream; await v.play().catch(() => {});
+    const loai = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => window.MediaRecorder?.isTypeSupported?.(t)) || '';
+    const rec = new MediaRecorder(stream, { ...(loai ? { mimeType: loai } : {}), videoBitsPerSecond: 2500000 });
+    knQ = { stream, rec, chunks: [], giay: 0, loai: (loai || rec.mimeType || 'video/webm').split(';')[0] };
+    rec.ondataavailable = (e) => { if (e.data?.size) knQ?.chunks.push(e.data); };
+    rec.start(1000);
+    knQ.hen = setInterval(() => { if (!knQ) return; knQ.giay++; const o = document.getElementById('kn-quay-gio'); if (o) o.textContent = '● ' + dgPhut(knQ.giay); }, 1000);
+  } catch(e) { knDongQuay(); alert('Không mở được camera: ' + e.message); }
+};
+function knDongQuay() {
+  if (knQ) { clearInterval(knQ.hen); try { knQ.stream.getTracks().forEach(t => t.stop()); } catch(e) {} }
+  const m = document.getElementById('kn-quay'); if (m) { m.style.display = 'none'; m.innerHTML = ''; }
+}
+window.knHuyQuay = async function() {
+  if (knQ?.giay > 3 && !await hoiXacNhan('Bỏ video đang quay?', { nutDongY: 'Bỏ video' })) return;
+  try { knQ?.rec.state !== 'inactive' && knQ?.rec.stop(); } catch(e) {}
+  knDongQuay(); knQ = null;
+};
+window.knDungQuay = function() {
+  const q = knQ; if (!q) return;
+  const nut = document.getElementById('kn-quay-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang xử lý...'; }
+  q.rec.onstop = () => { const blob = new Blob(q.chunks, { type: q.loai }); knDongQuay(); knQ = null; if (blob.size) knTaiVideoMoHang(blob, q.loai); else alert('Video trống — quay lại giúp mình'); };
+  try { q.rec.stop(); } catch(e) { knDongQuay(); knQ = null; }
+};
+
 // Admin: gán camera cho từng nhân viên đóng gói
 window.dgMoGanCamera = async function() {
   ddbMoKhung('dg-cam-modal', '⚙ Camera đóng gói', 'Mỗi nhân viên đóng gói ở bàn nào thì chọn camera bàn đó', '<div id="dg-cam-than"><div class="loading">Đang tải danh sách camera...</div></div>',
@@ -21987,6 +22147,7 @@ function hhoVe() {
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
             ${hhoChuaNK(d) ? `<span style="align-self:center;font-size:12px;font-weight:700;color:#B45309;margin-right:auto">⚠ Chưa nhập kho trong app</span>` : ''}
             ${(hhoTab !== 'xong' || hhoChuaNK(d)) && hhoDuocDuyet() ? `<button class="btn-outline" title="Đơn đã xử lý xong ở nơi khác — ẩn khỏi danh sách" style="width:auto!important;flex:0 0 auto;margin:0 auto 0 0;padding:8px 12px;color:var(--text2)" onclick="hhoAn('${k}')">Đã xử lý · Ẩn</button>` : ''}
+            <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 12px;color:#1D4ED8;border-color:#93C5FD" onclick="knMoHoSo('${escHtml(d.orderId)}','${escHtml(d.orderId)}')">📁 Khiếu nại</button>
             <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px" onclick="hhoXem('${k}')">Xem chi tiết</button>
             ${hhoChuaNK(d) ? `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>` : hhoTab === 'dangve' && !d.choDuyet ? '' : hhoTab !== 'cho' && hhoTab !== 'dangve' ? '' : d.choDuyet ? (hhoDuocDuyet()
                 ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#B91C1C;border-color:#FCA5A5" onclick="hhoTuChoi('${k}')">Từ chối</button>
@@ -28113,7 +28274,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v748</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v749</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28171,7 +28332,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v748</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v749</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28221,7 +28382,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v748</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v749</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28234,7 +28395,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v748</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v749</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
