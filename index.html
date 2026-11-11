@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 746;
+  const APP_VERSION = 747;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -21881,6 +21881,7 @@ const hhoGio = (s) => s ? new Date(s * 1000).toLocaleString('vi-VN', { hour: '2-
 const hhoKhoa = (d) => d.returnId || d.orderId;
 // Tab "Đã xử lý": đơn sàn đã xong nhưng app chưa nhập kho, hàng về shop trong 7 ngày qua -> vẫn cho xác nhận
 // Đơn trả hàng sàn tự duyệt hoàn tiền khi kiện còn trên đường về (chưa có mốc giao về shop): vẫn cho xác nhận trong 14 ngày kể từ lúc khách yêu cầu
+const hhoNhanTruocDuoc = (d) => hhoTab === 'dangve' && !d.daNhanApp && !d.choDuyet && !d.chiHoan && d.kind !== 'LazadaOrder' && coQuyen('tmdt_hoantra');
 const hhoChuaNK = (d) => hhoTab === 'xong' && !!d.chuaNhapKho && (Number(d.lucTra) > 0
   ? (Date.now() / 1000 - Number(d.lucTra)) < 7 * 86400
   : d.loai === 'tra' && !!d.vanDonHoan && Number(d.luc) > 0 && (Date.now() / 1000 - Number(d.luc)) < 14 * 86400);
@@ -21968,16 +21969,18 @@ function hhoVe() {
             <b style="font-size:13px">×${h.sl}</b></div>`).join('')}</div>
           ${(d.anhBC || []).length ? `<div style="font-size:11.5px;color:var(--text2);margin-top:5px">Bằng chứng từ người mua</div>
             <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${d.anhBC.map(u => `<img src="${escHtml(u)}" loading="lazy" onclick="viewPhoto('${escHtml(u)}')" style="width:58px;height:58px;object-fit:cover;border-radius:6px;cursor:pointer;background:var(--bg)">`).join('')}</div>` : ''}
-          ${hhoTab === 'cho' ? hhoVeTrangThaiDuyet(d) : ''}
+          ${hhoTab === 'cho' || hhoTab === 'dangve' ? hhoVeTrangThaiDuyet(d) : ''}
+          ${d.daNhanApp ? `<div style="margin-top:6px;font-size:12.5px;font-weight:600;padding:6px 8px;border-radius:8px;${d.daNhanApp.choKV ? 'background:#ECFDF5;color:#047857' : 'background:#F0FDF4;color:#15803D'}">✓ Đã nhận hàng trong app${d.daNhanApp.nguoi ? ' · ' + escHtml(d.daNhanApp.nguoi) : ''}${d.daNhanApp.choKV ? ' — chờ KiotViet cập nhật để tự xác nhận' : ''}${d.daNhanApp.loiKV ? `<div style="font-weight:400;color:#B45309;margin-top:2px">Lần gửi gần nhất lỗi: ${escHtml(d.daNhanApp.loiKV)}</div>` : ''}</div>` : ''}
           <div style="display:flex;gap:8px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">
             ${hhoChuaNK(d) ? `<span style="align-self:center;font-size:12px;font-weight:700;color:#B45309;margin-right:auto">⚠ Chưa nhập kho trong app</span>` : ''}
             ${(hhoTab !== 'xong' || hhoChuaNK(d)) && hhoDuocDuyet() ? `<button class="btn-outline" title="Đơn đã xử lý xong ở nơi khác — ẩn khỏi danh sách" style="width:auto!important;flex:0 0 auto;margin:0 auto 0 0;padding:8px 12px;color:var(--text2)" onclick="hhoAn('${k}')">Đã xử lý · Ẩn</button>` : ''}
             <button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px" onclick="hhoXem('${k}')">Xem chi tiết</button>
-            ${hhoChuaNK(d) ? `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>` : hhoTab !== 'cho' ? '' : d.choDuyet ? (hhoDuocDuyet()
+            ${hhoChuaNK(d) ? `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>` : hhoTab === 'dangve' && !d.choDuyet ? '' : hhoTab !== 'cho' && hhoTab !== 'dangve' ? '' : d.choDuyet ? (hhoDuocDuyet()
                 ? `<button class="btn-outline" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#B91C1C;border-color:#FCA5A5" onclick="hhoTuChoi('${k}')">Từ chối</button>
                    <button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#D97706" onclick="hhoMo('${k}', true)">Duyệt</button>`
                 : `<span style="align-self:center;font-size:12.5px;font-weight:700;color:#B45309">⏳ Đang chờ duyệt</span>`)
               : `<button class="btn-g" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 16px;background:#EA580C" onclick="hhoMo('${k}')">Xác nhận đã nhận</button>`}
+            ${hhoNhanTruocDuoc(d) ? `<button class="btn-outline" title="Kiện đã về shop nhưng KiotViet chưa cập nhật — nhập kho trong app trước" style="width:auto!important;flex:0 0 auto;margin:0;padding:8px 14px;color:#C2410C;border-color:#FDBA74" onclick="hhoMo('${k}', false, true)">📦 Nhận hàng trước</button>` : ''}
           </div>
         </div>`; }).join('')}
     ${!hhoDangTai && !hhoLoi && hhoSoNgay < 90 ? `<button class="btn-outline" style="width:100%;margin-top:4px" onclick="hhoXemCu()">Xem cả đơn cũ hơn (90 ngày)</button>` : ''}
@@ -22038,6 +22041,12 @@ window.hhoQuetMa = async function(ma) {
         hhoVe();
         // Sàn đã chuyển sang "Đã xử lý" mà app chưa nhập kho (VD Shopee hoàn tiền xong trước khi hàng về) -> vẫn cho xác nhận
         if (tab === 'xong' && don.chuaNhapKho) { showToast('Đơn đã xong trên sàn nhưng chưa nhập kho — xác nhận hàng nhận về'); hhoMo(hhoKhoa(don)); return; }
+        if (tab === 'dangve') {
+          if (don.daNhanApp) { alert(`Đơn ${don.orderId} đã nhận hàng trong app${don.daNhanApp.nguoi ? ' (' + don.daNhanApp.nguoi + ')' : ''} — đang chờ KiotViet cập nhật để tự xác nhận.`); return; }
+          if (don.choDuyet) { if (hhoDuocDuyet()) hhoMo(hhoKhoa(don), true); else alert(`Đơn ${don.orderId} đang chờ duyệt.`); return; }
+          if (hhoNhanTruocDuoc(don) && await hoiXacNhan(`Đơn ${don.orderId}: KiotViet vẫn báo "Đang hoàn về" (cập nhật trễ).\n\nKiện đã về tới shop? Nhận hàng trước trong app — khi KiotViet cập nhật, máy chủ tự gửi xác nhận theo số bạn kiểm.`, { nutDongY: 'Nhận hàng trước' })) { hhoMo(hhoKhoa(don), false, true); return; }
+          if (hhoNhanTruocDuoc(don)) return;
+        }
         const tenTab = (HHO_TABS[nhom].find(x => x[0] === tab) || [])[1] || tab;
         const loi = { dangve: 'sàn chưa báo hàng về kho nên chưa xác nhận được — chờ đơn chuyển sang "Chờ xác nhận hoàn"',
           xong: 'đơn đã xử lý xong (đã xác nhận / đã hoàn tiền) — không cần xác nhận nữa', khieunai: 'đơn đang khiếu nại trên sàn',
@@ -23097,10 +23106,11 @@ function kkSauQuet(t) {
 }
 
 // ----- Xác nhận đã nhận hàng hoàn -----
-window.hhoMo = async function(khoa, duyet) {
+window.hhoMo = async function(khoa, duyet, nhanTruoc) {
   const don = hhoDs.find(d => hhoKhoa(d) === khoa); if (!don) return;
   if (don.choDuyet && !duyet) { if (hhoDuocDuyet()) duyet = true; else { showToast('Đơn này đang chờ duyệt', true); return; } }
-  hhoMoDon = { don, dong: null, nhap: {}, dangTai: true, duyet: !!(duyet && don.choDuyet), ghiChu: '' };
+  // Nhận trước: kiện đã về shop nhưng KiotViet còn "Đang hoàn về" (hoặc đơn được duyệt từ tab Đang hoàn về)
+  hhoMoDon = { don, dong: null, nhap: {}, dangTai: true, duyet: !!(duyet && don.choDuyet), ghiChu: '', nhanTruoc: !!nhanTruoc || (hhoTab === 'dangve' && !!(duyet && don.choDuyet)) };
   hhoVeKhung();
   try {
     const kq = await goiWorkerAdmin('hh-hoan-chi-tiet', { orderId: don.orderId, returnId: don.returnId });
@@ -23130,7 +23140,7 @@ function hhoVeKhung() {
     const h = (d.hang || []).find(h => h.anh && String(h.sku || '').toLowerCase() === ma) || (d.hang?.length === 1 && M.dong.length === 1 ? d.hang[0] : null);
     return h?.anh ? { nho: h.anh, lon: h.anh } : null;
   };
-  ddbMoKhung('hho-modal', M.duyet ? 'Duyệt đơn hoàn trả' : 'Xác nhận đã nhận hàng hoàn', `${escHtml(san)} · ${escHtml(d.orderId)}${d.vanDonHoan || d.vanDon ? ' · VĐ ' + escHtml(d.vanDonHoan || d.vanDon) : ''}`,
+  ddbMoKhung('hho-modal', M.duyet ? 'Duyệt đơn hoàn trả' : M.nhanTruoc ? 'Nhận hàng hoàn trước' : 'Xác nhận đã nhận hàng hoàn', `${escHtml(san)} · ${escHtml(d.orderId)}${d.vanDonHoan || d.vanDon ? ' · VĐ ' + escHtml(d.vanDonHoan || d.vanDon) : ''}`,
     M.dangTai ? '<div class="loading">Đang lấy hàng trong đơn...</div>'
     : M.loi ? `<p class="info-note" style="color:#B91C1C">${escHtml(loiDeHieu(M.loi))}</p>`
     : `${M.dong.map((x, i) => { const n = M.nhap[i]; const lech = n.nhan + n.hong + n.mat !== x.sl;
@@ -23150,10 +23160,11 @@ function hhoVeKhung() {
           </div>${lech ? `<div style="font-size:11.5px;color:#DC2626;margin-top:4px">Nguyên vẹn + hỏng + mất phải bằng ${x.sl}</div>` : ''}</div>`; }).join('')}
       ${M.duyet ? `<div style="font-size:12.5px;margin-bottom:6px;color:var(--text2)">Nhân viên <b>${escHtml(d.choDuyet.nguoi || '')}</b> đã khai số lượng trên${d.choDuyet.ghiChu ? ` · ghi chú: <i>${escHtml(d.choDuyet.ghiChu)}</i>` : ''}. Sửa lại nếu cần rồi duyệt.</div>`
         : `<textarea id="hho-ghichu" rows="2" placeholder="Ghi chú (VD: cá chết 2 con, hộp móp...)" oninput="if(hhoMoDon)hhoMoDon.ghiChu=this.value" style="width:100%;box-sizing:border-box;padding:8px;font-size:13.5px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px">${escHtml(M.ghiChu || '')}</textarea>`}
+      ${M.nhanTruoc ? `<div class="info-note" style="font-size:12px;background:#FFF7ED;border-color:#FDBA74;color:#9A3412;margin-bottom:6px">KiotViet chưa cập nhật kiện này về shop. App nhập kho ngay theo số bạn kiểm; khi KiotViet cập nhật, máy chủ <b>tự gửi xác nhận</b> theo đúng số này.</div>` : ''}
       <div class="info-note" style="font-size:12px">Nguyên vẹn: nhập lại kho bán tiếp.${tongHong ? ' Hỏng: tự tạo phiếu xuất hủy.' : ''}${tongMat ? ' Mất: không nhập kho.' : ''}
         ${canGuiDuyet ? '<br><b style="color:#B45309">Có hàng hỏng / mất nên đơn cần được duyệt — chưa nhập kho cho tới khi duyệt.</b>' : ''}</div>`,
     `<button class="btn-outline" style="flex:1" onclick="hhoDong()">Thoát</button>
-     ${M.dong ? `<button class="btn-g" id="hho-nut" style="flex:2;margin:0;background:${M.duyet ? '#D97706' : '#EA580C'}" onclick="hhoXacNhan()">${M.duyet ? 'Duyệt & nhập kho' : canGuiDuyet ? 'Gửi duyệt' : 'Xác nhận đã nhận'}</button>` : ''}`);
+     ${M.dong ? `<button class="btn-g" id="hho-nut" style="flex:2;margin:0;background:${M.duyet ? '#D97706' : '#EA580C'}" onclick="hhoXacNhan()">${M.duyet ? 'Duyệt & nhập kho' : canGuiDuyet ? 'Gửi duyệt' : M.nhanTruoc ? 'Nhận hàng trước' : 'Xác nhận đã nhận'}</button>` : ''}`);
   ddbCanhGiua?.('hho-modal');
 }
 // Đơn đã xử lý xong ở nơi khác: ẩn khỏi danh sách (không nhập kho, không gửi xác nhận)
@@ -23186,6 +23197,7 @@ window.hhoXacNhan = async function() {
   if (guiDuyet && !String(M.ghiChu || '').trim()) { showToast('Có hàng hỏng / mất — ghi chú lý do để người duyệt nắm', true); document.getElementById('hho-ghichu')?.focus(); return; }
   const cauHoi = M.duyet ? `Duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nGửi xác nhận, nhập kho phần nguyên vẹn. Không hoàn tác được.`
     : guiDuyet ? `Gửi duyệt đơn ${M.don.orderId}?\n\n${soLuong}\n\nĐơn chưa nhập kho cho tới khi được duyệt.`
+    : M.nhanTruoc ? `Nhận hàng hoàn trước đơn ${M.don.orderId}?\n\n${soLuong}\n\nApp nhập kho ngay. Khi KiotViet cập nhật kiện đã về, máy chủ tự gửi xác nhận theo số này. Không hoàn tác được.`
     : `Xác nhận đã nhận hàng hoàn đơn ${M.don.orderId}?\n\n${soLuong}\n\nKhông hoàn tác được.`;
   if (!await hoiXacNhan(cauHoi, { nutDongY: M.duyet ? 'Duyệt' : guiDuyet ? 'Gửi duyệt' : 'Xác nhận' })) return;
   const nut = document.getElementById('hho-nut'), chuNut = nut?.textContent; if (nut) { nut.disabled = true; nut.textContent = 'Đang gửi...'; }
@@ -23195,7 +23207,7 @@ window.hhoXacNhan = async function() {
     const kq = M.duyet
       ? await goiWorkerAdmin('hh-hoan-duyet', { khoa: hhoKhoa(d), dongY: true, dong })
       : await goiWorkerAdmin('hh-hoan-xac-nhan', { orderId: d.orderId, returnId: d.returnId, kind: d.kind, shopId: d.shopId, shopName: d.shopName, loai: d.loai, vanDon: d.vanDonHoan || d.vanDon,
-          ghiChu: String(M.ghiChu || '').trim(), dong });
+          ghiChu: String(M.ghiChu || '').trim(), dong, nhanTruoc: !!M.nhanTruoc });
     if (!kq.success) throw new Error(kq.error || 'Lỗi');
     hhoDong(); hhoTim = '';
     if (kq.daXuLyTruoc) {
@@ -23213,6 +23225,11 @@ window.hhoXacNhan = async function() {
       return;
     }
     if (M.duyet) { hhoSoChoDuyet = Math.max(0, hhoSoChoDuyet - 1); if (!hhoSoChoDuyet) hhoChiChoDuyet = false; }
+    if (kq.nhanTruoc) {   // vẫn hiện ở Đang hoàn về, đánh dấu đã nhận trong app — chờ KiotViet
+      d.daNhanApp = { nguoi: currentUserData?.ten || '', choKV: true, loiKV: '' }; delete d.choDuyet; delete d.tuChoi; hhoVe();
+      showToast(`Đã nhận trước đơn ${d.orderId} · nhập kho ${kq.nhan}${kq.hong ? ` · hỏng ${kq.hong}` : ''} — tự xác nhận khi KiotViet cập nhật`);
+      loadSKUs(); return;
+    }
     hhoDs = hhoDs.filter(x => x !== d);
     if (hhoDem[hhoNhom]?.cho) hhoDem[hhoNhom].cho--;
     hhoVe();
@@ -28083,7 +28100,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v746</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v747</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28141,7 +28158,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v746</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v747</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28191,7 +28208,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v746</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v747</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28204,7 +28221,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v746</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v747</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
