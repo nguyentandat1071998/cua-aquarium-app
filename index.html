@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 752;
+  const APP_VERSION = 753;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -22933,6 +22933,7 @@ window.hhoXem = async function(khoa) {
 let kkDs = [], kkDsUnsub = null, kkDsLoi = '';
 let kkMoId = null, kkPhieu = null, kkPhieuUnsub = null;
 let kkLoc = 'tat', kkTim = '', kkTabDs = 'dang', kkGioiHan = 300;
+let kkChon = null;       // đang tick chọn phiếu để xóa khỏi danh sách: Set id (null = không ở chế độ chọn)
 let kkThuGon = new Set();   // nhóm hàng đang thu gọn trong phiếu đang mở
 let kkTam = {};          // số vừa đếm chưa lên máy chủ: { skuId: số | 'khop' | null }
 let kkHangDoi = {}, kkHenGui = null, kkDangGui = false;
@@ -23013,13 +23014,14 @@ function kkNguoiKiem(p, dsSku) {
 }
 function kkVeDs() {
   const el = document.getElementById('kiemkho-content'); if (!el) return;
-  const dang = kkDs.filter(p => p.trangThai === 'dang_kiem' || p.trangThai === 'cho_duyet');
-  const xong = kkDs.filter(p => p.trangThai === 'da_duyet' || p.trangThai === 'da_huy');
+  const dang = kkDs.filter(p => !p.deleted && (p.trangThai === 'dang_kiem' || p.trangThai === 'cho_duyet'));
+  const xong = kkDs.filter(p => !p.deleted && (p.trangThai === 'da_duyet' || p.trangThai === 'da_huy'));
   const tab = (k, t, n) => `<button onclick="kkDoiTab('${k}')" style="flex:1;border:none;border-bottom:2.5px solid ${kkTabDs === k ? '#2563EB' : 'transparent'};background:none;padding:10px 6px;font-size:14px;cursor:pointer;color:${kkTabDs === k ? '#2563EB' : 'var(--text2)'};font-weight:${kkTabDs === k ? 700 : 500}">${t}${n ? ` <span style="background:${kkTabDs === k ? '#2563EB' : 'var(--text2)'};color:#fff;border-radius:9px;padding:1px 7px;font-size:11px">${n}</span>` : ''}</button>`;
   const the = (p) => { const [tt, mau, nen] = KK_TT[p.trangThai] || ['', '#6B7280', '#F3F4F6']; const t = kkTienDo(p); const nk = kkNguoiKiem(p);
-    return `<div onclick="kkMo('${p.id}')" style="cursor:pointer;background:var(--surface);border:1px solid var(--border);border-left:4px solid ${mau};border-radius:10px;padding:10px 12px;margin-bottom:8px">
+    const dangChon = kkChon && kkDuocXoa(p), daTick = dangChon && kkChon.has(p.id);
+    return `<div onclick="${kkChon ? (dangChon ? `kkTick('${p.id}')` : '') : `kkMo('${p.id}')`}" style="cursor:pointer;background:${daTick ? '#EFF6FF' : 'var(--surface)'};border:1px solid ${daTick ? '#2563EB' : 'var(--border)'};border-left:4px solid ${mau};border-radius:10px;padding:10px 12px;margin-bottom:8px${kkChon && !dangChon ? ';opacity:.5;cursor:default' : ''}">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center">
-        <b style="font-size:14.5px">${escHtml(p.ma || '')}</b>
+        <b style="font-size:14.5px;display:flex;align-items:center;gap:8px">${dangChon ? `<input type="checkbox" ${daTick ? 'checked' : ''} style="width:20px;height:20px;margin:0;pointer-events:none;accent-color:#2563EB">` : ''}${escHtml(p.ma || '')}</b>
         <span style="font-size:11.5px;font-weight:700;color:${mau};background:${nen};padding:2px 9px;border-radius:10px">${tt}</span></div>
       <div style="font-size:12.5px;color:var(--text2);margin-top:3px">${kkTenKho(p.kho)} · ${escHtml((p.nhom || []).map(n => n.split(' > ').pop()).join(', ') || p.tieuDe || 'Chọn mã')}</div>
       <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
@@ -23029,14 +23031,56 @@ function kkVeDs() {
       <div style="font-size:12px;color:var(--text2);margin-top:3px">🕒 Tạo ${kkNgayDu(p.luc)} · ${escHtml(p.nguoiTao?.ten || '')}${p.trangThai === 'da_duyet' ? `<br>✓ Duyệt ${kkNgayDu(p.lucDuyet)}${p.duyet?.nguoi?.ten ? ' · ' + escHtml(p.duyet.nguoi.ten) : ''}` : ''}</div>
     </div>`; };
   const ds = kkTabDs === 'xong' ? xong : dang;
+  const dsXoaDuoc = ds.filter(kkDuocXoa);
+  if (kkChon) [...kkChon].forEach(id => { if (!dsXoaDuoc.some(p => p.id === id)) kkChon.delete(id); });   // phiếu đã đổi tab / bị người khác xử lý
+  const nChon = kkChon ? kkChon.size : 0, tatCa = nChon && nChon === dsXoaDuoc.length;
+  const thanhChon = !dsXoaDuoc.length ? '' : !kkChon
+    ? `<div style="display:flex;justify-content:flex-end;margin:-2px 0 8px"><button class="btn-xs" style="padding:6px 12px;font-size:13px" onclick="kkBatChon()">☑ Chọn để xóa</button></div>`
+    : `<div style="position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--surface);border:1.5px solid #2563EB;border-radius:10px;padding:8px 10px;margin-bottom:10px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13.5px;cursor:pointer;margin:0"><input type="checkbox" ${tatCa ? 'checked' : ''} onchange="kkTickHet(this.checked)" style="width:18px;height:18px;margin:0;accent-color:#2563EB">Tất cả (${dsXoaDuoc.length})</label>
+        <span style="flex:1;font-size:13px;color:var(--text2)">Đã chọn <b style="color:var(--text)">${nChon}</b></span>
+        <button class="btn-outline" style="width:auto;margin:0;padding:7px 12px" onclick="kkTatChon()">Thôi</button>
+        <button class="btn-g" style="width:auto;margin:0;padding:7px 14px;background:#DC2626${nChon ? '' : ';opacity:.5'}" ${nChon ? '' : 'disabled'} onclick="kkXoaDaChon(this)">🗑 Xóa khỏi danh sách${nChon ? ` (${nChon})` : ''}</button></div>`;
   el.innerHTML = `<div style="max-width:760px;margin:0 auto">
-    ${kkDuocTao() ? `<button class="btn-g" style="width:100%;margin:0 0 10px;padding:12px;font-size:15px" onclick="kkMoTao()">+ Tạo phiếu kiểm kho</button>` : ''}
+    ${kkDuocTao() && !kkChon ? `<button class="btn-g" style="width:100%;margin:0 0 10px;padding:12px;font-size:15px" onclick="kkMoTao()">+ Tạo phiếu kiểm kho</button>` : ''}
     <div style="display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:10px">${tab('dang', 'Đang kiểm', dang.length)}${tab('xong', 'Đã hoàn thành', 0)}</div>
+    ${thanhChon}
     ${kkDsLoi ? `<p class="info-note" style="color:#B91C1C">Không tải được: ${escHtml(loiDeHieu(kkDsLoi))}</p>` : ''}
     ${ds.length ? ds.map(the).join('') : `<p class="info-note">${kkTabDs === 'xong' ? 'Chưa có phiếu nào hoàn thành.' : kkDuocTao() ? 'Chưa có phiếu nào đang kiểm — bấm "Tạo phiếu kiểm kho".' : 'Chưa có phiếu kiểm kho nào cần kiểm.'}</p>`}
   </div>`;
 }
-window.kkDoiTab = (t) => { kkTabDs = t; kkVeDs(); };
+window.kkDoiTab = (t) => { kkTabDs = t; if (kkChon) kkChon.clear(); kkVeDs(); };
+// ----- Tick chọn nhiều phiếu rồi xóa khỏi danh sách -----
+// Phiếu đang kiểm / chờ duyệt: bị HỦY rồi ẩn. Phiếu đã duyệt / đã hủy: chỉ ẩn khỏi danh sách, tồn kho giữ nguyên.
+// Dữ liệu phiếu vẫn giữ trên máy chủ (không xóa hẳn). Người duyệt xóa được mọi phiếu; người tạo xóa được phiếu đang kiểm của mình.
+const kkDuocXoa = (p) => kkDuocDuyet() || (p.trangThai === 'dang_kiem' && p.uidTao === currentUser?.uid);
+window.kkBatChon = () => { kkChon = new Set(); kkVeDs(); };
+window.kkTatChon = () => { kkChon = null; kkVeDs(); };
+window.kkTick = (id) => { if (!kkChon) return; kkChon.has(id) ? kkChon.delete(id) : kkChon.add(id); kkVeDs(); };
+window.kkTickHet = (bat) => {
+  if (!kkChon) return;
+  const ds = kkDs.filter(p => !p.deleted && (kkTabDs === 'xong' ? ['da_duyet', 'da_huy'] : ['dang_kiem', 'cho_duyet']).includes(p.trangThai) && kkDuocXoa(p));
+  kkChon = bat ? new Set(ds.map(p => p.id)) : new Set(); kkVeDs();
+};
+window.kkXoaDaChon = async function(nut) {
+  if (!kkChon?.size) return;
+  const chon = kkDs.filter(p => kkChon.has(p.id));
+  const dangMo = chon.filter(p => p.trangThai === 'dang_kiem' || p.trangThai === 'cho_duyet'), daXong = chon.length - dangMo.length;
+  const ma = chon.slice(0, 8).map(p => p.ma).join(', ') + (chon.length > 8 ? `… (+${chon.length - 8})` : '');
+  if (!await hoiXacNhan(`Xóa ${chon.length} phiếu khỏi danh sách?\n\n${ma}\n\n`
+    + (dangMo.length ? `• ${dangMo.length} phiếu đang kiểm / chờ duyệt sẽ bị HỦY — số đã đếm không được dùng.\n` : '')
+    + (daXong ? `• ${daXong} phiếu đã hoàn thành chỉ ẩn khỏi danh sách — tồn kho KHÔNG thay đổi.\n` : ''),
+    { nutDongY: `Xóa ${chon.length} phiếu`, nguy: true })) return;
+  if (nut) { nut.disabled = true; nut.textContent = 'Đang xóa...'; }
+  try {
+    const kq = await goiWorkerAdmin('kk-xoa', { ids: chon.map(p => p.id) });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    const khong = new Set(kq.khongDuoc || []), daXoa = new Set(chon.filter(p => !khong.has(p.ma)).map(p => p.id));
+    kkDs = kkDs.map(p => daXoa.has(p.id) ? { ...p, deleted: true } : p);   // ẩn ngay, không đợi máy chủ báo về
+    kkChon = null; kkVeDs();
+    showToast(`Đã xóa ${kq.daXoa} phiếu khỏi danh sách` + ((kq.khongDuoc || []).length ? ` · ${kq.khongDuoc.length} phiếu không có quyền xóa: ${kq.khongDuoc.join(', ')}` : ''), !!(kq.khongDuoc || []).length);
+  } catch(e) { alert('Chưa xóa được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; kkVeDs(); } }
+};
 
 // ----- Tạo phiếu: chọn kho + nhóm hàng -----
 function kkCacNhom() {
@@ -28596,7 +28640,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v752</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v753</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28654,7 +28698,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v752</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v753</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28704,7 +28748,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v752</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v753</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28717,7 +28761,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v752</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v753</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
