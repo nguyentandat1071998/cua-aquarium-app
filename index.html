@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 762;
+  const APP_VERSION = 763;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -25209,14 +25209,15 @@ async function tinhLuongThang(thang) {
 
       // Làm thêm: chỉ tính khi quản lý đã duyệt
       // Làm thêm = check-in SỚM (trước giờ bắt đầu ca / khung 2, quá 5 phút) + ở lại SAU giờ kết thúc ca (quá 5 phút)
-      n.phutOLai = gioCa.khung2 ? (n.ra2 ? tinhPhutLamThem(n.ra2, gioCa.khung2.ketThuc) : 0) : tinhPhutLamThem(n.ra, gioCa.ketThuc);
-      n.phutDenSom = tinhPhutDenSom(n.vao, gioCa.batDau) + (gioCa.khung2 && ca.vaoLuc2?.seconds ? tinhPhutDenSom(new Date(ca.vaoLuc2.seconds * 1000), gioCa.khung2.batDau) : 0);
-      n.phutLamThem = n.phutDenSom + n.phutOLai;
-      n.lamThemDaDuyet = !!ca.lamThemDuyet;
-      if (n.lamThemDaDuyet) {
-        const pDuyet = Number(ca.lamThemDuyet.soPhut) || n.phutLamThem;   // tính đúng số phút đã duyệt
-        n.tienLamThem = Math.round(donGia / phutMotCong(caLV) * pDuyet * HE_SO_LAM_THEM);
-      }
+      // Tách 2 phần: đến sớm (duyệt mới tính) và sau ca (duyệt, hoặc tự chấp nhận khi Admin chốt lương)
+      const lt = ltTach(ca, gioCa);
+      n.phutOLai = lt.sau;
+      n.phutDenSom = lt.som;
+      n.phutLamThem = lt.som + lt.sau;
+      n.ltCu = lt.cu; n.dSom = lt.dSom; n.dSau = lt.dSau;
+      n.phutLamThemTinh = lt.phutTinh;
+      n.lamThemDaDuyet = lt.phutTinh > 0;
+      if (lt.phutTinh) n.tienLamThem = Math.round(donGia / phutMotCong(caLV) * lt.phutTinh * HE_SO_LAM_THEM);
     }
   }
 
@@ -25242,7 +25243,7 @@ async function tinhLuongThang(thang) {
     phut: s.phut + n.phut, luong: s.luong + n.luong,
     soCong: s.soCong + (n.coCong ? n.soCong : 0),
     lamThem: s.lamThem + (n.tienLamThem || 0),
-    phutLamThem: s.phutLamThem + (n.lamThemDaDuyet ? n.phutLamThem : 0),
+    phutLamThem: s.phutLamThem + (n.phutLamThemTinh || 0),
     thuongDon: s.thuongDon + (n.thuongDon || 0),
     thuongDT: s.thuongDT + (n.thuongDT || 0),
     thuongThem: s.thuongThem + (n.thuongThem || 0),
@@ -25458,10 +25459,10 @@ async function tinhLuongTatCa(thang) {
       n.soCa++; n.phut += phut;
       n.tongCong += soCong;
       n.luong += Math.round(donGia * soCong);
-      if (ca.lamThemDuyet) {
-        const p = Number(ca.lamThemDuyet.soPhut) || 0;
-        n.lamThem += Math.round(donGia / phutMotCong(caLV) * p * HE_SO_LAM_THEM);
-      }
+      const lt = ltTach(ca, gioCa);
+      if (lt.phutTinh) n.lamThem += Math.round(donGia / phutMotCong(caLV) * lt.phutTinh * HE_SO_LAM_THEM);
+      if (lt.sau && !lt.cu && !lt.dSau) { n.ltChoSau = (n.ltChoSau || 0) + lt.sau; }
+      if (lt.som && !lt.cu && !lt.dSom) { n.ltChoSom = (n.ltChoSom || 0) + lt.som; }
     }
     if (ca.vaoLuc?.seconds) {
       const v = new Date(ca.vaoLuc.seconds * 1000);
@@ -25503,7 +25504,11 @@ async function tinhLuongTatCa(thang) {
   blDanhSachHienTai = ds;
   const tongHong = qtTienHuy(chung.phieuHuy, {});
   const hongTheoKho = { ch: qtTienHuy(chung.phieuHuy, { khoHuy: ['ch'] }), san: qtTienHuy(chung.phieuHuy, { khoHuy: ['san'] }) };
-  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, hongTheoKho, mocHong: chung.mocHong, phieuHuy: chung.phieuHuy || [] };
+  let chot = null;
+  if (currentUserData?.role === 'admin') {
+    try { const sc = await getDoc(doc(db, 'settings', 'luong_chot')); chot = sc.exists() ? (sc.data()[thang] || null) : null; } catch(e) {}
+  }
+  return { thang, danhSach: ds, dtCuaHang, dtSan: chung.dtSan || 0, tongHong, hongTheoKho, mocHong: chung.mocHong, phieuHuy: chung.phieuHuy || [], chot };
 }
 
 function veDanhSachLuong(dl) {
@@ -25530,7 +25535,9 @@ function veDanhSachLuong(dl) {
       <td>${(n.tongCong || 0).toFixed(2).replace(/\.?0+$/,'')}
         ${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
       <td>${fmt(n.luong)}</td>
-      <td>${n.lamThem ? fmt(n.lamThem) : '—'}</td>
+      <td>${n.lamThem ? fmt(n.lamThem) : '—'}
+        ${n.ltChoSom ? `<div style="font-size:10px;color:#D97706">sớm ${n.ltChoSom}′ chờ duyệt</div>` : ''}
+        ${n.ltChoSau ? `<div style="font-size:10px;color:#D97706">sau ca ${n.ltChoSau}′ chờ duyệt</div>` : ''}</td>
       <td>${n.thuongCT ? `<span style="color:var(--green)">${fmt(n.thuongCT)}</span>` : '—'}${n.ctTruThuong ? `<div style="font-size:10px;color:var(--red)">đã trừ ${fmt(n.ctTruThuong)}</div>` : ''}</td>
       <td>${n.truCT ? `<span style="color:var(--red)">−${fmt(n.truCT)}</span>` : '—'}</td>
       <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
@@ -25628,7 +25635,17 @@ function veDanhSachLuong(dl) {
       ${laAdmin ? `
         <button class="btn-g" style="width:100%;margin-top:12px" onclick="blLuuPhuCap()">
           Lưu phụ cấp và ghi chú
-        </button>` : ''}`}
+        </button>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px">CHỐT LƯƠNG THÁNG ${th}/${nam}</div>
+          <div style="font-size:12px;color:var(--text2);margin-bottom:8px">
+            Khi chốt: phút làm <b>sau ca</b> chưa duyệt được tự chấp nhận. Phút <b>đến sớm</b> chưa duyệt thì không tính.
+          </div>
+          ${dl.chot ? `<div style="font-size:12px;color:var(--green);margin-bottom:8px">✓ Đã chốt ${escHtml(dl.chot.ten || '')} · ${new Date(dl.chot.luc).toLocaleString('vi-VN')}${dl.chot.soCa ? ` · tự duyệt ${dl.chot.soCa} ca sau ca (${dl.chot.soPhut}′)` : ''}</div>` : ''}
+          <button class="${dl.chot ? 'btn-outline' : 'btn-g'}" style="width:100%" onclick="blChotLuong()">
+            ${dl.chot ? '🔒 Chốt lại (duyệt các ca sau ca mới phát sinh)' : '🔒 Chốt lương tháng này'}
+          </button>
+        </div>` : ''}`}
     ${hhNutHoaHong(true)}`;
 }
 
@@ -25783,13 +25800,14 @@ function veBangLuong(dl) {
               </td>
               <td>${n.coCong ? (Math.round(n.soCong * 1000) / 1000).toString().replace('.', ',') : '—'}</td>
               <td>
-                ${n.phutLamThem ? (n.lamThemDaDuyet
-                  ? `<span style="color:var(--green)">${fmt(n.tienLamThem)}</span>`
-                  : `${laQuanLy ? `<button class="btn-xs bl-nut-xuly"
-                       onclick="duyetLamThem('${n.ngay}',${n.phutLamThem})">Duyệt ${n.phutLamThem}p</button>`
-                     : `<span style="color:#D97706;font-size:11px">chờ duyệt</span>`}`)
-                : '—'}
-                ${n.phutLamThem && n.phutDenSom ? `<div style="font-size:10px;color:var(--text2)">sớm ${n.phutDenSom}′${n.phutOLai ? ` + sau ca ${n.phutOLai}′` : ''}</div>` : ''}
+                ${n.ltCu
+                  ? `<span style="color:var(--green)">${fmt(n.tienLamThem)}</span>
+                     <div style="font-size:10px;color:var(--text2)">đã duyệt ${n.phutLamThemTinh}′</div>`
+                  : n.phutLamThem ? `
+                    ${n.tienLamThem ? `<span style="color:var(--green)">${fmt(n.tienLamThem)}</span>` : ''}
+                    ${n.phutDenSom ? ltDongCT(n.ngay, 'som', n.phutDenSom, n.dSom, laQuanLy) : ''}
+                    ${n.phutOLai ? ltDongCT(n.ngay, 'sau', n.phutOLai, n.dSau, laQuanLy) : ''}`
+                  : '—'}
               </td>
               <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
               <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
@@ -25928,27 +25946,129 @@ window.hoanTacBoQuaTre = async function(ngay) {
 };
 
 // ===== DUYỆT LÀM THÊM GIỜ =====
-// Đến sớm / ở lại sau giờ ra không tự thành làm thêm — có thể chỉ là đến sớm ngồi chơi, dọn dẹp hoặc quên
-// check-out. Quản lý duyệt thì mới tính (hệ số HE_SO_LAM_THEM).
-window.duyetLamThem = async function(ngay, soPhut) {
-  if (!coQuyen('luong_duyet')) { showToast('Bạn không có quyền duyệt làm thêm', true); return; }
+// Làm thêm tách 2 phần, duyệt riêng:
+//  - ĐẾN SỚM: phải duyệt mới tính (có thể chỉ đến sớm ngồi chơi).
+//  - SAU CA: phải duyệt; nếu Admin bấm "Chốt lương" mà chưa duyệt thì tự chấp nhận.
+// Lưu ở lich_ca.lamThemDuyet = { som: {soPhut, boi, luc} | null, sauCa: {soPhut, boi, luc, tuDong?} | null }.
+// Bản ghi cũ { soPhut, boi, luc } là duyệt gộp — vẫn tính đúng số phút đã duyệt.
+function ltTach(ca, gioCa) {
+  const kq = { som: 0, sau: 0, cu: false, dSom: null, dSau: null, phutTinh: 0 };
+  if (!ca?.vaoLuc?.seconds || !ca?.thoatLuc?.seconds) return kq;
+  const vao = new Date(ca.vaoLuc.seconds * 1000), ra = new Date(ca.thoatLuc.seconds * 1000);
+  kq.sau = gioCa.khung2
+    ? (ca.thoatLuc2?.seconds ? tinhPhutLamThem(new Date(ca.thoatLuc2.seconds * 1000), gioCa.khung2.ketThuc) : 0)
+    : tinhPhutLamThem(ra, gioCa.ketThuc);
+  kq.som = tinhPhutDenSom(vao, gioCa.batDau)
+    + (gioCa.khung2 && ca.vaoLuc2?.seconds ? tinhPhutDenSom(new Date(ca.vaoLuc2.seconds * 1000), gioCa.khung2.batDau) : 0);
+  const d = ca.lamThemDuyet;
+  if (d && typeof d === 'object') {
+    if (!('som' in d) && !('sauCa' in d) && d.soPhut != null) {
+      kq.cu = true;
+      kq.phutTinh = Number(d.soPhut) || (kq.som + kq.sau);
+    } else {
+      kq.dSom = d.som || null; kq.dSau = d.sauCa || null;
+      kq.phutTinh = (kq.dSom ? Number(kq.dSom.soPhut) || 0 : 0) + (kq.dSau ? Number(kq.dSau.soPhut) || 0 : 0);
+    }
+  }
+  return kq;
+}
+
+// Một dòng "Sớm 12′ / Sau ca 30′" trong ô Làm thêm của bảng lương chi tiết
+function ltDongCT(ngay, loai, phut, duyet, laQuanLy) {
+  const nhan = loai === 'som' ? 'Sớm' : 'Sau ca';
+  let ben;
+  if (duyet) {
+    ben = `<span style="color:var(--green)" title="${escHtml(duyet.tuDong ? 'Tự chấp nhận khi chốt lương' : ('Duyệt bởi ' + (duyet.boi?.ten || '')))}">✓${Number(duyet.soPhut) !== phut ? ` ${Number(duyet.soPhut) || 0}′` : ''}${duyet.tuDong ? ' tự duyệt' : ''}</span>`
+      + (laQuanLy ? ` <a style="color:var(--text2);cursor:pointer;text-decoration:underline" onclick="boDuyetLamThem('${ngay}','${loai}')">bỏ</a>` : '');
+  } else if (laQuanLy) {
+    ben = `<button class="btn-xs bl-nut-xuly" style="font-size:10px;padding:1px 6px" onclick="duyetLamThem('${ngay}','${loai}',${phut})">Duyệt</button>`;
+  } else {
+    ben = `<span style="color:#D97706">chờ duyệt</span>`;
+  }
+  return `<div style="font-size:10.5px;white-space:nowrap;margin-top:2px">${nhan} ${phut}′ ${ben}</div>`;
+}
+
+async function ltGhi(ngay, loai, giaTri) {
   const uid = blNhanVienDangXem || currentUser.uid;
+  const ref = doc(db, 'lich_ca', `${ngay}_${uid}`);
+  const snap = await getDoc(ref);
+  const cu = snap.exists() ? snap.data().lamThemDuyet : null;
+  if (cu && typeof cu === 'object' && !('som' in cu) && !('sauCa' in cu) && cu.soPhut != null) {
+    throw new Error('Ngày này đã duyệt gộp theo cách cũ, không tách được.');
+  }
+  const moi = { som: cu?.som || null, sauCa: cu?.sauCa || null };
+  moi[loai === 'som' ? 'som' : 'sauCa'] = giaTri;
+  await updateDoc(ref, { lamThemDuyet: (moi.som || moi.sauCa) ? moi : null });
+}
 
-  if (!await hoiXacNhan(`Duyệt ${soPhut} phút làm thêm ngày ${ngay}?\n\n`
+window.duyetLamThem = async function(ngay, loai, soPhut) {
+  if (!coQuyen('luong_duyet')) { showToast('Bạn không có quyền duyệt làm thêm', true); return; }
+  if (loai !== 'som' && loai !== 'sau') return;
+  const nhan = loai === 'som' ? 'đến sớm' : 'làm sau ca';
+  if (!await hoiXacNhan(`Duyệt ${soPhut} phút ${nhan} ngày ${ngay}?\n\n`
     + `Hưởng ${HE_SO_LAM_THEM * 100}% đơn giá theo công.`)) return;
-
   try {
-    await updateDoc(doc(db, 'lich_ca', `${ngay}_${uid}`), {
-      lamThemDuyet: {
-        soPhut,
-        boi: { uid: currentUser.uid, ten: currentUserData?.ten || '' },
-        luc: new Date().toISOString()
-      }
-    });
-    showToast(`Đã duyệt ${soPhut} phút làm thêm`);
+    await ltGhi(ngay, loai, { soPhut, boi: { uid: currentUser.uid, ten: currentUserData?.ten || '' }, luc: new Date().toISOString() });
+    showToast(`Đã duyệt ${soPhut} phút ${nhan}`);
     renderBangLuong();
   } catch(e) {
     alert('Không duyệt được: ' + e.message);
+  }
+};
+
+window.boDuyetLamThem = async function(ngay, loai) {
+  if (!coQuyen('luong_duyet')) { showToast('Bạn không có quyền duyệt làm thêm', true); return; }
+  if (loai !== 'som' && loai !== 'sau') return;
+  if (!await hoiXacNhan(`Bỏ duyệt phần ${loai === 'som' ? 'đến sớm' : 'sau ca'} ngày ${ngay}?`)) return;
+  try { await ltGhi(ngay, loai, null); showToast('Đã bỏ duyệt'); renderBangLuong(); }
+  catch(e) { alert('Không lưu được: ' + e.message); }
+};
+
+// Chốt lương tháng (Admin): phần SAU CA chưa duyệt → tự chấp nhận; phần ĐẾN SỚM chưa duyệt → không tính.
+// Chốt lại được nhiều lần (ví dụ chốt trước cuối tháng rồi có thêm ca).
+window.blChotLuong = async function() {
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin', true); return; }
+  const thang = blThang;
+  const [nam, th] = thang.split('-').map(Number);
+  const dau = `${thang}-01`, cuoi = `${thang}-${String(new Date(nam, th, 0).getDate()).padStart(2, '0')}`;
+  try {
+    if (!allCaLamViec.length) await napCaLamViec();
+    const snap = await getDocs(query(collection(db, 'lich_ca'), where('ngay', '>=', dau), where('ngay', '<=', cuoi)));
+    const canDuyet = []; let phutSau = 0, soSom = 0, phutSom = 0, chuaKetCa = 0;
+    for (const d of snap.docs) {
+      const ca = d.data();
+      if (ca.deleted || !ca.uid) continue;
+      if (ca.vaoLuc?.seconds && !ca.thoatLuc?.seconds) { chuaKetCa++; continue; }
+      const caLV = ca.caId ? layCa(ca.caId) : null;
+      const gioCa = caLV || CA_GIO[ca.loaiCa] || CA_GIO.full;
+      const lt = ltTach(ca, gioCa);
+      if (lt.cu) continue;
+      if (lt.sau && !lt.dSau) { canDuyet.push({ ref: d.ref, som: lt.dSom, sau: lt.sau }); phutSau += lt.sau; }
+      if (lt.som && !lt.dSom) { soSom++; phutSom += lt.som; }
+    }
+    const homNay = new Date().toLocaleDateString('sv-SE');
+    const msg = `Chốt lương tháng ${String(th).padStart(2, '0')}/${nam}?\n\n`
+      + `• Tự chấp nhận ${canDuyet.length} ca làm sau ca chưa duyệt (${phutSau} phút).\n`
+      + `• ${soSom ? `${soSom} ca đến sớm chưa duyệt (${phutSom} phút) sẽ KHÔNG được tính.` : 'Không còn ca đến sớm chờ duyệt.'}`
+      + (chuaKetCa ? `\n• ${chuaKetCa} ca chưa kết ca — bỏ qua.` : '')
+      + (homNay <= cuoi ? `\n\nTháng chưa kết thúc — ca phát sinh sau hôm nay cần bấm Chốt lại.` : '');
+    if (!await hoiXacNhan(msg)) return;
+    const boi = { uid: currentUser.uid, ten: currentUserData?.ten || '' };
+    const luc = new Date().toISOString();
+    for (let i = 0; i < canDuyet.length; i += 400) {
+      const b = writeBatch(db);
+      canDuyet.slice(i, i + 400).forEach(x => b.update(x.ref, {
+        lamThemDuyet: { som: x.som || null, sauCa: { soPhut: x.sau, tuDong: true, boi, luc } }
+      }));
+      await b.commit();
+    }
+    await setDoc(doc(db, 'settings', 'luong_chot'), {
+      [thang]: { luc, uid: boi.uid, ten: boi.ten, soCa: canDuyet.length, soPhut: phutSau }
+    }, { merge: true });
+    showToast(`Đã chốt lương · tự duyệt ${canDuyet.length} ca sau ca`);
+    renderBangLuong();
+  } catch(e) {
+    alert('Không chốt được: ' + e.message);
   }
 };
 
@@ -28796,7 +28916,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v762</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v763</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28854,7 +28974,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v762</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v763</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28904,7 +29024,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v762</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v763</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28917,7 +29037,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v762</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v763</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
