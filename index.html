@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 761;
+  const APP_VERSION = 762;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -25036,6 +25036,9 @@ async function renderBangLuong() {
     blThang = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
   }
   el.innerHTML = '<div class="loading">Đang tính lương...</div>';
+  // Giờ bắt đầu từng ca phải có trước khi tính trễ — thiếu thì mọi ca bị coi như ca mặc định 8:30 (ca chiều thành trễ hàng trăm phút)
+  if (!allCaLamViec.length) await napCaLamViec();
+  if (!QUY_TAC_THUONG.length) await napQuyTacThuong();
   const xemHet = coQuyen('luong_xemtatca');
   try {
     // Bảng lương cần vai trò và cấp bậc từng người. Vào thẳng tab này thì
@@ -25085,6 +25088,7 @@ function phutSangGio(p) {
 }
 
 async function tinhLuongThang(thang) {
+  if (!allCaLamViec.length) await napCaLamViec();
   const dauThang = `${thang}-01`;
   const [nam, th] = thang.split('-').map(Number);
   const ngayCuoi = new Date(nam, th, 0).getDate();
@@ -25390,6 +25394,7 @@ async function qtDuLieuCuaHang(thang, donBanCoSan) {
 }
 
 async function tinhLuongTatCa(thang) {
+  if (!allCaLamViec.length) await napCaLamViec();
   blHoaHongDuLieu = [];
   const dauThang = `${thang}-01`;
   const [nam, th] = thang.split('-').map(Number);
@@ -25460,7 +25465,7 @@ async function tinhLuongTatCa(thang) {
     }
     if (ca.vaoLuc?.seconds) {
       const v = new Date(ca.vaoLuc.seconds * 1000);
-      if (v.getHours() * 60 + v.getMinutes() - gioCa.batDau > 0 && !(ca.dieuChinhCa || ca.dieuChinhTre)) n.soTre++;
+      if (v.getHours() * 60 + v.getMinutes() - gioCa.batDau > nguongTreTag() && !(ca.dieuChinhCa || ca.dieuChinhTre)) n.soTre++;
     }
   }
   for (const d of sQuet.docs) { const x = d.data(); if (x.uid) lay(x.uid)?._quet.push(x); }
@@ -28791,7 +28796,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v761</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v762</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28849,7 +28854,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v761</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v762</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -28899,7 +28904,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v761</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v762</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -28912,7 +28917,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v761</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v762</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
