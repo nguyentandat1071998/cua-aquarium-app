@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 763;
+  const APP_VERSION = 764;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -25460,7 +25460,10 @@ async function tinhLuongTatCa(thang) {
       n.tongCong += soCong;
       n.luong += Math.round(donGia * soCong);
       const lt = ltTach(ca, gioCa);
-      if (lt.phutTinh) n.lamThem += Math.round(donGia / phutMotCong(caLV) * lt.phutTinh * HE_SO_LAM_THEM);
+      if (lt.phutTinh) {
+        n.lamThem += Math.round(donGia / phutMotCong(caLV) * lt.phutTinh * HE_SO_LAM_THEM);
+        n.congLamThem = (n.congLamThem || 0) + lt.phutTinh / phutMotCong(caLV);
+      }
       if (lt.sau && !lt.cu && !lt.dSau) { n.ltChoSau = (n.ltChoSau || 0) + lt.sau; }
       if (lt.som && !lt.cu && !lt.dSom) { n.ltChoSom = (n.ltChoSom || 0) + lt.som; }
     }
@@ -25533,15 +25536,13 @@ function veDanhSachLuong(dl) {
         ${n.capBac ? `<div style="font-size:10px;color:var(--text2)">${escHtml(n.capBac)}</div>` : ''}
       </td>
       <td>${(n.tongCong || 0).toFixed(2).replace(/\.?0+$/,'')}
-        ${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
-      <td>${fmt(n.luong)}</td>
-      <td>${n.lamThem ? fmt(n.lamThem) : '—'}
+        ${n.congLamThem ? `<div style="font-size:10px;color:var(--green)">+${(Math.round(n.congLamThem * 100) / 100).toString().replace('.', ',')} công làm thêm</div>` : ''}
         ${n.ltChoSom ? `<div style="font-size:10px;color:#D97706">sớm ${n.ltChoSom}′ chờ duyệt</div>` : ''}
-        ${n.ltChoSau ? `<div style="font-size:10px;color:#D97706">sau ca ${n.ltChoSau}′ chờ duyệt</div>` : ''}</td>
-      <td>${n.thuongCT ? `<span style="color:var(--green)">${fmt(n.thuongCT)}</span>` : '—'}${n.ctTruThuong ? `<div style="font-size:10px;color:var(--red)">đã trừ ${fmt(n.ctTruThuong)}</div>` : ''}</td>
-      <td>${n.truCT ? `<span style="color:var(--red)">−${fmt(n.truCT)}</span>` : '—'}</td>
-      <td>${n.thuongThem ? `<span style="color:var(--green)">${fmt(n.thuongThem)}</span>` : '—'}</td>
-      <td>${n.khauTru ? `<span style="color:var(--red)">−${fmt(n.khauTru)}</span>` : '—'}</td>
+        ${n.ltChoSau ? `<div style="font-size:10px;color:#D97706">sau ca ${n.ltChoSau}′ chờ duyệt</div>` : ''}
+        ${n.soTre ? `<div style="font-size:10px;color:var(--red)">${n.soTre} trễ</div>` : ''}</td>
+      <td>${fmt(n.luong + (n.lamThem || 0))}${n.lamThem ? `<div style="font-size:10px;color:var(--text2)">gồm làm thêm ${fmt(n.lamThem)}</div>` : ''}</td>
+      <td>${(() => { const t = (n.thuongCT || 0) + (n.ctTruThuong || 0) + (n.thuongThem || 0); return t ? `<span style="color:var(--green)">${fmt(t)}</span>` : '—'; })()}</td>
+      <td>${(() => { const g = (n.ctTruThuong || 0) + (n.truCT || 0) + (n.khauTru || 0); return g ? `<span style="color:var(--red)">−${fmt(g)}</span>` : '—'; })()}</td>
       <td>
         ${laAdmin ? `
           <input type="text" inputmode="numeric" class="bl-phucap" data-uid="${n.uid}"
@@ -25610,10 +25611,8 @@ function veDanhSachLuong(dl) {
           <thead>
             <tr>
               <th style="text-align:left">Họ tên</th>
-              <th>Công</th><th>Lương</th><th>Làm thêm</th>
-              <th>Thưởng<br><span style="font-weight:400;font-size:10px">sau khấu trừ</span></th><th>Trừ<br><span style="font-weight:400;font-size:10px">vào lương</span></th>
-              <th>Thưởng<br><span style="font-weight:400;font-size:10px">thêm</span></th><th>Điều chỉnh<br><span style="font-weight:400;font-size:10px">trừ</span></th>
-              <th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng</th>
+              <th>Công</th><th>Lương</th><th>Thưởng</th><th>Giảm thưởng</th>
+              <th>Phụ cấp</th><th style="text-align:left">Ghi chú</th><th>Tổng thu nhập</th>
             </tr>
           </thead>
           ${nhom.map(g => {
@@ -25623,7 +25622,7 @@ function veDanhSachLuong(dl) {
             return `
             <tbody>
               <tr class="bl-nhom">
-                <td colspan="10" style="text-align:left">${escHtml(g.ten)} (${ds.length})</td>
+                <td colspan="7" style="text-align:left">${escHtml(g.ten)} (${ds.length})</td>
                 <td>${fmt(tongNhom)}</td>
               </tr>
               ${ds.map(dongNV).join('')}
@@ -26202,10 +26201,12 @@ const HE_SO_LAM_THEM = 1;   // làm thêm tính như giờ thường (8 giờ = 
 
 // Số phút làm thêm của một ca: tính từ giờ ra quy định tới lúc check-out thật
 // Số phút check-in sớm so với giờ bắt đầu ca — quá 5 phút mới tính (chờ duyệt như làm thêm)
+// Đến sớm phải TRÊN 30 phút mới tính là làm thêm (mở nút duyệt); dưới đó coi như đến sớm bình thường.
+const PHUT_TOI_THIEU_DEN_SOM = 30;
 function tinhPhutDenSom(gioVaoThat, gioCaBatDau) {
   if (!gioVaoThat) return 0;
   const som = gioCaBatDau - (gioVaoThat.getHours() * 60 + gioVaoThat.getMinutes());
-  return som > PHUT_TOI_THIEU_LAM_THEM ? som : 0;
+  return som > PHUT_TOI_THIEU_DEN_SOM ? som : 0;
 }
 function tinhPhutLamThem(gioRaThat, gioCaKetThuc) {
   if (!gioRaThat) return 0;
@@ -26635,7 +26636,7 @@ function qtTinhChoNguoi(vaiTroId, du) {
   for (const q of QUY_TAC_THUONG) {
     if (!qtApDung(q, vaiTroId)) continue;
     const r = qtTinh(q, du);
-    const vaoLuong = q.loai === 'tru' && q.truVao === 'luong';
+    const vaoLuong = false;   // Đã bỏ "trừ vào lương": mọi khoản trừ đều giảm vào thưởng
     if (q.loai !== 'tru') thuongGoc += r.tien; else if (vaoLuong) truLuong += r.tien; else truVaoThuong += r.tien;
     chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, vaoLuong, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo, lyDo: r.lyDo });
   }
@@ -26703,7 +26704,7 @@ async function renderThietLapLuong() {
         <thead><tr><th class="lb-dau">Tên</th><th>Loại</th><th style="min-width:200px">Công thức</th><th>Áp dụng</th><th>Bật</th><th></th></tr></thead>
         <tbody>${QUY_TAC_THUONG.map(q => `<tr style="${q.bat === false ? 'opacity:.5' : ''}">
           <th class="lb-dau">${escHtml(q.ten || '(chưa đặt tên)')}</th>
-          <td><span style="font-weight:700;color:${q.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${q.loai === 'tru' ? 'Trừ' : 'Thưởng'}</span>${q.loai === 'tru' ? `<div style="font-size:10.5px;color:var(--text2)">vào ${q.truVao === 'luong' ? 'lương' : 'thưởng'}</div>` : ''}</td>
+          <td><span style="font-weight:700;color:${q.loai === 'tru' ? 'var(--red)' : 'var(--green)'}">${q.loai === 'tru' ? 'Trừ' : 'Thưởng'}</span>${q.loai === 'tru' ? `<div style="font-size:10.5px;color:var(--text2)">giảm thưởng</div>` : ''}</td>
           <td style="white-space:normal;font-size:12px">${escHtml(qtMoTa(q))}</td>
           <td style="white-space:normal;font-size:12px">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || 'vai trò đã xóa')).join(', ') : 'Mọi vai trò'}</td>
           <td style="text-align:center"><input type="checkbox" ${q.bat !== false ? 'checked' : ''} onchange="qtBatTat('${q.id}',this.checked)" style="width:18px;height:18px"></td>
@@ -26826,8 +26827,7 @@ function qtVeForm(moi) {
   ddbMoKhung('qt-modal', moi ? 'Thêm công thức' : 'Sửa công thức', '', `
     <div class="field"><label>Tên</label><input id="qtf-ten" maxlength="80" value="${escHtml(q.ten || '')}" placeholder="VD: Thưởng doanh số cá"></div>
     <div class="field"><label>Loại</label><div style="display:flex;gap:6px">${chip(q.loai !== 'tru', 'Thưởng (+)', "qtDat('loai','thuong')")}${chip(q.loai === 'tru', 'Trừ (−)', "qtDat('loai','tru')")}</div></div>
-    ${q.loai === 'tru' ? `<div class="field"><label>Trừ vào</label><div style="display:flex;gap:6px">${chip(q.truVao !== 'luong', 'Tiền thưởng', "qtDat('truVao','thuong')")}${chip(q.truVao === 'luong', 'Tổng lương', "qtDat('truVao','luong')")}</div>
-      <div style="font-size:11.5px;color:var(--text2);margin-top:4px">${q.truVao === 'luong' ? 'Trừ thẳng vào tổng lương.' : 'Trừ vào thưởng, thưởng về 0 thì dừng — lương cơ bản giữ nguyên.'}</div></div>` : ''}
+    ${q.loai === 'tru' ? `<div style="font-size:11.5px;color:var(--text2);margin:-4px 0 10px">Khoản trừ giảm vào thưởng, thưởng về 0 thì dừng — lương cơ bản giữ nguyên.</div>` : ''}
     <div class="field"><label>Áp dụng cho</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonVaiTro()">${(q.apDung || []).length ? q.apDung.map(id => escHtml(allVaiTro.find(v => v.id === id)?.ten || '?')).join(', ') : 'Mọi vai trò'}</button></div>
     <div class="field"><label>Tính theo</label><button class="bh-chon-tt" style="width:100%;font-weight:600" onclick="qtChonCoSo('coSo')">${escHtml(cs.ten || '')}</button></div>
     ${cs.kho ? `<div class="field"><label>Kho</label><div style="display:flex;gap:14px;flex-wrap:wrap">
@@ -28916,7 +28916,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v763</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v764</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -28974,7 +28974,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v763</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v764</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29024,7 +29024,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v763</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v764</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29037,7 +29037,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v763</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v764</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
