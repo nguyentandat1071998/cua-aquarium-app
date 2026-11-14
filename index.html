@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 776;
+  const APP_VERSION = 777;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -1284,15 +1284,17 @@ async function renderLichCaTab() {
   lcVe();
 }
 
-function lcVe() {
-  const el = document.getElementById('lichca-content');
+function lcVe(o = {}) {
+  // o.chiXem: bảng chỉ xem (màn Vào ca) — không xếp ca, nút tuần / chế độ gọi hàm riêng
+  const el = document.getElementById(o.el || 'lichca-content');
   if (!el) return;
-  const dates = lichCaDatesCache;
+  const dates = o.dates || lichCaDatesCache;
   // Ca không cần xếp lịch trước (nhân viên cố định, check-in tự nhận ca) không hiện ở Lịch làm việc
-  const shifts = (lichCaShiftsCache || []).filter(x => { const c = x.caId ? layCa(x.caId) : null; return !(c && c.canXepLich === false); });
-  const canEdit = coQuyen('lichca_xepca');
+  const shifts = (o.shifts || lichCaShiftsCache || []).filter(x => { const c = x.caId ? layCa(x.caId) : null; return !(c && c.canXepLich === false); });
+  const canEdit = !o.chiXem && coQuyen('lichca_xepca');
+  const vaoLucC = o.chiXem ? null : lichCaVaoLucCache;
   const today = getTodayISO();
-  const nut = (k, t) => `<button class="${lichCaCheDo === k ? 'btn-g' : 'btn-outline'}" style="flex:1;margin:0;padding:7px" onclick="lcDoiCheDo('${k}')">${t}</button>`;
+  const nut = (k, t) => `<button class="${lichCaCheDo === k ? 'btn-g' : 'btn-outline'}" style="flex:1;margin:0;padding:7px" onclick="${o.chiXem ? 'xlDoiCheDo' : 'lcDoiCheDo'}('${k}')">${t}</button>`;
   const dauCot = dates.map(ngay => {
     const d = new Date(ngay + 'T00:00:00');
     return `<th class="${ngay === today ? 'lb-homnay' : ''}">${THU_NGAN[d.getDay()]}<br><span>${d.getDate()}/${d.getMonth() + 1}</span></th>`;
@@ -1308,7 +1310,7 @@ function lcVe() {
     const nguoi = [...ds.entries()].sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'vi'));
     hang = nguoi.map(([uid, ten]) => `<tr><th class="lb-dau">${escHtml(ten)}</th>${dates.map(ngay => {
       const s = shifts.find(x => x.ngay === ngay && x.uid === uid);
-      const khoa = !!lichCaVaoLucCache?.[`${ngay}_${uid}`];
+      const khoa = !!vaoLucC?.[`${ngay}_${uid}`];
       const ca = s ? layCa(s.caId) : null;
       const o = s ? `<div class="lb-chip" style="background:${lcMauCuaLich(s)}1A;border-color:${lcMauCuaLich(s)};color:${lcMauCuaLich(s)}">
           <b>${escHtml(lcTenCaCuaLich(s))}</b>${ca ? `<span>${nhanGioCa(ca).replace(' · ', '<br>')}</span>` : ''}${khoa ? '<span>✓ đã vào ca</span>' : ''}</div>`
@@ -1324,7 +1326,7 @@ function lcVe() {
     hang = dsCa.map(c => `<tr><th class="lb-dau" style="border-left:3px solid ${c.mau || 'var(--green)'}"><b style="color:${c.mau || 'inherit'}">${escHtml(c.ten)}</b><span>${nhanGioCa(c).replace(' · ', '<br>')}</span></th>${dates.map(ngay => {
       const ds = shifts.filter(s => s.ngay === ngay && s.caId === c.id).sort((a, b) => String(a.ten).localeCompare(String(b.ten), 'vi'));
       return `<td class="${ngay === today ? 'lb-homnay' : ''}" ${canEdit ? `onclick="lcChonNVCa('${ngay}','${c.id}')" style="cursor:pointer"` : ''}>
-        ${ds.map(s => `<div class="lb-ten">${escHtml(s.ten || '')}${lichCaVaoLucCache?.[`${ngay}_${s.uid}`] ? ' ✓' : ''}</div>`).join('')}
+        ${ds.map(s => `<div class="lb-ten">${escHtml(s.ten || '')}${vaoLucC?.[`${ngay}_${s.uid}`] ? ' ✓' : ''}</div>`).join('')}
         ${canEdit ? '<div class="lb-them">+</div>' : (!ds.length ? '' : '')}</td>`;
     }).join('')}</tr>`).join('');
     // Lịch cũ chưa gắn ca trong module
@@ -1335,9 +1337,9 @@ function lcVe() {
 
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:6px">
-      <button class="btn-xs" onclick="doiTuanLichCa(-1)">← Tuần trước</button>
+      <button class="btn-xs" onclick="${o.chiXem ? 'doiTuanXemLich' : 'doiTuanLichCa'}(-1)">← Tuần trước</button>
       <span style="font-size:13px;font-weight:600;text-align:center">${fmtDateOnly(new Date(dates[0] + 'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6] + 'T00:00:00'))}</span>
-      <button class="btn-xs" onclick="doiTuanLichCa(1)">Tuần sau →</button>
+      <button class="btn-xs" onclick="${o.chiXem ? 'doiTuanXemLich' : 'doiTuanLichCa'}(1)">Tuần sau →</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:10px">${nut('nv', 'Theo nhân viên')}${nut('ca', 'Theo ca')}</div>
     ${canEdit ? `<button class="btn-g" style="width:100%;margin:0 0 6px" onclick="moFormXepCaTuan()">Xếp ca</button>
@@ -1348,6 +1350,7 @@ function lcVe() {
       <tbody>${hang}</tbody>
     </table></div>`;
 }
+window.xlDoiCheDo = function(k) { lichCaCheDo = k; try { localStorage.setItem('lichCaCheDo', k); } catch(e) {} if (xlCache) lcVe(xlCache); };
 window.lcDoiCheDo = function(k) { lichCaCheDo = k; try { localStorage.setItem('lichCaCheDo', k); } catch(e) {} lcVe(); };
 
 // Ghi / gỡ một ô lịch (lich_ca riêng + bản công khai)
@@ -1584,38 +1587,20 @@ window.doiTuanXemLich = function(delta) {
   renderXemLichContent();
 };
 
+let xlCache = null;
 async function renderXemLichContent() {
   const el = document.getElementById('xemlich-content');
   if (!el) return;
   el.innerHTML = '<div class="loading">Đang tải...</div>';
-  const dates = getWeekDatesISO(xemLichWeekOffset);
-  const start = dates[0], end = dates[6];
-  const snap = await getDocs(query(collection(db,'lich_cong_khai'), where('ngay','>=',start), where('ngay','<=',end)));
-  const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
-  const today = getTodayISO();
-  const thuTenFull = ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'];
-
-  const daysHtml = dates.map(ngay => {
-    const d = new Date(ngay + 'T00:00:00');
-    const thu = thuTenFull[d.getDay()];
-    const isToday = ngay === today;
-    const dayShifts = shifts.filter(s => s.ngay === ngay).sort((a,b) => (a.ten||'').localeCompare(b.ten||''));
-    const rows = dayShifts.map(s => renderShiftRow(s, false)).join('') ||
-      `<p style="font-size:12px;color:var(--text2);padding:4px 0">Chưa xếp ca</p>`;
-    return `
-      <div class="admin-block" style="margin-bottom:10px;${isToday ? 'border:1.5px solid var(--green)' : ''}">
-        <h4 style="font-size:13px;font-weight:600;margin-bottom:6px">${thu} · ${d.getDate()}/${d.getMonth()+1}${isToday ? ' <span style="color:var(--green)">(Hôm nay)</span>' : ''}</h4>
-        ${rows}
-      </div>`;
-  }).join('');
-
-  el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-      <button class="btn-xs" onclick="doiTuanXemLich(-1)">← Tuần trước</button>
-      <span style="font-size:13px;font-weight:600">${fmtDateOnly(new Date(dates[0]+'T00:00:00'))} – ${fmtDateOnly(new Date(dates[6]+'T00:00:00'))}</span>
-      <button class="btn-xs" onclick="doiTuanXemLich(1)">Tuần sau →</button>
-    </div>
-    ${daysHtml}`;
+  try {
+    if (!allCaLamViec.length) await napCaLamViec();
+    const dates = getWeekDatesISO(xemLichWeekOffset);
+    const snap = await getDocs(query(collection(db,'lich_cong_khai'), where('ngay','>=',dates[0]), where('ngay','<=',dates[6])));
+    const shifts = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(s => !s.deleted);
+    // Cùng bảng với mục Lịch làm việc (tên ca, giờ ca, người làm), chỉ xem
+    xlCache = { el: 'xemlich-content', dates, shifts, chiXem: true };
+    lcVe(xlCache);
+  } catch(e) { el.innerHTML = `<p class="info-note">Không tải được lịch: ${escHtml(e.message)}</p>`; }
 }
 
 window.doiTuanChamCong = function(delta) {
@@ -29146,7 +29131,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v776</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v777</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29204,7 +29189,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v776</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v777</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29254,7 +29239,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v776</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v777</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29267,7 +29252,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v776</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v777</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
@@ -29726,7 +29711,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
 <!-- XEM LỊCH LÀM VIỆC (trước khi check-in) -->
 <div id="xemlich-modal">
-  <div style="background:var(--surface);border-radius:var(--radius);padding:16px;width:100%;max-width:400px;margin-top:2rem">
+  <div style="background:var(--surface);border-radius:var(--radius);padding:16px;width:100%;max-width:960px;box-sizing:border-box;margin-top:2rem">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
       <h3 style="font-size:15px;font-weight:600">Lịch làm việc</h3>
       <button onclick="dongXemLich()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);line-height:1">✕</button>
