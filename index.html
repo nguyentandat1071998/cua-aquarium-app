@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 777;
+  const APP_VERSION = 778;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2776,7 +2776,7 @@ if (!LA_BAN_DEMO) {
 const ANH_XA_QUYEN_THEO_MOD = {
   checklist: 'checklist', nhap: 'nhap', xuat: 'xuat', lichca: 'lichca',
   baocao: 'bc_ngay', tknhap: 'bc_tk_nhap', tkxuat: 'bc_tk_xuat', nhaphang: 'nhaphang', dathang: 'dathang',
-  hanghoa: 'hanghoa', banhang: 'banhang', dungnb: 'dungnb', datcoc: 'datcoc', thuchi: 'soquy', ketca: 'ketca', hanghoan: 'tmdt_hoantra', kiemkho: 'kiemkho',
+  hanghoa: 'hanghoa', banhang: 'banhang', dungnb: 'dungnb', datcoc: 'datcoc', thuchi: 'soquy', ketca: 'ketca', hanghoan: 'tmdt_hoantra', doisoat: 'tmdt_doisoat', kiemkho: 'kiemkho',
   donbanle: 'donbanle', khachhang: 'khachhang', tmdt: 'tmdt', quetdonggoi: 'quetdonggoi',
   chamcong: 'chamcong', luongnv: 'luong', nhacungcap: 'nhacungcap'
 };
@@ -2867,6 +2867,13 @@ window.switchModule = function(mod) {
     document.getElementById('panel-kiemkho-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     renderKiemKho();
+    return;
+  }
+  if (mod === 'doisoat') {
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    document.getElementById('panel-doisoat-main').style.display = 'block';
+    document.getElementById('sub-tab-bar').style.display = 'none';
+    renderDoiSoat();
     return;
   }
   if (mod === 'hanghoan') {
@@ -19226,7 +19233,8 @@ const DANH_SACH_MODULE = [
     { key: 'hh_ke', ten: 'Hàng hoàn: xem danh sách nhập kho đơn Trả hàng / Hoàn tiền & xác nhận từng sản phẩm' },
     { key: 'tmdt_xuly_huy', ten: 'Xử lý yêu cầu hủy của khách (Đồng ý / Từ chối)' },
     { key: 'tmdt_sanpham', ten: 'Sản phẩm trên sàn' },
-    { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' }
+    { key: 'tmdt_daytonkho', ten: 'Đẩy tồn kho' },
+    { key: 'tmdt_doisoat', ten: 'Đối soát sàn (tiền sàn trả, phí sàn, đơn lệch / quá hạn)' }
   ]},
   // Chuông thông báo: tick loại nào thì nhận loại đó (vẫn cần quyền làm việc tương ứng, VD duyệt xuất hủy)
   { key: 'thongbao', nhom: true, ten: 'Thông báo (chuông)', con: [
@@ -19355,6 +19363,7 @@ const NHOM_MENU = [
     { key: 'donhang',   ten: 'Đơn hàng',       quyen: 'tmdt_donhang',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('donhang', true); } },
     { key: 'hanghoan',  ten: 'Đơn hoàn trả',   quyen: 'tmdt_hoantra', moGi: () => switchModule('hanghoan') },
+    { key: 'doisoat',   ten: 'Đối soát',       quyen: 'tmdt_doisoat', moGi: () => switchModule('doisoat') },
     { key: 'donggoi',   ten: 'Đóng gói',       quyen: 'quetdonggoi', moGi: () => switchModule('quetdonggoi') },
     { key: 'spsan',     ten: 'Sản phẩm trên sàn', quyen: 'tmdt_sanpham',
       moGi: () => { switchModule('tmdt'); moManHinhTMDT('sanpham', true); } },
@@ -19677,7 +19686,7 @@ let unsubscribeVaiTroDoc = null;
 // ===== CÔNG TẮC TÍNH NĂNG (cau_hinh/tinh_nang, Admin bật/tắt ở Thiết lập › Hệ thống) =====
 // Sàn TMĐT: nhân viên thấy mục nào là theo quyền tick trong Vai trò.
 let dangTheoDoiTinhNang = false;
-const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'tmdt_video', 'kn_quay', 'kn_donggoi', 'kn_link', 'hh_ke', 'tmdt_xuly_huy', 'hh_kho_san'];
+const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'tmdt_video', 'kn_quay', 'kn_donggoi', 'kn_link', 'hh_ke', 'tmdt_xuly_huy', 'tmdt_doisoat', 'hh_kho_san'];
 
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
@@ -22657,6 +22666,138 @@ const hhoNhanTruocDuoc = (d) => (hhoTab === 'dangve' || hhoTab === 'khieunai') &
 const hhoChuaNK = (d) => hhoTab === 'xong' && !!d.chuaNhapKho && (Number(d.lucTra) > 0
   ? (Date.now() / 1000 - Number(d.lucTra)) < 7 * 86400
   : d.loai === 'tra' && !!d.vanDonHoan && Number(d.luc) > 0 && (Date.now() / 1000 - Number(d.luc)) < 14 * 86400);
+
+// ===== ĐỐI SOÁT SÀN =====
+// Số liệu lấy từ mục Đối soát của KiotViet Bán Online (từng đơn: khách trả, phí sàn, sàn cần trả, sàn đã trả).
+// Đã đối chiếu tay với trang người bán: "Sàn cần trả" khớp đúng với TikTok / Lazada / Shopee.
+// Riêng Shopee: đơn nhận sớm qua Quick Funds thì KiotViet chỉ ghi khoản trừ sau (hoa hồng tiếp thị liên kết, vài trăm đồng âm)
+// nên báo "lệch" sai — app tách riêng nhóm này, chỉ báo lệch thật.
+let dsoSan = 'shopee', dsoLoai = 'da', dsoKy = 'thangnay', dsoTu = '', dsoDen = '', dsoLoc = 'tatca', dsoTim = '', dsoKq = null, dsoLoi = '', dsoDangTai = false, dsoLuot = 0;
+const DSO_SAN = { shopee: ['Shopee', '#EE4D2D'], tiktok: ['TikTok', '#111'], lazada: ['Lazada', '#0F146D'] };
+const DSO_PHI_CAO = 0.45;          // phí sàn trên 45% tiền khách trả -> đánh dấu xem lại
+const DSO_QUA_HAN = { shopee: 14, tiktok: 14, lazada: 14 };   // giao xong quá số ngày này mà sàn chưa trả -> đánh dấu
+const dsoTien = (n) => (Math.round(Number(n) || 0)).toLocaleString('vi-VN');
+const dsoNgay = (s) => { if (!s) return ''; const d = new Date(String(s).replace(/(\.\d{3})\d+/, '$1') + (/[zZ+]/.test(String(s).slice(10)) ? '' : '+07:00')); return isNaN(d) ? '' : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`; };
+function dsoKhoangKy() {
+  const nay = new Date(), y = nay.getFullYear(), m = nay.getMonth();
+  if (dsoKy === 'thangnay') return [ngayLocal(new Date(y, m, 1)), ngayLocal(nay)];
+  if (dsoKy === 'thangtruoc') return [ngayLocal(new Date(y, m - 1, 1)), ngayLocal(new Date(y, m, 0))];
+  if (dsoKy === '7') return [ngayLocal(new Date(Date.now() - 6 * 86400000)), ngayLocal(nay)];
+  if (dsoKy === '30') return [ngayLocal(new Date(Date.now() - 29 * 86400000)), ngayLocal(nay)];
+  if (dsoKy === '90') return [ngayLocal(new Date(Date.now() - 89 * 86400000)), ngayLocal(nay)];
+  return [dsoTu || ngayLocal(new Date(y, m, 1)), dsoDen || ngayLocal(nay)];
+}
+// Nhãn từng đơn
+function dsoNhan(r) {
+  const n = [];
+  if (dsoLoai === 'da') {
+    const chenh = (Number(r.daTra) || 0) - r.canTra;
+    if (Math.abs(chenh) < 1) n.push('khop');
+    else if (dsoSan === 'shopee' && r.canTra > 0 && r.daTra != null && r.daTra <= 0 && -r.daTra <= r.phi) n.push('quickfund');
+    else if (dsoSan === 'shopee' && r.hoan > 0 && r.daTra != null && r.daTra < 0) n.push('qfhoan');   // trả sớm rồi trừ lại khi hoàn: KiotViet chỉ thấy khoản trừ
+    else n.push('lech');
+  } else {
+    const g = r.giao ? Date.parse(String(r.giao).replace(/(\.\d{3})\d+/, '$1') + '+07:00') : 0;
+    if (g && (Date.now() - g) / 86400000 > (DSO_QUA_HAN[dsoSan] || 14)) n.push('quahan');
+    if (r.dangHoan) n.push('danghoan');
+  }
+  if (r.khach > 0 && r.phi / r.khach > DSO_PHI_CAO) n.push('phicao');
+  if (r.thieuPhi) n.push('thieuphi');
+  return n;
+}
+const DSO_TEN_NHAN = { khop: ['Khớp', '#15803D', '#DCFCE7'], quickfund: ['Nhận sớm Quick Funds', '#1D4ED8', '#DBEAFE'], qfhoan: ['Hoàn trả sau khi nhận sớm', '#0E7490', '#CFFAFE'], lech: ['Lệch', '#B91C1C', '#FEE2E2'],
+  quahan: ['Quá hạn chưa trả', '#B45309', '#FEF3C7'], danghoan: ['Đang hoàn trả', '#7C3AED', '#EDE9FE'], phicao: ['Phí cao', '#B91C1C', '#FFF1F2'], thieuphi: ['Thiếu phí', '#6B7280', '#F3F4F6'] };
+
+async function renderDoiSoat() { dsoVe(); await dsoTai(); }
+async function dsoTai() {
+  const luot = ++dsoLuot; dsoDangTai = true; dsoLoi = ''; dsoVe();
+  const [tu, den] = dsoKhoangKy();
+  try {
+    const kq = await goiWorkerAdmin('doi-soat-san', { san: dsoSan, loai: dsoLoai, tu, den });
+    if (luot !== dsoLuot) return;
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    kq.rows.forEach(r => { r.nhan = dsoNhan(r); });
+    dsoKq = kq;
+  } catch(e) { if (luot === dsoLuot) { dsoLoi = e.message; dsoKq = null; } }
+  if (luot === dsoLuot) { dsoDangTai = false; dsoVe(); }
+}
+window.dsoTai = dsoTai;
+window.dsoDat = (k, v) => {
+  if (k === 'san') { dsoSan = v; dsoLoc = 'tatca'; }
+  if (k === 'loai') { dsoLoai = v; dsoLoc = 'tatca'; }
+  if (k === 'ky') dsoKy = v;
+  if (k === 'tu') { dsoTu = v; dsoKy = 'tuy'; }
+  if (k === 'den') { dsoDen = v; dsoKy = 'tuy'; }
+  if (k === 'loc') { dsoLoc = v; dsoVe(); return; }
+  dsoTai();
+};
+window.dsoDatTim = (v) => { dsoTim = v || ''; const o = document.getElementById('dso-tim'); const vt = o?.selectionStart; dsoVe(); const o2 = document.getElementById('dso-tim'); if (o2) { o2.focus(); try { o2.setSelectionRange(vt, vt); } catch(e) {} } };
+function dsoVe() {
+  const el = document.getElementById('doisoat-content'); if (!el) return;
+  const [tu, den] = dsoKhoangKy();
+  const chip = (k, v, t, on) => `<button class="${on ? 'btn-g' : 'btn-outline'}" style="width:auto!important;flex:0 0 auto;margin:0;padding:6px 12px;font-size:13px" onclick="dsoDat('${k}','${v}')">${t}</button>`;
+  const rows = dsoKq?.rows || [];
+  const dem = (n) => rows.filter(r => r.nhan.includes(n)).length;
+  const tong = (ds, f) => ds.reduce((a, r) => a + (Number(f(r)) || 0), 0);
+  const t = dsoTim.trim().toLowerCase();
+  const loc = rows.filter(r => (dsoLoc === 'tatca' || r.nhan.includes(dsoLoc)) && (!t || r.ma.toLowerCase().includes(t)));
+  // Tiền thực nhận = đơn khớp + đơn Quick Funds (đã nhận sớm đủ "sàn cần trả") + đơn lệch theo số KiotViet ghi
+  const thucNhan = tong(rows, r => r.nhan.includes('quickfund') || r.nhan.includes('qfhoan') ? r.canTra : r.daTra);
+  const lechThat = rows.filter(r => r.nhan.includes('lech'));
+  const the = (ten, so, phu, mau) => `<div style="flex:1 1 140px;border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--surface)">
+    <div style="font-size:12px;color:var(--text2)">${ten}</div><div style="font-size:17px;font-weight:700;color:${mau || 'inherit'}">${so}</div>${phu ? `<div style="font-size:11.5px;color:var(--text2)">${phu}</div>` : ''}</div>`;
+  const theTong = !dsoKq ? '' : dsoLoai === 'da' ? [
+      the('Đơn sàn đã trả', rows.length, `Khách trả ${dsoTien(tong(rows, r => r.khach))}`),
+      the('Phí sàn', dsoTien(tong(rows, r => r.phi)), `${(tong(rows, r => r.phi) / Math.max(1, tong(rows, r => r.khach)) * 100).toFixed(1)}% tiền khách trả`, '#B91C1C'),
+      the('Sàn cần trả', dsoTien(tong(rows, r => r.canTra)), tong(rows, r => r.hoan) ? `Trừ hoàn trả ${dsoTien(tong(rows, r => r.hoan))}` : ''),
+      the('Thực nhận', dsoTien(thucNhan), dsoSan === 'shopee' && dem('quickfund') ? `Gồm ${dem('quickfund') + dem('qfhoan')} đơn nhận sớm Quick Funds` : 'Theo KiotViet', '#15803D'),
+      the('Lệch thật', lechThat.length ? dsoTien(tong(lechThat, r => (Number(r.daTra) || 0) - r.canTra)) : '0', `${lechThat.length} đơn`, lechThat.length ? '#B91C1C' : '#15803D')
+    ].join('') : [
+      the('Đơn chưa được trả', rows.length, `Khách trả ${dsoTien(tong(rows, r => r.khach))}`),
+      the('Sàn còn phải trả', dsoTien(tong(rows, r => r.canTra)), `Phí sàn ${dsoTien(tong(rows, r => r.phi))}`, '#B45309'),
+      the('Quá hạn', dem('quahan'), `Giao xong hơn ${DSO_QUA_HAN[dsoSan]} ngày`, dem('quahan') ? '#B91C1C' : '#15803D'),
+      the('Đang hoàn trả', dem('danghoan'), '')
+    ].join('');
+  const locDs = dsoLoai === 'da' ? ['tatca', 'khop', ...(dsoSan === 'shopee' ? ['quickfund', 'qfhoan'] : []), 'lech', 'phicao'] : ['tatca', 'quahan', 'danghoan', 'phicao'];
+  const nhanHtml = (n) => n.filter(x => x !== 'khop').map(x => { const [ten, mau, nen] = DSO_TEN_NHAN[x]; return `<span style="font-size:11px;font-weight:700;color:${mau};background:${nen};border-radius:6px;padding:1px 6px;white-space:nowrap">${ten}</span>`; }).join(' ');
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:10px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${Object.entries(DSO_SAN).map(([k, [ten]]) => chip('san', k, ten, dsoSan === k)).join('')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">${chip('loai', 'da', 'Đã thanh toán', dsoLoai === 'da')}${chip('loai', 'chua', 'Chưa thanh toán', dsoLoai === 'chua')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <select onchange="dsoDat('ky',this.value)" style="padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          ${[['thangnay', 'Tháng này'], ['thangtruoc', 'Tháng trước'], ['7', '7 ngày'], ['30', '30 ngày'], ['90', '90 ngày'], ['tuy', 'Tùy chọn']].map(([v, tt]) => `<option value="${v}" ${dsoKy === v ? 'selected' : ''}>${tt}</option>`).join('')}
+        </select>
+        <input type="date" value="${tu}" onchange="dsoDat('tu',this.value)" style="padding:5px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        <span style="color:var(--text2)">–</span>
+        <input type="date" value="${den}" onchange="dsoDat('den',this.value)" style="padding:5px 6px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+        <button class="btn-xs" onclick="dsoTai()">↻ Tải lại</button>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:6px">${dsoLoai === 'da' ? 'Lọc theo ngày sàn thanh toán.' : 'Lọc theo ngày giao thành công.'} Số liệu lấy từ mục Đối soát của KiotViet Bán Online.</div>
+    </div>
+    ${dsoLoi ? `<p class="info-note" style="color:#B91C1C">Không tải được: ${escHtml(dsoLoi)}</p>` : ''}
+    ${dsoDangTai ? '<div class="loading">Đang tải số liệu đối soát...</div>' : ''}
+    ${dsoKq && !dsoDangTai ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${theTong}</div>
+      ${dsoLoai === 'da' && dsoSan === 'shopee' && dem('quickfund') ? `<p class="info-note" style="margin-bottom:8px">${dem('quickfund')} đơn Shopee nhận sớm qua Quick Funds: KiotViet chỉ ghi khoản trừ sau đó (hoa hồng tiếp thị liên kết) nên báo "lệch" — thực tế Shopee đã trả đủ "Sàn cần trả". App không tính các đơn này là lệch.${dem('qfhoan') ? ` ${dem('qfhoan')} đơn hoàn trả sau khi đã nhận sớm: KiotViet chỉ thấy khoản Shopee trừ lại, app tính theo "Sàn cần trả".` : ''}</p>` : ''}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
+        ${locDs.map(k => chip('loc', k, k === 'tatca' ? `Tất cả (${rows.length})` : `${DSO_TEN_NHAN[k][0]} (${dem(k)})`, dsoLoc === k)).join('')}
+        <input type="text" id="dso-tim" placeholder="Tìm mã đơn..." value="${escHtml(dsoTim)}" oninput="dsoDatTim(this.value)" style="flex:1 1 140px;min-width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+      </div>
+      <div class="lb-khung"><table class="lich-bang" style="font-size:12.5px">
+        <thead><tr><th class="lb-dau">Mã đơn</th><th>Mua</th><th>${dsoLoai === 'da' ? 'Trả' : 'Giao'}</th><th>Khách trả</th><th>Phí sàn</th><th>Hoàn trả</th><th>Sàn cần trả</th>${dsoLoai === 'da' ? '<th>Sàn đã trả</th><th>Chênh</th>' : ''}<th>Ghi chú</th></tr></thead>
+        <tbody>${loc.slice(0, 500).map(r => { const ch = dsoLoai === 'da' ? (Number(r.daTra) || 0) - r.canTra : 0;
+          return `<tr><th class="lb-dau" style="font-weight:600">${escHtml(r.ma.replace(/^HD(SPE|TTS|LZD)_/, ''))}</th>
+            <td>${dsoNgay(r.mua)}</td><td>${dsoNgay(dsoLoai === 'da' ? r.tt : r.giao)}</td>
+            <td style="text-align:right">${dsoTien(r.khach)}</td>
+            <td style="text-align:right;color:#B91C1C">${dsoTien(r.phi)}<div style="font-size:10.5px;color:var(--text2)">${r.khach ? Math.round(r.phi / r.khach * 100) + '%' : ''}</div></td>
+            <td style="text-align:right">${r.hoan ? dsoTien(r.hoan) : '-'}</td>
+            <td style="text-align:right;font-weight:600">${dsoTien(r.canTra)}</td>
+            ${dsoLoai === 'da' ? `<td style="text-align:right">${r.daTra == null ? '-' : dsoTien(r.daTra)}</td><td style="text-align:right;color:${Math.abs(ch) < 1 ? 'var(--text2)' : r.nhan.includes('quickfund') || r.nhan.includes('qfhoan') ? '#1D4ED8' : '#B91C1C'}">${Math.abs(ch) < 1 ? '0' : dsoTien(ch)}</td>` : ''}
+            <td style="text-align:left">${nhanHtml(r.nhan)}</td></tr>`; }).join('') || `<tr><td colspan="10" style="text-align:center;color:var(--text2);padding:14px">Không có đơn nào.</td></tr>`}</tbody>
+      </table></div>
+      ${loc.length > 500 ? `<p class="info-note">Đang hiện 500 / ${loc.length} đơn — dùng bộ lọc hoặc ô tìm để thu hẹp.</p>` : ''}` : ''}`;
+}
 
 async function renderHangHoan() {
   const el = document.getElementById('hanghoan-content'); if (!el) return;
@@ -29131,7 +29272,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v777</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v778</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29189,7 +29330,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v777</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v778</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29239,7 +29380,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v777</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v778</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29252,7 +29393,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v777</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v778</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
@@ -29525,6 +29666,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
       <div class="panel" id="panel-thuchi-main" style="display:none"><div id="thuchi-content"></div></div>
       <div class="panel" id="panel-ketca-main" style="display:none"><div id="ketca-content"></div></div>
       <div class="panel" id="panel-hanghoan-main" style="display:none"><div id="hanghoan-content"></div></div>
+      <div class="panel" id="panel-doisoat-main" style="display:none"><div id="doisoat-content"></div></div>
       <div class="panel" id="panel-kiemkho-main" style="display:none"><div id="kiemkho-content"></div></div>
       <div class="panel" id="panel-khuyenmai-main" style="display:none">
         <div id="khuyenmai-content"></div>
