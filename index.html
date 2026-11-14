@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 774;
+  const APP_VERSION = 775;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9533,7 +9533,7 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
 // Nhân viên xem lại đơn mình bán trong ngày. Quản lý xem tất cả.
 // ==========================================================================
 // Bộ lọc Đơn đã bán: khoảng ngày + trạng thái trả hàng + cách thanh toán + nhân viên (mảng rỗng = tất cả)
-let ddbLoc = { tu: null, den: null, traHang: [], cachTra: [], nhanVien: [] };
+let ddbLoc = { tu: null, den: null, traHang: [], cachTra: [], nhanVien: [], chia: [] };
 function ngayLocal(d = new Date()) {
   const z = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
@@ -9728,10 +9728,11 @@ function ddbQuaLoc(d) {
   }
   if (L.cachTra.length && !L.cachTra.includes(ddbCachTraCuaDon(d))) return false;
   if (L.nhanVien.length && !L.nhanVien.includes(d.nguoiBan?.uid)) return false;
+  if ((L.chia || []).length && !L.chia.includes((d.chiaThuong || []).length ? 'co' : 'khong')) return false;
   return true;
 }
 function ddbSoBoLoc() {
-  return ddbLoc.traHang.length + ddbLoc.cachTra.length + ddbLoc.nhanVien.length;
+  return ddbLoc.traHang.length + ddbLoc.cachTra.length + ddbLoc.nhanVien.length + (ddbLoc.chia || []).length;
 }
 function ddbChuKhoangNgay() {
   const f = (s) => s.split('-').reverse().join('/');
@@ -9768,6 +9769,7 @@ window.ddbMoLoc = function() {
     ${nhom('PHƯƠNG THỨC THANH TOÁN',
       o('ddbl-tt', 'tienmat', 'Tiền mặt', ddbLoc.cachTra) + o('ddbl-tt', 'chuyenkhoan', 'Chuyển khoản', ddbLoc.cachTra)
       + o('ddbl-tt', 'ketHop', 'Kết hợp', ddbLoc.cachTra))}
+    ${nhom('CHIA THƯỞNG', o('ddbl-chia', 'co', 'Có chia thưởng', ddbLoc.chia || []) + o('ddbl-chia', 'khong', 'Không chia thưởng', ddbLoc.chia || []))}
     ${xemHet && nv.size ? nhom('NHÂN VIÊN', [...nv].map(([uid, ten]) => o('ddbl-nv', uid, ten, ddbLoc.nhanVien)).join('')) : ''}`,
     `<button class="btn-outline" style="flex:1" onclick="ddbDatLaiLoc()">Đặt lại</button>
      <button class="btn-g" style="flex:1" onclick="ddbApDungLoc()">Áp dụng</button>`);
@@ -9788,7 +9790,7 @@ window.ddbApDungLoc = async function() {
   let den = document.getElementById('ddbl-den')?.value || tu;
   if (tu > den) [tu, den] = [den, tu];
   const doiNgay = tu !== ddbLoc.tu || den !== ddbLoc.den;
-  ddbLoc = { tu, den, traHang: lay('ddbl-tra'), cachTra: lay('ddbl-tt'), nhanVien: lay('ddbl-nv') };
+  ddbLoc = { tu, den, traHang: lay('ddbl-tra'), cachTra: lay('ddbl-tt'), nhanVien: lay('ddbl-nv'), chia: lay('ddbl-chia') };
   document.getElementById('ddb-loc-modal').style.display = 'none';
   if (doiNgay) {
     const el = document.getElementById('ddb-ket-qua');
@@ -9800,7 +9802,7 @@ window.ddbApDungLoc = async function() {
 window.ddbDatLaiLoc = async function() {
   const hn = ngayLocal();
   const doiNgay = ddbLoc.tu !== hn || ddbLoc.den !== hn;
-  ddbLoc = { tu: hn, den: hn, traHang: [], cachTra: [], nhanVien: [] };
+  ddbLoc = { tu: hn, den: hn, traHang: [], cachTra: [], nhanVien: [], chia: [] };
   document.getElementById('ddb-loc-modal').style.display = 'none';
   if (doiNgay) await napDonDaBan();
   veManHinhDonDaBan();
@@ -10009,6 +10011,7 @@ window.ddbXemChiTiet = function(id) {
   const coTra = d.maHoaDonKiotViet && !d.daHuy && coQuyen('dbl_trahang');
   ddbMoKhung('ddb-chi-tiet-modal', `Hóa đơn ${escHtml(d.maHoaDonKiotViet || d.maDon || '')}`, `${fmt(d.phaiTra)}đ · ${cachTra}`, noiDung,
     `<button class="btn-outline" style="flex:1" onclick="guiLenhIn('${d.id}')">In bill</button>
+     ${coQuyen('dbl_sua') ? `<button class="btn-outline" style="flex:1;color:#6D28D9;border-color:#C4B5FD" onclick="ddbSuaChia('${d.id}')">🤝 Chia thưởng</button>` : ''}
      ${coTra ? `<button class="btn-g" style="flex:1;background:#D97706" onclick="document.getElementById('ddb-chi-tiet-modal').style.display='none';moTraHang('${d.id}')">Trả hàng</button>` : ''}`);
 };
 
@@ -13170,7 +13173,7 @@ function veDayDuoi() {
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:stretch">
       <input id="bh-ghi-chu" placeholder="Ghi chú đơn hàng" value="${escHtml(p.ghiChu || '')}" maxlength="300" autocomplete="off"
         oninput="bhDatGhiChu(this.value)" style="flex:1;min-width:0;padding:8px 10px;font-size:14px;border:1.5px solid var(--border);border-radius:8px">
-      ${coQuyen('bh_chiathuong') ? `<button class="bh-chon-tt" style="font-weight:600;white-space:nowrap;width:auto;flex:0 0 auto;padding:0 12px;${(p.chiaThuong || []).length ? 'border-color:#7C3AED;color:#6D28D9;background:#F5F3FF' : ''}" onclick="bhMoChiaThuong()">🤝 Chia thưởng${(p.chiaThuong || []).length ? ' · ' + p.chiaThuong.length : ''}</button>` : ''}
+      ${coQuyen('bh_chiathuong') ? `<button onclick="bhMoChiaThuong()" style="flex:0 0 auto;padding:0 10px;font-size:12.5px;font-weight:600;white-space:nowrap;border:1.5px solid ${(p.chiaThuong || []).length ? '#7C3AED' : 'var(--border)'};border-radius:8px;background:${(p.chiaThuong || []).length ? '#F5F3FF' : 'var(--surface)'};color:${(p.chiaThuong || []).length ? '#6D28D9' : 'var(--text)'};cursor:pointer">🤝 Chia thưởng${(p.chiaThuong || []).length ? ' · ' + p.chiaThuong.length : ''}</button>` : ''}
     </div>
     ${(p.chiaThuong || []).length ? `<div style="font-size:12px;color:#6D28D9;margin:-4px 0 8px">Chia thưởng: ${p.chiaThuong.map(c => `${escHtml(c.ten)} ${c.pt}%`).join(', ')} · bạn giữ ${100 - p.chiaThuong.reduce((a, c) => a + c.pt, 0)}%</div>` : ''}
     <div style="display:flex;gap:8px;margin-bottom:8px;align-items:stretch">
@@ -13190,27 +13193,38 @@ function veDayDuoi() {
 // ===== CHIA THƯỞNG DOANH THU ĐƠN (nhiều người cùng tư vấn 1 khách) =====
 // Người tạo đơn chia % doanh thu của đơn cho người cùng tư vấn; phần còn lại người tạo giữ.
 // Chỉ ảnh hưởng thưởng / hoa hồng trong bảng lương (KiotViet vẫn ghi một người bán).
-let bhDsNVChia = null, bhCtNhap = [];
-window.bhMoChiaThuong = async function() {
-  const p = bhPhieuHienTai(); if (!p) return;
-  if (!coQuyen('bh_chiathuong')) { showToast('Bạn chưa có quyền chia thưởng', true); return; }
-  bhCtNhap = (p.chiaThuong || []).map(c => ({ ...c }));
-  bhVeChiaThuong(true);
+let bhDsNVChia = null, bhCtNhap = [], ctNgu = null;   // ctNgu = { nguoiTao: {uid, ten}, luu: async (ds) => {} }
+// Cửa sổ chia thưởng dùng chung: Bán hàng, thanh toán phiếu cọc, sửa đơn đã bán
+async function ctMo(ngu) {
+  ctNgu = ngu;
+  bhCtNhap = (ngu.ds || []).map(c => ({ ...c }));
+  ctVe(true);
   if (!bhDsNVChia) {
     try { const kq = await goiWorkerAdmin('dbl-chia-thuong', { lam: 'nv' }); if (!kq.success) throw new Error(kq.error || 'Lỗi'); bhDsNVChia = kq.ds || []; }
     catch(e) { bhDsNVChia = null; showToast('Không tải được danh sách nhân viên: ' + loiDeHieu(e.message), true); }
   }
-  bhVeChiaThuong();
+  ctVe();
+}
+window.bhMoChiaThuong = function() {
+  const p = bhPhieuHienTai(); if (!p) return;
+  if (!coQuyen('bh_chiathuong')) { showToast('Bạn chưa có quyền chia thưởng', true); return; }
+  ctMo({ nguoiTao: { uid: currentUser.uid, ten: currentUserData?.ten || '' }, ds: p.chiaThuong,
+    luu: (ds) => { p.chiaThuong = ds; bhLuu(); veManHinhBanHang(); } });
 };
-function bhVeChiaThuong(dangTai) {
+function ctNhanTong() {
   const tong = bhCtNhap.reduce((a, c) => a + (Number(c.pt) || 0), 0);
-  const ds = bhDsNVChia || [];
+  return { tong, html: `${escHtml(ctNgu?.nguoiTao?.ten || 'Người tạo')} giữ <b>${Math.max(0, 100 - tong)}%</b> · chia đi <b>${tong}%</b>${tong > 100 ? ' — vượt 100%' : ''}` };
+}
+function ctVe(dangTai) {
+  const { tong, html } = ctNhanTong();
+  const ds = (bhDsNVChia || []).filter(n => n.uid !== ctNgu?.nguoiTao?.uid);
   const dong = (c, i) => {
     const daChon = new Set(bhCtNhap.filter((x, j) => j !== i).map(x => x.uid));
     return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <select onchange="bhCtDat(${i},'uid',this.value)" style="flex:1;min-width:0;padding:9px 8px;font-size:14px;border:1.5px solid var(--border);border-radius:8px">
         <option value="">— Chọn nhân viên —</option>
         ${ds.filter(n => !daChon.has(n.uid)).map(n => `<option value="${escHtml(n.uid)}" ${n.uid === c.uid ? 'selected' : ''}>${escHtml(n.ten)}</option>`).join('')}
+        ${c.uid && !ds.some(n => n.uid === c.uid) ? `<option value="${escHtml(c.uid)}" selected>${escHtml(c.ten || c.uid)}</option>` : ''}
       </select>
       <div style="display:flex;align-items:center;gap:4px;flex:0 0 auto">
         <input type="text" inputmode="numeric" value="${c.pt || ''}" placeholder="0" oninput="bhCtDat(${i},'pt',this.value)"
@@ -13219,35 +13233,54 @@ function bhVeChiaThuong(dangTai) {
       <button class="btn-xs" style="background:transparent;color:var(--text2);flex:0 0 auto" onclick="bhCtXoa(${i})">✕</button>
     </div>`;
   };
-  ddbMoKhung('bh-ct-modal', '🤝 Chia thưởng doanh thu', 'Người cùng tư vấn được tính % doanh thu đơn này vào thưởng; phần còn lại bạn giữ',
+  ddbMoKhung('bh-ct-modal', '🤝 Chia thưởng doanh thu', 'Người cùng tư vấn được tính % doanh thu đơn này vào thưởng; phần còn lại người tạo đơn giữ',
     dangTai && !bhDsNVChia ? '<div class="loading">Đang tải danh sách nhân viên...</div>' : `
       ${bhCtNhap.map(dong).join('') || '<p style="font-size:13px;color:var(--text2);margin:4px 0 10px">Chưa chia cho ai — bấm Thêm.</p>'}
       ${bhCtNhap.length < 3 ? `<button class="btn-outline" style="width:100%;margin:0 0 10px" onclick="bhCtThem()">+ Thêm</button>` : ''}
-      <div id="bh-ct-tong" style="font-size:13px;padding:8px 10px;border-radius:8px;background:${tong > 100 ? '#FEF2F2' : 'var(--bg)'};color:${tong > 100 ? '#B91C1C' : 'var(--text)'}">
-        ${escHtml(currentUserData?.ten || 'Bạn')} giữ <b>${Math.max(0, 100 - tong)}%</b> · chia đi <b>${tong}%</b>${tong > 100 ? ' — vượt 100%' : ''}</div>`,
+      <div id="bh-ct-tong" style="font-size:13px;padding:8px 10px;border-radius:8px;background:${tong > 100 ? '#FEF2F2' : 'var(--bg)'};color:${tong > 100 ? '#B91C1C' : 'var(--text)'}">${html}</div>`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('bh-ct-modal').style.display='none'">Hủy</button>
-     <button class="btn-g" style="flex:2;background:#7C3AED" onclick="bhCtLuu()">Lưu</button>`);
+     <button class="btn-g" id="bh-ct-luu" style="flex:2;background:#7C3AED" onclick="bhCtLuu()">Lưu</button>`);
+  const m = document.getElementById('bh-ct-modal'); if (m) { document.body.appendChild(m); ddbCanhGiua?.('bh-ct-modal'); }
 }
-window.bhCtThem = function() { if (bhCtNhap.length >= 3) return; bhCtNhap.push({ uid: '', ten: '', pt: 0 }); bhVeChiaThuong(); };
-window.bhCtXoa = function(i) { bhCtNhap.splice(i, 1); bhVeChiaThuong(); };
+window.bhCtThem = function() { if (bhCtNhap.length >= 3) return; bhCtNhap.push({ uid: '', ten: '', pt: 0 }); ctVe(); };
+window.bhCtXoa = function(i) { bhCtNhap.splice(i, 1); ctVe(); };
 window.bhCtDat = function(i, k, v) {
   const c = bhCtNhap[i]; if (!c) return;
-  if (k === 'uid') { c.uid = v; c.ten = (bhDsNVChia || []).find(n => n.uid === v)?.ten || ''; bhVeChiaThuong(); return; }
+  if (k === 'uid') { c.uid = v; c.ten = (bhDsNVChia || []).find(n => n.uid === v)?.ten || ''; ctVe(); return; }
   c.pt = Math.max(0, Math.min(100, Math.round(Number(String(v).replace(/[^\d]/g, '')) || 0)));
-  const tong = bhCtNhap.reduce((a, x) => a + (Number(x.pt) || 0), 0);
+  const { tong, html } = ctNhanTong();
   const el = document.getElementById('bh-ct-tong');
-  if (el) { el.innerHTML = `${escHtml(currentUserData?.ten || 'Bạn')} giữ <b>${Math.max(0, 100 - tong)}%</b> · chia đi <b>${tong}%</b>${tong > 100 ? ' — vượt 100%' : ''}`; el.style.background = tong > 100 ? '#FEF2F2' : 'var(--bg)'; el.style.color = tong > 100 ? '#B91C1C' : 'var(--text)'; }
+  if (el) { el.innerHTML = html; el.style.background = tong > 100 ? '#FEF2F2' : 'var(--bg)'; el.style.color = tong > 100 ? '#B91C1C' : 'var(--text)'; }
 };
-window.bhCtLuu = function() {
-  const p = bhPhieuHienTai(); if (!p) return;
+window.bhCtLuu = async function() {
+  if (!ctNgu) return;
   const ds = bhCtNhap.filter(c => c.uid || c.pt);
   if (ds.some(c => !c.uid)) { showToast('Chọn nhân viên cho từng dòng', true); return; }
   if (ds.some(c => !(c.pt > 0))) { showToast('Nhập % cho từng người (lớn hơn 0)', true); return; }
   if (ds.reduce((a, c) => a + c.pt, 0) > 100) { showToast('Tổng % chia đi vượt 100%', true); return; }
-  p.chiaThuong = ds.map(c => ({ uid: c.uid, ten: c.ten, pt: c.pt }));
-  bhLuu();
-  document.getElementById('bh-ct-modal').style.display = 'none';
-  veManHinhBanHang();
+  const nut = document.getElementById('bh-ct-luu'); if (nut) { nut.disabled = true; nut.textContent = 'Đang lưu...'; }
+  try {
+    await ctNgu.luu(ds.map(c => ({ uid: c.uid, ten: c.ten, pt: c.pt })));
+    document.getElementById('bh-ct-modal').style.display = 'none';
+  } catch(e) { alert('Không lưu được: ' + loiDeHieu(e.message)); if (nut) { nut.disabled = false; nut.textContent = 'Lưu'; } }
+};
+// Sửa / thêm chia thưởng cho đơn đã bán (quyền dbl_sua) — ghi qua máy chủ
+window.ddbSuaChia = function(id) {
+  const d = ddbTimDon(id); if (!d) return;
+  if (!coQuyen('dbl_sua')) { showToast('Bạn chưa có quyền sửa đơn đã bán', true); return; }
+  ctMo({ nguoiTao: d.nguoiBan || {}, ds: d.chiaThuong, luu: async (ds) => {
+    const kq = await goiWorkerAdmin('dbl-chia-thuong', { lam: 'sua', maDon: d.id, chiaThuong: ds });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    d.chiaThuong = kq.chiaThuong || ds; d.chiaThuongUids = d.chiaThuong.map(c => c.uid);
+    showToast('Đã lưu chia thưởng');
+    ddbXemChiTiet(id); veManHinhDonDaBan();
+  } });
+};
+// Thanh toán phiếu cọc: người thanh toán là người tạo hóa đơn, chia thưởng như Bán hàng
+window.dcMoChiaThuong = function() {
+  const t = dcTTDangMo; if (!t) return;
+  ctMo({ nguoiTao: { uid: currentUser.uid, ten: currentUserData?.ten || '' }, ds: t.chiaThuong,
+    luu: (ds) => { t.chiaThuong = ds; dcVeThanhToan(); } });
 };
 // Tên người tạo kèm phần chia: "Anh Vũ (Tấn Phúc-20%)"
 function tenNguoiTaoDon(d) {
@@ -15011,7 +15044,8 @@ function dcVeThanhToan() {
         <div class="bh-dong-tt"><span>Chuyển khoản</span><b id="dc-tt-ck" style="color:#2563EB">${fmt(canCK)}đ</b></div>` : ''}
     </div>
     ${con > 0 ? `<button class="bh-chon-tt" aria-label="Cách thanh toán" style="width:100%;font-weight:600;margin-top:8px" onclick="dcTTMoChonCach()">${DC_CACH_TRA[t.cachTra] || 'Tiền mặt'}</button>`
-      : '<p class="info-note" style="margin-top:8px">Khách đã trả đủ — bấm Hoàn tất.</p>'}`,
+      : '<p class="info-note" style="margin-top:8px">Khách đã trả đủ — bấm Hoàn tất.</p>'}
+    ${coQuyen('bh_chiathuong') ? `<button onclick="dcMoChiaThuong()" style="width:100%;margin-top:8px;padding:9px;font-size:13px;font-weight:600;border:1.5px solid ${(t.chiaThuong || []).length ? '#7C3AED' : 'var(--border)'};border-radius:8px;background:${(t.chiaThuong || []).length ? '#F5F3FF' : 'var(--surface)'};color:${(t.chiaThuong || []).length ? '#6D28D9' : 'var(--text)'};cursor:pointer">🤝 Chia thưởng${(t.chiaThuong || []).length ? ': ' + t.chiaThuong.map(c => `${escHtml(c.ten)} ${c.pt}%`).join(', ') : ''}</button>` : ''}`,
     `<button class="btn-outline" style="flex:1" onclick="dcDongTT()">Đóng</button>
      <button class="btn-g" id="dc-tt-nut" style="flex:2;margin:0;background:${DC_MAU}" onclick="${canCK > 0 ? `dcTaoLaiQR('${t.ma}',${canCK},'tt')` : 'dcHoanTatTT()'}">${canCK > 0 ? 'Mã QR thanh toán · ' + fmt(canCK) + 'đ' : 'Hoàn tất'}</button>`);
   ddbCanhGiua?.('dc-tt');
@@ -15056,7 +15090,7 @@ window.dcHoanTatTT = async function(tuDong) {
   if (tuDong !== true && !await hoiXacNhan(`Hoàn tất phiếu ${t.p.maPhieu}?\n\nTổng ${fmt(t.tong)}đ · đã cọc ${fmt(t.daCoc)}đ${t.tienMat ? `\nThu tiền mặt ${fmt(t.tienMat)}đ` : ''}`, { nutDongY: 'Hoàn tất' })) return;
   const nut = document.getElementById('dc-tt-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang xử lý...'; }
   try {
-    const kq = await dcGoi('dc-thanh-toan', { ma: t.ma, tienMat: t.tienMat, khachDua: t.khachDua ?? t.tienMat });
+    const kq = await dcGoi('dc-thanh-toan', { ma: t.ma, tienMat: t.tienMat, khachDua: t.khachDua ?? t.tienMat, chiaThuong: coQuyen('bh_chiathuong') ? (t.chiaThuong || []) : [] });
     document.getElementById('dc-tt').style.display = 'none'; dcTTDangMo = null;
     showToast(`Đã xuất hóa đơn ${kq.maHoaDon}`);
     await loadSKUs();
@@ -19075,7 +19109,8 @@ const DANH_SACH_MODULE = [
   { key: 'donbanle', ten: 'Đơn đã bán', con: [
     { key: 'dbl_xemtatca', ten: 'Xem đơn của mọi người (không tick: chỉ đơn mình bán)' },
     { key: 'dbl_trahang', ten: 'Tạo phiếu trả hàng' },
-    { key: 'dbl_duyettra', ten: 'Duyệt / từ chối phiếu trả hàng' }
+    { key: 'dbl_duyettra', ten: 'Duyệt / từ chối phiếu trả hàng' },
+    { key: 'dbl_sua', ten: 'Sửa đơn đã bán: thêm / sửa chia thưởng' }
   ]},
   { key: 'ketca', ten: 'Kết ca (xem tiền mặt mình đang giữ, thấy "Đã kết ca")', con: [
     { key: 'sq_ketca', ten: 'Quản lý: xem tất cả nhân viên, lập phiếu chi (tiền mặt, có ảnh), kết ca, giao quỹ đầu ca, lịch sử kết ca' }
@@ -25279,7 +25314,7 @@ async function tinhLuongThang(thang) {
       const daCo = new Set(donBan.map(x => x.maDon));
       (kq?.ds || []).filter(x => !daCo.has(x.maDon)).forEach(x => donBan.push({ ...x, taoLuc: x.taoLuc ? { toDate: () => new Date(x.taoLuc) } : null }));
     }
-    donBan = donBan.map(x => { const t = tyLeChiaDon(x, uidXem); return t < 1 ? { ...x, _tyLe: t } : x; }).filter(x => (x._tyLe ?? 1) > 0);
+    donBan = donBan.map(x => { const t = tyLeChiaDon(x, uidXem); const chia = x.nguoiBan?.uid !== uidXem; return t < 1 || chia ? { ...x, _tyLe: t, ...(chia ? { _duocChia: true } : {}) } : x; }).filter(x => !x._duocChia || (x._tyLe ?? 1) > 0);
   } catch(e) { console.warn('Không tải được đơn bán lẻ:', e.message); }
 
   // --- Đơn đóng gói ---
@@ -25464,7 +25499,7 @@ function hoaHongChiTiet(dsNguoi) {
         const pt = ct.reduce((a, q) => qtLocHang(sku, q.nhomHang) ? a + (Number(q.giaTri) || 0) : a, 0);
         const khoa = ng.uid + '|' + (h.sku || h.ten);
         const o = dong.get(khoa) || { uid: ng.uid, nv: ng.ten, sku: h.sku || '', ten: h.ten || sku?.ten || h.sku || '', sl: 0, doanhThu: 0, pt, tien: 0 };
-        o.sl += (Number(h.soLuong) || 0) * (d._tyLe ?? 1); o.doanhThu += tien; o.tien += tien * pt / 100;
+        o.sl += Number(h.soLuong) || 0; o.doanhThu += tien; o.tien += tien * pt / 100;
         dong.set(khoa, o);
       }
     }
@@ -25494,7 +25529,7 @@ function hhKhoiHoaHong(kq, nhieuNguoi, locHtml = '') {
       <tbody>${kq.ds.map(x => `<tr style="${x.pt ? '' : 'color:var(--text2)'}">
         ${nhieuNguoi ? `<td style="text-align:left;white-space:nowrap">${escHtml(x.nv)}</td>` : ''}
         <td style="text-align:left;white-space:normal;min-width:160px">${escHtml(x.ten)}<div style="font-size:10.5px;color:var(--text2)">${escHtml(x.sku)}</div></td>
-        <td>${String(Math.round(x.sl * 100) / 100).replace('.', ',')}</td><td>${fmt(Math.round(x.doanhThu))}</td><td>${x.pt ? pt(x.pt) : '—'}</td>
+        <td>${fmt(x.sl)}</td><td>${fmt(Math.round(x.doanhThu))}</td><td>${x.pt ? pt(x.pt) : '—'}</td>
         <td style="font-weight:600;color:${x.tien ? 'var(--green)' : 'inherit'}">${x.tien ? fmt(Math.round(x.tien)) : '—'}</td></tr>`).join('')}
       <tr style="font-weight:700;background:var(--bg)">${nhieuNguoi ? '<td></td>' : ''}<td style="text-align:left">Tổng</td><td>${fmt(kq.ds.reduce((a, x) => a + x.sl, 0))}</td><td>${fmt(Math.round(kq.doanhThu))}</td><td></td><td style="color:var(--green)">${fmt(Math.round(kq.tong))}</td></tr>
       </tbody></table></div>
@@ -25637,8 +25672,8 @@ async function tinhLuongTatCa(thang) {
     const daTra = (d.lanTra || []).reduce((s, l) => s + (Number(l.tienHoan) || 0), 0);
     dtCuaHang += Math.max(0, (Number(d.phaiTra) || 0) - daTra);
     // Chia thưởng: người tạo giữ phần còn lại, người cùng tư vấn nhận đúng % được chia
-    if (d.nguoiBan?.uid) { const t = tyLeChiaDon(d, d.nguoiBan.uid); if (t > 0) lay(d.nguoiBan.uid)?._donBan.push(t < 1 ? { ...d, _tyLe: t } : d); }
-    for (const c of (d.chiaThuong || [])) { const t = tyLeChiaDon(d, c.uid); if (c.uid && t > 0) lay(c.uid)?._donBan.push({ ...d, _tyLe: t }); }
+    if (d.nguoiBan?.uid) { const t = tyLeChiaDon(d, d.nguoiBan.uid); lay(d.nguoiBan.uid)?._donBan.push(t < 1 ? { ...d, _tyLe: t } : d); }   // vẫn tính 1 đơn cho người tạo dù chia hết %
+    for (const c of (d.chiaThuong || [])) { const t = tyLeChiaDon(d, c.uid); if (c.uid && t > 0) lay(c.uid)?._donBan.push({ ...d, _tyLe: t, _duocChia: true }); }
   }
   // Điều chỉnh tay: loại "thưởng" cộng, còn lại trừ
   for (const d of sKT.docs) {
@@ -26726,7 +26761,7 @@ function qtDoanhThuDon(d, nhomHang) {
 function qtChiSo(coSo, q, du) {
   switch (coSo) {
     case 'dt_ban': return (du.donBan || []).reduce((s, d) => s + qtDoanhThuDon(d, q.nhomHang), 0);
-    case 'so_don_ban': return (du.donBan || []).reduce((s, d) => s + (d._tyLe ?? 1), 0);
+    case 'so_don_ban': return (du.donBan || []).filter(d => !d._duocChia).length;   // số đơn chỉ tính cho người tạo
     case 'dt_cuahang': return du.donBanCH ? du.donBanCH.reduce((s, d) => s + qtDoanhThuDon(d, q.nhomHang), 0) : undefined;
     case 'dt_san': return du.dtSan;
     case 'so_don_goi': return (du.quetGoi || []).length;
@@ -29082,7 +29117,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v774</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v775</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29140,7 +29175,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v774</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v775</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29190,7 +29225,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v774</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v775</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29203,7 +29238,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v774</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v775</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
