@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 783;
+  const APP_VERSION = 784;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9485,7 +9485,10 @@ window.dhLuuNhapKho = async function() {
 window.moTheKho = async function(maSku, maKho = 'cuahang') {
   const sku = allSKUs.find(s => s.sku === maSku);
   if (!sku) return;
-  const tenKho = maKho === 'cuahang' ? 'Kho Cửa hàng' : 'Kho Online';
+  // Mã kho chung: gộp 2 kho thành một thẻ kho, bỏ các lần app tự chuyển qua lại giữa 2 kho (cộng trừ triệt tiêu)
+  const laChung = maKho === 'chung';
+  const tenKho = laChung ? 'Kho chung' : maKho === 'cuahang' ? 'Kho Cửa hàng' : 'Kho Online';
+  const giuCoc = laChung ? layTon(sku, 'cuahang') : 0;
   let modal = document.getElementById('the-kho-modal');
   if (!modal) {
     modal = document.createElement('div');
@@ -9507,7 +9510,8 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
           style="flex:0 0 32px;width:32px;height:32px;padding:0;border:1.5px solid var(--border);border-radius:8px;background:var(--surface);font-size:15px;line-height:1;cursor:pointer;color:var(--text2)">✕</button>
       </div>
       <div style="padding:10px 14px;background:var(--bg);font-size:13px">
-        ${escHtml(tenKho)}: <b style="font-size:16px">${layTon(sku, maKho)}</b>
+        ${escHtml(tenKho)}: <b style="font-size:16px">${laChung ? layTon(sku, 'san') : layTon(sku, maKho)}</b>${giuCoc > 0 ? ` <span style="color:#0E7490">· đang giữ cọc ở quầy ${giuCoc}</span>` : ''}
+        ${laChung ? `<div style="font-size:11.5px;color:var(--text2);margin-top:2px">Gộp Kho Online và Cửa hàng · không hiện các lần app tự chuyển qua lại giữa 2 kho</div>` : ''}
       </div>
       <div id="the-kho-noidung" style="flex:1;overflow-y:auto;padding:12px 14px">
         <div class="loading">Đang tải thẻ kho...</div>
@@ -9517,10 +9521,15 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
 
   try {
     // Lọc kho ngay trong truy vấn — hai kho chung một danh sách thì rất khó đọc
-    const snap = await getDocs(query(collection(db, 'the_kho'),
-      where('sku', '==', maSku), where('kho', '==', maKho),
-      orderBy('thoiGian', 'desc'), limit(100)));
-    const ds = snap.docs.map(d => d.data());
+    const taiKho = async (k) => (await getDocs(query(collection(db, 'the_kho'),
+      where('sku', '==', maSku), where('kho', '==', k),
+      orderBy('thoiGian', 'desc'), limit(100)))).docs.map(d => d.data());
+    const ms = (g) => g.thoiGian?.toMillis?.() || 0;
+    const ds = laChung
+      ? [...await taiKho('san'), ...await taiKho('cuahang')]
+          .filter(g => !/^Kho chung:/.test(String(g.loaiGiaoDich || '')))
+          .sort((a, b) => ms(b) - ms(a)).slice(0, 100)
+      : await taiKho(maKho);
     const el = document.getElementById('the-kho-noidung');
     if (!ds.length) { el.innerHTML = ''; return; }
     el.innerHTML = ds.map(g => {
@@ -9538,7 +9547,7 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div style="font-size:16px;font-weight:700;color:${am ? 'var(--red)' : 'var(--green)'}">${am ? '' : '+'}${g.soLuong}</div>
-          ${g.tonSau != null ? `<div style="font-size:11px;color:var(--text2)">còn ${g.tonSau}</div>` : ''}
+          ${g.tonSau != null && !laChung ? `<div style="font-size:11px;color:var(--text2)">còn ${g.tonSau}</div>` : ''}
         </div>
       </div>`;
     }).join('');
@@ -16936,8 +16945,9 @@ function hhTheSku(s, trongNhom = false) {
           ${(s.thuongHieu || s.nhom3 || s.nhom2 || s.nhom1) ? `<div style="font-size:12px;color:#7C3AED">${s.thuongHieu ? `<b style="color:#0F766E">${escHtml(s.thuongHieu)}</b>${(s.nhom3 || s.nhom2 || s.nhom1) ? ' · ' : ''}` : ''}${escHtml(s.nhom3 || s.nhom2 || s.nhom1 || '')}</div>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
+          ${s.khoChung && (hienCH || hienSan) ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','chung')">Thẻ kho</button>` : `
           ${hienCH ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','cuahang')">Thẻ kho${kho === 'ca' ? ' CH' : ''}</button>` : ''}
-          ${hienSan ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho${kho === 'ca' ? ' Online' : ''}</button>` : ''}
+          ${hienSan ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho${kho === 'ca' ? ' Online' : ''}</button>` : ''}`}
 
           ${coQuyen('hh_ghichu_sua') ? `<button class="btn-xs" onclick="hhSuaGhiChu('${s.id}')">📝 Ghi chú</button>` : ''}
           ${currentUserData.role === 'admin' ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
@@ -29439,7 +29449,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v783</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v784</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29497,7 +29507,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v783</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v784</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29547,7 +29557,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v783</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v784</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29560,7 +29570,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v783</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v784</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
