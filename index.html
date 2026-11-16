@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 787;
+  const APP_VERSION = 788;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -19204,13 +19204,17 @@ function qdChiaVon() {
   const trongSo = tu.reduce((t, d) => t + (Number(qdSp(d.id)?.gia) || 1) * d.sl, 0);
   tu.forEach(d => { d.gia = trongSo ? Math.round(conLai * ((Number(qdSp(d.id)?.gia) || 1) * d.sl / trongSo) / d.sl) : 0; });
 }
-// Gợi ý mã nhận: cùng nhóm cùng loại hoặc cùng 2 chữ đầu của tên
+// Gợi ý mã nhận: cùng nhóm cùng loại, rồi tới các mã có tên giống nhất (chữ càng hiếm càng được tính nhiều)
+let qdTuHiem = null;
 function qdGoiY() {
   const s0 = qdSp(qd.nguon[0]?.id); if (!s0) return [];
-  const dau = (t) => boDauTim(t).split(/\s+/).slice(0, 2).join(' ');
-  const k = dau(s0.tenChinh || s0.ten);
-  const co = new Set([...qd.nguon, ...qd.dich].map(x => x.id));
-  return allSKUs.filter(s => !s.deleted && !s.laCombo && !co.has(s.id) && ((s0.nhomCL && s.nhomCL === s0.nhomCL) || (k.length >= 4 && dau(s.tenChinh || s.ten) === k))).slice(0, 14);
+  const tach = (t) => [...new Set(boDauTim(t).split(/[^a-z0-9]+/).filter(w => w.length >= 2))];
+  if (!qdTuHiem) { qdTuHiem = new Map(); allSKUs.forEach(s => tach(s.ten).forEach(w => qdTuHiem.set(w, (qdTuHiem.get(w) || 0) + 1))); }
+  const tu0 = tach(s0.ten), co = new Set([...qd.nguon, ...qd.dich].map(x => x.id));
+  return allSKUs.filter(s => !s.deleted && !s.laCombo && !co.has(s.id))
+    .map(s => { const tu = new Set(tach(s.ten)); let d = s0.nhomCL && s.nhomCL === s0.nhomCL ? 100 : 0;
+      tu0.forEach(w => { if (tu.has(w)) d += 1 / (qdTuHiem.get(w) || 1); }); return { s, d }; })
+    .filter(x => x.d >= 0.15).sort((a, b) => b.d - a.d).slice(0, 8).map(x => x.s);
 }
 window.moQuyDoi = function(id) {
   const s = qdSp(id); if (!s) return;
@@ -29604,7 +29608,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v787</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v788</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29662,7 +29666,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v787</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v788</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29712,7 +29716,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v787</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v788</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29725,7 +29729,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v787</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v788</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
