@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 785;
+  const APP_VERSION = 786;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -4795,10 +4795,12 @@ function veNutThaoTac(d, maTT) {
 
   // Chờ sàn duyệt, hoặc hãng vận chuyển còn là "Đang điều phối ĐVVC" (Shopee chưa gán hãng):
   // sàn chưa cho chuẩn bị -> nút xám, không bấm được (trước đây bấm vào mới báo lỗi)
+  // KiotViet hay ghi chậm: sàn đã có hãng vận chuyển mà bên này vẫn "điều phối" -> vẫn cho bấm thử,
+  // sàn chưa sẵn sàng thì lúc chuẩn bị sẽ báo lại
   if (maTT === 'san_chua_duyet' || (maTT === 'cho_xu_ly' && laDangDieuPhoi(d))) {
     if (!['shopee', 'tiktok', 'lazada'].includes(d.san)) return '';
-    return `<button disabled title="Sàn đang điều phối đơn vị vận chuyển — chưa chuẩn bị được"
-      style="flex-shrink:0;align-self:center;background:#E5E7EB;color:#9CA3AF;border:none;border-radius:6px;padding:7px 11px;font-size:12px;font-weight:600;cursor:not-allowed;white-space:nowrap">Chuẩn bị</button>`;
+    return `<button onclick="event.stopPropagation();xacNhanDon('${ma}')" title="Hệ thống còn ghi đang điều phối — bấm thử, sàn chưa sẵn sàng thì sẽ báo"
+      style="flex-shrink:0;align-self:center;background:#F3E8FF;color:#7E22CE;border:none;border-radius:6px;padding:7px 11px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Chuẩn bị</button>`;
   }
   if (maTT === 'cho_xu_ly') {
     if (!['shopee', 'tiktok', 'lazada'].includes(d.san)) return '';
@@ -4850,7 +4852,7 @@ function veThanhChon(trang) {
   const hienChuanBi = tt === 'cho_xu_ly' || tt === 'san_chua_duyet' || tt === 'all';
   const dsChonCB = [...vdDaChon].map(ma => allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean);
   // sàn đang điều phối ĐVVC — chưa chuẩn bị được (cả bộ lọc Chờ sàn duyệt, hoặc mọi đơn đang chọn đều đang điều phối)
-  const chuanBiXam = tt === 'san_chua_duyet' || (dsChonCB.length > 0 && dsChonCB.every(d => trangThaiHienThi(d) === 'san_chua_duyet' || laDangDieuPhoi(d)));
+  const chuanBiXam = false;   // đơn đang điều phối vẫn cho bấm thử (sàn chưa sẵn sàng thì báo lại)
   const hienIn = tt === 'cho_in' || tt === 'cho_dong_goi' || tt === 'da_dong_goi' || tt === 'all';
   const daChonHet = trang.length && trang.every(d => vdDaChon.has(d.maDonSan || d.maHoaDon));
 
@@ -11456,11 +11458,11 @@ window.chuanBiHangLoat = async function() {
     allDonHangSan.find(x => x.maDonSan === ma || x.maHoaDon === ma)).filter(Boolean)
     .filter(d => !d.maVanDon && d.coHoaDon !== true
       && (d.san === 'shopee' || d.san === 'tiktok' || d.san === 'lazada')
-      && trangThaiHienThi(d) !== 'chua_thanh_toan' && trangThaiHienThi(d) !== 'san_chua_duyet' && !laDangDieuPhoi(d));
+      && trangThaiHienThi(d) !== 'chua_thanh_toan');
 
   if (!ds.length) {
     hienPopup({ loai: 'thuong', tieuDe: 'Không có đơn nào',
-      noiDung: 'Đơn đã chuẩn bị rồi, khách chưa thanh toán, hoặc sàn đang điều phối đơn vị vận chuyển.' });
+      noiDung: 'Đơn đã chuẩn bị rồi hoặc khách chưa thanh toán.' });
     return;
   }
 
@@ -29457,7 +29459,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v785</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v786</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29515,7 +29517,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v785</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v786</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29565,7 +29567,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v785</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v786</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29578,7 +29580,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v785</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v786</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
