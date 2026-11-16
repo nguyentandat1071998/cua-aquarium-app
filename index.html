@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 786;
+  const APP_VERSION = 787;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -16960,6 +16960,7 @@ function hhTheSku(s, trongNhom = false) {
           ${hienSan ? `<button class="btn-xs" onclick="moTheKho('${escHtml(s.sku||'')}','san')">Thẻ kho${kho === 'ca' ? ' Online' : ''}</button>` : ''}`}
 
           ${coQuyen('hh_ghichu_sua') ? `<button class="btn-xs" onclick="hhSuaGhiChu('${s.id}')">📝 Ghi chú</button>` : ''}
+          ${currentUserData.role === 'admin' && !s.laCombo ? `<button class="btn-xs" onclick="moQuyDoi('${s.id}')" title="Tách hàng về thành các mã bán lẻ">🔁 Quy đổi</button>` : ''}
           ${currentUserData.role === 'admin' ? `<button class="btn-xs" onclick="moFormSuaHangHoa('${s.id}')">Sửa</button>
           <button class="btn-xs danger" onclick="xoaHangHoa('${s.id}')">Xóa</button>` : ''}
         </div>
@@ -19175,6 +19176,150 @@ window.dongSuaHangHoa = function() {
   hhFormGom = null;
   hhPL = null;
   const m2 = document.getElementById('hh-pl-modal'); if (m2) m2.style.display = 'none';
+};
+
+// ===== QUY ĐỔI HÀNG =====
+// Một (hoặc vài) mã hàng về -> tách thành các mã bán lẻ. VD: 1 thùng Matrix 20L -> 5 túi 1L + 10 túi 500ml + 100 túi 100ml;
+// 100 cái quạt -> các mã quạt đôi, quạt ba... Tồn mã nguồn giảm, mã nhận tăng (cả bên KiotViet, bằng phiếu kiểm kho cộng/trừ).
+// Giá vốn của phần quy đổi (tính theo lô cũ nhất trước) chia cho các mã nhận theo giá bán, sửa tay được.
+let qd = null;   // { kho, nguon: [{ id, sl }], dich: [{ id, sl, gia, tay }], tim, ghiChu, dangLuu }
+const qdSp = (id) => allSKUs.find(s => s.id === id);
+const qdKhoCua = (s) => s?.khoChung ? 'san' : qd.kho;
+const qdTon = (s) => layTon(s, qdKhoCua(s) === 'san' ? 'san' : 'cuahang');
+// Giá vốn của sl cái lấy ra: dùng lô cũ nhất trước (đúng như lúc bán)
+function qdChiPhi(s, sl) {
+  const lo = loConLai(s);
+  if (!lo?.length) return sl * (Number(s?.giaVon) || 0);
+  let con = sl, tien = 0;
+  for (const l of lo) { if (con <= 0) break; const g = Math.min(con, l.sl); tien += g * l.gia; con = r3(con - g); }
+  if (con > 0) tien += con * lo[lo.length - 1].gia;
+  return tien;
+}
+function qdTongVon() { return qd.nguon.reduce((t, n) => t + qdChiPhi(qdSp(n.id), n.sl), 0); }
+// Chia giá vốn: mã sửa tay giữ nguyên, phần còn lại chia cho các mã khác theo (giá bán x số lượng)
+function qdChiaVon() {
+  const tong = qdTongVon();
+  const tay = qd.dich.filter(d => d.tay), tu = qd.dich.filter(d => !d.tay && d.sl > 0);
+  const conLai = Math.max(0, tong - tay.reduce((t, d) => t + d.gia * d.sl, 0));
+  const trongSo = tu.reduce((t, d) => t + (Number(qdSp(d.id)?.gia) || 1) * d.sl, 0);
+  tu.forEach(d => { d.gia = trongSo ? Math.round(conLai * ((Number(qdSp(d.id)?.gia) || 1) * d.sl / trongSo) / d.sl) : 0; });
+}
+// Gợi ý mã nhận: cùng nhóm cùng loại hoặc cùng 2 chữ đầu của tên
+function qdGoiY() {
+  const s0 = qdSp(qd.nguon[0]?.id); if (!s0) return [];
+  const dau = (t) => boDauTim(t).split(/\s+/).slice(0, 2).join(' ');
+  const k = dau(s0.tenChinh || s0.ten);
+  const co = new Set([...qd.nguon, ...qd.dich].map(x => x.id));
+  return allSKUs.filter(s => !s.deleted && !s.laCombo && !co.has(s.id) && ((s0.nhomCL && s.nhomCL === s0.nhomCL) || (k.length >= 4 && dau(s.tenChinh || s.ten) === k))).slice(0, 14);
+}
+window.moQuyDoi = function(id) {
+  const s = qdSp(id); if (!s) return;
+  if (currentUserData?.role !== 'admin') { showToast('Chỉ Admin quy đổi hàng', true); return; }
+  qd = { kho: layTon(s, 'cuahang') > 0 || s.khoChung ? 'ch' : 'san', nguon: [{ id, sl: 1 }], dich: [], tim: '', ghiChu: '', dangLuu: false };
+  if (!s.khoChung && layTon(s, 'cuahang') <= 0 && layTon(s, 'san') <= 0) qd.kho = 'ch';
+  ddbMoKhung('qd-modal', '🔁 Quy đổi hàng', 'Tách hàng về thành các mã bán lẻ', `<div id="qd-than"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('qd-modal').style.display='none'">Đóng</button>
+     <button class="btn-g" id="qd-nut" style="flex:2;margin:0" onclick="qdLuu()">Quy đổi</button>`);
+  ddbCanhGiua('qd-modal');
+  const m = document.getElementById('qd-modal'); if (m) { m.style.display = 'flex'; m.style.zIndex = '1350'; }
+  qdVe();
+};
+function qdVe() {
+  const el = document.getElementById('qd-than'); if (!el || !qd) return;
+  qdChiaVon();
+  const tong = qdTongVon(), tongDich = qd.dich.reduce((t, d) => t + d.gia * d.sl, 0);
+  const coKC = [...qd.nguon, ...qd.dich].some(x => qdSp(x.id)?.khoChung);
+  const nutKho = (k, nhan) => `<button type="button" onclick="qdDat('kho','${k}')" style="flex:1;border:1.5px solid ${qd.kho === k ? '#2563EB' : 'var(--border)'};background:${qd.kho === k ? '#EFF6FF' : '#fff'};color:${qd.kho === k ? '#1D4ED8' : 'var(--text)'};font-weight:${qd.kho === k ? 700 : 500};border-radius:8px;padding:7px;font-size:13px;cursor:pointer">${nhan}</button>`;
+  const dongNguon = qd.nguon.map((n, i) => { const s = qdSp(n.id); const ton = qdTon(s); const thieu = ton < n.sl; return `
+    <div style="display:flex;gap:8px;align-items:center;border:1px solid ${thieu ? '#FCA5A5' : '#FDE68A'};background:${thieu ? '#FEF2F2' : '#FFFBEB'};border-radius:8px;padding:7px 9px;margin-bottom:6px">
+      <div style="flex:1;min-width:0"><b style="font-size:13.5px">${escHtml(s?.ten || n.id)}</b>
+        <div style="font-size:11.5px;color:${thieu ? 'var(--red)' : 'var(--text2)'}">${escHtml(s?.sku || '')} · tồn ${s?.khoChung ? 'kho chung' : (qdKhoCua(s) === 'san' ? 'Online' : 'Cửa hàng')} ${ton}${thieu ? ' — không đủ' : ''}</div></div>
+      <span style="font-size:12px;color:var(--text2)">−</span>
+      <input type="text" inputmode="decimal" value="${n.sl}" onchange="qdSua('nguon',${i},'sl',this.value)" style="width:64px;padding:6px;text-align:center;font-weight:700">
+      ${qd.nguon.length > 1 ? `<button class="btn-xs" onclick="qdBo('nguon',${i})">✕</button>` : ''}
+    </div>`; }).join('');
+  const dongDich = qd.dich.map((d, i) => { const s = qdSp(d.id); return `
+    <div style="border:1px solid #BBF7D0;background:#F0FDF4;border-radius:8px;padding:7px 9px;margin-bottom:6px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <div style="flex:1;min-width:0"><b style="font-size:13.5px">${escHtml(s?.ten || d.id)}</b>
+          <div style="font-size:11.5px;color:var(--text2)">${escHtml(s?.sku || '')} · tồn ${s?.khoChung ? 'kho chung' : (qdKhoCua(s) === 'san' ? 'Online' : 'Cửa hàng')} ${qdTon(s)} · bán ${fmt(s?.gia || 0)}đ</div></div>
+        <span style="font-size:12px;color:var(--text2)">+</span>
+        <input type="text" inputmode="decimal" value="${d.sl || ''}" placeholder="SL" onchange="qdSua('dich',${i},'sl',this.value)" style="width:64px;padding:6px;text-align:center;font-weight:700">
+        <button class="btn-xs" onclick="qdBo('dich',${i})">✕</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:5px;font-size:12px;color:var(--text2)">
+        Giá vốn / cái <input type="text" inputmode="numeric" value="${d.gia ? fmt(d.gia) : ''}" onchange="qdSua('dich',${i},'gia',this.value)" style="width:110px;padding:5px;text-align:right${d.tay ? ';border-color:#2563EB' : ''}">
+        ${d.tay ? `<span style="color:#2563EB">sửa tay</span> <button class="btn-xs" onclick="qdSua('dich',${i},'tudong')">tự chia</button>` : '<span>tự chia theo giá bán</span>'}
+      </div>
+    </div>`; }).join('');
+  const goiY = qdGoiY();
+  const q = boDauTim(qd.tim);
+  const co = new Set([...qd.nguon, ...qd.dich].map(x => x.id));
+  const kqTim = q.length >= 2 ? allSKUs.filter(s => !s.deleted && !s.laCombo && !co.has(s.id) && (boDauTim(s.ten).includes(q) || boDauTim(s.sku).includes(q))).slice(0, 10) : [];
+  el.innerHTML = `
+    <div style="font-size:12.5px;font-weight:600;margin-bottom:5px">Kho</div>
+    <div style="display:flex;gap:6px;margin-bottom:${coKC ? 4 : 12}px">${nutKho('ch', '🏪 Cửa hàng')}${nutKho('san', '🛒 Kho Online')}</div>
+    ${coKC ? '<div style="font-size:11.5px;color:#0E7490;margin-bottom:12px">Mã kho chung luôn tính ở Kho Online.</div>' : ''}
+    <div style="font-size:12.5px;font-weight:600;margin-bottom:5px">Hàng quy đổi (trừ tồn)</div>
+    ${dongNguon}
+    <div style="font-size:12.5px;font-weight:600;margin:12px 0 5px">Thành các mã (cộng tồn)</div>
+    ${dongDich || '<div style="font-size:12.5px;color:var(--text2);margin-bottom:6px">Chưa chọn mã nào — chọn bên dưới.</div>'}
+    ${goiY.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">${goiY.map(s => `<button type="button" onclick="qdThem('${s.id}')" style="border:1.5px dashed #16A34A;background:#fff;color:#15803D;border-radius:16px;padding:4px 10px;font-size:12px;cursor:pointer">+ ${escHtml(s.ten)}</button>`).join('')}</div>` : ''}
+    <input type="text" id="qd-tim" value="${escHtml(qd.tim)}" placeholder="Tìm mã nhận khác (tên / mã)..." oninput="qdTim(this.value)" autocomplete="off" style="width:100%;padding:7px 10px;font-size:13.5px">
+    ${kqTim.length ? `<div style="border:1px solid var(--border);border-radius:8px;margin-top:4px;max-height:220px;overflow-y:auto">${kqTim.map(s => `<div onclick="qdThem('${s.id}')" style="padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px"><b>${escHtml(s.ten)}</b> <span style="color:var(--text2);font-size:11.5px">${escHtml(s.sku)}</span></div>`).join('')}</div>` : ''}
+    <input type="text" id="qd-ghichu" value="${escHtml(qd.ghiChu)}" placeholder="Ghi chú (không bắt buộc)" onchange="qdDat('ghiChu', this.value)" style="width:100%;padding:7px 10px;font-size:13px;margin-top:10px">
+    <div style="font-size:12.5px;background:var(--bg);border-radius:8px;padding:8px 10px;margin-top:10px;line-height:1.6">
+      Giá vốn phần quy đổi: <b>${fmt(Math.round(tong))}đ</b><br>
+      Giá vốn các mã nhận: <b style="color:${Math.abs(tongDich - tong) > Math.max(1000, tong * 0.01) ? '#D97706' : 'var(--green)'}">${fmt(Math.round(tongDich))}đ</b>
+      ${Math.abs(tongDich - tong) > Math.max(1000, tong * 0.01) ? '<span style="color:#D97706"> — lệch so với phần quy đổi</span>' : ''}
+    </div>`;
+  const nut = document.getElementById('qd-nut');
+  if (nut && !qd.dangLuu) { const ok = qd.dich.some(d => d.sl > 0); nut.disabled = !ok; nut.textContent = 'Quy đổi'; }
+}
+window.qdDat = function(k, v) { if (!qd || qd.dangLuu) return; qd[k] = v; if (k !== 'ghiChu') qdVe(); };
+window.qdTim = function(v) {
+  qd.tim = v; qdVe();
+  const o = document.getElementById('qd-tim'); if (o) { o.focus(); o.setSelectionRange(o.value.length, o.value.length); }
+};
+window.qdThem = function(id) { if (!qd || qd.dich.some(d => d.id === id)) return; qd.dich.push({ id, sl: 0, gia: 0, tay: false }); qd.tim = ''; qdVe(); };
+window.qdBo = function(loai, i) { qd[loai].splice(i, 1); qdVe(); };
+window.qdSua = function(loai, i, k, v) {
+  const d = qd[loai][i]; if (!d) return;
+  if (k === 'sl') d.sl = Math.max(0, slLe(v));
+  else if (k === 'gia') { d.gia = Math.max(0, soTien(v)); d.tay = true; }
+  else if (k === 'tudong') d.tay = false;
+  qdVe();
+};
+window.qdLuu = async function() {
+  if (!qd || qd.dangLuu) return;
+  const dich = qd.dich.filter(d => d.sl > 0);
+  if (!dich.length) { showToast('Nhập số lượng cho mã nhận', true); return; }
+  const thieu = qd.nguon.filter(n => qdTon(qdSp(n.id)) < n.sl);
+  if (thieu.length) { alert('Không đủ tồn để quy đổi:\n\n' + thieu.map(n => '· ' + (qdSp(n.id)?.ten || n.id)).join('\n')); return; }
+  const chuoi = (ds) => ds.map(x => `${x.sl} × ${qdSp(x.id)?.ten || x.id}`).join('\n');
+  if (!await hoiXacNhan(`Quy đổi hàng\n\nTrừ:\n${chuoi(qd.nguon)}\n\nCộng:\n${chuoi(dich)}\n\nTồn kho (cả bên KiotViet) đổi theo phiếu này.`, { nutDongY: 'Quy đổi' })) return;
+  qd.dangLuu = true;
+  const nut = document.getElementById('qd-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang quy đổi...'; }
+  try {
+    const kq = await goiWorkerAdmin('quy-doi-hang', { kho: qd.kho, khoCH: branchKhoTheoMa('ch'), ghiChu: qd.ghiChu,
+      nguon: qd.nguon.map(n => ({ id: n.id, sl: n.sl })), dich: dich.map(d => ({ id: d.id, sl: d.sl, gia: d.gia })) });
+    if (!kq.success) throw new Error(kq.error || 'Lỗi');
+    (Array.isArray(kq.giaVon) ? kq.giaVon : []).forEach(x => {
+      const k = String(x.sku).trim();
+      bangGiaVon.set(k, x.giaVon); bangGiaVon.set(k.toLowerCase(), x.giaVon);
+      if (x.lo?.length) bangLoGia.set(k, x.lo); else bangLoGia.delete(k);
+      const sp = allSKUs.find(s => s.sku === x.sku); if (sp && daNapGiaVon) sp.giaVon = x.giaVon;
+    });
+    document.getElementById('qd-modal').style.display = 'none';
+    qd = null;
+    showToast(`Đã quy đổi · ${kq.kvCode || kq.ma}`);
+    await loadSKUs();
+    if (document.getElementById('hanghoa-list')) renderHangHoaList();
+  } catch(e) {
+    qd.dangLuu = false;
+    alert('Chưa quy đổi được:\n\n' + loiDeHieu(e.message));
+    qdVe();
+  }
 };
 
 window.xoaHangHoa = async function(id) {
@@ -29459,7 +29604,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v786</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v787</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29517,7 +29662,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v786</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v787</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29567,7 +29712,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v786</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v787</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29580,7 +29725,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v786</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v787</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
