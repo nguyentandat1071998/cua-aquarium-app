@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 793;
+  const APP_VERSION = 794;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -18387,14 +18387,15 @@ function dgVeThan() {
       <select id="dg-cam" onchange="dgDoiCam(this.value)" style="flex:1;min-width:0;padding:5px 8px;font-size:13px">${dgCamOpts()}</select></div>
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:6px">
       <b style="min-width:62px">Bắt đầu</b><span id="dg-tu" style="font-variant-numeric:tabular-nums;min-width:66px">${dgGio(dgV.tu)}</span>
-      ${nut('−10s', "dgChinh('tu',-10)")}${nut('+10s', "dgChinh('tu',10)")}</div>
+      ${nut('−1 phút', "dgChinh('tu',-60)")}${nut('−10s', "dgChinh('tu',-10)")}${nut('+10s', "dgChinh('tu',10)")}${nut('+1 phút', "dgChinh('tu',60)")}</div>
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
       <b style="min-width:62px">Kết thúc</b><span id="dg-den" style="font-variant-numeric:tabular-nums;min-width:66px">${dgGio(dgV.den)}</span>
-      ${nut('−10s', "dgChinh('den',-10)")}${nut('+10s', "dgChinh('den',10)")}
+      ${nut('−1 phút', "dgChinh('den',-60)")}${nut('−10s', "dgChinh('den',-10)")}${nut('+10s', "dgChinh('den',10)")}${nut('+1 phút', "dgChinh('den',60)")}
       <button class="btn-xs" id="dg-nut-ap" style="margin-left:auto;display:none;background:#2563EB;color:#fff" onclick="dgApDung()">↻ Xem lại đoạn đã chỉnh</button></div>
     <div style="display:flex;justify-content:space-between;align-items:center;font-size:12.5px;background:var(--bg);border-radius:8px;padding:7px 10px">
       <span id="dg-tiendo">Đang ghi lại để tải: 0:00 / ${dgPhut((dgV.den - dgV.tu) / 1000)}</span>
       <label style="display:flex;gap:5px;align-items:center;cursor:pointer"><input type="checkbox" ${dgV.nhe ? 'checked' : ''} onchange="dgDoiNhe(this.checked)"> Bản nhẹ</label></div>
+    ${dgV.kn && knMo?.ma === dgV.kn && (knMo.files || []).some(f => f.ten.startsWith('VideoDongGoi_')) ? '<div style="font-size:12px;color:#0F766E;margin-top:6px">Thư mục Video đã có video đóng gói. Chỉnh Bắt đầu / Kết thúc → "Xem lại đoạn đã chỉnh" → Lưu: bản mới <b>thay</b> bản cũ (bản cũ vào thùng rác Drive, khôi phục được 30 ngày).</div>' : ''}
     <div style="font-size:11.5px;color:var(--text2);margin-top:4px">Camera phát lại gần đúng tốc độ thật — đoạn dài bao nhiêu thì cần để mở chừng ấy rồi mới tải đủ. Muốn tải sớm thì bấm Tải để lấy phần đã ghi.</div>`;
 }
 function dgPhat(url) {
@@ -18550,8 +18551,19 @@ async function tlLam1Don() {
     break;   // mỗi lượt 1 đơn
   }
 }
-// Kiểm tra 2 phút/lần (lần đầu sau 20 giây kể từ khi mở app)
-setTimeout(function tlVong() { if (currentUser) tlLam1Don().catch(() => {}).finally(() => setTimeout(tlVong, 120000)); else setTimeout(tlVong, 120000); }, 20000);
+// Không hỏi đi hỏi lại: máy chủ có đơn mới (vừa lưu video mở hàng) thì đổi cau_hinh/tu_luu_dg -> các máy đang mở app
+// nhận ngay qua Firestore và bắt tay vào ghi. Kiểm tra dự phòng 10 phút/lần cho đơn bị dở (máy tắt giữa chừng, lỗi thử lại).
+let tlNgheUnsub = null, tlHenChay = null;
+const tlChaySau = (ms = 3000) => { clearTimeout(tlHenChay); tlHenChay = setTimeout(() => tlLam1Don().catch(() => {}), ms); };
+window.tlChaySau = tlChaySau;
+function tlBatNghe() {
+  if (tlNgheUnsub || !currentUser || !coQuyen('kn_donggoi') || !tlHoTro()) return;
+  let lanDau = true;
+  tlNgheUnsub = onSnapshot(doc(db, 'cau_hinh', 'tu_luu_dg'), () => { if (lanDau) { lanDau = false; return; } tlChaySau(3000); },
+    (e) => { console.warn('[tự lưu video đóng gói] không nghe được:', e.message); tlNgheUnsub = null; });
+}
+setTimeout(function tlVong() { if (currentUser) { tlBatNghe(); tlLam1Don().catch(() => {}); } setTimeout(tlVong, 600000); }, 20000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && currentUser) tlChaySau(5000); });
 
 // ===== DANH SÁCH NHẬP KHO HÀNG TRẢ (thay nhóm Zalo) =====
 // Đơn Trả hàng / Hoàn tiền (không gồm giao thất bại) đã bấm nhập kho -> nhân viên có quyền hh_ke tick "Xác nhận" từng sản phẩm (đã nhận lại, cất lên kệ).
@@ -18739,7 +18751,7 @@ async function knTaiPhien(id) {
     await knXoaPhienMay(id);
     knDangTai.delete(id);
     showToast(`✓ Đã lưu ${ten} lên Drive (${knMB(blob.size)})`);
-    if (!knLaAnh(p)) goiWorkerAdmin('dg-video', { lam: 'knvideo', ma: p.ma }).catch(() => {});   // báo Admin (chuông thông báo)
+    if (!knLaAnh(p)) goiWorkerAdmin('dg-video', { lam: 'knvideo', ma: p.ma }).then(() => window.tlChaySau?.(2000)).catch(() => {});   // báo Admin + xếp hàng tự lưu video đóng gói (máy này ghi được thì làm luôn)
     if (knMo?.ma === p.ma) await knTai();
   } catch(e) {
     p = { ...(await knDocPhien(id).catch(() => null) || p), trangThai: 'loi', loi: String(e.message || e).slice(0, 300) };
@@ -29672,7 +29684,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v793</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v794</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29730,7 +29742,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v793</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v794</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29780,7 +29792,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v793</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v794</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29793,7 +29805,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v793</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v794</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
