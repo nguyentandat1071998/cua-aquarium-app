@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 790;
+  const APP_VERSION = 791;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -7087,8 +7087,11 @@ let ktPhien = { soDon: 0, tienThuong: 0 };   // số liệu ca làm hiện tại
 async function renderKiemTraDonTab() {
   const el = document.getElementById('tmdt-than');
   if (!el) return;
-  el.innerHTML = '<div class="loading">Đang tải...</div>';
-  if (!allSKUs.length) await loadSKUs();
+  // Danh mục hàng (1.500+ mã) chỉ dùng để hiện ảnh / tên trong cửa sổ đơn: tải ngầm, không bắt chờ.
+  // Trước đây màn hình đứng ở "Đang tải..." tới khi tải xong cả danh mục — máy yếu / mạng chậm mất vài giây.
+  if (!allSKUs.length) loadSKUs().then(() => { if (ktDon && document.getElementById('kt-modal')?.style.display !== 'none') ktVeDanhSachHang(true); }).catch(e => console.warn('[đóng gói] tải danh mục:', e.message));
+  // Máy không có bộ đọc mã sẵn (iPhone...): tải thư viện đọc mã ngay từ lúc mở màn hình, bấm quét là chạy liền
+  if (!('BarcodeDetector' in window)) napZXing().catch(() => {});
 
   el.innerHTML = `
     <div style="background:#0F172A;border-radius:12px;padding:12px;margin-bottom:10px;color:#fff">
@@ -7227,12 +7230,13 @@ async function ktTimDonTheoMa(ma) {
   if (!H.startsWith('SHOPEE')) thu.push(['maVanDon', 'SHOPEE' + H], ['maVanDon', 'SHOPEEVTPVN' + H.replace(/^VTPVN/, '')]);
   else thu.push(['maVanDon', H.replace(/^SHOPEE/, '')]);
   if (/^\d{15,20}$/.test(H)) thu.push(['maHoaDon', 'HDTTS_' + H]);
-  const daThu = new Set();
-  for (const [truong, gt] of thu) {
-    if (!gt || daThu.has(truong + gt)) continue; daThu.add(truong + gt);
-    const kq = await getDocs(query(collection(db, 'don_hang_san'), where(truong, '==', gt), limit(1)));
-    if (!kq.empty) return kq;
-  }
+  // Hỏi tất cả cách cùng một lúc (trước đây hỏi lần lượt — quét mã đơn / mã có tiền tố phải chờ 5-9 lượt mạng),
+  // rồi lấy kết quả theo đúng thứ tự ưu tiên ở trên
+  const daThu = new Set(), ds = thu.filter(([truong, gt]) => gt && !daThu.has(truong + gt) && daThu.add(truong + gt));
+  const kqs = await Promise.all(ds.map(([truong, gt]) => getDocs(query(collection(db, 'don_hang_san'), where(truong, '==', gt), limit(1))).catch(e => ({ empty: true, loi: e }))));
+  const thay = kqs.find(k => !k.empty);
+  if (thay) return thay;
+  const loi = kqs.find(k => k.loi); if (loi && kqs.every(k => k.loi || k.empty) && kqs.filter(k => k.loi).length === kqs.length) throw loi.loi;
   return null;
 }
 // Đơn chuẩn bị bên Bigseller / sàn thì app chưa có mã vận đơn -> kéo hóa đơn 2 ngày gần nhất về rồi tìm lại
@@ -7323,8 +7327,9 @@ function gopDongCungMa(ds) {
   }
   return ra;
 }
-function ktVeDanhSachHang() {
+function ktVeDanhSachHang(chiVeLai) {
   if (!ktDon) return;
+  const cuonCu = chiVeLai ? document.getElementById('kt-ds-hang')?.scrollTop || 0 : 0;
   const kq = document.getElementById('kt-ketqua'); if (kq) kq.innerHTML = '';
   // Sàn hay tách cùng 1 sản phẩm thành nhiều dòng (combo mua nhiều giá khác) — đóng gói thì gộp lại theo mã
   const hang = gopDongCungMa(ktDon.chiTiet || []);
@@ -7391,7 +7396,7 @@ function ktVeDanhSachHang() {
     </div>`;
   m.style.display = 'flex';
   const ds = document.getElementById('kt-ds-hang');
-  if (ds) ds.scrollTop = 0;
+  if (ds) ds.scrollTop = cuonCu;
   ktKiemCuon();
   // Ảnh tải xong có thể làm danh sách dài ra -> kiểm lại
   ds?.querySelectorAll('img').forEach(im => im.addEventListener('load', () => ktKiemCuon(), { once: true }));
@@ -29588,7 +29593,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v790</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v791</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29646,7 +29651,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v790</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v791</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29696,7 +29701,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v790</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v791</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29709,7 +29714,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v790</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v791</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
