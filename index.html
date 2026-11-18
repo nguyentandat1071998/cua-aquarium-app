@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 800;
+  const APP_VERSION = 801;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -25851,6 +25851,88 @@ function phutSangGio(p) {
   return `${Math.floor(p / 60)}h${String(p % 60).padStart(2, '0')}`;
 }
 
+// Đơn sàn HOÀN THÀNH = đã giao thành công và HẾT HẠN TRẢ HÀNG (ngày giao xong + 15 ngày), không bị hoàn / trả.
+// Worker ghi giaoXongLuc / hoanTatLuc / traHangDoiSoat từ mục Đối soát của KiotViet (Bán online).
+// Thưởng doanh thu đóng gói tính theo THÁNG HOÀN THÀNH của đơn.
+async function layDonHoanTatThang(tuNgay, denNgay, uidLoc) {
+  const tu = new Date(tuNgay + 'T00:00:00'), den = new Date(denNgay + 'T23:59:59.999');
+  const bayGio = new Date();
+  const s = await getDocs(query(collection(db, 'don_hang_san'), where('hoanTatLuc', '>=', tu), where('hoanTatLuc', '<=', den)));
+  return s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => {
+    const ht = x.hoanTatLuc?.toDate ? x.hoanTatLuc.toDate() : null;
+    return ht && ht <= bayGio && x.nhanVienDongGoi && (!uidLoc || x.nhanVienDongGoi === uidLoc)
+      && x.traHangDoiSoat !== true && Number(x.trangThaiGiaoMa) === MA_GIAO.DA_GIAO;
+  });
+}
+// Đơn đã đóng gói nhưng CHƯA hoàn thành tính tới cuối tháng đang xem (hoặc tới hôm nay):
+// chưa giao / đang giao / đã giao còn trong hạn trả hàng. Đơn hoàn / hủy chỉ hiện nếu đóng gói trong tháng.
+async function layDonChuaHoanTat(tuNgay, denNgay, uidLoc) {
+  const dau = new Date(tuNgay + 'T00:00:00');
+  const tu = new Date(dau.getTime() - 45 * 86400000), den = new Date(denNgay + 'T23:59:59.999');
+  const moc = new Date(Math.min(Date.now(), den.getTime()));
+  const s = await getDocs(query(collection(db, 'don_hang_san'), where('thoiGianDongGoi', '>=', tu), where('thoiGianDongGoi', '<=', den)));
+  return s.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => {
+    if (!x.nhanVienDongGoi || (uidLoc && x.nhanVienDongGoi !== uidLoc)) return false;
+    const ma = Number(x.trangThaiGiaoMa) || 0;
+    const ht = x.hoanTatLuc?.toDate ? x.hoanTatLuc.toDate() : null;
+    if (x.traHangDoiSoat === true || ma === MA_GIAO.DANG_HOAN || ma === MA_GIAO.DA_HOAN || ma === MA_GIAO.DA_HUY)
+      return x.thoiGianDongGoi?.toDate && x.thoiGianDongGoi.toDate() >= dau;
+    return !ht || ht > moc;
+  });
+}
+function hhTrangThaiDG(x) {
+  const ma = Number(x.trangThaiGiaoMa) || 0;
+  if (x.traHangDoiSoat === true || ma === MA_GIAO.DANG_HOAN || ma === MA_GIAO.DA_HOAN) return { t: 'Hoàn / trả hàng — không tính', mau: '#DC2626', thu: 4 };
+  if (ma === MA_GIAO.DA_HUY) return { t: 'Đã hủy — không tính', mau: '#DC2626', thu: 4 };
+  const ht = x.hoanTatLuc?.toDate ? x.hoanTatLuc.toDate() : null;
+  if (ma === MA_GIAO.DA_GIAO) {
+    if (!ht) return { t: 'Đã giao — chờ cập nhật ngày giao', mau: '#B45309', thu: 1 };
+    if (ht.getTime() <= Date.now()) return { t: `Hoàn thành ${ht.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} — tính tháng ${ht.getMonth() + 1}`, mau: '#15803D', thu: 1 };
+    return { t: `Đã giao — còn ${Math.max(1, Math.ceil((ht.getTime() - Date.now()) / 86400000))} ngày hết hạn trả`, mau: '#B45309', thu: 1 };
+  }
+  if (ma === MA_GIAO.DANG_GIAO) return { t: 'Đang giao', mau: '#2563EB', thu: 2 };
+  return { t: 'Chưa giao', mau: 'var(--text2)', thu: 3 };
+}
+// Bảng thưởng doanh thu đóng gói: 2 tab "Chưa hoàn thành" / "Đã hoàn thành"
+function hhKhoiDongGoi(dsNguoi, nhieu) {
+  const coDL = (dsNguoi || []).filter(ng => (ng.donHoanTat || []).length || (ng.donChuaHT || []).length);
+  if (!coDL.length) return '';
+  const tien = (x) => Math.max(0, (Number(x.tongTien) || 0) - (Number(x.tienHangTra) || 0));
+  const ptCua = (ng) => QUY_TAC_THUONG.filter(q => q.loai !== 'tru' && q.coSo === 'dt_don_goi' && q.cachTinh === 'phan_tram' && qtApDung(q, ng.vaiTroId)).reduce((a, q) => a + (Number(q.giaTri) || 0), 0);
+  const ngayVN = (t) => t?.toDate ? t.toDate().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' }) : '—';
+  const pt = (v) => String(Math.round(v * 1000) / 1000).replace('.', ',') + '%';
+  const xong = [], chua = [];
+  for (const ng of coDL) {
+    const p = ptCua(ng);
+    for (const x of ng.donHoanTat || []) xong.push({ ng, x, p, dt: tien(x) });
+    for (const x of ng.donChuaHT || []) chua.push({ ng, x, p, dt: tien(x), tt: hhTrangThaiDG(x) });
+  }
+  xong.sort((a, b) => (a.x.hoanTatLuc?.seconds || 0) - (b.x.hoanTatLuc?.seconds || 0));
+  chua.sort((a, b) => a.tt.thu - b.tt.thu || (a.x.thoiGianDongGoi?.seconds || 0) - (b.x.thoiGianDongGoi?.seconds || 0));
+  const tongXong = xong.reduce((a, r) => a + r.dt, 0), thuongXong = xong.reduce((a, r) => a + r.dt * r.p / 100, 0);
+  const tongChua = chua.filter(r => r.tt.thu < 4).reduce((a, r) => a + r.dt, 0);
+  const thNV = nhieu ? '<th style="text-align:left">Nhân viên</th>' : '';
+  const tdNV = (r) => nhieu ? `<td style="text-align:left;white-space:nowrap">${escHtml(r.ng.ten || '')}</td>` : '';
+  const maDon = (x) => `<b>${escHtml(x.maDonSan || x.maHoaDon || x.id)}</b><div style="font-size:10.5px;color:var(--text2)">${escHtml(TEN_SAN[x.san] || x.san || '')}</div>`;
+  const nut = (id, nhan, so, bat) => `<button type="button" class="btn-outline" data-hhdg="${id}" style="flex:1;margin:0;padding:8px;${bat ? 'background:var(--green);color:#fff;border-color:var(--green)' : ''}"
+    onclick="document.querySelectorAll('[data-hhdg]').forEach(b => { const on = b === this; b.style.background = on ? 'var(--green)' : ''; b.style.color = on ? '#fff' : ''; b.style.borderColor = on ? 'var(--green)' : ''; }); document.getElementById('hhdg-xong').style.display = '${id}' === 'xong' ? '' : 'none'; document.getElementById('hhdg-chua').style.display = '${id}' === 'chua' ? '' : 'none';">${nhan} (${so})</button>`;
+  return `<div style="margin-top:16px">
+    <h3 style="margin:0 0 4px">Thưởng doanh thu đóng gói</h3>
+    <p class="info-note" style="margin:0 0 8px">Đơn <b>hoàn thành</b> = đã giao thành công và hết hạn trả hàng (giao xong + 15 ngày), không bị hoàn / trả. Thưởng tính vào tháng đơn hoàn thành.</p>
+    <div style="display:flex;gap:6px;margin-bottom:8px">${nut('chua', 'Chưa hoàn thành', chua.filter(r => r.tt.thu < 4).length, false)}${nut('xong', 'Đã hoàn thành', xong.length, true)}</div>
+    <div id="hhdg-xong" style="overflow-x:auto;-webkit-overflow-scrolling:touch">${xong.length ? `<table class="bl-bang">
+      <thead><tr>${thNV}<th style="text-align:left">Đơn</th><th>Giao xong</th><th>Hoàn thành</th><th>Doanh thu</th><th>%</th><th>Thưởng</th></tr></thead>
+      <tbody>${xong.map(r => `<tr>${tdNV(r)}<td style="text-align:left">${maDon(r.x)}</td><td>${ngayVN(r.x.giaoXongLuc)}</td><td>${ngayVN(r.x.hoanTatLuc)}</td><td>${fmt(r.dt)}</td><td>${r.p ? pt(r.p) : '—'}</td><td>${r.p ? fmt(Math.round(r.dt * r.p / 100)) : '—'}</td></tr>`).join('')}</tbody>
+      <tfoot><tr>${nhieu ? '<td></td>' : ''}<td style="text-align:left"><b>Tổng</b></td><td></td><td></td><td><b>${fmt(tongXong)}</b></td><td></td><td><b>${fmt(Math.round(thuongXong))}</b></td></tr></tfoot>
+    </table>` : '<p class="info-note">Chưa có đơn hoàn thành trong tháng.</p>'}</div>
+    <div id="hhdg-chua" style="display:none;overflow-x:auto;-webkit-overflow-scrolling:touch">${chua.length ? `<table class="bl-bang">
+      <thead><tr>${thNV}<th style="text-align:left">Đơn</th><th>Đóng gói</th><th style="text-align:left">Trạng thái</th><th>Doanh thu</th></tr></thead>
+      <tbody>${chua.map(r => `<tr style="${r.tt.thu === 4 ? 'color:var(--text2)' : ''}">${tdNV(r)}<td style="text-align:left">${maDon(r.x)}</td><td>${ngayVN(r.x.thoiGianDongGoi)}</td><td style="text-align:left;color:${r.tt.mau};white-space:nowrap">${r.tt.t}</td><td>${fmt(r.dt)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr>${nhieu ? '<td></td>' : ''}<td style="text-align:left"><b>Tổng (trừ hoàn / hủy)</b></td><td></td><td></td><td><b>${fmt(tongChua)}</b></td></tr></tfoot>
+    </table>` : '<p class="info-note">Không có đơn nào đang chờ.</p>'}</div>
+  </div>`;
+}
+
 // Lần đóng gói trong tháng — lấy thẳng từ đơn sàn (người bấm "Hoàn thành đóng gói" + giờ bấm).
 // Bảng nhat_ky_dong_goi cũ không còn được ghi nữa. Trả về dạng giống getDocs để chỗ gọi cũ dùng luôn.
 async function layLanDongGoiThang(tuNgay, denNgay, uidLoc) {
@@ -26051,7 +26133,11 @@ async function tinhLuongThang(thang) {
 
   // Công thức thưởng / trừ do Admin đặt
   const chung = await qtDuLieuCuaHang(thang, null);
-  const rCT = qtTinhChoNguoi(nguoi.vaiTroId, { ...chung, donBan, quetGoi: cacLanQuet, donSan: [...cacLanQuet.map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa, soCong: tong.soCong });
+  // Đơn đóng gói: hoàn thành (hết hạn trả hàng) trong tháng -> tính thưởng; còn lại -> "Chưa hoàn thành"
+  let donHoanTat = null, donChuaHT = [];
+  try { [donHoanTat, donChuaHT] = await Promise.all([layDonHoanTatThang(dauThang, cuoiThang, uidXem), layDonChuaHoanTat(dauThang, cuoiThang, uidXem)]); }
+  catch(e) { console.warn('Không tải được đơn đóng gói hoàn thành:', e.message); }
+  const rCT = qtTinhChoNguoi(nguoi.vaiTroId, { ...chung, donBan, donHoanTat, quetGoi: cacLanQuet, donSan: [...cacLanQuet.map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa, soCong: tong.soCong });
   tong.thuongCT = rCT.thuong; tong.truCT = rCT.tru; tong.ctChiTiet = rCT.chiTiet; tong.ctBoQua = rCT.boQua;
   // Tiền trừ đi trễ của TỪNG NGÀY (công thức "số tiền × số lần / số phút trễ") để hiện cạnh ngày đó
   const ctTre = QUY_TAC_THUONG.filter(q => q.loai === 'tru' && QT_CO_SO[q.coSo]?.tre && q.cachTinh === 'moi_don_vi' && qtApDung(q, nguoi.vaiTroId));
@@ -26065,7 +26151,7 @@ async function tinhLuongThang(thang) {
   tong.tong += rCT.thuong - rCT.tru;
 
   return { thang, xemHet, uidXem, tenNguoi: nguoi.hoTen || nguoi.ten || currentUserData?.hoTen || currentUserData?.ten || '',
-    laBanHang, laDongGoi, donGia, ngay: ds, tong, donBan, vaiTroId: nguoi.vaiTroId || '' };
+    laBanHang, laDongGoi, donGia, ngay: ds, tong, donBan, donHoanTat: donHoanTat || [], donChuaHT, vaiTroId: nguoi.vaiTroId || '' };
 }
 
 
@@ -26108,8 +26194,11 @@ function hhNutHoaHong(nhieu) {
   return `<button class="btn-outline" style="width:100%;margin-top:12px" onclick="blMoHoaHong(${nhieu ? 'true' : 'false'})">Bảng chi tiết hoa hồng</button>`;
 }
 window.blMoHoaHong = function(nhieu) {
-  const noiDung = nhieu ? blVeHoaHongDS() : hhKhoiHoaHong(hoaHongChiTiet(blHoaHongMot ? [blHoaHongMot] : []), false);
-  ddbMoKhung('bl-hh-modal', 'Bảng chi tiết hoa hồng', '', `<div id="bl-hoahong">${noiDung}</div>`,
+  const dongGoi = hhKhoiDongGoi(nhieu ? blHoaHongDuLieu : (blHoaHongMot ? [blHoaHongMot] : []), nhieu);
+  const kqMot = nhieu ? null : hoaHongChiTiet(blHoaHongMot ? [blHoaHongMot] : []);
+  // Người chỉ đóng gói (không có công thức hoa hồng bán hàng) thì chỉ hiện phần đóng gói
+  const noiDung = nhieu ? blVeHoaHongDS() : (dongGoi && !kqMot.coCT ? '' : hhKhoiHoaHong(kqMot, false));
+  ddbMoKhung('bl-hh-modal', 'Bảng chi tiết hoa hồng', '', `<div id="bl-hoahong">${noiDung}</div>${dongGoi}`,
     `<button class="btn-outline" style="flex:1" onclick="document.getElementById('bl-hh-modal').style.display='none'">Đóng</button>`);
   ddbCanhGiua?.('bl-hh-modal');
 };
@@ -26285,10 +26374,19 @@ async function tinhLuongTatCa(thang) {
     sPC.docs.forEach(d => { const x = d.data(); phuCapTheoNguoi.set(x.uid, x); });
   } catch(e) { console.warn('Không tải được phụ cấp:', e.message); }
 
+  // Đơn đóng gói hoàn thành trong tháng (tính thưởng) và chưa hoàn thành — chia theo người đóng gói
+  let hoanTatTheoNguoi = null; const chuaHTTheoNguoi = new Map();
+  try {
+    const [dsHT, dsChua] = await Promise.all([layDonHoanTatThang(dauThang, cuoiThang, null), layDonChuaHoanTat(dauThang, cuoiThang, null)]);
+    hoanTatTheoNguoi = new Map();
+    for (const x of dsHT) { if (!hoanTatTheoNguoi.has(x.nhanVienDongGoi)) hoanTatTheoNguoi.set(x.nhanVienDongGoi, []); hoanTatTheoNguoi.get(x.nhanVienDongGoi).push(x); }
+    for (const x of dsChua) { if (!chuaHTTheoNguoi.has(x.nhanVienDongGoi)) chuaHTTheoNguoi.set(x.nhanVienDongGoi, []); chuaHTTheoNguoi.get(x.nhanVienDongGoi).push(x); }
+  } catch(e) { console.warn('Không tải được đơn đóng gói hoàn thành:', e.message); }
+
   const ds = [...theoNguoi.values()].filter(Boolean).map(n => {
-    const r = qtTinhChoNguoi(n.vaiTroId, { ...chung, donBan: n._donBan, quetGoi: n._quet, donSan: [...(n._quet || []).map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa: n._ca, soCong: n.tongCong });
+    const r = qtTinhChoNguoi(n.vaiTroId, { ...chung, donBan: n._donBan, donHoanTat: hoanTatTheoNguoi ? (hoanTatTheoNguoi.get(n.uid) || []) : null, quetGoi: n._quet, donSan: [...(n._quet || []).map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa: n._ca, soCong: n.tongCong });
     const { _ca, _donBan, _quet, ...gon } = n;
-    blHoaHongDuLieu.push({ uid: n.uid, ten: n.ten, vaiTroId: n.vaiTroId, donBan: _donBan });
+    blHoaHongDuLieu.push({ uid: n.uid, ten: n.ten, vaiTroId: n.vaiTroId, donBan: _donBan, donHoanTat: hoanTatTheoNguoi?.get(n.uid) || [], donChuaHT: chuaHTTheoNguoi.get(n.uid) || [] });
     const pc = phuCapTheoNguoi.get(n.uid) || {};
     const phuCap = Number(pc.soTien) || 0;
     return { ...gon, thuongCT: r.thuong, truCT: r.tru, ctChiTiet: r.chiTiet, ctTruThuong: r.thuongGoc - r.thuong, phuCap, ghiChu: pc.ghiChu || '',
@@ -26629,7 +26727,7 @@ function veBangLuong(dl) {
         <span>Thưởng còn lại${tong.truCT ? ' / trừ lương' : ''}</span><span>${fmt(tong.thuongCT || 0)}đ${tong.truCT ? ` / −${fmt(tong.truCT)}đ` : ''}</span></div>
     </div>` : ''}
 
-    ${(blHoaHongMot = { uid: uidXem, ten: tenNguoi, vaiTroId: dl.vaiTroId, donBan: dl.donBan || [] }, hhNutHoaHong(false))}
+    ${(blHoaHongMot = { uid: uidXem, ten: tenNguoi, vaiTroId: dl.vaiTroId, donBan: dl.donBan || [], donHoanTat: dl.donHoanTat || [], donChuaHT: dl.donChuaHT || [] }, hhNutHoaHong(false))}
 `;
 }
 
@@ -27262,7 +27360,7 @@ const QT_CO_SO = {
   dt_cuahang:      { ten: 'Doanh thu bán tại quầy — cả cửa hàng', donVi: 'đ', nhom: true, chung: true },
   dt_san:          { ten: 'Doanh thu sàn TMĐT đã giao — cả cửa hàng', donVi: 'đ', chung: true },
   so_don_goi:      { ten: 'Số đơn sàn đã đóng gói — cá nhân', donVi: 'đơn' },
-  dt_don_goi:      { ten: 'Doanh thu đơn sàn mình đóng gói (đã giao)', donVi: 'đ' },
+  dt_don_goi:      { ten: 'Doanh thu đơn sàn mình đóng gói (hoàn thành — hết hạn trả hàng)', donVi: 'đ' },
   so_cong:         { ten: 'Số công trong tháng', donVi: 'công' },
   so_lan_tre:      { ten: 'Số lần đi trễ', donVi: 'lần', tre: true },
   phut_tre:        { ten: 'Tổng số phút đi trễ', donVi: 'phút', tre: true },
@@ -27361,7 +27459,8 @@ function qtChiSo(coSo, q, du) {
     case 'dt_cuahang': return du.donBanCH ? du.donBanCH.reduce((s, d) => s + qtDoanhThuDon(d, q.nhomHang), 0) : undefined;
     case 'dt_san': return du.dtSan;
     case 'so_don_goi': return (du.quetGoi || []).length;
-    case 'dt_don_goi': return (du.quetGoi || []).reduce((s, qt) => {
+    case 'dt_don_goi': if (Array.isArray(du.donHoanTat)) return du.donHoanTat.reduce((s, d) => s + Math.max(0, (Number(d.tongTien) || 0) - (Number(d.tienHangTra) || 0)), 0);
+      return (du.quetGoi || []).reduce((s, qt) => {
       const don = (du.donSan || []).find(x => x.maDonSan === qt.maDonSan || x.maHoaDon === qt.maHoaDon);
       if (!don || trangThaiHienThi(don) !== 'da_giao') return s;
       return s + Math.max(0, (Number(don.tongTien) || 0) - (Number(don.tienHangTra) || 0));
@@ -29715,7 +29814,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v800</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v801</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29773,7 +29872,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v800</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v801</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29823,7 +29922,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v800</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v801</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29836,7 +29935,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v800</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v801</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
