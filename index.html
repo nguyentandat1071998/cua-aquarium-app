@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 801;
+  const APP_VERSION = 802;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -25851,6 +25851,34 @@ function phutSangGio(p) {
   return `${Math.floor(p / 60)}h${String(p % 60).padStart(2, '0')}`;
 }
 
+// Cập nhật ngày giao thành công / hoàn-trả của đơn sàn từ mục Đối soát (worker ghi lên đơn), để biết đơn nào
+// "hoàn thành" (hết hạn trả hàng) cho thưởng doanh thu đóng gói. Chỉ máy Admin / người có quyền Đối soát chạy,
+// tối đa 6 tiếng một lần (nhớ theo máy). Lấy từ lần chạy trước (lùi 1 ngày), tối đa 30 ngày, mỗi đợt 5 ngày.
+let gxDangChay = null;
+async function tuDongBoGiaoXong(epChay) {
+  if (!currentUser || !(currentUserData?.role === 'admin' || coQuyen('tmdt_doisoat'))) return;
+  if (gxDangChay) return gxDangChay;
+  let cuoi = 0; try { cuoi = Number(localStorage.getItem('giaoXongDongBoLuc')) || 0; } catch(e) {}
+  if (!epChay && Date.now() - cuoi < 6 * 3600000) return;
+  gxDangChay = (async () => {
+    const ngay = (t) => new Date(t + 7 * 3600000).toISOString().slice(0, 10);
+    const bayGio = Date.now();
+    let tuMs = cuoi ? cuoi - 86400000 : bayGio - 10 * 86400000;
+    tuMs = Math.max(tuMs, bayGio - 30 * 86400000);
+    let loi = 0;
+    for (let t = tuMs; t <= bayGio; t += 5 * 86400000) {
+      const tu = ngay(t), den = ngay(Math.min(t + 4 * 86400000, bayGio));
+      for (const san of ['shopee', 'tiktok', 'lazada']) for (const loai of ['da', 'chua']) {
+        try { const r = await goiWorkerAdmin('doi-soat-san', { san, loai, tu, den, ghi: true }); if (r && r.success === false) loi++; }
+        catch(e) { loi++; console.warn('[đồng bộ giao xong]', san, loai, tu, e.message); }
+      }
+    }
+    if (!loi) { try { localStorage.setItem('giaoXongDongBoLuc', String(bayGio)); } catch(e) {} }
+  })().finally(() => { gxDangChay = null; });
+  return gxDangChay;
+}
+setTimeout(function gxVong() { tuDongBoGiaoXong().catch(() => {}); setTimeout(gxVong, 3 * 3600000); }, 90000);
+
 // Đơn sàn HOÀN THÀNH = đã giao thành công và HẾT HẠN TRẢ HÀNG (ngày giao xong + 15 ngày), không bị hoàn / trả.
 // Worker ghi giaoXongLuc / hoanTatLuc / traHangDoiSoat từ mục Đối soát của KiotViet (Bán online).
 // Thưởng doanh thu đóng gói tính theo THÁNG HOÀN THÀNH của đơn.
@@ -26374,6 +26402,7 @@ async function tinhLuongTatCa(thang) {
     sPC.docs.forEach(d => { const x = d.data(); phuCapTheoNguoi.set(x.uid, x); });
   } catch(e) { console.warn('Không tải được phụ cấp:', e.message); }
 
+  await tuDongBoGiaoXong().catch(() => {});   // đơn mới giao / mới hoàn -> cập nhật trước khi tính
   // Đơn đóng gói hoàn thành trong tháng (tính thưởng) và chưa hoàn thành — chia theo người đóng gói
   let hoanTatTheoNguoi = null; const chuaHTTheoNguoi = new Map();
   try {
@@ -29814,7 +29843,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v801</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v802</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29872,7 +29901,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v801</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v802</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29922,7 +29951,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v801</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v802</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29935,7 +29964,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v801</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v802</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
