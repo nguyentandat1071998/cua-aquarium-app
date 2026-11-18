@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 802;
+  const APP_VERSION = 803;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -25879,6 +25879,118 @@ async function tuDongBoGiaoXong(epChay) {
 }
 setTimeout(function gxVong() { tuDongBoGiaoXong().catch(() => {}); setTimeout(gxVong, 3 * 3600000); }, 90000);
 
+// ===== LỖI ĐÓNG GÓI SAI QUY TRÌNH =====
+// Lưu trong khau_tru (loai 'loi_dong_goi') để nhân viên tự xem được lỗi của mình như các khoản điều chỉnh khác.
+// Chỉ TRỪ VÀO THƯỞNG (cùng nhóm khoản trừ công thức: thưởng về 0 thì thôi), tính vào tháng ghi lỗi.
+// Người ghi chỉ nhập mã đơn, lý do, số tiền — người đóng gói, giờ đóng gói, link thư mục video app tự lấy.
+let ldgDon = null;
+const ldgQuanLy = () => currentUserData?.role === 'admin' || coQuyen('luong_duyet');   // khau_tru: tạo cần luong_duyet, hủy chỉ Admin
+function ldgNutGhi() {
+  return ldgQuanLy() ? `<button class="btn-outline" style="width:100%;margin-top:8px" onclick="ldgMo()">+ Ghi lỗi đóng gói</button>` : '';
+}
+function ldgKhoi(ds) {
+  const quanLy = ldgQuanLy();
+  if (!(ds || []).length && !quanLy) return '';
+  const tong = ds.reduce((a, x) => a + (Number(x.soTien) || 0), 0);
+  const gio = (t) => { const d = t?.toDate ? t.toDate() : (t ? new Date(t) : null); return d && !isNaN(d) ? d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'; };
+  return `<div class="admin-block" style="margin-top:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">
+      <h3 style="margin:0">Lỗi đóng gói sai quy trình${ds.length ? ` (${ds.length})` : ''}</h3>
+      ${quanLy ? `<button class="btn-outline" style="width:auto;margin:0;padding:6px 10px;font-size:12.5px" onclick="ldgMo()">+ Ghi lỗi</button>` : ''}
+    </div>
+    <p class="info-note" style="margin:0 0 6px">Trừ vào thưởng của tháng ghi lỗi — thưởng về 0 thì thôi, không trừ vào lương.</p>
+    ${ds.length ? ds.map(x => `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;justify-content:space-between">
+      <div style="min-width:0">
+        <div style="font-weight:600;font-size:13px">${escHtml(x.maDon || '')} <span style="font-weight:400;color:var(--text2);font-size:11.5px">· đóng gói ${gio(x.thoiGianDongGoi)} · ghi ngày ${escHtml((x.ngay || '').split('-').reverse().join('/'))}</span></div>
+        <div style="font-size:12.5px;margin-top:2px;white-space:pre-wrap">${escHtml(x.lyDo || '')}</div>
+        ${/^https?:\/\//i.test(x.linkVideo || '') ? `<a href="${escHtml(x.linkVideo)}" target="_blank" rel="noopener" style="font-size:12.5px">▶ Xem video mở hàng / đóng gói</a>` : '<span style="font-size:12px;color:var(--text2)">Chưa có link video</span>'}
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <b style="color:var(--red);white-space:nowrap">−${fmt(Number(x.soTien) || 0)}</b>
+        ${currentUserData?.role === 'admin' ? `<div><button class="btn-outline" style="width:auto;margin:4px 0 0;padding:3px 8px;font-size:11.5px" onclick="ldgHuy('${escHtml(x.id)}')">Hủy</button></div>` : ''}
+      </div></div>`).join('') + `<div style="display:flex;justify-content:space-between;padding-top:8px;font-weight:700"><span>Tổng</span><span style="color:var(--red)">−${fmt(tong)}đ</span></div>`
+      : '<p class="info-note" style="margin:0">Chưa có lỗi nào trong tháng.</p>'}
+  </div>`;
+}
+window.ldgMo = function() {
+  ldgDon = null;
+  const nhan = (t) => `<label style="display:block;font-size:12.5px;font-weight:600;margin-top:10px">${t}</label>`;
+  ddbMoKhung('ldg-modal', 'Ghi lỗi đóng gói', '', `
+    ${nhan('Mã đơn')}
+    <div style="display:flex;gap:6px;margin-top:4px"><input id="ldg-ma" placeholder="Mã đơn sàn / mã vận đơn" style="flex:1;margin:0" onkeydown="if (event.key === 'Enter') ldgTim()">
+      <button class="btn-g" style="width:auto;margin:0;padding:8px 14px" onclick="ldgTim()">Tìm</button></div>
+    <div id="ldg-don" style="margin-top:8px;font-size:13px;color:var(--text2)">Nhập mã đơn rồi bấm Tìm — app tự lấy người đóng gói, giờ đóng gói và link video.</div>
+    ${nhan('Link video (mở hàng / đóng gói)')}
+    <input id="ldg-link" placeholder="https://drive.google.com/..." style="width:100%;margin-top:4px">
+    ${nhan('Lý do')}
+    <textarea id="ldg-lydo" rows="2" style="width:100%;margin-top:4px" placeholder="VD: thiếu 1 túi Matrix 100ml, chống sốc không đủ..."></textarea>
+    ${nhan('Số tiền trừ vào thưởng')}
+    <input id="ldg-tien" inputmode="numeric" placeholder="0" style="width:100%;margin-top:4px" oninput="const v = this.value.replace(/[^0-9]/g, ''); this.value = v ? Number(v).toLocaleString('vi-VN') : ''">`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('ldg-modal').style.display='none'">Đóng</button>
+     <button id="ldg-nut" class="btn-g" style="flex:1;margin:0" onclick="ldgLuu()">Lưu lỗi</button>`);
+  ddbCanhGiua?.('ldg-modal');
+  setTimeout(() => document.getElementById('ldg-ma')?.focus(), 60);
+};
+window.ldgTim = async function() {
+  const ma = (document.getElementById('ldg-ma')?.value || '').trim().toUpperCase();
+  const o = document.getElementById('ldg-don'); if (!ma || !o) return;
+  o.innerHTML = 'Đang tìm...'; ldgDon = null;
+  try {
+    let d = null;
+    for (const truong of ['maDonSan', 'maVanDon', 'maHoaDon']) {
+      const s = await getDocs(query(collection(db, 'don_hang_san'), where(truong, '==', ma), limit(1)));
+      if (!s.empty) { d = { id: s.docs[0].id, ...s.docs[0].data() }; break; }
+    }
+    if (!d) { o.innerHTML = '<span style="color:var(--red)">Không tìm thấy đơn này.</span>'; return; }
+    if (!d.nhanVienDongGoi || !d.thoiGianDongGoi) { o.innerHTML = `<span style="color:var(--red)">Đơn ${escHtml(d.maDonSan || ma)} chưa được bấm "Hoàn thành đóng gói" trên app — không biết ai đóng.</span>`; return; }
+    ldgDon = d;
+    const t = d.thoiGianDongGoi.toDate ? d.thoiGianDongGoi.toDate() : new Date(d.thoiGianDongGoi);
+    o.innerHTML = `<div style="color:var(--text);background:var(--bg);border-radius:8px;padding:8px 10px;line-height:1.6">
+      <b>${escHtml(d.maDonSan || ma)}</b> · ${escHtml(TEN_SAN[d.san] || d.san || '')}<br>
+      Người đóng gói: <b>${escHtml(d.banDongGoi || '')}</b><br>
+      Thời gian đóng gói: <b>${t.toLocaleString('vi-VN')}</b></div><div id="ldg-canh" style="margin-top:4px;font-size:12.5px"></div>`;
+    const canh = (html) => document.getElementById('ldg-canh')?.insertAdjacentHTML('beforeend', `<div>${html}</div>`);
+    try {
+      const tr = await getDocs(query(collection(db, 'khau_tru'), where('maDon', '==', d.maDonSan || ma)));
+      const con = tr.docs.map(x => x.data()).filter(x => !x.huy && x.loai === 'loi_dong_goi');
+      if (con.length) canh(`<span style="color:var(--red)">Đơn này đã bị ghi lỗi ${con.length} lần (ngày ${con.map(x => (x.ngay || '').split('-').reverse().join('/')).join(', ')}).</span>`);
+    } catch(e) {}
+    // Một link: thư mục video của đơn (có cả video mở hàng và video đóng gói)
+    const lk = document.getElementById('ldg-link');
+    const kq = await goiWorkerAdmin('dg-video', { lam: 'kn', ma: d.maDonSan || ma }).catch(() => null);
+    if (lk && !lk.value.trim() && kq?.link) lk.value = kq.link;
+    if (kq && kq.success !== false && !(kq.files || []).length) canh('<span style="color:#B45309">Thư mục video của đơn chưa có file nào — có thể dán link khác.</span>');
+  } catch(e) { o.innerHTML = `<span style="color:var(--red)">Lỗi: ${escHtml(e.message)}</span>`; }
+};
+window.ldgLuu = async function() {
+  const d = ldgDon; if (!d) { showToast('Chưa tìm đơn — nhập mã đơn rồi bấm Tìm', true); return; }
+  const lyDo = (document.getElementById('ldg-lydo')?.value || '').trim();
+  const tien = Number(String(document.getElementById('ldg-tien')?.value || '').replace(/[^0-9]/g, '')) || 0;
+  const link = (document.getElementById('ldg-link')?.value || '').trim();
+  if (!lyDo) { showToast('Cần ghi lý do', true); return; }
+  if (tien <= 0) { showToast('Chưa nhập số tiền', true); return; }
+  if (link && !/^https?:\/\//i.test(link)) { showToast('Link video phải bắt đầu bằng https://', true); return; }
+  const nut = document.getElementById('ldg-nut'); if (nut) { if (nut.disabled) return; nut.disabled = true; nut.textContent = 'Đang lưu...'; }
+  const p2 = (n) => String(n).padStart(2, '0'), h = new Date();
+  try {
+    await addDoc(collection(db, 'khau_tru'), {
+      uid: d.nhanVienDongGoi, ngay: `${h.getFullYear()}-${p2(h.getMonth() + 1)}-${p2(h.getDate())}`,
+      soTien: tien, lyDo, loai: 'loi_dong_goi',
+      maDon: d.maDonSan || d.maHoaDon || d.id, donId: d.id, san: d.san || '',
+      thoiGianDongGoi: d.thoiGianDongGoi, nguoiDongGoi: d.banDongGoi || '', linkVideo: link,
+      nguoiTao: { uid: currentUser.uid, ten: currentUserData?.ten || '' }, taoLuc: serverTimestamp()
+    });
+    document.getElementById('ldg-modal').style.display = 'none';
+    showToast(`Đã ghi lỗi đóng gói ${d.maDonSan || ''} (${d.banDongGoi || ''}): −${fmt(tien)}đ`);
+    renderBangLuong();
+  } catch(e) { alert('Không lưu được: ' + e.message); if (nut) { nut.disabled = false; nut.textContent = 'Lưu lỗi'; } }
+};
+window.ldgHuy = async function(id) {
+  if (!await hoiXacNhan('Hủy lỗi đóng gói này?\n\nSố tiền sẽ không bị trừ vào thưởng nữa.', { nutDongY: 'Hủy lỗi', nguy: true })) return;
+  try { await updateDoc(doc(db, 'khau_tru', id), { huy: true, huyBoi: currentUserData?.ten || '', huyLuc: serverTimestamp() }); showToast('Đã hủy lỗi đóng gói'); renderBangLuong(); }
+  catch(e) { alert('Không hủy được: ' + e.message); }
+};
+
 // Đơn sàn HOÀN THÀNH = đã giao thành công và HẾT HẠN TRẢ HÀNG (ngày giao xong + 15 ngày), không bị hoàn / trả.
 // Worker ghi giaoXongLuc / hoanTatLuc / traHangDoiSoat từ mục Đối soát của KiotViet (Bán online).
 // Thưởng doanh thu đóng gói tính theo THÁNG HOÀN THÀNH của đơn.
@@ -26121,7 +26233,7 @@ async function tinhLuongThang(thang) {
 
   // Điều chỉnh: loai 'thuong' thì cộng vào cột Thưởng, còn lại trừ vào Điều chỉnh
   for (const kt of cacKhauTru) {
-    if (kt.huy) continue;   // thưởng layout của hóa đơn đã hủy / trả hàng
+    if (kt.huy || kt.loai === 'loi_dong_goi') continue;   // thưởng layout của hóa đơn đã hủy / trả hàng; lỗi đóng gói tính riêng (trừ vào thưởng)
     const n = layNgay(kt.ngay);
     const tien = Number(kt.soTien) || 0;
     if (kt.loai === 'thuong') {
@@ -26165,7 +26277,8 @@ async function tinhLuongThang(thang) {
   let donHoanTat = null, donChuaHT = [];
   try { [donHoanTat, donChuaHT] = await Promise.all([layDonHoanTatThang(dauThang, cuoiThang, uidXem), layDonChuaHoanTat(dauThang, cuoiThang, uidXem)]); }
   catch(e) { console.warn('Không tải được đơn đóng gói hoàn thành:', e.message); }
-  const rCT = qtTinhChoNguoi(nguoi.vaiTroId, { ...chung, donBan, donHoanTat, quetGoi: cacLanQuet, donSan: [...cacLanQuet.map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa, soCong: tong.soCong });
+  const loiDongGoi = cacKhauTru.filter(x => !x.huy && x.loai === 'loi_dong_goi');
+  const rCT = qtTinhChoNguoi(nguoi.vaiTroId, { ...chung, donBan, donHoanTat, loiDongGoi, quetGoi: cacLanQuet, donSan: [...cacLanQuet.map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa, soCong: tong.soCong });
   tong.thuongCT = rCT.thuong; tong.truCT = rCT.tru; tong.ctChiTiet = rCT.chiTiet; tong.ctBoQua = rCT.boQua;
   // Tiền trừ đi trễ của TỪNG NGÀY (công thức "số tiền × số lần / số phút trễ") để hiện cạnh ngày đó
   const ctTre = QUY_TAC_THUONG.filter(q => q.loai === 'tru' && QT_CO_SO[q.coSo]?.tre && q.cachTinh === 'moi_don_vi' && qtApDung(q, nguoi.vaiTroId));
@@ -26179,7 +26292,7 @@ async function tinhLuongThang(thang) {
   tong.tong += rCT.thuong - rCT.tru;
 
   return { thang, xemHet, uidXem, tenNguoi: nguoi.hoTen || nguoi.ten || currentUserData?.hoTen || currentUserData?.ten || '',
-    laBanHang, laDongGoi, donGia, ngay: ds, tong, donBan, donHoanTat: donHoanTat || [], donChuaHT, vaiTroId: nguoi.vaiTroId || '' };
+    laBanHang, laDongGoi, donGia, ngay: ds, tong, donBan, donHoanTat: donHoanTat || [], donChuaHT, loiDongGoi, vaiTroId: nguoi.vaiTroId || '' };
 }
 
 
@@ -26391,7 +26504,7 @@ async function tinhLuongTatCa(thang) {
   for (const d of sKT.docs) {
     const kt = d.data();
     if (kt.huy) continue;
-    const n = kt.uid && lay(kt.uid);
+    const n = kt.loai === 'loi_dong_goi' ? null : kt.uid && lay(kt.uid);   // lỗi đóng gói tính riêng
     if (!n) continue;
     if (kt.loai === 'thuong') n.thuongThem += Number(kt.soTien) || 0; else n.khauTru += Number(kt.soTien) || 0;
   }
@@ -26403,6 +26516,9 @@ async function tinhLuongTatCa(thang) {
   } catch(e) { console.warn('Không tải được phụ cấp:', e.message); }
 
   await tuDongBoGiaoXong().catch(() => {});   // đơn mới giao / mới hoàn -> cập nhật trước khi tính
+  // Lỗi đóng gói sai quy trình theo người (trừ vào thưởng)
+  const loiTheoNguoi = new Map();
+  for (const d of sKT.docs) { const x = { id: d.id, ...d.data() }; if (x.huy || x.loai !== 'loi_dong_goi' || !x.uid) continue; if (!loiTheoNguoi.has(x.uid)) loiTheoNguoi.set(x.uid, []); loiTheoNguoi.get(x.uid).push(x); }
   // Đơn đóng gói hoàn thành trong tháng (tính thưởng) và chưa hoàn thành — chia theo người đóng gói
   let hoanTatTheoNguoi = null; const chuaHTTheoNguoi = new Map();
   try {
@@ -26413,7 +26529,7 @@ async function tinhLuongTatCa(thang) {
   } catch(e) { console.warn('Không tải được đơn đóng gói hoàn thành:', e.message); }
 
   const ds = [...theoNguoi.values()].filter(Boolean).map(n => {
-    const r = qtTinhChoNguoi(n.vaiTroId, { ...chung, donBan: n._donBan, donHoanTat: hoanTatTheoNguoi ? (hoanTatTheoNguoi.get(n.uid) || []) : null, quetGoi: n._quet, donSan: [...(n._quet || []).map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa: n._ca, soCong: n.tongCong });
+    const r = qtTinhChoNguoi(n.vaiTroId, { ...chung, donBan: n._donBan, donHoanTat: hoanTatTheoNguoi ? (hoanTatTheoNguoi.get(n.uid) || []) : null, loiDongGoi: loiTheoNguoi.get(n.uid) || [], quetGoi: n._quet, donSan: [...(n._quet || []).map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa: n._ca, soCong: n.tongCong });
     const { _ca, _donBan, _quet, ...gon } = n;
     blHoaHongDuLieu.push({ uid: n.uid, ten: n.ten, vaiTroId: n.vaiTroId, donBan: _donBan, donHoanTat: hoanTatTheoNguoi?.get(n.uid) || [], donChuaHT: chuaHTTheoNguoi.get(n.uid) || [] });
     const pc = phuCapTheoNguoi.get(n.uid) || {};
@@ -26563,7 +26679,7 @@ function veDanhSachLuong(dl) {
             ${dl.chot ? 'Chốt lại (duyệt các ca sau ca mới phát sinh)' : 'Chốt lương tháng này'}
           </button>
         </div>` : ''}`}
-    ${hhNutHoaHong(true)}`;
+    ${hhNutHoaHong(true)}${ldgNutGhi()}`;
 }
 
 // Tính lại tổng của một dòng khi Admin gõ phụ cấp, chưa cần lưu
@@ -26756,6 +26872,7 @@ function veBangLuong(dl) {
         <span>Thưởng còn lại${tong.truCT ? ' / trừ lương' : ''}</span><span>${fmt(tong.thuongCT || 0)}đ${tong.truCT ? ` / −${fmt(tong.truCT)}đ` : ''}</span></div>
     </div>` : ''}
 
+    ${ldgKhoi(dl.loiDongGoi || [])}
     ${(blHoaHongMot = { uid: uidXem, ten: tenNguoi, vaiTroId: dl.vaiTroId, donBan: dl.donBan || [], donHoanTat: dl.donHoanTat || [], donChuaHT: dl.donChuaHT || [] }, hhNutHoaHong(false))}
 `;
 }
@@ -27561,6 +27678,13 @@ function qtTinhChoNguoi(vaiTroId, du) {
     const laHong = /hang_hong/.test(q.coSo || '');
     chiTiet.push({ id: q.id, ten: q.ten, nhanCoSo: QT_CO_SO[q.coSo]?.ten || '', loai: q.loai, vaoLuong, coSo: r.coSo, donVi: QT_CO_SO[q.coSo]?.donVi || '', tien: r.tien, ghiChu: r.ghiChu, khongCo: r.khongCo, lyDo: r.lyDo,
       moc: laHong ? (Number(qtMocCua(du, q)) || 0) : undefined, daHuy: laHong && du.phieuHuy ? qtTienHuy(du.phieuHuy, q) : undefined });
+  }
+  // Lỗi đóng gói sai quy trình: chỉ trừ vào thưởng (cùng nhóm các khoản trừ công thức)
+  const loiDG = (du.loiDongGoi || []).filter(x => !x.huy);
+  if (loiDG.length) {
+    const tienLoi = loiDG.reduce((a, x) => a + (Number(x.soTien) || 0), 0);
+    truVaoThuong += tienLoi;
+    chiTiet.push({ id: 'loi_dong_goi', ten: 'Lỗi đóng gói sai quy trình', nhanCoSo: 'Số lỗi', loai: 'tru', vaoLuong: false, coSo: loiDG.length, donVi: 'lỗi', tien: tienLoi, ghiChu: '', khongCo: false, lyDo: '' });
   }
   const truDuoc = Math.min(thuongGoc, truVaoThuong);
   return { thuong: thuongGoc - truDuoc, tru: truLuong, thuongGoc, truVaoThuong, boQua: truVaoThuong - truDuoc, chiTiet };
@@ -29843,7 +29967,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v802</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v803</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -29901,7 +30025,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v802</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v803</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -29951,7 +30075,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v802</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v803</span></div>
       <div class="header-right">
         <button id="tb-nut" class="tb-nut" onclick="event.stopPropagation();tbBatTat()" title="Thông báo" aria-label="Thông báo" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -29964,7 +30088,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v802</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v803</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
