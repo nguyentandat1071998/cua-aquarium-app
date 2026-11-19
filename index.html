@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 817;
+  const APP_VERSION = 818;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -24418,12 +24418,14 @@ function kkSkuTheoNhom(nhom, kho, coTon0) {
   return allSKUs.filter(s => !s.laCombo && !s.deleted && nhom.some(n => { const p = nhomCuoiCuaSku(s); return p === n || p.startsWith(n + ' > '); })
     && (coTon0 || kkTonSku(s, kho) !== 0));
 }
-// Theo thương hiệu: '__chua' = mã chưa điền thương hiệu
-function kkThCuaSku(s) { return String(s.thuongHieu || '').trim() || '__chua'; }
+// Theo thương hiệu: '__chua' = mã chưa điền thương hiệu. Gộp tên viết khác nhau (KoiKa / Koika, Marine Blue / MarineBlue)
+function kkThCuaSku(s) { const t = String(s.thuongHieu || '').trim(); return t ? t.toLowerCase().replace(/\s+/g, '') : '__chua'; }
+// -> [[khoa, soMa, tenHienThi, cacCachViet[]]]
 function kkCacTh() {
   const m = new Map();
-  allSKUs.filter(s => !s.laCombo && !s.deleted).forEach(s => { const t = kkThCuaSku(s); m.set(t, (m.get(t) || 0) + 1); });
-  return [...m].sort((a, b) => a[0] === '__chua' ? 1 : b[0] === '__chua' ? -1 : a[0].localeCompare(b[0], 'vi'));
+  allSKUs.filter(s => !s.laCombo && !s.deleted).forEach(s => { const k = kkThCuaSku(s), t = String(s.thuongHieu || '').trim(); const o = m.get(k) || { n: 0, ten: new Map() }; o.n++; if (t) o.ten.set(t, (o.ten.get(t) || 0) + 1); m.set(k, o); });
+  return [...m].map(([k, o]) => { const ds = [...o.ten].sort((a, b) => b[1] - a[1]).map(x => x[0]); return [k, o.n, k === '__chua' ? 'Chưa có thương hiệu' : ds[0], ds]; })
+    .sort((a, b) => a[0] === '__chua' ? 1 : b[0] === '__chua' ? -1 : a[2].localeCompare(b[2], 'vi'));
 }
 // Danh sách mã của phiếu đang tạo: theo nhóm hàng hoặc theo thương hiệu
 function kkSkuTao(T) {
@@ -24435,10 +24437,10 @@ function kkVeCayTh(T) {
   const chon = new Set(T.th || []), ds = kkCacTh(), tim = String(T.timTh || '').trim().toLowerCase();
   if (!ds.length) return '<span style="font-size:12px;color:var(--text2)">Chưa có mã hàng</span>';
   return `<input type="text" placeholder="Tìm thương hiệu..." value="${escHtml(T.timTh || '')}" oninput="kkTaoLocTh(this.value)" style="width:100%;box-sizing:border-box;padding:6px 9px;font-size:13.5px;border:1.5px solid var(--border);border-radius:8px;margin:2px 0 4px">`
-    + ds.map(([t, n]) => { const khoa = (t === '__chua' ? 'chưa có thương hiệu' : t).toLowerCase();
+    + ds.map(([t, n, ten, cach]) => { const khoa = [ten, ...cach].join(' ').toLowerCase();
       return `<label data-t="${escHtml(khoa)}" style="display:${!tim || khoa.includes(tim) || chon.has(t) ? 'flex' : 'none'};gap:8px;align-items:center;padding:5px 0;cursor:pointer;font-size:13.5px">
         <input type="checkbox" ${chon.has(t) ? 'checked' : ''} data-th="${escHtml(t)}" onchange="kkTaoTickTh(this)" style="width:18px;height:18px;margin:0">
-        <span style="flex:1;min-width:0">${t === '__chua' ? '<i>Chưa có thương hiệu</i>' : escHtml(t)}</span><span style="font-size:12px;color:var(--text2)">${n} mã</span></label>`; }).join('');
+        <span style="flex:1;min-width:0">${t === '__chua' ? '<i>Chưa có thương hiệu</i>' : escHtml(ten)}${cach.length > 1 ? `<span style="display:block;font-size:11px;color:#B45309">gộp: ${escHtml(cach.join(' / '))}</span>` : ''}</span><span style="font-size:12px;color:var(--text2)">${n} mã</span></label>`; }).join('');
 }
 window.kkTaoTickTh = function(o) {
   const t = o.dataset.th, ds = (kkTao.th || []).filter(x => x !== t);
@@ -24520,7 +24522,7 @@ window.kkTaoLocMa = function(v) {
 };
 window.kkTaoPhieu = async function() {
   const T = kkTao, bo = new Set(T.bo || []), ds = kkSkuTao(T).filter(s => !bo.has(s.id));
-  if (T.theo === 'th') await kkTaoTuDs(ds.map(s => s.id), T.kho, [], 'Thương hiệu: ' + (T.th || []).map(t => t === '__chua' ? 'Chưa có TH' : t).join(', '));
+  if (T.theo === 'th') await kkTaoTuDs(ds.map(s => s.id), T.kho, [], 'Thương hiệu: ' + (() => { const ten = new Map(kkCacTh().map(x => [x[0], x[2]])); return (T.th || []).map(t => t === '__chua' ? 'Chưa có TH' : (ten.get(t) || t)).join(', '); })());
   else await kkTaoTuDs(ds.map(s => s.id), T.kho, T.nhom, '');
 };
 async function kkTaoTuDs(ids, kho, nhom, tieuDe) {
@@ -30512,7 +30514,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v817</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v818</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -30570,7 +30572,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v817</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v818</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -30620,7 +30622,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v817</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v818</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -30637,7 +30639,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v817</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v818</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
