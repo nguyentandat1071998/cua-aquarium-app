@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 815;
+  const APP_VERSION = 816;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -2580,6 +2580,48 @@ function lhCanLam() {
   const ds = lhSuKien(lhCong(nay, -30), lhCong(nay, 31)).filter(x => !x.xong && (x.ngay <= nay || lhCong(x.ngay, -(Number(x.it.nhacTruoc) || 0)) <= nay));
   lhLoc = locCu; return ds;
 }
+// ===== ÂM LỊCH VIỆT NAM (thuật toán Hồ Ngọc Đức, múi giờ +7) + NGÀY LỄ =====
+const AL_TZ = 7;
+function alJd(d, m, y) { const a = Math.floor((14 - m) / 12), yy = y + 4800 - a, mm = m + 12 * a - 3; let jd = d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045; if (jd < 2299161) jd = d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - 32083; return jd; }
+function alSoi(k) { const T = k / 1236.85, T2 = T * T, T3 = T2 * T, dr = Math.PI / 180; let Jd1 = 2415020.75933 + 29.53058868 * k + 0.0001178 * T2 - 0.000000155 * T3; Jd1 += 0.00033 * Math.sin((166.56 + 132.87 * T - 0.009173 * T2) * dr); const M = 359.2242 + 29.10535608 * k - 0.0000333 * T2 - 0.00000347 * T3, Mpr = 306.0253 + 385.81691806 * k + 0.0107306 * T2 + 0.00001236 * T3, F = 21.2964 + 390.67050646 * k - 0.0016528 * T2 - 0.00000239 * T3;
+  let C1 = (0.1734 - 0.000393 * T) * Math.sin(M * dr) + 0.0021 * Math.sin(2 * dr * M) - 0.4068 * Math.sin(Mpr * dr) + 0.0161 * Math.sin(dr * 2 * Mpr) - 0.0004 * Math.sin(dr * 3 * Mpr) + 0.0104 * Math.sin(dr * 2 * F) - 0.0051 * Math.sin(dr * (M + Mpr)) - 0.0074 * Math.sin(dr * (M - Mpr)) + 0.0004 * Math.sin(dr * (2 * F + M)) - 0.0004 * Math.sin(dr * (2 * F - M)) - 0.0006 * Math.sin(dr * (2 * F + Mpr)) + 0.0010 * Math.sin(dr * (2 * F - Mpr)) + 0.0005 * Math.sin(dr * (2 * Mpr + M));
+  const deltat = T < -11 ? 0.001 + 0.000839 * T + 0.0002261 * T2 - 0.00000845 * T3 - 0.000000081 * T * T3 : -0.000278 + 0.000265 * T + 0.000262 * T2; return Jd1 + C1 - deltat; }
+function alNgaySoi(k) { return Math.floor(alSoi(k) + 0.5 + AL_TZ / 24); }
+function alKinhDo(jdn) { const T = (jdn - 2451545.5 - AL_TZ / 24) / 36525, T2 = T * T, dr = Math.PI / 180; const M = 357.52910 + 35999.05030 * T - 0.0001559 * T2 - 0.00000048 * T * T2, L0 = 280.46645 + 36000.76983 * T + 0.0003032 * T2; let DL = (1.914600 - 0.004817 * T - 0.000014 * T2) * Math.sin(dr * M) + (0.019993 - 0.000101 * T) * Math.sin(dr * 2 * M) + 0.000290 * Math.sin(dr * 3 * M); let L = (L0 + DL) * dr; L = L - Math.PI * 2 * Math.floor(L / (Math.PI * 2)); return Math.floor(L / Math.PI * 6); }
+function alThang11(yy) { const off = alJd(31, 12, yy) - 2415021, k = Math.floor(off / 29.530588853); let nm = alNgaySoi(k); if (alKinhDo(nm) >= 9) nm = alNgaySoi(k - 1); return nm; }
+function alLechNhuan(a11) { const k = Math.floor((a11 - 2415021.076998695) / 29.530588853 + 0.5); let last, i = 1, arc = alKinhDo(alNgaySoi(k + i)); do { last = arc; i++; arc = alKinhDo(alNgaySoi(k + i)); } while (arc !== last && i < 14); return i - 1; }
+const __alNho = new Map();
+// -> { ngay, thang, nam, nhuan } cho ngày dương d/m/y
+function amLich(d, m, y) {
+  const khoa = y * 10000 + m * 100 + d; if (__alNho.has(khoa)) return __alNho.get(khoa);
+  const dn = alJd(d, m, y), k = Math.floor((dn - 2415021.076998695) / 29.530588853);
+  let dauThang = alNgaySoi(k + 1); if (dauThang > dn) dauThang = alNgaySoi(k);
+  let a11 = alThang11(y), b11 = a11, nam;
+  if (a11 >= dauThang) { nam = y; a11 = alThang11(y - 1); } else { nam = y + 1; b11 = alThang11(y + 1); }
+  const ngay = dn - dauThang + 1, lech = Math.floor((dauThang - a11) / 29);
+  let nhuan = false, thang = lech + 11;
+  if (b11 - a11 > 365) { const ln = alLechNhuan(a11); if (lech >= ln) { thang = lech + 10; if (lech === ln) nhuan = true; } }
+  if (thang > 12) thang -= 12; if (thang >= 11 && lech < 4) nam -= 1;
+  const kq = { ngay, thang, nam, nhuan }; __alNho.set(khoa, kq); return kq;
+}
+const AL_CAN = ['Giáp', 'Ất', 'Bính', 'Đinh', 'Mậu', 'Kỷ', 'Canh', 'Tân', 'Nhâm', 'Quý'], AL_CHI = ['Tý', 'Sửu', 'Dần', 'Mão', 'Thìn', 'Tỵ', 'Ngọ', 'Mùi', 'Thân', 'Dậu', 'Tuất', 'Hợi'];
+function amNamCanChi(n) { return AL_CAN[(n + 6) % 10] + ' ' + AL_CHI[(n + 8) % 12]; }
+// Lễ dương lịch (nghi: được nghỉ theo luật) và âm lịch (chỉ tháng thường, không tính tháng nhuận)
+const LE_DUONG = { '01-01': ['Tết Dương lịch', 1], '02-03': ['Thành lập Đảng'], '02-14': ['Lễ Tình nhân'], '03-08': ['Quốc tế Phụ nữ'],
+  '04-30': ['Giải phóng miền Nam', 1], '05-01': ['Quốc tế Lao động', 1], '05-19': ['Sinh nhật Bác Hồ'], '06-01': ['Quốc tế Thiếu nhi'],
+  '06-28': ['Gia đình Việt Nam'], '07-27': ['Thương binh Liệt sĩ'], '09-02': ['Quốc khánh', 1], '10-20': ['Phụ nữ Việt Nam'],
+  '11-20': ['Nhà giáo Việt Nam'], '11-24': ['Ngày Văn hóa Việt Nam', 1], '12-22': ['Quân đội Nhân dân'], '12-24': ['Đêm Giáng sinh'], '12-25': ['Giáng sinh'] };
+const LE_AM = { '1-1': ['Tết Nguyên Đán', 1], '1-2': ['Mùng 2 Tết', 1], '1-3': ['Mùng 3 Tết', 1], '1-15': ['Rằm tháng Giêng'], '3-3': ['Tết Hàn thực'],
+  '3-10': ['Giỗ Tổ Hùng Vương', 1], '4-15': ['Lễ Phật Đản'], '5-5': ['Tết Đoan Ngọ'], '7-15': ['Lễ Vu Lan'], '8-15': ['Tết Trung thu'], '12-23': ['Ông Công Ông Táo'] };
+// 'YYYY-MM-DD' -> { am, le: [{ ten, nghi }] }
+function ngayLe(s) {
+  const [y, m, d] = s.split('-').map(Number), am = amLich(d, m, y), le = [];
+  const dl = LE_DUONG[s.slice(5)]; if (dl) le.push({ ten: dl[0], nghi: !!dl[1] });
+  if (!am.nhuan) { const a = LE_AM[am.thang + '-' + am.ngay]; if (a) le.push({ ten: a[0], nghi: !!a[1] }); }
+  if (am.thang === 12 && !am.nhuan) { const t = new Date(y, m - 1, d + 1), sau = amLich(t.getDate(), t.getMonth() + 1, t.getFullYear()); if (sau.ngay === 1 && sau.thang === 1) le.push({ ten: 'Giao thừa', nghi: true }); }
+  return { am, le };
+}
+function lhAmChu(s) { const { am, le } = ngayLe(s); return 'Âm lịch: ' + am.ngay + '/' + am.thang + (am.nhuan ? ' (nhuận)' : '') + ' năm ' + amNamCanChi(am.nam) + (le.length ? ' · <b style="color:#DC2626">' + le.map(x => escHtml(x.ten) + (x.nghi ? ' (nghỉ lễ)' : '')).join(', ') + '</b>' : ''); }
 function lhVeSo() {
   const so = document.getElementById('lh-so'); if (!so) return;
   const n = lhCanLam().length;
@@ -2595,12 +2637,13 @@ window.lhMo = function() {
 #lh-khung .lh-than{overflow:auto;padding:10px 14px 16px}
 .lh-tab{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}.lh-tab button{border:0;background:none;padding:6px 12px;font-size:13px;cursor:pointer;color:var(--text2)}.lh-tab button.on{background:var(--green);color:#fff;font-weight:600}
 .lh-luoi{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px}.lh-thu{font-size:11px;color:var(--text2);text-align:center;padding:2px 0;font-weight:600}
-.lh-o{min-height:84px;border:1px solid var(--border);border-radius:6px;padding:3px;cursor:pointer;background:var(--surface);overflow:hidden}.lh-o.ngoai{opacity:.45}.lh-o.nay{border:2px solid var(--green)}.lh-o.chon{background:#F0FDF4}
+.lh-o{min-height:84px;border:1px solid var(--border);border-radius:6px;padding:3px;cursor:pointer;background:var(--surface);overflow:hidden}.lh-o.ngoai{opacity:.45}.lh-o.le{background:rgba(220,38,38,.07);border-color:#FCA5A5}.lh-o.nay{border:2px solid var(--green)}.lh-o.chon{background:#F0FDF4}
+.lh-am{font-size:10px;font-weight:500;color:var(--text2)}.lh-am.dam{color:#B45309;font-weight:700}.lh-le{font-size:10.5px;color:#DC2626;font-weight:600;line-height:1.2;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lh-so-ngay{font-size:12px;font-weight:700;margin-bottom:2px}.lh-chip{font-size:11px;line-height:1.25;padding:1px 4px;border-radius:4px;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lh-chip.xong{text-decoration:line-through;opacity:.55}.lh-chip.tre{background:#FEE2E2!important;color:#B91C1C!important}
 .lh-dong{display:flex;gap:10px;align-items:flex-start;padding:9px 4px;border-bottom:1px solid var(--border)}.lh-dong input[type=checkbox]{width:20px;height:20px;margin-top:1px;flex:0 0 auto}
 .lh-nhom{font-size:12px;font-weight:700;color:var(--text2);margin:12px 0 2px;text-transform:uppercase}
-@media(max-width:600px){.lh-o{min-height:52px}.lh-chip{font-size:0;height:6px;padding:0;margin:1px 0}}`;
+@media(max-width:600px){.lh-le{font-size:8.5px;white-space:normal;line-height:1.1;max-height:2.25em}.lh-am{font-size:9px}.lh-o{min-height:52px}.lh-chip{font-size:0;height:6px;padding:0;margin:1px 0}}`;
     document.head.appendChild(st);
   }
   if (!lhThang) { const d = new Date(); lhThang = new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -2625,7 +2668,7 @@ function lhDongHtml(x, hienNgay) {
     <input type="checkbox" ${x.xong ? 'checked' : ''} onclick="event.stopPropagation();lhDanhXong('${x.it.id}','${x.ngay}')" title="Đánh dấu xong">
     <div style="flex:1;min-width:0;cursor:pointer" onclick="lhMoForm('${x.it.id}','${x.ngay}')">
       <div style="font-weight:600;font-size:14px;${x.xong ? 'text-decoration:line-through;opacity:.55' : ''}">${escHtml(x.it.tieuDe)}</div>
-      <div style="font-size:12px;color:${tre ? '#DC2626' : 'var(--text2)'};margin-top:2px">${hienNgay ? lhNgayVN(x.ngay) : ''}${x.it.gio ? (hienNgay ? ' · ' : '') + x.it.gio : ''}
+      <div style="font-size:12px;color:${tre ? '#DC2626' : 'var(--text2)'};margin-top:2px">${hienNgay ? lhNgayVN(x.ngay) + ' <span style="opacity:.7">(' + amLich(lhDate(x.ngay).getDate(), lhDate(x.ngay).getMonth() + 1, lhDate(x.ngay).getFullYear()).ngay + '/' + amLich(lhDate(x.ngay).getDate(), lhDate(x.ngay).getMonth() + 1, lhDate(x.ngay).getFullYear()).thang + ' ÂL)</span>' : ''}${x.it.gio ? (hienNgay ? ' · ' : '') + x.it.gio : ''}
         <span style="background:${l.nen};color:${l.mau};border-radius:4px;padding:0 5px;margin-left:4px">${l.ten}</span>${x.it.lap ? ` <span title="${LH_LAP[x.it.lap]}">🔁</span>` : ''}${x.it.nhacTruoc ? ` <span title="Nhắc trước ${x.it.nhacTruoc} ngày">🔔${x.it.nhacTruoc}n</span>` : ''}</div>
       ${x.it.ghiChu ? `<div style="font-size:12px;color:var(--text2);margin-top:3px;white-space:pre-wrap">${escHtml(x.it.ghiChu)}</div>` : ''}</div></div>`;
 }
@@ -2644,17 +2687,19 @@ function lhVe() {
     sk.forEach(x => { (theoNgay[x.ngay] = theoNgay[x.ngay] || []).push(x); });
     let o = '';
     for (let i = 0; i < soO; i++) {
-      const s = lhCong(tu, i), d = lhDate(s), ds = theoNgay[s] || [];
-      o += `<div class="lh-o ${d.getMonth() !== m ? 'ngoai' : ''} ${s === nay ? 'nay' : ''} ${s === lhChonNgay ? 'chon' : ''}" onclick="lhChon('${s}')">
-        <div class="lh-so-ngay" style="${d.getDay() === 0 ? 'color:#DC2626' : ''}">${d.getDate()}</div>
+      const s = lhCong(tu, i), d = lhDate(s), ds = theoNgay[s] || [], nl = ngayLe(s), al = nl.am;
+      o += `<div class="lh-o ${d.getMonth() !== m ? 'ngoai' : ''} ${nl.le.length ? 'le' : ''} ${s === nay ? 'nay' : ''} ${s === lhChonNgay ? 'chon' : ''}" onclick="lhChon('${s}')" title="${escHtml(nl.le.map(x => x.ten).join(', '))}">
+        <div class="lh-so-ngay" style="display:flex;justify-content:space-between;align-items:baseline;gap:2px;${nl.le.length || d.getDay() === 0 ? 'color:#DC2626' : ''}"><span>${d.getDate()}</span><span class="lh-am ${al.ngay === 1 || al.ngay === 15 ? 'dam' : ''}">${al.ngay === 1 ? al.ngay + '/' + al.thang + (al.nhuan ? 'N' : '') : al.ngay}</span></div>
+        ${nl.le.map(x => `<div class="lh-le">${escHtml(x.ten)}</div>`).join('')}
         ${ds.slice(0, 3).map(lhChipHtml).join('')}${ds.length > 3 ? `<div style="font-size:10.5px;color:var(--text2)">+${ds.length - 3} việc</div>` : ''}</div>`;
     }
     const dsChon = lhChonNgay ? (theoNgay[lhChonNgay] || lhSuKien(lhChonNgay, lhChonNgay)) : [];
     than = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         <button class="btn-xs" onclick="lhDoiThang(-1)">‹</button><b style="font-size:16px;min-width:120px;text-align:center">Tháng ${m + 1}/${y}</b><button class="btn-xs" onclick="lhDoiThang(1)">›</button>
-        <button class="btn-xs" onclick="lhDoiThang(0)">Hôm nay</button></div>
+        <button class="btn-xs" onclick="lhDoiThang(0)">Hôm nay</button>
+        <span style="font-size:12px;color:var(--text2);margin-left:auto">${(() => { const a = amLich(1, m + 1, y), b = amLich(new Date(y, m + 1, 0).getDate(), m + 1, y); return 'Âm lịch: tháng ' + a.thang + (a.nhuan ? ' nhuận' : '') + (a.thang !== b.thang || a.nhuan !== b.nhuan ? '–' + b.thang + (b.nhuan ? ' nhuận' : '') : '') + ' · ' + (a.nam !== b.nam ? amNamCanChi(a.nam) + '/' : '') + amNamCanChi(b.nam); })()}</span></div>
       <div class="lh-luoi">${['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map(t => `<div class="lh-thu">${t}</div>`).join('')}${o}</div>
-      ${lhChonNgay ? `<div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center"><b>${lhNgayVN(lhChonNgay)}/${lhDate(lhChonNgay).getFullYear()}</b>
+      ${lhChonNgay ? `<div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:8px"><div><b>${lhNgayVN(lhChonNgay)}/${lhDate(lhChonNgay).getFullYear()}</b><div style="font-size:12px;color:var(--text2);margin-top:2px">${lhAmChu(lhChonNgay)}</div></div>
           <button class="btn-xs" onclick="lhMoForm('', '${lhChonNgay}')">+ Thêm việc ngày này</button></div>
         ${dsChon.length ? dsChon.map(x => lhDongHtml(x, false)).join('') : '<p class="info-note">Chưa có việc.</p>'}` : '<p class="info-note" style="margin-top:10px">Bấm vào một ngày để xem và thêm việc.</p>'}`;
   } else {
@@ -2668,6 +2713,10 @@ function lhVe() {
       ['Sau đó (đến 3 tháng)', sk.filter(x => x.ngay > tuan && !x.xong)]];
     than = nhom.filter(([, ds]) => ds.length).map(([t, ds]) => `<div class="lh-nhom" style="${t === 'Quá hạn' ? 'color:#DC2626' : ''}">${t} · ${ds.length}</div>${ds.map(x => lhDongHtml(x, true)).join('')}`).join('')
       || '<p class="info-note" style="margin-top:12px">Chưa có việc nào trong 3 tháng tới. Bấm "+ Thêm việc".</p>';
+    const leToi = []; for (let i = 0; i <= 60 && leToi.length < 5; i++) { const s = lhCong(nay, i), nl = ngayLe(s); if (nl.le.length) leToi.push([s, nl]); }
+    if (leToi.length) than += `<div class="lh-nhom" style="color:#DC2626">Ngày lễ sắp tới</div>` + leToi.map(([s, nl]) => `<div style="display:flex;gap:8px;align-items:baseline;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px">
+      <b style="color:#DC2626;min-width:78px">${lhNgayVN(s)}</b><span style="flex:1;min-width:0">${nl.le.map(x => escHtml(x.ten) + (x.nghi ? ' <span style="font-size:11px;background:#FEE2E2;color:#B91C1C;border-radius:4px;padding:0 5px">nghỉ lễ</span>' : '')).join(', ')}${s === nay ? ' <b>· hôm nay</b>' : ''}</span>
+      <span style="font-size:12px;color:var(--text2);white-space:nowrap">${nl.am.ngay}/${nl.am.thang} ÂL</span></div>`).join('');
   }
   k.innerHTML = `<div class="lh-hop">
     <div class="lh-dau"><b style="font-size:16px;margin-right:auto">📅 Lịch hẹn</b>
@@ -30428,7 +30477,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v815</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v816</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -30486,7 +30535,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v815</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v816</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -30536,7 +30585,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v815</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v816</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -30553,7 +30602,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v815</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v816</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
