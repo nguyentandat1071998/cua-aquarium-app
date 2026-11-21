@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 825;
+  const APP_VERSION = 826;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -3117,11 +3117,12 @@ window.switchModule = function(mod) {
     }
     return;
   }
-  if (['thanhtoan', 'hethong', 'phanquyen', 'chamcongcd', 'inhoadon', 'ketnoi', 'nhatky', 'congthucthuong'].includes(mod)) {
+  if (['thanhtoan', 'hethong', 'phanquyen', 'chamcongcd', 'inhoadon', 'ketnoi', 'nhatky', 'congthucthuong', 'loinhuan'].includes(mod)) {
     document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
     document.getElementById('panel-thietlap-main').style.display = 'block';
     document.getElementById('sub-tab-bar').style.display = 'none';
     if (mod === 'nhatky') renderNhatKy();
+    else if (mod === 'loinhuan') renderLoiNhuan();
     else if (mod === 'congthucthuong') { moNVTab('thietlapluong'); return; }
     else if (mod === 'chamcongcd') { moNVTab('calamviec'); return; }
     else renderHeThong(mod);
@@ -8282,6 +8283,330 @@ Vào Đặt hàng → mở đơn → "Đối chiếu & nhập kho" để lưu.`)
     if (nut && nut.textContent === 'Đang lưu...') { nut.textContent = chuNut; nhVeTao(); }
   }
 };
+
+// ===== BÁO CÁO LỢI NHUẬN (chỉ Admin) =====
+// Lãi ròng theo tháng = doanh thu (quầy + sàn) − hàng trả − giá vốn − phí sàn − hàng hủy − dùng nội bộ
+//   − chi phí sổ quỹ (Admin chọn danh mục nào tính) − lương (bảng lương tháng).
+// Giá vốn lấy theo giá vốn hiện tại của từng mã (lô đang còn), đơn sàn tính theo ngày đặt.
+let lnThang = null, lnKq = null, lnCfg = null, lnChiDs = [];
+const LN_HM_BO = ['noi_bo', 'tien_hang', 'tra_truoc', 'dat_coc', 'tra_hang', 'hoan_coc', 'hoan_ung', 'ban_hang', 'coc', 'thu_khac'];
+const lnNgay = (t) => { const d = t?.toDate ? t.toDate() : (t ? new Date(t) : null); return d && !isNaN(d) ? d.toLocaleDateString('sv-SE') : ''; };
+const lnPt = (a, b) => b ? (a / b * 100).toFixed(1) + '%' : '—';
+const lnTien = (n) => (n < 0 ? '−' : '') + fmt(Math.abs(n));
+function lnDmChi(p) {
+  if (p.thamChieu?.loai === 'don_dat_hang') return null;          // trả nhà cung cấp = tiền hàng, đã nằm trong giá vốn
+  if (p.hangMuc === 'cuoc_vc') return 'Cước vận chuyển (nhập hàng)';
+  if (LN_HM_BO.includes(p.hangMuc)) return null;
+  return String(p.danhMuc || SQ_HM[p.hangMuc] || 'Chi khác').trim();
+}
+// Mặc định tính mọi danh mục chi, trừ các khoản điều chỉnh / chuyển quỹ (không phải chi phí)
+function lnTinhDm(dm) {
+  const t = lnCfg?.tinh || {};
+  if (Object.prototype.hasOwnProperty.call(t, dm)) return !!t[dm];
+  return !/điều chỉnh|chuyển quỹ|chuyển tiền|rút tiền|nộp tiền/i.test(dm);
+}
+
+async function lnTai(thang) {
+  const [nam, th] = thang.split('-').map(Number);
+  const dau = new Date(nam, th - 1, 1), cuoi = new Date(nam, th, 1);
+  const dauS = `${thang}-01`, cuoiS = `${thang}-${String(new Date(nam, th, 0).getDate()).padStart(2, '0')}`;
+  if (!allSKUs.length) await loadSKUs();
+  if (!daNapGiaVon) await napGiaVon();
+  const [sBL, sSan, sTra, sHuy, sDnb, sSq, sCfg] = await Promise.all([
+    getDocs(query(collection(db, 'don_ban_le'), where('taoLuc', '>=', dau), where('taoLuc', '<', cuoi), limit(10000))),
+    getDocs(query(collection(db, 'don_hang_san'), where('ngayDat', '>=', dau), where('ngayDat', '<', cuoi), limit(10000))),
+    getDocs(query(collection(db, 'phieu_tra_hang'), where('taoLuc', '>=', dau), where('taoLuc', '<', cuoi), limit(3000))),
+    getDocs(query(collection(db, 'phieu_huy'), where('createdAt', '>=', dau), where('createdAt', '<', cuoi), limit(3000))),
+    getDocs(query(collection(db, 'phieu_dung_nb'), where('createdAt', '>=', dau), where('createdAt', '<', cuoi), limit(3000))),
+    getDocs(query(collection(db, 'so_quy'), where('ngay', '>=', dauS), where('ngay', '<=', cuoiS), limit(15000))),
+    getDoc(doc(db, 'cau_hinh', 'loi_nhuan')).catch(() => null)
+  ]);
+  lnCfg = sCfg?.exists?.() ? sCfg.data() : { tinh: {} };
+
+  const skuMa = new Map();
+  allSKUs.forEach(s => { if (s.sku && !s.deleted) { skuMa.set(String(s.sku), s); skuMa.set(String(s.sku).toLowerCase(), s); } });
+  allSKUs.forEach(s => { if (s.sku && !skuMa.has(String(s.sku))) { skuMa.set(String(s.sku), s); skuMa.set(String(s.sku).toLowerCase(), s); } });
+  const timSku = (ma) => skuMa.get(String(ma || '')) || skuMa.get(String(ma || '').toLowerCase());
+  const gv = (ma) => { const s = timSku(ma); return s ? giaVonDonVi(s) : null; };
+
+  const kq = { thang, kenh: {}, ngay: {}, nhom: {}, ma: {}, thieuVon: new Map(),
+    tra: { tien: 0, von: 0, so: 0 }, huy: { von: 0, so: 0, theo: {} }, dnb: { von: 0, so: 0 }, chi: {}, hoan: 0, huyDon: 0, luong: null };
+  const kenh = (k) => kq.kenh[k] || (kq.kenh[k] = { don: 0, dt: 0, von: 0, phi: 0, phiDuKien: 0, tra: 0 });
+  const ngayO = (d) => kq.ngay[d] || (kq.ngay[d] = { dt: 0, von: 0, phi: 0 });
+  // Ghi 1 dòng hàng vào thống kê nhóm / mã; trả về giá vốn của dòng
+  const themDong = (ma, ten, sl, dt) => {
+    const s = timSku(ma), g = s ? giaVonDonVi(s) : null;
+    const von = g == null ? 0 : g * sl;
+    if (g == null && sl > 0) { const t = kq.thieuVon.get(ma) || { ten: s?.ten || ten || ma, sl: 0, dt: 0 }; t.sl += sl; t.dt += dt; kq.thieuVon.set(ma, t); }
+    const nh = s?.nhom1 || (s?.laCombo ? 'Combo' : '(Chưa phân nhóm)');
+    const o = kq.nhom[nh] || (kq.nhom[nh] = { dt: 0, von: 0, sl: 0 }); o.dt += dt; o.von += von; o.sl += sl;
+    const khoa = s?.sku || ma || ten;
+    const m = kq.ma[khoa] || (kq.ma[khoa] = { ten: s?.ten || ten || ma, dt: 0, von: 0, sl: 0, thieu: g == null });
+    m.dt += dt; m.von += von; m.sl += sl;
+    return von;
+  };
+  // Chia tiền đơn (sau giảm giá) về từng dòng theo tỉ lệ thành tiền
+  const chiaDong = (dong, tongDon) => { const tong = dong.reduce((s, y) => s + y.raw, 0); return dong.map(y => ({ ...y, dt: tong ? tongDon * y.raw / tong : 0 })); };
+
+  // 1. Bán tại quầy
+  sBL.docs.forEach(x => {
+    const d = x.data();
+    if (d.deleted || /huy/.test(String(d.trangThai || ''))) return;
+    const ng = lnNgay(d.taoLuc), dt = Number(d.phaiTra) || 0;
+    const dong = chiaDong((d.dongHang || []).map(h => ({ h,
+      raw: Math.max(0, (Number(h.gia) || 0) * (Number(h.soLuong) || 0) - (Number(h.giamGia) || 0) - (Number(h.giamKM) || 0)) })), dt);
+    let von = 0;
+    dong.forEach(({ h, dt: dtDong }) => { von += themDong(h.sku, h.ten, (Number(h.soLuong) || 0) + (Number(h.tang) || 0), dtDong); });
+    const k = kenh('quay'); k.don++; k.dt += dt; k.von += von;
+    const n = ngayO(ng); n.dt += dt; n.von += von;
+  });
+  // 2. Trả hàng tại quầy (đã duyệt): bớt doanh thu, hàng về kho nên bớt giá vốn
+  sTra.docs.forEach(x => {
+    const p = x.data();
+    if (p.deleted || (p.trangThai && p.trangThai !== 'da_duyet')) return;
+    const tien = Number(p.tienHoan) || 0; let von = 0;
+    (p.hang || []).forEach(h => { von -= themDong(h.sku, h.ten, -(Number(h.soLuong) || 0), -(Number(h.tienHoan) || 0)); });
+    kq.tra.tien += tien; kq.tra.von += von; kq.tra.so++;
+    const k = kenh('quay'); k.tra += tien; k.von -= von;
+    const n = ngayO(lnNgay(p.taoLuc)); n.dt -= tien; n.von -= von;
+  });
+  // 3. Đơn sàn: bỏ đơn hủy / chuyển hoàn; trừ phần khách trả lại
+  sSan.docs.forEach(x => {
+    const d = { id: x.id, ...x.data() };
+    if (d.trangThaiGiao === 'Đã chuyển hoàn') { kq.hoan++; return; }
+    if (d.trangThaiDatHang === 'Đã hủy' || d.trangThaiGiao === 'Đã hủy' || d.trangThaiHoaDon === 'Đã hủy') { kq.huyDon++; return; }
+    const ng = lnNgay(d.ngayDat);
+    const tra = Number(d.tienHangTra) || 0, dt = Math.max(0, (Number(d.tongTien) || 0) - tra);
+    const dong = chiaDong((d.chiTiet || []).map(c => {
+      const slGoc = Number(c.soLuong) || 0, sl = Math.max(0, slGoc - (Number(c.soLuongTra) || 0));
+      const tt = Number(c.thanhTien) || (Number(c.donGia) || 0) * slGoc;
+      return { c, sl, raw: slGoc ? tt * sl / slGoc : 0 };
+    }), dt);
+    let von = 0;
+    dong.forEach(({ c, sl, dt: dtDong }) => { von += themDong(c.maHang, c.tenHang, sl, dtDong); });
+    let phi = d.phiSanTong != null ? (Number(d.phiSanTong) || 0) : null, duKien = false;
+    if (phi == null) { phi = phiDuKienCua(d) || 0; duKien = true; }
+    const k = kenh(d.san || 'khac'); k.don++; k.dt += dt; k.von += von; k.phi += phi; if (duKien) k.phiDuKien++;
+    const n = ngayO(ng); n.dt += dt; n.von += von; n.phi += phi;
+  });
+  // 4. Hàng hủy (cá chết, hư hỏng) tính theo giá vốn
+  sHuy.docs.forEach(x => {
+    const p = x.data();
+    if (p.deleted || ['cho_duyet', 'tu_choi', 'da_huy'].includes(p.trangThai)) return;
+    kq.huy.so++;
+    (p.items || []).forEach(h => {
+      const sl = Number(h.sl) || 0, g = gv(h.sku), von = (g != null ? g : (Number(h.gia) || 0)) * sl;
+      kq.huy.von += von;
+      const s = timSku(h.sku), nh = s?.nhom1 || '(Chưa phân nhóm)';
+      kq.huy.theo[nh] = (kq.huy.theo[nh] || 0) + von;
+    });
+  });
+  // 5. Xuất dùng nội bộ (đã duyệt)
+  sDnb.docs.forEach(x => {
+    const p = x.data();
+    if (p.deleted || p.trangThai !== 'da_duyet') return;
+    kq.dnb.so++;
+    (p.items || []).forEach(h => { const g = gv(h.sku); if (g != null) kq.dnb.von += g * (Number(h.sl) || 0); });
+  });
+  // 6. Chi phí sổ quỹ (phiếu chi còn hiệu lực)
+  sSq.docs.forEach(x => {
+    const p = x.data();
+    if (p.loai !== 'chi' || p.trangThai !== 'hieu_luc') return;
+    const dm = lnDmChi(p); if (!dm) return;
+    const o = kq.chi[dm] || (kq.chi[dm] = { tien: 0, so: 0 });
+    o.tien += Number(p.soTien) || 0; o.so++;
+  });
+  return kq;
+}
+
+// Lương: dùng đúng cách tính của Bảng lương (tháng đang chạy = tạm tính tới hôm nay)
+async function lnTinhLuong(thang) {
+  if (!allCaLamViec.length) await napCaLamViec();
+  if (!QUY_TAC_THUONG.length) await napQuyTacThuong();
+  if (allUsersCache.length < 2) {
+    const sU = await getDocs(collection(db, 'users'));
+    allUsersCache = sU.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+  if (!allVaiTro.length) await loadVaiTro();
+  if (!daNapDonChoLuong) {
+    try {
+      const sD = await getDocs(query(collection(db, 'don_hang_san'), orderBy('ngayDat', 'desc'), limit(1000)));
+      const gop = new Map(allDonHangSan.map(d => [d.id, d]));
+      sD.docs.forEach(d => { if (!gop.has(d.id)) gop.set(d.id, { id: d.id, ...d.data() }); });
+      const t = (x) => x.ngayDat?.toDate ? x.ngayDat.toDate().getTime() : 0;
+      allDonHangSan = [...gop.values()].sort((a, b) => t(b) - t(a));
+      daNapDonChoLuong = true;
+    } catch(e) { console.warn('[lợi nhuận] không nạp được đơn sàn cho lương:', e.message); }
+  }
+  const ds = await tinhLuongTatCa(thang);
+  return { tong: (ds || []).reduce((s, n) => s + (Number(n?.tong) || 0), 0), so: (ds || []).length };
+}
+
+async function renderLoiNhuan() {
+  const el = document.getElementById('thietlap-content');
+  if (!el) return;
+  if (currentUserData?.role !== 'admin') { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
+  if (!lnThang) { const n = new Date(); lnThang = `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`; }
+  const [nam, th] = lnThang.split('-').map(Number);
+  const homNay = new Date(), laThangNay = nam === homNay.getFullYear() && th === homNay.getMonth() + 1;
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <button class="btn-outline" style="width:auto;padding:6px 14px" onclick="lnDoiThang(-1)">‹</button>
+      <div style="font-weight:700;font-size:16px;min-width:120px;text-align:center">Tháng ${String(th).padStart(2, '0')}/${nam}</div>
+      <button class="btn-outline" style="width:auto;padding:6px 14px" ${laThangNay ? 'disabled' : ''} onclick="lnDoiThang(1)">›</button>
+      <div style="flex:1"></div>
+      <button class="btn-outline" style="width:auto;padding:6px 12px" onclick="locBam();renderLoiNhuan()">Tính lại</button>
+    </div>
+    <div id="ln-than"><div class="loading">Đang tính lợi nhuận...</div></div>`;
+  const luot = locBatDau('ln');
+  try {
+    const kq = await lnTai(lnThang);
+    if (!locXong('ln', luot)) return;
+    lnKq = kq; kq.luong = 'dang'; lnVe();
+    lnTinhLuong(kq.thang)
+      .then(l => { if (lnKq === kq) { kq.luong = l; lnVe(); } })
+      .catch(e => { if (lnKq === kq) { kq.luong = { loi: e.message }; lnVe(); } });
+  } catch(e) {
+    if (!locXong('ln', luot)) return;
+    const o = document.getElementById('ln-than');
+    if (o) o.innerHTML = `<p class="info-note">Không tính được lợi nhuận: ${escHtml(e.message)}</p>`;
+  }
+}
+window.lnDoiThang = function(buoc) {
+  const [y, m] = (lnThang || '').split('-').map(Number);
+  const t = new Date(y, m - 1 + buoc, 1), nay = new Date();
+  if (t > new Date(nay.getFullYear(), nay.getMonth(), 1)) return;
+  lnThang = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`;
+  locBam(); renderLoiNhuan();
+};
+window.lnDoiTinhChi = async function(i, bat) {
+  const dm = lnChiDs[i]?.[0]; if (!dm) return;
+  lnCfg = lnCfg || {}; lnCfg.tinh = { ...(lnCfg.tinh || {}), [dm]: !!bat };
+  lnVe();
+  try { await setDoc(doc(db, 'cau_hinh', 'loi_nhuan'), { tinh: lnCfg.tinh, doiLuc: serverTimestamp(), doiBoi: currentUserData?.ten || '' }, { merge: true }); }
+  catch(e) { showToast('Không lưu được lựa chọn: ' + e.message, true); }
+};
+
+function lnVe() {
+  const o = document.getElementById('ln-than'), kq = lnKq;
+  if (!o || !kq) return;
+  const KENH = [['quay', 'Tại quầy'], ['shopee', 'Shopee'], ['lazada', 'Lazada'], ['tiktok', 'TikTok Shop']];
+  Object.keys(kq.kenh).forEach(k => { if (!KENH.some(x => x[0] === k)) KENH.push([k, TEN_SAN[k] || k]); });
+  const ks = KENH.map(([k, ten]) => ({ k, ten, ...(kq.kenh[k] || { don: 0, dt: 0, von: 0, phi: 0, phiDuKien: 0, tra: 0 }) }));
+  const tong = (f) => ks.reduce((s, x) => s + (Number(x[f]) || 0), 0);
+  const dtBan = tong('dt'), tra = kq.tra.tien, dtThuan = dtBan - tra;
+  const von = tong('von'), laiBan = dtThuan - von, phi = tong('phi'), sauPhi = laiBan - phi;
+  lnChiDs = Object.entries(kq.chi).sort((a, b) => b[1].tien - a[1].tien);
+  const chiTinh = lnChiDs.filter(([dm]) => lnTinhDm(dm)).reduce((s, [, v]) => s + v.tien, 0);
+  const luongXong = kq.luong && typeof kq.luong === 'object' && !kq.luong.loi;
+  const luong = luongXong ? kq.luong.tong : 0;
+  const tongChi = kq.huy.von + kq.dnb.von + chiTinh + luong;
+  const laiRong = sauPhi - tongChi;
+  const mau = (n) => n >= 0 ? '#15803D' : '#DC2626';
+  const phiDuKien = ks.reduce((s, x) => s + x.phiDuKien, 0);
+
+  const the = (ten, so, phu, m) => `<div style="flex:1 1 150px;background:var(--surface,#fff);border:1px solid var(--border);border-radius:10px;padding:10px 12px">
+      <div style="font-size:12px;color:var(--text2)">${ten}</div>
+      <div style="font-size:20px;font-weight:800;color:${m || 'var(--text)'};margin-top:2px">${so}</div>
+      ${phu ? `<div style="font-size:12px;color:var(--text2);margin-top:2px">${phu}</div>` : ''}</div>`;
+  const dong = (ten, so, o2 = {}) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:${o2.dam ? '8px' : '5px'} 0 ${o2.dam ? '8px' : '5px'} ${o2.lui ? 16 : 0}px;${o2.dam ? 'border-top:1px solid var(--border);font-weight:700;' : ''}font-size:${o2.lui ? 13 : 14}px">
+      <span style="${o2.lui ? 'color:var(--text2)' : ''}">${ten}</span><span style="white-space:nowrap;${o2.mau ? `color:${o2.mau}` : ''}">${so}</span></div>`;
+  const khung = (tieuDe, noi) => `<div class="admin-block" style="margin-bottom:12px"><div style="font-weight:700;margin-bottom:8px">${tieuDe}</div>${noi}</div>`;
+
+  // Kết quả kinh doanh
+  const bang = dong('Doanh thu bán hàng', fmt(dtBan))
+    + (tra ? dong(`Khách trả hàng tại quầy (${kq.tra.so} phiếu)`, '−' + fmt(tra), { lui: true }) : '')
+    + dong('Doanh thu thuần', fmt(dtThuan), { dam: true })
+    + dong('Giá vốn hàng bán', '−' + fmt(von), { lui: true })
+    + dong('Lợi nhuận gộp', lnTien(laiBan) + ` <span style="font-weight:400;color:var(--text2)">(${lnPt(laiBan, dtThuan)})</span>`, { dam: true, mau: mau(laiBan) })
+    + dong(`Phí sàn${phiDuKien ? ` <span style="font-size:11px;color:#D97706">(${phiDuKien} đơn dùng phí dự kiến)</span>` : ''}`, '−' + fmt(phi), { lui: true })
+    + dong('Lãi sau phí sàn', lnTien(sauPhi), { dam: true, mau: mau(sauPhi) })
+    + dong(`Hàng hủy theo giá vốn (${kq.huy.so} phiếu)`, '−' + fmt(kq.huy.von), { lui: true })
+    + dong(`Xuất dùng nội bộ (${kq.dnb.so} phiếu)`, '−' + fmt(kq.dnb.von), { lui: true })
+    + dong('Chi phí sổ quỹ (mục đã tick bên dưới)', '−' + fmt(chiTinh), { lui: true })
+    + dong('Lương nhân viên' + (luongXong ? ` (${kq.luong.so} người)` : ''),
+        kq.luong === 'dang' ? '<span style="color:var(--text2)">đang tính...</span>'
+        : kq.luong?.loi ? `<span style="color:#DC2626" title="${escHtml(kq.luong.loi)}">không tính được</span>` : '−' + fmt(luong), { lui: true })
+    + `<div style="display:flex;justify-content:space-between;padding:10px 0 2px;border-top:2px solid var(--text);font-weight:800;font-size:17px">
+        <span>LÃI RÒNG</span><span style="color:${mau(laiRong)}">${lnTien(laiRong)} <span style="font-size:13px;font-weight:600">(${lnPt(laiRong, dtThuan)})</span></span></div>`;
+
+  // Theo kênh
+  const kenhHtml = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">
+      <tr style="color:var(--text2);text-align:right"><th style="text-align:left;padding:4px">Kênh</th><th>Đơn</th><th>Doanh thu</th><th>Giá vốn</th><th>Phí sàn</th><th>Lãi</th><th>Biên</th></tr>
+      ${ks.filter(x => x.don || x.dt || x.tra).map(x => { const d = x.dt - x.tra, l = d - x.von - x.phi;
+        return `<tr style="border-top:1px solid var(--border);text-align:right"><td style="text-align:left;padding:6px 4px;font-weight:600">${escHtml(x.ten)}</td>
+          <td>${x.don}</td><td>${fmt(d)}</td><td>${fmt(x.von)}</td><td>${x.phi ? fmt(x.phi) : '—'}</td>
+          <td style="font-weight:700;color:${mau(l)}">${lnTien(l)}</td><td>${lnPt(l, d)}</td></tr>`; }).join('')}
+    </table></div>
+    <div style="font-size:12px;color:var(--text2);margin-top:6px">Lãi theo kênh = doanh thu − giá vốn − phí sàn (chưa trừ chi phí chung, lương).${kq.hoan || kq.huyDon ? ` Không tính ${kq.huyDon} đơn sàn hủy, ${kq.hoan} đơn chuyển hoàn.` : ''}</div>`;
+
+  // Theo ngày (lãi sau phí sàn, chưa trừ chi phí chung)
+  const cacNgay = Object.keys(kq.ngay).filter(Boolean).sort();
+  const laiNgay = cacNgay.map(d => { const n = kq.ngay[d]; return { d, dt: n.dt, l: n.dt - n.von - n.phi }; });
+  const maxL = Math.max(1, ...laiNgay.map(x => Math.abs(x.l)));
+  const ngayHtml = laiNgay.length ? laiNgay.map(x => `<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;padding:2px 0">
+      <span style="width:40px;color:var(--text2)">${x.d.slice(8)}/${x.d.slice(5, 7)}</span>
+      <div style="flex:1;height:14px;background:var(--bg);border-radius:4px;overflow:hidden">
+        <div style="width:${Math.round(Math.abs(x.l) / maxL * 100)}%;height:100%;background:${x.l >= 0 ? '#22C55E' : '#EF4444'}"></div></div>
+      <span style="width:92px;text-align:right;font-weight:600;color:${mau(x.l)}">${lnTien(x.l)}</span>
+      <span style="width:92px;text-align:right;color:var(--text2)">${fmt(x.dt)}</span></div>`).join('')
+    + `<div style="font-size:12px;color:var(--text2);margin-top:6px">Cột xanh: lãi sau phí sàn trong ngày · số xám: doanh thu. Chi phí chung và lương chỉ tính cho cả tháng.</div>`
+    : '<p class="info-note">Chưa có đơn nào trong tháng.</p>';
+
+  // Nhóm hàng & mã hàng
+  const nhom = Object.entries(kq.nhom).filter(([, v]) => v.dt || v.sl).sort((a, b) => (b[1].dt - b[1].von) - (a[1].dt - a[1].von));
+  const nhomHtml = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:460px">
+      <tr style="color:var(--text2);text-align:right"><th style="text-align:left;padding:4px">Nhóm hàng</th><th>SL</th><th>Doanh thu</th><th>Lãi gộp</th><th>Biên</th><th>Hàng hủy</th></tr>
+      ${nhom.map(([ten, v]) => { const l = v.dt - v.von; return `<tr style="border-top:1px solid var(--border);text-align:right">
+        <td style="text-align:left;padding:6px 4px">${escHtml(ten)}</td><td>${fmt(v.sl)}</td><td>${fmt(v.dt)}</td>
+        <td style="font-weight:700;color:${mau(l)}">${lnTien(l)}</td><td>${lnPt(l, v.dt)}</td>
+        <td style="color:#B45309">${kq.huy.theo[ten] ? fmt(kq.huy.theo[ten]) : '—'}</td></tr>`; }).join('')}
+    </table></div>
+    <div style="font-size:12px;color:var(--text2);margin-top:6px">Lãi gộp nhóm = doanh thu − giá vốn (chưa trừ phí sàn).</div>`;
+  const maDs = Object.entries(kq.ma).filter(([, v]) => v.sl > 0 && !v.thieu && v.dt > 0).map(([ma, v]) => ({ ma, ...v, l: v.dt - v.von }));
+  const dongMa = (x) => `<div style="display:flex;gap:8px;padding:5px 0;border-top:1px solid var(--border);font-size:13px">
+      <div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(x.ten)}</div>
+        <div style="font-size:11px;color:var(--text2)">${escHtml(x.ma)} · bán ${fmt(x.sl)} · DT ${fmt(x.dt)}</div></div>
+      <div style="text-align:right"><b style="color:${mau(x.l)}">${lnTien(x.l)}</b><div style="font-size:11px;color:var(--text2)">${lnPt(x.l, x.dt)}</div></div></div>`;
+  const topLai = [...maDs].sort((a, b) => b.l - a.l).slice(0, 10);
+  const topThap = [...maDs].filter(x => x.l < x.dt * 0.15).sort((a, b) => (a.l / a.dt) - (b.l / b.dt)).slice(0, 10);
+  const maHtml = `<div style="display:flex;gap:14px;flex-wrap:wrap">
+      <div style="flex:1 1 280px"><div style="font-size:13px;font-weight:700;margin-bottom:4px">Top 10 mã lãi nhiều nhất</div>${topLai.map(dongMa).join('') || '<p class="info-note">—</p>'}</div>
+      <div style="flex:1 1 280px"><div style="font-size:13px;font-weight:700;margin-bottom:4px;color:#B91C1C">Mã lỗ / biên dưới 15%</div>${topThap.map(dongMa).join('') || '<p class="info-note">Không có mã nào.</p>'}</div>
+    </div>`;
+
+  // Chi phí sổ quỹ — tick mục nào tính vào chi phí
+  const chiHtml = lnChiDs.length ? lnChiDs.map(([dm, v], i) => `<label style="display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--border);font-size:13.5px;cursor:pointer">
+      <input type="checkbox" ${lnTinhDm(dm) ? 'checked' : ''} onchange="lnDoiTinhChi(${i},this.checked)" style="width:18px;height:18px;margin:0">
+      <span style="flex:1;${lnTinhDm(dm) ? '' : 'color:var(--text2);text-decoration:line-through'}">${escHtml(dm)} <span style="font-size:11px;color:var(--text2)">· ${v.so} phiếu</span></span>
+      <b>${fmt(v.tien)}</b></label>`).join('')
+    + `<div style="font-size:12px;color:var(--text2);margin-top:6px">Bỏ tick khoản không phải chi phí kinh doanh (VD điều chỉnh quỹ, trả nợ thẻ đã ghi chi phí ở chỗ khác). Lựa chọn được nhớ cho các tháng sau. Tiền trả nhà cung cấp không nằm ở đây vì đã tính trong giá vốn.</div>`
+    : '<p class="info-note">Tháng này chưa có phiếu chi nào.</p>';
+
+  // Thiếu giá vốn
+  const thieu = [...kq.thieuVon.entries()].sort((a, b) => b[1].dt - a[1].dt);
+  const thieuHtml = thieu.length ? `<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px">
+      ⚠️ <b>${thieu.length} mã chưa có giá vốn</b> (doanh thu ${fmt(thieu.reduce((s, [, v]) => s + v.dt, 0))}) — đang tính giá vốn = 0 nên lãi bị cao hơn thực tế.
+      <div style="margin-top:4px;color:#92400E">${thieu.slice(0, 12).map(([ma, v]) => `${escHtml(v.ten)} (${fmt(v.sl)})`).join(' · ')}${thieu.length > 12 ? ' …' : ''}</div></div>` : '';
+
+  o.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${the('Doanh thu thuần', fmt(dtThuan), `${tong('don')} đơn`)}
+      ${the('Lãi sau phí sàn', lnTien(sauPhi), 'Biên ' + lnPt(sauPhi, dtThuan), mau(sauPhi))}
+      ${the('Chi phí & lương', fmt(tongChi), kq.luong === 'dang' ? 'lương đang tính...' : 'hủy, nội bộ, sổ quỹ, lương')}
+      ${the('Lãi ròng', lnTien(laiRong), 'Biên ' + lnPt(laiRong, dtThuan), mau(laiRong))}
+    </div>
+    ${thieuHtml}
+    ${khung('Kết quả kinh doanh', bang)}
+    ${khung('Theo kênh bán', kenhHtml)}
+    ${khung('Theo ngày', ngayHtml)}
+    ${khung('Theo nhóm hàng', nhomHtml)}
+    ${khung('Theo mã hàng', maHtml)}
+    ${khung('Chi phí sổ quỹ', chiHtml)}
+    <p style="font-size:12px;color:var(--text2);line-height:1.5">Cách tính: giá vốn theo giá vốn hiện tại của từng mã (combo cộng từ thành phần, hàng tặng vẫn tính vốn).
+      Đơn sàn tính theo ngày đặt, phí sàn lấy phí thật; TikTok / Lazada chưa có phí thật thì dùng phí dự kiến trong Thiết lập › Hệ thống.
+      Lương theo Bảng lương${kq.thang === new Date().toLocaleDateString('sv-SE').slice(0, 7) ? ' (tháng đang chạy: tạm tính tới hôm nay)' : ''}.</p>`;
+}
 
 // ===== DÒ BILL: bấm ✓ từng dòng để đánh dấu đã đối chiếu với bill nhà cung cấp =====
 // Chỉ giữ trong lúc đang mở app (không lưu lên máy chủ). Phiếu đang sửa và màn xem chi tiết dùng chung dấu.
@@ -20505,7 +20830,8 @@ const NHOM_MENU = [
   { key: 'baocao', ten: 'Báo cáo', muc: [
     { key: 'bcngay',    ten: 'Báo cáo ngày',       quyen: 'bc_ngay',    moGi: () => switchModule('baocao') },
     { key: 'tknhap',    ten: 'Thống kê chuyển kho', quyen: 'bc_tk_nhap', moGi: () => switchModule('tknhap') },
-    { key: 'tkxuat',    ten: 'Thống kê xuất hủy',  quyen: 'bc_tk_xuat', moGi: () => switchModule('tkxuat') }
+    { key: 'tkxuat',    ten: 'Thống kê xuất hủy',  quyen: 'bc_tk_xuat', moGi: () => switchModule('tkxuat') },
+    { key: 'loinhuan',  ten: 'Lợi nhuận',          chiAdmin: true,       moGi: () => switchModule('loinhuan') }
   ]},
   { key: 'thietlap', ten: 'Thiết lập', chiAdmin: true, muc: [
     { key: 'phanquyen',  ten: 'Phân quyền',        chiAdmin: true, moGi: () => switchModule('phanquyen') },
@@ -30734,7 +31060,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v825</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v826</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -30792,7 +31118,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v825</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v826</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -30842,7 +31168,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v825</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v826</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -30859,7 +31185,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v825</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v826</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
