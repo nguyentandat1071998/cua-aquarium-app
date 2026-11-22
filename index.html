@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 835;
+  const APP_VERSION = 836;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9612,6 +9612,7 @@ function sqGhiBanHang(ma) {
 }
 
 // ----- PHIẾU THU-CHI -----
+let sqCach = '';   // lọc hình thức: '' tất cả | 'tienmat' | 'ck'
 let sqNgay = ngayLocal(), sqLoc = 'tat', sqDs = [], sqChoThu = [], sqHuyNghe = null, sqHuyNgheCT = null, sqHuyNgheGiu = null, sqQuy = null;
 async function renderThuChi() {
   const el = document.getElementById('thuchi-content');
@@ -9626,7 +9627,10 @@ async function renderThuChi() {
         ${taoChi ? `<button class="sq-nut-thu" style="background:#2563EB" onclick="sqMoGiaoTien()">Giao quỹ</button>` : ''}
       </div>
       <div class="sq-chips">
-        ${[['tat', 'Tất cả'], ['thu', 'Thu'], ['chi', 'Chi'], ['cho', 'Chờ duyệt']].map(([k, t]) => `<button class="sq-chip${sqLoc === k ? ' on' : ''}" onclick="sqDatLoc('${k}')">${t}</button>`).join('')}
+        ${[['tat', 'Tất cả'], ['thu', 'Thu'], ['chi', 'Chi'], ['banhang', 'Bán hàng'], ['giaoquy', 'Giao quỹ'], ['cho', 'Chờ duyệt']].map(([k, t]) => `<button class="sq-chip${sqLoc === k ? ' on' : ''}" onclick="sqDatLoc('${k}')">${t}</button>`).join('')}
+      </div>
+      <div class="sq-chips" style="margin-top:-2px">
+        ${[['', 'Mọi hình thức'], ['tienmat', 'Tiền mặt'], ['ck', 'Chuyển khoản']].map(([k, t]) => `<button class="sq-chip sq-chip-cach${sqCach === k ? ' on' : ''}" data-cach="${k}" onclick="sqDatCach('${k}')">${t}</button>`).join('')}
       </div>
       <div id="sq-quy"></div>
       ${sqXemHet() ? '' : '<div class="sq-ghi">Bạn đang xem phiếu do mình tạo.</div>'}
@@ -9671,7 +9675,18 @@ window.sqDoiNgay = (v) => {
   locBam(); window.__sqLuotNgay = locBatDau('sq');
   sqNghe();
 };
-window.sqDatLoc = (k) => { sqLoc = k; document.querySelectorAll('.sq-chip').forEach(b => b.classList.toggle('on', b.getAttribute('onclick').includes(`'${k}'`))); sqVeDs(); };
+window.sqDatLoc = (k) => { sqLoc = k; document.querySelectorAll('.sq-chip:not(.sq-chip-cach)').forEach(b => b.classList.toggle('on', b.getAttribute('onclick').includes(`'${k}'`))); sqVeDs(); };
+window.sqDatCach = (k) => { sqCach = k; document.querySelectorAll('.sq-chip-cach').forEach(b => b.classList.toggle('on', b.dataset.cach === k)); sqVeDs(); };
+// Lọc phiếu: loại (thu / chi / bán hàng / giao quỹ / chờ duyệt) kết hợp hình thức (tiền mặt / chuyển khoản)
+function sqHopLoc(p) {
+  if (sqLoc === 'cho') { if (!(p.duyet?.trangThai === 'cho_duyet' && p.trangThai === 'hieu_luc')) return false; }
+  else if (sqLoc === 'thu' || sqLoc === 'chi') { if (p.loai !== sqLoc) return false; }
+  else if (sqLoc === 'banhang') { if (p.hangMuc !== 'ban_hang') return false; }
+  else if (sqLoc === 'giaoquy') { if (p.hangMuc !== 'noi_bo') return false; }
+  if (sqCach === 'tienmat' && p.cach !== 'tienmat') return false;
+  if (sqCach === 'ck' && p.cach === 'tienmat') return false;
+  return true;
+}
 function sqVeChoThu() {
   const o = document.getElementById('sq-cho-thu'); if (!o) return;
   if (!sqChoThu.length) { o.innerHTML = ''; return; }
@@ -9684,14 +9699,17 @@ function sqVeChoThu() {
 }
 function sqVeDs() {
   const o = document.getElementById('sq-ds'); if (!o) return;
-  const ds = sqDs.filter(p => sqLoc === 'tat' || (sqLoc === 'cho' ? p.duyet?.trangThai === 'cho_duyet' && p.trangThai === 'hieu_luc' : p.loai === sqLoc));
+  const ds = sqDs.filter(sqHopLoc);
+  const dangLoc = sqLoc !== 'tat' || sqCach;
+  const tl = { thu: 0, chi: 0, n: 0 };
+  if (dangLoc) ds.filter(p => p.trangThai === 'hieu_luc').forEach(p => { tl.n++; tl[p.loai === 'thu' ? 'thu' : 'chi'] += Number(p.soTien) || 0; });
   const t = { thuTM: 0, thuCK: 0, chiTM: 0, chiCK: 0 };
   sqDs.filter(p => p.trangThai === 'hieu_luc' && p.hangMuc !== 'noi_bo').forEach(p => { t[(p.loai === 'thu' ? 'thu' : 'chi') + (p.cach === 'tienmat' ? 'TM' : 'CK')] += Number(p.soTien) || 0; });
   const ot = document.getElementById('sq-tong');
   if (ot) ot.innerHTML = `<div class="sq-tong">
     <div><span>Thu tiền mặt</span><b class="xanh">${fmt(t.thuTM)}</b></div><div><span>Chi tiền mặt</span><b class="do">${fmt(t.chiTM)}</b></div>
     <div><span>Thu chuyển khoản</span><b class="xanh">${fmt(t.thuCK)}</b></div><div><span>Chi chuyển khoản</span><b class="do">${fmt(t.chiCK)}</b></div></div>`;
-  o.innerHTML = ds.length ? ds.map(p => {
+  o.innerHTML = (dangLoc && ds.length ? `<div style="font-size:12.5px;color:var(--text2);margin:2px 0 8px">${tl.n} phiếu đang lọc${tl.thu ? ` · thu <b class="xanh" style="color:#16A34A">${fmt(tl.thu)}</b>` : ''}${tl.chi ? ` · chi <b style="color:#DC2626">${fmt(tl.chi)}</b>` : ''}</div>` : '') + (ds.length ? ds.map(p => {
     const thu = p.loai === 'thu', huy = p.trangThai === 'huy', noiBo = p.hangMuc === 'noi_bo';
     const nhan = [];
     if (huy) nhan.push('<span class="sq-nhan xam">Đã hủy</span>');
@@ -9708,7 +9726,7 @@ function sqVeDs() {
         <div class="sq-tien ${thu ? 'xanh' : 'do'}">${thu ? '+' : '−'}${fmt(p.soTien || 0)}</div>
         <div class="sq-cach">${p.cach === 'tienmat' ? 'Tiền mặt' : 'Chuyển khoản'}</div>
       </div></div>`;
-  }).join('') : '<p class="info-note">Chưa có phiếu nào trong ngày.</p>';
+  }).join('') : `<p class="info-note">${dangLoc ? 'Không có phiếu nào khớp bộ lọc trong ngày.' : 'Chưa có phiếu nào trong ngày.'}</p>`);
 }
 
 // ----- Xem / duyệt / hủy -----
@@ -31240,7 +31258,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v835</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v836</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31298,7 +31316,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v835</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v836</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31348,7 +31366,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v835</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v836</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31365,7 +31383,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v835</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v836</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
