@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 832;
+  const APP_VERSION = 833;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -297,7 +297,7 @@ const NK_API = {
   'kv-luu-hang-hoa': ['Hàng hóa: đồng bộ KiotViet', 'Kho'], 'kv-xoa-hang-hoa': ['Hàng hóa: xóa bên KiotViet', 'Kho'],
   'tao-hoa-don-ban-le': ['Bán hàng: tạo hóa đơn', 'Bán hàng'], 'huy-hoa-don': ['Hủy hóa đơn', 'Bán hàng'],
   'tra-hang': ['Duyệt phiếu trả hàng', 'Bán hàng'], 'tra-hoa-don-da-tra': ['Trả hàng hóa đơn', 'Bán hàng'],
-  'kh-luu': ['Lưu khách hàng', 'Khách hàng'],
+  'kh-luu': ['Lưu khách hàng', 'Khách hàng'], 'sq-thu-no': ['Thu nợ khách', 'Khách hàng'],
   'tao-phieu-huy': ['Tạo phiếu xuất hủy', 'Kho'], 'sua-phieu-huy': ['Sửa / xóa phiếu xuất hủy', 'Kho'],
   'tao-phieu-chuyen': ['Tạo phiếu chuyển kho', 'Kho'], 'sua-phieu-chuyen': ['Sửa phiếu chuyển kho', 'Kho'], 'xoa-phieu-chuyen': ['Xóa phiếu chuyển kho', 'Kho'],
   'tao-phieu-nhap-san': ['Lưu phiếu nhập kho (KiotViet)', 'Kho'],
@@ -9585,7 +9585,7 @@ window.dhXacNhanHuyChi = async function(donId, maPC) {
 // Quyền: soquy · sq_xemtatca · sq_ketca · sq_duyet (Admin có tất cả + xác nhận đã nhận tiền nộp).
 // ==========================================================================
 const SQ_HM = { ...SQ_HANG_MUC, ban_hang: 'Bán hàng', tra_hang: 'Trả hàng', coc: 'Tiền cọc', hoan_coc: 'Hoàn cọc',
-  thu_khac: 'Thu khác', chi_khac: 'Chi khác', hoan_ung: 'Nhân viên hoàn tiền', noi_bo: 'Quỹ đầu ca / giao nhận nội bộ' };
+  thu_khac: 'Thu khác', thu_no: 'Thu nợ khách', chi_khac: 'Chi khác', hoan_ung: 'Nhân viên hoàn tiền', noi_bo: 'Quỹ đầu ca / giao nhận nội bộ' };
 const SQ_DM_GOI_Y = ['Phí ship', 'Mua đồ dùng cửa hàng', 'Mua thức ăn cá', 'Mua vật tư', 'Điện nước', 'Ăn uống', 'Tiền thối khách', 'Khác'];
 // Chỉ Admin xem phiếu thu-chi của mọi người; ai được bật Sổ quỹ chỉ xem phiếu do chính mình tạo
 const sqXemHet = () => currentUserData?.role === 'admin';
@@ -11068,6 +11068,52 @@ const khLaSan = (ma) => /^KH[A-Z]{3,4}/.test(String(ma || ''));
 const khTenSan = (ma) => { const m = String(ma || '').match(/^KH([A-Z]{3,4})/); return m ? (KH_SAN_TEN[m[1]] || 'sàn') : ''; };
 const hdLaSan = (ma) => /^HD[A-Z]{3,4}_/.test(String(ma || ''));
 
+// ===== THU NỢ KHÁCH CỬA HÀNG =====
+// Máy chủ ghi phiếu thu vào các hóa đơn còn nợ bên KiotViet (cũ trước) rồi ghi phiếu thu "Thu nợ khách" vào Sổ quỹ.
+let khThuNoCach = 'tienmat';
+window.khMoThuNo = function() {
+  const k = khDangXem; if (!k || !(k.no > 0)) return;
+  if (!coQuyen('kh_thuno')) { showToast('Bạn không có quyền thu nợ', true); return; }
+  khThuNoCach = 'tienmat';
+  khVeThuNo(k.no);
+};
+function khVeThuNo(soTien) {
+  const k = khDangXem; if (!k) return;
+  const chip = (gt, nhan) => `<button class="btn-xs" onclick="khThuNoCach='${gt}';khVeThuNo(sqTien(document.getElementById('kh-tn-tien').value))" style="flex:1;padding:8px;${khThuNoCach === gt ? 'background:#2563EB;color:#fff;border-color:#2563EB' : ''}">${nhan}</button>`;
+  ddbMoKhung('kh-thu-no', '💵 Thu nợ khách', `${escHtml(k.ten)} · ${escHtml(k.ma)}`, `
+    <div style="background:#FEF2F2;border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:14px">Khách đang nợ <b style="color:#DC2626">${fmt(k.no)}đ</b></div>
+    <label style="font-size:12px;color:var(--text2)">Số tiền thu</label>
+    <input id="kh-tn-tien" inputmode="numeric" value="${fmt(soTien || k.no)}" oninput="this.value=this.value?fmt(sqTien(this.value)):''" style="width:100%;font-size:18px;font-weight:700;margin:4px 0 10px">
+    <div style="display:flex;gap:6px;margin-bottom:10px">${chip('tienmat', 'Tiền mặt')}${chip('chuyenkhoan', 'Chuyển khoản')}</div>
+    <input id="kh-tn-gc" maxlength="200" placeholder="Ghi chú (không bắt buộc)" style="width:100%">
+    <div style="font-size:12px;color:var(--text2);margin-top:8px;line-height:1.5">Tiền thu được trừ vào các hóa đơn còn nợ bên KiotViet (hóa đơn cũ trước) và ghi phiếu thu "Thu nợ khách" vào Sổ quỹ.</div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('kh-thu-no').style.display='none'">Đóng</button>
+     <button class="btn-g" id="kh-tn-nut" style="flex:2;margin:0;background:#16A34A" onclick="khXacNhanThuNo()">Xác nhận thu</button>`);
+  ddbCanhGiua('kh-thu-no');
+}
+window.khXacNhanThuNo = async function() {
+  const k = khDangXem; if (!k) return;
+  const soTien = sqTien(document.getElementById('kh-tn-tien')?.value);
+  const ghiChu = String(document.getElementById('kh-tn-gc')?.value || '').trim();
+  if (!soTien) { showToast('Nhập số tiền thu', true); return; }
+  if (soTien > k.no) { showToast(`Khách chỉ đang nợ ${fmt(k.no)}đ`, true); return; }
+  const cachTen = khThuNoCach === 'tienmat' ? 'tiền mặt' : 'chuyển khoản';
+  if (!await hoiXacNhan(`Thu nợ ${fmt(soTien)}đ (${cachTen}) của ${k.ten}?\n\nCòn nợ sau khi thu: ${fmt(k.no - soTien)}đ`, { nutDongY: 'Thu nợ' })) return;
+  const nut = document.getElementById('kh-tn-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang ghi...'; }
+  try {
+    const kq = await sqGoi('sq-thu-no', { khachId: k.id, soTien, cach: khThuNoCach, ghiChu });
+    document.getElementById('kh-thu-no').style.display = 'none';
+    khNoCache = null;
+    const hd = (kq.daGhi || []).map(x => `${x.ma}: ${fmt(x.tien)}đ`).join('\n');
+    alert(`Đã thu ${fmt(kq.tong)}đ của ${k.ten}.\n\n${hd}${kq.conLai > 0 ? `\n\n${fmt(kq.conLai)}đ chưa ghi được (không còn hóa đơn nợ) — kiểm tra lại bên KiotViet.` : ''}${kq.soQuy !== true ? `\n\n⚠️ ${kq.soQuy}` : ''}`);
+    khXemChiTiet(k.id);
+    if (khChiNo) khTai(0);
+  } catch(e) {
+    alert('Không thu được nợ: ' + e.message);
+    if (nut) { nut.disabled = false; nut.textContent = 'Xác nhận thu'; }
+  }
+};
+
 async function goiKhachKV(action, body) {
   const idToken = await currentUser.getIdToken();
   const r = await fetch(WORKER_URL, {
@@ -11231,7 +11277,8 @@ window.khXemChiTiet = async function(id) {
     <div style="font-size:12px;font-weight:600;color:var(--text2)">LỊCH SỬ MUA (${(kq.hoaDon || []).length} hóa đơn gần nhất)</div>
     ${kq.loiHoaDon ? `<p class="info-note">Không tải được hóa đơn: ${escHtml(kq.loiHoaDon)}</p>` : lichSu || '<p class="info-note">Chưa có hóa đơn.</p>'}`;
   ddbMoKhung('kh-chi-tiet-modal', escHtml(k.ten), escHtml(k.ma), noiDung,
-    coQuyen('kh_sua') ? `<button class="btn-outline" style="flex:1" onclick="khMoForm(true)">✏️ Sửa thông tin</button>` : '');
+    (k.no > 0 && !khLaSan(k.ma) && coQuyen('kh_thuno') ? `<button class="btn-g" style="flex:1;margin:0;background:#16A34A" onclick="khMoThuNo()">💵 Thu nợ</button>` : '')
+    + (coQuyen('kh_sua') ? `<button class="btn-outline" style="flex:1" onclick="khMoForm(true)">✏️ Sửa thông tin</button>` : ''));
 };
 
 // Mở hóa đơn KiotViet tương ứng trong màn Đơn đã bán (tìm theo mã)
@@ -20652,7 +20699,8 @@ const DANH_SACH_MODULE = [
     { key: 'dc_tuinbill', ten: 'Tự in phiếu cọc / hóa đơn khi thu tiền xong' }
   ]},
   { key: 'khachhang', ten: 'Khách hàng', con: [
-    { key: 'kh_sua', ten: 'Thêm / sửa khách hàng' }
+    { key: 'kh_sua', ten: 'Thêm / sửa khách hàng' },
+    { key: 'kh_thuno', ten: 'Thu nợ khách (ghi phiếu thu vào hóa đơn nợ + Sổ quỹ)' }
   ]},
   { key: 'soquy', ten: 'Sổ quỹ (xem phiếu thu-chi của mình)', con: [
     { key: 'sq_taothu', ten: 'Tạo phiếu thu' },
@@ -31133,7 +31181,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v832</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v833</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31191,7 +31239,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v832</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v833</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31241,7 +31289,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v832</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v833</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31258,7 +31306,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v832</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v833</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
