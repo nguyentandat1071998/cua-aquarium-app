@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 829;
+  const APP_VERSION = 830;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -11088,33 +11088,79 @@ async function renderKhachHang(tuKhoaMoi) {
   await khTai(0);
 }
 
+// Lọc: khách cửa hàng (mã KH + số, mặc định) / khách sàn / tất cả; "Có công nợ" quét hết khách cửa hàng rồi lọc
+let khLoai = 'ch', khChiNo = false, khNoCache = null;
+async function khQuetNo(epMoi) {
+  if (!epMoi && khNoCache && Date.now() - khNoCache.luc < 5 * 60000) return khNoCache.ds;
+  const dau = await goiKhachKV('kh-tim', { tuKhoa: 'KH0', trang: 0 });
+  let ds = [...(dau.ds || [])];
+  const soTrang = Math.ceil((dau.tong || 0) / 20);
+  for (let i = 1; i < soTrang; i += 8) {
+    const rs = await Promise.all(Array.from({ length: Math.min(8, soTrang - i) }, (_, j) => goiKhachKV('kh-tim', { tuKhoa: 'KH0', trang: i + j })));
+    rs.forEach(r => ds.push(...(r.ds || [])));
+  }
+  const daCo = new Set();
+  ds = ds.filter(k => !khLaSan(k.ma) && Number(k.no) && !daCo.has(k.id) && daCo.add(k.id)).sort((a, b) => b.no - a.no);
+  khNoCache = { luc: Date.now(), ds };
+  return ds;
+}
 async function khTai(trang) {
   try {
-    khKetQua = await goiKhachKV('kh-tim', { tuKhoa: khTuKhoa, trang });
+    if (khChiNo) {
+      const tk = khTuKhoa.toLowerCase();
+      const ds = (await khQuetNo(trang === 'moi')).filter(k => !tk || [k.ten, k.sdt, k.ma].some(x => String(x || '').toLowerCase().includes(tk)));
+      const t = trang === 'moi' ? 0 : trang;
+      khKetQua = { ds: ds.slice(t * 20, t * 20 + 20), tong: ds.length, trang: t, tongNo: ds.reduce((s, k) => s + (k.no > 0 ? k.no : 0), 0) };
+    } else {
+      // Gõ đúng mã khách sàn (KHSPE…) thì không lọc theo loại, để tìm ra ngay
+      const loc = khLoai === 'all' || khLaSan(khTuKhoa) ? null : khLoai;
+      const r = await goiKhachKV('kh-tim', { tuKhoa: khTuKhoa || (loc === 'ch' ? 'KH0' : ''), trang });
+      const ds = (r.ds || []).filter(k => !loc || (loc === 'san') === khLaSan(k.ma));
+      const anDi = (r.ds || []).length - ds.length;
+      khKetQua = { ...r, ds, daLoc: !!loc && (khTuKhoa || loc === 'san') && anDi > 0, anDi: khTuKhoa ? anDi : 0 };
+    }
   } catch(e) {
     khKetQua = { ds: [], tong: 0, trang: 0, loi: e.message };
   }
   veManHinhKhachHang(false);
 }
+window.khDoiLoc = function(loai, chiNo) {
+  if (loai) khLoai = loai;
+  if (chiNo !== undefined) khChiNo = !!chiNo;
+  if (khLoai === 'san') khChiNo = false;   // khách sàn không có nợ thật
+  veManHinhKhachHang(true);
+  khTai(0);
+};
 
 function veManHinhKhachHang(dangTai) {
   const el = document.getElementById('khachhang-content');
   if (!el) return;
   const { ds, tong, trang, loi } = khKetQua;
   const soTrang = Math.max(1, Math.ceil((tong || 0) / 20));
+  const chip = (nhan, bat, bam) => `<button class="btn-xs" onclick="${bam}" style="padding:6px 12px;border-radius:16px;${bat ? 'background:#2563EB;color:#fff;border-color:#2563EB' : ''}">${nhan}</button>`;
+  const moTa = dangTai ? 'Đang tải...' : loi ? ''
+    : khChiNo ? `${tong} khách cửa hàng có công nợ${khKetQua.tongNo ? ` · khách nợ tổng <b style="color:#DC2626">${fmt(khKetQua.tongNo)}đ</b>` : ''}${khTuKhoa ? ` khớp "${escHtml(khTuKhoa)}"` : ''}`
+    : khTuKhoa ? `${khKetQua.daLoc ? `${ds.length} khách ${khLoai === 'san' ? 'sàn' : 'cửa hàng'} trong trang này` : `${tong} khách`} khớp "${escHtml(khTuKhoa)}"${khKetQua.anDi ? ` · ẩn ${khKetQua.anDi} khách ${khLoai === 'san' ? 'cửa hàng' : 'sàn'} (bấm Tất cả để xem)` : ''}`
+    : khLoai === 'ch' ? `Khách cửa hàng mới nhất · tổng ${tong} khách`
+    : khLoai === 'san' ? 'Khách sàn mới nhất' : `Khách mới nhất · tổng ${tong} khách`;
   el.innerHTML = `
-    <div style="display:flex;gap:6px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;margin-bottom:8px">
       <input id="kh-tim" type="search" placeholder="🔍 SĐT, tên hoặc mã khách (KH...)" value="${escHtml(khTuKhoa)}"
         onkeydown="if(event.key==='Enter')khTimKhach(this.value)" style="flex:1;min-width:0">
       <button class="btn-xs" style="padding:0 14px" onclick="khTimKhach(document.getElementById('kh-tim').value)">Tìm</button>
       ${khTuKhoa ? `<button class="btn-xs" style="padding:0 12px" onclick="khTimKhach('')">✕</button>` : ''}
     </div>
-    ${coQuyen('kh_sua') ? `<button class="btn-g" style="width:100%;margin-bottom:10px" onclick="khMoForm()">+ Thêm khách hàng</button>` : ''}
-    <div style="font-size:12px;color:var(--text2);margin-bottom:6px">
-      ${dangTai ? 'Đang tải...' : loi ? '' : khTuKhoa ? `${tong} khách khớp "${escHtml(khTuKhoa)}"` : `Khách mới nhất · tổng ${tong} khách`}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      ${chip('Khách cửa hàng', khLoai === 'ch' && !khChiNo, "khDoiLoc('ch',false)")}
+      ${chip('Khách sàn', khLoai === 'san', "khDoiLoc('san',false)")}
+      ${chip('Tất cả', khLoai === 'all' && !khChiNo, "khDoiLoc('all',false)")}
+      ${chip('Có công nợ', khChiNo, `khDoiLoc('ch',${!khChiNo})`)}
+      ${khChiNo && !dangTai ? `<button class="btn-xs" style="padding:6px 10px" onclick="veManHinhKhachHang(true);khTai('moi')" title="Quét lại công nợ">↻</button>` : ''}
     </div>
+    ${coQuyen('kh_sua') ? `<button class="btn-g" style="width:100%;margin-bottom:10px" onclick="khMoForm()">+ Thêm khách hàng</button>` : ''}
+    <div style="font-size:12px;color:var(--text2);margin-bottom:6px">${moTa}</div>
     ${loi ? `<p class="info-note" style="color:#DC2626">Không tải được khách hàng: ${escHtml(loi)}</p>` : ''}
-    ${dangTai ? '<div class="loading">Đang tải...</div>' : !ds.length && !loi ? '<p class="info-note">Không có khách nào.</p>' : ds.map(k => `
+    ${dangTai ? `<div class="loading">${khChiNo ? 'Đang dò công nợ khách cửa hàng (vài giây)...' : 'Đang tải...'}</div>` : !ds.length && !loi ? `<p class="info-note">${khChiNo ? 'Không có khách cửa hàng nào đang có công nợ.' : 'Không có khách nào.'}</p>` : ds.map(k => `
       <div onclick="khXemChiTiet(${k.id})" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;gap:8px">
         <div style="min-width:0">
           <div style="font-weight:600;font-size:14px">${escHtml(k.ten)}</div>
@@ -11122,7 +11168,7 @@ function veManHinhKhachHang(dangTai) {
         </div>
         <div style="text-align:right;flex-shrink:0;font-size:12px">
           <div style="font-weight:600">${fmt(k.tongMua)}đ</div>
-          ${khLaSan(k.ma) ? `<div style="color:var(--text2)">khách ${khTenSan(k.ma)}</div>` : k.no ? `<div style="color:#DC2626">nợ ${fmt(k.no)}đ</div>` : ''}
+          ${khLaSan(k.ma) ? `<div style="color:var(--text2)">khách ${khTenSan(k.ma)}</div>` : k.no > 0 ? `<div style="color:#DC2626">nợ ${fmt(k.no)}đ</div>` : k.no < 0 ? `<div style="color:#2563EB">shop nợ khách ${fmt(-k.no)}đ</div>` : ''}
         </div>
       </div>`).join('')}
     ${!dangTai && soTrang > 1 ? `
@@ -11132,6 +11178,7 @@ function veManHinhKhachHang(dangTai) {
         <button class="btn-xs" ${trang + 1 >= soTrang ? 'disabled' : ''} onclick="khTai(${trang + 1})">Sau ›</button>
       </div>` : ''}`;
 }
+window.veManHinhKhachHang = veManHinhKhachHang;
 window.khTai = khTai;
 window.khTimKhach = function(v) { renderKhachHang(String(v || '').trim()); };
 window.khMoVoiTuKhoa = function(v) { khTuKhoa = String(v || '').trim(); switchModule('khachhang'); };
@@ -31069,7 +31116,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v829</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v830</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31127,7 +31174,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v829</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v830</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31177,7 +31224,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v829</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v830</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31194,7 +31241,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v829</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v830</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
