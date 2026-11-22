@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 838;
+  const APP_VERSION = 839;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -13920,6 +13920,7 @@ function kmTinh(dsKM, dong, nhomCua, bayGio, boQua) {
 
 // Chương trình khuyến mãi đang lưu ở cau_hinh/khuyen_mai (Admin sửa ở Cửa hàng › Khuyến mãi)
 let dsKhuyenMai = [];
+let kmDaNap = false;
 function kmNhomCua(ma) { const s = allSKUs.find(x => x.sku === ma); return s ? [s.nhom1, s.nhom2, s.nhom3].filter(Boolean) : []; }
 // KM của phiếu bán: số lượng trong giỏ là số khách TRẢ TIỀN, hàng tặng app tự cộng thêm
 function bhTinhKM(p) {
@@ -13947,7 +13948,48 @@ let bhPhieuDangMo = null;    // id phiếu đang mở
 
 function bhKhoaLuu() { return `ban_hang_phieu_${currentUser?.uid || 'chung'}`; }
 
+// Giỏ đổi sau khi đã tạo QR -> hủy ngay hóa đơn tạm và mã QR cũ, khách không quét nhầm mã cũ
+let bhDangHuyQR = new Set();
+async function bhTraTienHD(ma) {
+  try {
+    const idToken = await currentUser.getIdToken();
+    return await (await fetch(WORKER_URL, { method: 'POST',
+      headers: { 'x-action': 'tra-hoa-don-da-tra', 'Authorization': `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maHoaDon: ma }) })).json();
+  } catch(e) { return null; }
+}
+function bhKiemQRLech() {
+  if (!kmDaNap || !allSKUs.length) return;   // chưa nạp đủ khuyến mãi / hàng hóa thì dấu vân tay giỏ chưa đúng
+  for (const p of bhPhieu) {
+    if (!p.maHoaDonKV || !p.vanTayLucTaoQR || p.daBaoTraDu || bhDangHuyQR.has(p.id)) continue;
+    if (bhVanTayGio(p) === p.vanTayLucTaoQR) { if (p.qrLechDaTra) delete p.qrLechDaTra; continue; }
+    if (p.qrLechDaTra) continue;
+    bhDangHuyQR.add(p.id);
+    (async () => {
+      try {
+        const ma = p.maHoaDonKV;
+        const d = await bhTraTienHD(ma);
+        if (p.maHoaDonKV !== ma) return;
+        if (!d?.success) { showToast('Chưa kiểm tra được mã QR cũ — sửa tiếp sẽ thử lại', true); return; }
+        if ((Number(d.daTra) || 0) > 0) {
+          p.qrLechDaTra = true; bhLuu();
+          alert(`${p.ten}: khách đã chuyển ${fmt(d.daTra)}đ theo mã QR cũ (${fmt(d.tongTien)}đ).\n\nĐưa giỏ về như lúc tạo mã để hoàn tất, hoặc báo quản lý xử lý.`);
+          return;
+        }
+        if (bhVanTayGio(p) === p.vanTayLucTaoQR) return;   // đã sửa về như cũ
+        p.maHoaDonKV = null; p.anhQRDaTao = null; p.vanTayLucTaoQR = null; delete p.tienMatDaChot;
+        bhLuu();
+        bhHuyHoaDonCu(ma);
+        showToast(`${p.ten}: giỏ đã đổi — đã hủy mã QR cũ. Bấm Thanh toán để tạo mã mới`, false, 6000);
+        if (document.getElementById('bh-nut-xong')) veDayDuoi();
+        veTabPhieu();
+      } finally { bhDangHuyQR.delete(p.id); }
+    })();
+  }
+}
+
 function bhLuu() {
+  try { bhKiemQRLech(); } catch(e) { console.warn('[QR lệch]', e); }
   try {
     const conDung = bhPhieu.filter(p => p.gio.length);
     if (!conDung.length) { localStorage.removeItem(bhKhoaLuu()); return; }
@@ -15516,6 +15558,13 @@ async function bhHoanThanhThat(daTraQuaQR, idPhieu) {
     // mang số lượng cũ — phải hủy và tạo lại, nếu không sai cả tiền lẫn tồn kho.
     const vanTayHienTai = bhVanTayGio(p);
     if (p.maHoaDonKV && p.vanTayLucTaoQR && p.vanTayLucTaoQR !== vanTayHienTai) {
+      // Không bao giờ hủy hóa đơn khách đã trả tiền
+      const dTra = await bhTraTienHD(p.maHoaDonKV);
+      if (!dTra?.success) { baoLoi('Chưa kiểm tra được tiền của mã QR cũ — thử lại sau.'); return; }
+      if ((Number(dTra.daTra) || 0) > 0) {
+        baoLoi(`Khách đã chuyển ${fmt(dTra.daTra)}đ theo mã QR cũ nhưng giỏ hàng đã bị sửa sau đó.\n\nĐưa giỏ về như lúc tạo mã, hoặc báo quản lý xử lý.`);
+        return;
+      }
       await bhHuyHoaDonCu(p.maHoaDonKV);
       p.maHoaDonKV = null;
       p.anhQRDaTao = null;
@@ -21404,6 +21453,7 @@ function theoDoiTinhNang() {
   }, () => {});
   onSnapshot(doc(db, 'cau_hinh', 'khuyen_mai'), (snap) => {
     dsKhuyenMai = snap.exists() && Array.isArray(snap.data().ds) ? snap.data().ds : [];
+    kmDaNap = true;
     if (activeModule === 'banhang' && document.getElementById('bh-gio')) { veGioHang(); veDayDuoi(); }
     if (activeModule === 'khuyenmai') renderKhuyenMai();
   }, () => {});
@@ -31330,7 +31380,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v838</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v839</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31388,7 +31438,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v838</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v839</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31438,7 +31488,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v838</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v839</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31455,7 +31505,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v838</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v839</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
