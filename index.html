@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 843;
+  const APP_VERSION = 844;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9430,8 +9430,9 @@ function g1688TinhDong(d, h) {
   let kg = 0, m3 = 0, thieu = !sp;
   if (sp) {
     const kt = sp.kichThuoc || {}, cm3 = kt.dai && kt.rong && kt.cao ? kt.dai * kt.rong * kt.cao : 0;
-    const kgThuc = (Number(sp.canNang) || 0) / 1000, kgQD = cm3 && Number(h?.heSo) > 0 ? cm3 / Number(h.heSo) : 0;
-    kg = Math.max(kgThuc, kgQD) * sl; m3 = cm3 / 1e6 * sl; thieu = !kgThuc && !cm3;
+    const chiCanThuc = h?.cachCan === 'thuc';
+    const kgThuc = (Number(sp.canNang) || 0) / 1000, kgQD = !chiCanThuc && cm3 && Number(h?.heSo) > 0 ? cm3 / Number(h.heSo) : 0;
+    kg = Math.max(kgThuc, kgQD) * sl; m3 = cm3 / 1e6 * sl; thieu = chiCanThuc ? !kgThuc : (!kgThuc && !cm3);
   }
   const cuoc = Math.max(kg * (Number(h?.cuocKg) || 0), m3 * (Number(h?.cuocKhoi) || 0));
   const tong = tienHang + phiMua + kiem + cuoc;
@@ -9457,6 +9458,7 @@ function g1688Ve() {
         <button class="bh-chon-tt" style="flex:1;min-width:200px;font-weight:600" onclick="g1688ChonHvc()">🚚 ${h ? escHtml(h.ten) : 'Chọn hãng vận chuyển'}</button>
         ${ds.length ? `<button class="btn-xs" onclick="g1688ChonTatCa()">${chonDs.length === ds.length ? 'Bỏ chọn hết' : 'Chọn tất cả'}</button>` : ''}
       </div>
+      ${h ? hvcDongTyGia(h) : ''}
       ${!hvcDs.length ? '<p class="info-note">Chưa có hãng vận chuyển — thêm ở tab <b>Hãng vận chuyển</b> để ước tính giá về kho.</p>' : ''}
       ${!ds.length ? '<p class="info-note" style="text-align:center;padding:24px 0">Giỏ trống.<br>Trên trang sản phẩm 1688, nhập số lượng các phân loại rồi bấm <b>🛒 Thêm vào giỏ CUA</b> ở khung CUA Aquarium.</p>' : ''}
       ${[...nhom.entries()].map(([shop, dong]) => `
@@ -9598,11 +9600,11 @@ function hvcVe() {
   if (!laAdminGio()) { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
   el.innerHTML = `<div style="max-width:640px;margin:0 auto">
     <p class="info-note">Giá từng hãng dùng để ước tính giá về kho ở Giỏ 1688: (giá ¥ + ship nội địa) × tỷ giá, cộng phí mua %, phí kiểm đếm và cước.
-      Cước = kg tính cước × đ/kg, với kg tính cước = max(cân nặng thật, thể tích ÷ hệ số quy đổi); hãng có giá theo khối thì lấy mức cao hơn.
+      Cước = kg tính cước × đ/kg. Mỗi hãng chọn cách tính cân: chỉ cân thực, hoặc so cân thực với cân quy đổi (thể tích ÷ hệ số) lấy số lớn hơn; hãng có giá theo khối thì lấy mức cao hơn.
       Cân nặng, kích thước lấy từ thông tin Hàng hóa.</p>
     ${hvcDs.map(h => `<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;display:flex;gap:8px;align-items:center">
       <div style="flex:1;min-width:0"><b>${escHtml(h.ten)}</b>${h.macDinh ? ' <span style="font-size:11px;background:#DCFCE7;color:#15803D;padding:1px 6px;border-radius:4px">Mặc định</span>' : ''}
-        <div style="font-size:12px;color:var(--text2)">Tỷ giá ${fmt(h.tyGia)}đ/¥ · phí mua ${h.phiMua || 0}% · ${fmt(h.cuocKg)}đ/kg${Number(h.heSo) ? ` · quy đổi ÷${h.heSo}` : ''}${Number(h.cuocKhoi) ? ` · ${fmt(h.cuocKhoi)}đ/m³` : ''}${Number(h.phiKiemDem) ? ` · kiểm đếm ${fmt(h.phiKiemDem)}đ/sp` : ''}</div>
+        <div style="font-size:12px;color:var(--text2)">Tỷ giá ${fmt(h.tyGia)}đ/¥${h.tyGiaLuc?.toDate ? ' (' + h.tyGiaLuc.toDate().toLocaleDateString('vi-VN') + ')' : ''} · phí mua ${h.phiMua || 0}% · ${fmt(h.cuocKg)}đ/kg · ${h.cachCan === 'thuc' ? 'chỉ cân thực' : 'cân thực / quy đổi ÷' + (h.heSo || 0) + ', lấy số lớn'}${Number(h.cuocKhoi) ? ` · ${fmt(h.cuocKhoi)}đ/m³` : ''}${Number(h.phiKiemDem) ? ` · kiểm đếm ${fmt(h.phiKiemDem)}đ/sp` : ''}</div>
         ${h.ghiChu ? `<div style="font-size:12px;color:var(--text2)">${escHtml(h.ghiChu)}</div>` : ''}</div>
       <button class="btn-xs" onclick="hvcMo('${h.id}')">Sửa</button></div>`).join('') || '<p class="info-note" style="text-align:center">Chưa có hãng nào.</p>'}
     <button class="btn-g" style="background:#2563EB" onclick="hvcMo()">+ Thêm hãng vận chuyển</button></div>`;
@@ -9615,7 +9617,10 @@ window.hvcMo = (id) => {
     ${o('tyGia', 'Tỷ giá', '(đ/¥)')}
     ${o('phiMua', 'Phí mua hàng', '(% trên tiền hàng + ship nội địa)')}
     ${o('cuocKg', 'Cước cân nặng', '(đ/kg)')}
-    ${o('heSo', 'Hệ số quy đổi thể tích', '(cm³ ra 1 kg, thường 6000; 0 = không quy đổi)')}
+    <div class="field"><label>Cách tính cân</label><select id="hvc-cachCan" style="width:100%;padding:8px;font-size:14px">
+      <option value="max" ${h.cachCan !== 'thuc' ? 'selected' : ''}>So cân thực với cân quy đổi, lấy số lớn hơn</option>
+      <option value="thuc" ${h.cachCan === 'thuc' ? 'selected' : ''}>Chỉ tính cân thực</option></select></div>
+    ${o('heSo', 'Hệ số quy đổi thể tích', '(cm³ ra 1 kg, thường 6000 — chỉ dùng khi so với cân quy đổi)')}
     ${o('cuocKhoi', 'Cước theo khối', '(đ/m³; 0 = không tính)')}
     ${o('phiKiemDem', 'Phí kiểm đếm', '(đ/sản phẩm; 0 = không)')}
     <div class="field"><label>Ghi chú</label><input id="hvc-ghiChu" maxlength="200" value="${escHtml(h.ghiChu || '')}"></div>
@@ -9629,7 +9634,10 @@ window.hvcLuu = async (id) => {
   const v = (k) => String(document.getElementById('hvc-' + k)?.value || '').trim();
   const so = (k) => Math.max(0, parseFloat(v(k).replace(/\s/g, '').replace(',', '.')) || 0);
   const du = { ten: v('ten'), tyGia: so('tyGia'), phiMua: so('phiMua'), cuocKg: so('cuocKg'), heSo: so('heSo'), cuocKhoi: so('cuocKhoi'), phiKiemDem: so('phiKiemDem'),
-    ghiChu: v('ghiChu'), macDinh: !!document.getElementById('hvc-macDinh')?.checked, deleted: false, suaLuc: serverTimestamp() };
+    ghiChu: v('ghiChu'), macDinh: !!document.getElementById('hvc-macDinh')?.checked, deleted: false, suaLuc: serverTimestamp(),
+    cachCan: document.getElementById('hvc-cachCan')?.value === 'thuc' ? 'thuc' : 'max' };
+  const cu = hvcDs.find(x => x.id === id);
+  if (!cu || Number(cu.tyGia) !== du.tyGia) du.tyGiaLuc = serverTimestamp();
   if (!du.ten) { showToast('Nhập tên hãng', true); return; }
   if (!du.tyGia) { showToast('Nhập tỷ giá', true); return; }
   try {
@@ -9639,6 +9647,27 @@ window.hvcLuu = async (id) => {
     document.getElementById('hvc-modal').style.display = 'none';
     showToast('Đã lưu hãng vận chuyển');
   } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+function hvcDongTyGia(h) {
+  const luc = h.tyGiaLuc?.toDate ? h.tyGiaLuc.toDate() : null, cu = !luc || Date.now() - luc.getTime() > 3 * 86400000;
+  return `<div style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin:-2px 0 8px;color:${cu ? '#B45309' : 'var(--text2)'}">
+    <span style="flex:1">Tỷ giá <b style="color:var(--text)">${fmt(h.tyGia)}đ/¥</b> · ${luc ? 'cập nhật ' + luc.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'chưa rõ ngày cập nhật'}${cu ? ' — kiểm lại tỷ giá' : ''} · ${h.cachCan === 'thuc' ? 'chỉ cân thực' : 'cân thực / quy đổi ÷' + (h.heSo || 0)}</span>
+    <button class="btn-xs" onclick="hvcSuaTyGia('${h.id}')">Sửa tỷ giá</button></div>`;
+}
+window.hvcSuaTyGia = (id) => {
+  const h = hvcDs.find(x => x.id === id); if (!h) return;
+  ddbMoKhung('hvc-ty-gia', 'Tỷ giá ' + escHtml(h.ten), 'Đổi tỷ giá thì giỏ tính lại ngay; đơn đã lưu giữ nguyên giá lúc tạo.',
+    `<div class="field"><label>Tỷ giá (đ/¥)</label><input id="hvc-tg-moi" inputmode="decimal" value="${h.tyGia || ''}" style="font-size:18px;font-weight:700"></div>`,
+    `<button class="btn-outline" style="flex:1" onclick="document.getElementById('hvc-ty-gia').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0;background:#2563EB" onclick="hvcLuuTyGia('${id}')">Lưu</button>`);
+  ddbCanhGiua('hvc-ty-gia');
+  setTimeout(() => { const o = document.getElementById('hvc-tg-moi'); if (o) { o.focus(); o.select(); } }, 50);
+};
+window.hvcLuuTyGia = async (id) => {
+  const v = parseFloat(String(document.getElementById('hvc-tg-moi')?.value || '').replace(/\s/g, '').replace(',', '.')) || 0;
+  if (!v) { showToast('Nhập tỷ giá', true); return; }
+  try { await updateDoc(doc(db, 'hang_van_chuyen', id), { tyGia: v, tyGiaLuc: serverTimestamp() }); document.getElementById('hvc-ty-gia').style.display = 'none'; showToast('Đã cập nhật tỷ giá'); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
 };
 window.hvcXoa = async (id) => {
   if (!await hoiXacNhan('Xóa hãng vận chuyển này?')) return;
@@ -31724,7 +31753,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v843</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v844</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31782,7 +31811,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v843</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v844</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31832,7 +31861,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v843</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v844</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31849,7 +31878,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v843</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v844</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
