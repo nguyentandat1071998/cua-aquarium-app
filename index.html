@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 840;
+  const APP_VERSION = 841;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -270,7 +270,7 @@ import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, 
 // ===== LỊCH SỬ THAO TÁC: tự ghi mọi thay đổi dữ liệu + thao tác qua máy chủ =====
 // Mọi lệnh ghi Firestore đi qua các hàm bọc dưới đây; các thay đổi xảy ra liền nhau
 // (trong ~2 giây) của cùng một thao tác được gộp thành MỘT dòng lịch sử.
-const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong', 'gio_tem']);
+const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong', 'gio_tem', 'dang_nhap']);
 const NK_COL = {
   skus: ['Hàng hóa', 'Kho'], ton_san: ['Tồn Kho Online', 'Kho'], gia_von: ['Giá vốn', 'Kho'], nhom_hang: ['Nhóm hàng', 'Kho'],
   phieu_chuyenkho: ['Phiếu chuyển kho', 'Kho'], phieu_huy: ['Phiếu xuất hủy', 'Kho'], phieu_nhap_san: ['Phiếu nhập kho', 'Kho'], moc_hang_hong: ['Mốc hàng hỏng', 'Kho'],
@@ -426,6 +426,58 @@ const secondaryAuth = getAuth(secondaryApp);
 
 // ===== CONFIG =====
 const WORKER_URL = 'https://cua-video-upload.nguyentandat1071998.workers.dev';
+
+// Chống bấm 2 lần: nút Lưu / Gửi / Tạo / Xác nhận… vừa bấm là tô xám 1,5 giây, bấm thêm trong lúc đó bị bỏ qua
+(function chongBamHaiLan() {
+  try {
+    const st = document.createElement('style');
+    st.textContent = '.dang-bam{opacity:.5!important;filter:grayscale(.5);pointer-events:none!important}';
+    document.head.appendChild(st);
+  } catch(e) {}
+  const LA_NUT_LUU = /(^|[\s✓💵💰📤➕])(Lưu|Gửi|Tạo|Xác nhận|Duyệt|Từ chối|Hoàn thành|Hoàn tất|Thanh toán|Bán ghi nợ|Nhập|Kết ca|Giao|Trả hàng|Thu nợ|Đồng ý|Chi |Chuyển|Hủy phiếu|Xóa phiếu|Gộp)/i;
+  document.addEventListener('click', (e) => {
+    const b = e.target?.closest?.('button');
+    if (!b || b.disabled || b.dataset.choBamLai === '1') return;
+    const chu = (b.textContent || '').trim();
+    if (chu.length < 3 || !LA_NUT_LUU.test(chu)) return;
+    const bay = Date.now();
+    if (bay - (Number(b.dataset.bamLuc) || 0) < 1500) { e.stopImmediatePropagation(); e.preventDefault(); return; }
+    b.dataset.bamLuc = String(bay);
+    b.classList.add('dang-bam');
+    setTimeout(() => b.classList.remove('dang-bam'), 1500);
+  }, true);
+})();
+
+// Phiếu tạo bên kia (hủy, chuyển kho, nhập kho, dùng nội bộ): gửi kèm mã yêu cầu = dấu vân tay nội dung.
+// Lần bấm trước đã tới máy chủ (dù app không nhận được trả lời) thì máy chủ trả lại kết quả cũ, không tạo phiếu thứ hai.
+(function maYeuCauMotLan() {
+  const MOT_LAN = new Set(['tao-phieu-huy', 'tao-phieu-chuyen', 'tao-phieu-nhap-san', 'tao-phieu-dung-nb']);
+  const fetchGoc = window.fetch.bind(window);
+  window.fetch = async function(url, opt) {
+    try {
+      if (String(url).startsWith(WORKER_URL) && opt?.headers && typeof opt.body === 'string') {
+        const h = new Headers(opt.headers);
+        const act = h.get('x-action');
+        if (MOT_LAN.has(act) && !h.get('x-ma-yeu-cau')) {
+          const so = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(act + '|' + opt.body)));
+          h.set('x-ma-yeu-cau', Array.from(so.slice(0, 16), x => x.toString(16).padStart(2, '0')).join(''));
+          opt = { ...opt, headers: h };
+        }
+      }
+    } catch(e) {}
+    return fetchGoc(url, opt);
+  };
+})();
+
+// Thiết bị đang dùng app: mã riêng lưu trên máy + đời máy (nếu trình duyệt cho biết)
+function thongTinThietBi() {
+  let id = '';
+  try { id = localStorage.getItem('cua_tb_id') || ''; if (!id) { id = 'T' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('cua_tb_id', id); } } catch(e) { id = 'khong_luu_duoc'; }
+  const ua = navigator.userAgent || '';
+  const m = ua.match(/Android [\d.]+; ([^;)]+?)(?: Build|\))/);
+  const may = m && m[1].trim() !== 'K' ? m[1].trim() : /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : 'Khác';
+  return { id, may, ua: ua.slice(0, 200) };
+}
 
 // Chi nhánh ghi hóa đơn bán lẻ. Tạm dùng Sàn TMĐT để test, xong đổi về
 // Chi nhánh trung tâm (634586).
@@ -1049,7 +1101,7 @@ function suyCaTuGioVao(caDuoc, phutHienTai) {
 async function luuAnhChamCong(shiftId, truong, photoData) {
   try {
     await setDoc(doc(db, 'anh_cham_cong', shiftId), { uid: currentUser.uid, ngay: String(shiftId).split('_')[0], ten: currentUserData?.ten || '',
-      [truong]: photoData, [truong + 'Luc']: serverTimestamp() }, { merge: true });
+      [truong]: photoData, [truong + 'Luc']: serverTimestamp(), ['tb' + truong[0].toUpperCase() + truong.slice(1)]: thongTinThietBi() }, { merge: true });
   } catch(e) { console.warn('[ảnh chấm công] không lưu được:', e.message); }
 }
 let phutTreLanVao = 0;   // số phút trễ của lần quét vào vừa rồi — để báo "Vào ca · trễ …p"
@@ -21445,9 +21497,18 @@ let unsubscribeVaiTroDoc = null;
 let dangTheoDoiTinhNang = false;
 const KHOA_TMDT = ['tmdt_donhang', 'tmdt_hoantra', 'tmdt_hoantra_duyet', 'tmdt_sanpham', 'tmdt_daytonkho', 'quetdonggoi', 'tmdt_hoantat_donggoi', 'tmdt_video', 'kn_quay', 'kn_donggoi', 'kn_link', 'hh_ke', 'tmdt_xuly_huy', 'tmdt_doisoat', 'hh_kho_san'];
 
+async function ghiDangNhapThietBi() {
+  try {
+    if (!currentUser) return;
+    const tb = thongTinThietBi();
+    await setDoc(doc(db, 'dang_nhap', currentUser.uid + '_' + tb.id), { uid: currentUser.uid, ten: currentUserData?.ten || '',
+      tbId: tb.id, may: tb.may, ua: tb.ua, lanCuoi: serverTimestamp(), soLan: increment(1) }, { merge: true });
+  } catch(e) { console.warn('[đăng nhập]', e.message); }
+}
 function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
   dangTheoDoiTinhNang = true;
+  setTimeout(() => ghiDangNhapThietBi(), 3000);
   setTimeout(() => bhKhoiDongNen(), 8000);
   onSnapshot(doc(db, 'cau_hinh', 'chi_nhanh'), (snap) => {
     cauHinhChiNhanh = snap.exists() ? snap.data() : null;
@@ -23758,7 +23819,9 @@ window.setXuatQty = function(i,v) {
 
 function renderXuatItems() { veXuatHuyTao(); }
 
+let xhDangLuu = false;
 window.submitXuat = async function() {
+  if (xhDangLuu) return;
   if (!currentPhieu.items.length) { showToast('Chụp ảnh và chọn hàng cần hủy trước', true); return; }
   if (xhAnhCho.length) { showToast('Còn ảnh chưa chọn hàng — chọn hàng hoặc xóa ảnh đó', true); return; }
   const thieuAnh = currentPhieu.items.filter(i => !xhAnhCua(i.skuId).length);
@@ -23772,6 +23835,7 @@ window.submitXuat = async function() {
     : `Lưu phiếu xuất hủy ở ${kh.ten}?`, { nutDongY: canDuyet.length ? 'Gửi chờ duyệt' : 'Lưu phiếu', nguy: true })) return;
   const btn = document.getElementById('btn-xuat-submit');
   btn.disabled = true; btn.textContent = 'Đang lưu...';
+  xhDangLuu = true;
   try {
     // Máy chủ kiểm quyền (kho + danh mục), tạo phiếu xuất hủy bên KiotViet (trừ kho bên đó),
     // rồi ghi phiếu + trừ tồn trong app. Lỗi ở bước nào thì không bước nào được ghi.
@@ -23787,6 +23851,7 @@ window.submitXuat = async function() {
     const kq = await res.json().catch(() => ({}));
     if (!kq.success) {
       alert('Chưa lưu được phiếu xuất hủy:\n\n' + (kq.error || `Lỗi ${res.status}`));
+      xhDangLuu = false;
       btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
       return;
     }
@@ -23796,6 +23861,7 @@ window.submitXuat = async function() {
     showToast(kq.choDuyet ? 'Đã gửi phiếu — đã tạm trừ kho, chờ duyệt' : 'Tạo phiếu thành công');
     if (kq.choDuyet) loadSKUs();
   } catch(e) { showToast('Lỗi: ' + e.message, true); }
+  xhDangLuu = false;
   btn.disabled = false; btn.textContent = 'Lưu phiếu xuất hủy';
   veXuatHuyTao();
 };
@@ -31381,7 +31447,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v840</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v841</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31439,7 +31505,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v840</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v841</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31489,7 +31555,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v840</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v841</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31506,7 +31572,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v840</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v841</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
