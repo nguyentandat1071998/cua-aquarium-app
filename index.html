@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 844;
+  const APP_VERSION = 845;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9390,14 +9390,16 @@ Mở đơn → Thanh toán để ghi lại.`);
 // Cước = kg tính cước × đ/kg (kg tính cước = max(cân nặng thật, thể tích ÷ hệ số quy đổi)); có giá theo khối thì lấy mức cao hơn.
 // ==========================================================================
 const laAdminGio = () => currentUserData?.role === 'admin';
-let g1688Ds = [], g1688Nghe = null, hvcDs = [], hvcNghe = null, g1688Hvc = null, g1688Chon = new Set(), g1688DangGan = null, g1688Tim = '';
+let g1688Ds = [], g1688Nghe = null, hvcDs = [], hvcNghe = null, g1688Hvc = null, g1688Chon = new Set(), g1688DangGan = null, g1688Tim = '', g1688Phieu = {}, g1688CanVe = false;
 const fmtTe = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('vi-VN');
 
 function g1688BatNghe() {
   if (!laAdminGio()) return;
   ngheSp1688();
   if (!g1688Nghe) g1688Nghe = onSnapshot(collection(db, 'gio_1688'), (s) => {
-    g1688Ds = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.themLuc || '').localeCompare(String(a.themLuc || '')));
+    const tatCa = s.docs.map(d => ({ id: d.id, ...d.data() }));
+    g1688Phieu = tatCa.find(d => d.id === '_phieu') || {};   // ô nhập tay của phiếu, không phải dòng hàng
+    g1688Ds = tatCa.filter(d => d.id !== '_phieu').sort((a, b) => String(b.themLuc || '').localeCompare(String(a.themLuc || '')));
     veNutGio1688();
     if (activeModule === 'dathang' && activeSubTab === 'gio1688') g1688Ve();
   }, (e) => console.warn('[giỏ 1688]', e.message));
@@ -9422,36 +9424,75 @@ function g1688MaGan(d) {
   return ra;
 }
 const g1688Hang = (id) => hvcDs.find(h => h.id === id) || null;
-function g1688TinhDong(d, h) {
-  const sl = Number(d.sl) || 0, sp = g1688MaGan(d)[0] || null, ty = Number(h?.tyGia) || 0;
-  const tienHang = ((Number(d.giaTe) || 0) + (Number(d.shipTe) || 0)) * sl * ty;
-  const phiMua = tienHang * (Number(h?.phiMua) || 0) / 100;
-  const kiem = (Number(h?.phiKiemDem) || 0) * sl;
-  let kg = 0, m3 = 0, thieu = !sp;
-  if (sp) {
-    const kt = sp.kichThuoc || {}, cm3 = kt.dai && kt.rong && kt.cao ? kt.dai * kt.rong * kt.cao : 0;
-    const chiCanThuc = h?.cachCan === 'thuc';
-    const kgThuc = (Number(sp.canNang) || 0) / 1000, kgQD = !chiCanThuc && cm3 && Number(h?.heSo) > 0 ? cm3 / Number(h.heSo) : 0;
-    kg = Math.max(kgThuc, kgQD) * sl; m3 = cm3 / 1e6 * sl; thieu = chiCanThuc ? !kgThuc : (!kgThuc && !cm3);
+// ---- Phiếu 1688: các dòng đã tick (được nhiều shop / nhiều đơn 1688) gộp thành một phiếu, trả vận chuyển một lần ----
+// Giá = giá niêm yết từng phân loại. Giảm giá 1688 + ship nội địa là của cả đơn -> nhập ở phiếu.
+// Ship nội địa và cước chia theo cân nặng tính cước; giảm giá và phí bên vận chuyển chia theo tiền hàng.
+// Ô của phiếu lưu ở gio_1688/_phieu (null = tự tính).
+const g1688GiaTe = (d) => Number(d.giaNiemYet) || Number(d.giaTe) || 0;
+function g1688LinkCua(sp, d) {
+  return sp ? ((sp1688.get(sp.id) || {}).links || []).find(l => String(l.offerId) === String(d.offerId) && (l.phanLoai || '') === (d.phanLoai || '')) || null : null;
+}
+function g1688CanDong(d, h) {
+  const sl = Number(d.sl) || 0, sp = g1688MaGan(d)[0] || null, link = g1688LinkCua(sp, d);
+  const g = Number(d.canNang) || Number(sp?.canNang) || Number(link?.canNang) || 0;   // gram / cái
+  const nguon = Number(d.canNang) ? 'gio' : Number(sp?.canNang) ? 'sp' : Number(link?.canNang) ? 'lan_truoc' : '';
+  const kt = sp?.kichThuoc || {}, cm3 = kt.dai && kt.rong && kt.cao ? kt.dai * kt.rong * kt.cao : 0;
+  const kgThuc = g / 1000 * sl;
+  const kgQD = h?.cachCan !== 'thuc' && cm3 && Number(h?.heSo) > 0 ? cm3 / Number(h.heSo) * sl : 0;
+  return { sp, sl, g, nguon, kgThuc, kgTinh: Math.max(kgThuc, kgQD), m3: cm3 / 1e6 * sl, tienTe: g1688GiaTe(d) * sl };
+}
+// 1688 báo ship / giảm giá cho cả đơn lúc thêm vào giỏ -> chia theo số lượng nếu chỉ tick một phần đơn đó
+function g1688GoiY1688(dong) {
+  const theoDon = new Map();
+  for (const x of dong) { const k = String(x.d.offerId); if (!theoDon.has(k)) theoDon.set(k, []); theoDon.get(k).push(x); }
+  let ship = 0, giam = 0;
+  for (const ds of theoDon.values()) {
+    const moi = ds.reduce((a, x) => String(x.d.themLuc || '') > String(a.d.themLuc || '') ? x : a, ds[0]).d;
+    const slChon = ds.reduce((a, x) => a + x.sl, 0), slDon = Number(moi.slDon) || 0;
+    const tiLe = slDon > 0 ? Math.min(1, slChon / slDon) : 1;
+    if (moi.shipDon != null) ship += (Number(moi.shipDon) || 0) * tiLe;
+    else ship += ds.reduce((a, x) => a + (Number(x.d.shipTe) || 0) * x.sl, 0);   // dòng thêm bằng extension cũ
+    giam += (Number(moi.giamDon) || 0) * tiLe;
   }
-  const cuoc = Math.max(kg * (Number(h?.cuocKg) || 0), m3 * (Number(h?.cuocKhoi) || 0));
-  const tong = tienHang + phiMua + kiem + cuoc;
-  return { sp, sl, tienHang, phiMua, kiem, cuoc, kg, m3, thieu, tong, moiCai: sl ? tong / sl : 0 };
+  return { ship: Math.round(ship * 100) / 100, giam: Math.round(giam * 100) / 100, soDon: theoDon.size };
+}
+function g1688TinhPhieu(ds, h) {
+  const P = g1688Phieu || {}, ty = Number(h?.tyGia) || 0;
+  const dong = ds.map(d => ({ d, ...g1688CanDong(d, h) }));
+  const gy = g1688GoiY1688(dong);
+  const tienTe = dong.reduce((a, x) => a + x.tienTe, 0), slTong = dong.reduce((a, x) => a + x.sl, 0);
+  const kgCong = dong.reduce((a, x) => a + x.kgTinh, 0), m3 = dong.reduce((a, x) => a + x.m3, 0);
+  const so = (v) => v == null || v === '' ? null : Number(v);
+  const giam = so(P.giam) ?? gy.giam, ship = so(P.ship) ?? gy.ship, kg = so(P.kg) ?? kgCong;
+  const cuocTD = Math.max(kg * (Number(h?.cuocKg) || 0), m3 * (Number(h?.cuocKhoi) || 0));
+  const cuoc = so(P.cuoc) ?? cuocTD;
+  const phiTD = Math.max(0, tienTe - giam + ship) * ty * (Number(h?.phiMua) || 0) / 100 + (Number(h?.phiKiemDem) || 0) * slTong;
+  const phi = so(P.phi) ?? phiTD;
+  // trọng số: cân nặng tính cước (thiếu hết cân nặng thì chia theo số lượng) và tiền hàng
+  const tongCan = kgCong > 0 ? kgCong : slTong;
+  dong.forEach(x => {
+    const wk = tongCan ? (kgCong > 0 ? x.kgTinh : x.sl) / tongCan : 0, wv = tienTe ? x.tienTe / tienTe : 0;
+    x.shipTe = ship * wk; x.giamTe = giam * wv;
+    x.tong = (x.tienTe - x.giamTe + x.shipTe) * ty + cuoc * wk + phi * wv;
+    x.moiCai = x.sl ? x.tong / x.sl : 0;
+  });
+  const tong = (tienTe - giam + ship) * ty + cuoc + phi;
+  return { dong, gy, ty, tienTe, slTong, kgCong, m3, giam, ship, kg, cuoc, cuocTD, phi, phiTD, tong, P,
+    thieuCan: dong.filter(x => !x.g).length, chuaGan: dong.filter(x => !x.sp).length };
 }
 
 function g1688Ve() {
   const el = document.getElementById('dathang-gio1688'); if (!el) return;
   if (!laAdminGio()) { el.innerHTML = '<p class="info-note">Chỉ Admin dùng giỏ 1688.</p>'; return; }
+  const dangGo = document.activeElement;
+  if (dangGo && el.contains(dangGo) && dangGo.dataset && dangGo.dataset.giu) { g1688CanVe = true; return; }   // đang gõ: vẽ lại khi rời ô
+  g1688CanVe = false;
   const h = g1688Hang(g1688Hvc), ds = g1688Ds;
   g1688Chon = new Set([...g1688Chon].filter(id => ds.some(d => d.id === id)));
+  const chonDs = ds.filter(d => g1688Chon.has(d.id));
+  const T = g1688TinhPhieu(chonDs, h), theoId = new Map(T.dong.map(x => [x.d.id, x]));
   const nhom = new Map();
   ds.forEach(d => { const k = d.shop || d.tieuDe || d.offerId; if (!nhom.has(k)) nhom.set(k, []); nhom.get(k).push(d); });
-  const chonDs = ds.filter(d => g1688Chon.has(d.id));
-  const tinh = chonDs.map(d => g1688TinhDong(d, h));
-  const tongVe = tinh.reduce((a, t) => a + t.tong, 0);
-  const tongTe = chonDs.reduce((a, d) => a + ((Number(d.giaTe) || 0) + (Number(d.shipTe) || 0)) * (Number(d.sl) || 0), 0);
-  const tongKg = tinh.reduce((a, t) => a + t.kg, 0);
-  const chuaGan = tinh.filter(t => !t.sp).length, thieuKT = tinh.filter(t => t.sp && t.thieu).length;
   el.innerHTML = `
     <div style="max-width:760px;margin:0 auto;padding-bottom:8px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
@@ -9461,30 +9502,65 @@ function g1688Ve() {
       ${h ? hvcDongTyGia(h) : ''}
       ${!hvcDs.length ? '<p class="info-note">Chưa có hãng vận chuyển — thêm ở tab <b>Hãng vận chuyển</b> để ước tính giá về kho.</p>' : ''}
       ${!ds.length ? '<p class="info-note" style="text-align:center;padding:24px 0">Giỏ trống.<br>Trên trang sản phẩm 1688, nhập số lượng các phân loại rồi bấm <b>🛒 Thêm vào giỏ CUA</b> ở khung CUA Aquarium.</p>' : ''}
-      ${[...nhom.entries()].map(([shop, dong]) => `
-        <div style="border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden">
-          <div style="background:#FFF7ED;padding:7px 10px;font-weight:700;font-size:13px">🏪 ${escHtml(shop)}</div>
-          ${dong.map(d => g1688VeDong(d, h)).join('')}
-        </div>`).join('')}
+      ${[...nhom.entries()].map(([shop, dong]) => {
+        const tienShop = dong.reduce((a, d) => a + g1688GiaTe(d) * (Number(d.sl) || 0), 0);
+        return `<div style="border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden">
+          <div style="background:#FFF7ED;padding:7px 10px;font-weight:700;font-size:13px;display:flex;gap:8px"><span style="flex:1;min-width:0">🏪 ${escHtml(shop)}</span><span style="font-weight:600;color:var(--text2)">¥${fmtTe(tienShop)}</span></div>
+          ${dong.map(d => g1688VeDong(d, h, theoId.get(d.id))).join('')}
+        </div>`; }).join('')}
+      ${chonDs.length ? g1688VePhieu(T, h) : ''}
     </div>
     ${ds.length ? `<div style="position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:10px;max-width:760px;margin:0 auto">
       <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;flex-wrap:wrap">
-        <span>Đã chọn <b>${chonDs.length}</b>/${ds.length} dòng · ¥${fmtTe(tongTe)}${tongKg ? ` · ~${tongKg.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} kg tính cước` : ''}</span>
-        <span>Về kho ~<b style="color:#1D4ED8">${fmt(tongVe)}đ</b></span>
+        <span>Đã chọn <b>${chonDs.length}</b>/${ds.length} dòng${chonDs.length ? ` · ${T.gy.soDon} đơn 1688 · ${fmt(T.slTong)} cái` : ''}</span>
+        ${chonDs.length && h ? `<span>Về kho ~<b style="color:#1D4ED8">${fmt(T.tong)}đ</b></span>` : ''}
       </div>
-      ${chuaGan ? `<div style="font-size:12px;color:#B45309">${chuaGan} dòng đã chọn chưa gắn mã — không vào đơn được.</div>` : ''}
-      ${thieuKT ? `<div style="font-size:12px;color:#B45309">${thieuKT} mã chưa có cân nặng / kích thước trong Hàng hóa — chưa tính cước.</div>` : ''}
+      ${T.chuaGan ? `<div style="font-size:12px;color:#B45309">${T.chuaGan} dòng đã chọn chưa gắn mã — gắn mã hoặc bỏ chọn rồi mới tạo đơn.</div>` : ''}
       <div style="display:flex;gap:6px;margin-top:6px">
         <button class="btn-outline" style="flex:0 0 auto" ${chonDs.length ? '' : 'disabled'} onclick="g1688XoaChon()">Xóa khỏi giỏ</button>
-        <button class="btn-g" style="flex:1;margin:0;background:#2563EB" ${chonDs.length && chuaGan < chonDs.length ? '' : 'disabled'} onclick="g1688TaoDon()">Tạo đơn đặt hàng</button>
+        <button class="btn-g" style="flex:1;margin:0;background:#2563EB" ${chonDs.length && !T.chuaGan ? '' : 'disabled'} onclick="g1688TaoDon()">Tạo đơn đặt hàng${chonDs.length ? ` (${chonDs.length} dòng)` : ''}</button>
       </div>
     </div>` : ''}`;
   const o = document.getElementById('g1688-tim');
   if (o) { o.oninput = () => { g1688Tim = o.value; g1688VeKq(); }; g1688VeKq(); o.focus(); }
 }
-function g1688VeDong(d, h) {
-  const t = g1688TinhDong(d, h), gan = g1688MaGan(d), chon = g1688Chon.has(d.id), sp = gan[0];
-  const lai = sp && sp.gia && h ? Math.round((sp.gia - t.moiCai) / sp.gia * 100) : null;
+window.g1688SauGo = () => { if (g1688CanVe) setTimeout(() => { const a = document.activeElement; if (!(a && a.dataset && a.dataset.giu)) g1688Ve(); }, 0); };
+
+function g1688VePhieu(T, h) {
+  const P = T.P, kgS = (n) => (Math.round(n * 100) / 100).toLocaleString('vi-VN');
+  const hienSo = (n, donVi) => donVi === 'đ' ? fmt(n) : (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('vi-VN');
+  const o = (k, nhan, gt, tuDong, goiY, donVi) => {
+    const tay = P[k] != null && P[k] !== '';
+    return `<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-top:1px dashed var(--border)">
+      <div style="flex:1;min-width:0;font-size:13px"><div style="font-weight:600">${nhan}</div><div style="font-size:11.5px;color:var(--text2)">${goiY}</div></div>
+      <input data-giu="1" inputmode="decimal" value="${hienSo(tay ? Number(gt) : tuDong, donVi)}" onchange="g1688SuaPhieu('${k}', this.value)" onblur="g1688SauGo()"
+        style="width:118px;padding:6px 8px;text-align:right;font-size:14px;${tay ? 'font-weight:700;border-color:#2563EB' : 'color:var(--text2)'}">
+      <span style="width:20px;font-size:12px;color:var(--text2)">${donVi}</span>
+      ${tay ? `<button class="btn-xs" title="Về số tự tính" onclick="g1688SuaPhieu('${k}', '')">↺</button>` : '<span style="width:30px"></span>'}
+    </div>`;
+  };
+  return `<div style="border:2px solid #93C5FD;border-radius:10px;padding:10px;margin-bottom:10px;background:#F8FBFF">
+    <div style="font-weight:800;font-size:14px;margin-bottom:4px">🧾 Phiếu đặt hàng · ${T.gy.soDon} đơn 1688 · ${T.dong.length} dòng</div>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:4px">Ô chữ xám là số tự tính; gõ số thật để sửa, bấm ↺ để về tự tính.</div>
+    <div style="display:flex;justify-content:space-between;font-size:13px;padding:4px 0"><span>Tiền hàng (giá niêm yết)</span><b>¥${fmtTe(T.tienTe)}</b></div>
+    ${o('giam', 'Giảm giá 1688', P.giam, T.gy.giam, T.gy.giam ? `1688 báo giảm ¥${fmtTe(T.gy.giam)} · chia theo tiền hàng` : 'Mã giảm / khuyến mãi của cả đơn', '¥')}
+    ${o('ship', 'Tổng ship nội địa', P.ship, T.gy.ship, `1688 ước tính ¥${fmtTe(T.gy.ship)} · chia từng món theo cân nặng`, '¥')}
+    ${o('kg', 'Tổng cân nặng', P.kg, T.kgCong, `Cộng từ cân nặng từng dòng: ${kgS(T.kgCong)} kg${h?.cachCan !== 'thuc' && Number(h?.heSo) ? ' (đã so cân quy đổi)' : ''}${T.thieuCan ? ` · <span style="color:#B45309">${T.thieuCan} dòng chưa có cân nặng</span>` : ''}`, 'kg')}
+    ${o('cuoc', 'Cước vận chuyển dự kiến', P.cuoc, T.cuocTD, h ? `${kgS(T.kg)} kg × ${fmt(h.cuocKg)}đ${Number(h.cuocKhoi) ? ` (so với ${fmt(h.cuocKhoi)}đ/m³)` : ''} · chia theo cân nặng` : 'Chọn hãng vận chuyển để tự tính', 'đ')}
+    ${o('phi', 'Phí bên vận chuyển', P.phi, T.phiTD, h ? `Phí mua ${h.phiMua || 0}%${Number(h.phiKiemDem) ? ` + kiểm đếm ${fmt(h.phiKiemDem)}đ/sp` : ''} · chia theo tiền hàng` : 'Chọn hãng vận chuyển để tự tính', 'đ')}
+    ${h ? `<div style="border-top:1px solid var(--border);margin-top:4px;padding-top:6px;font-size:13px">
+      <div style="display:flex;justify-content:space-between"><span>Hàng + ship nội địa: ¥${fmtTe(T.tienTe - T.giam + T.ship)} × ${fmt(T.ty)}</span><b>${fmt((T.tienTe - T.giam + T.ship) * T.ty)}đ</b></div>
+      <div style="display:flex;justify-content:space-between"><span>Cước + phí vận chuyển</span><b>${fmt(T.cuoc + T.phi)}đ</b></div>
+      <div style="display:flex;justify-content:space-between;font-size:15px;margin-top:2px"><span>Tổng về kho</span><b style="color:#1D4ED8">${fmt(T.tong)}đ</b></div></div>`
+      : '<p class="info-note" style="margin:6px 0 0">Chọn hãng vận chuyển để tính giá về kho.</p>'}
+  </div>`;
+}
+
+function g1688VeDong(d, h, x) {
+  const gan = g1688MaGan(d), chon = g1688Chon.has(d.id), sp = gan[0];
+  const c = x || g1688CanDong(d, h);
+  const lai = x && sp && sp.gia && h ? Math.round((sp.gia - x.moiCai) / sp.gia * 100) : null;
+  const nguon = { gio: '', sp: 'theo Hàng hóa', lan_truoc: 'theo lần trước' }[c.nguon] || '';
   return `<div style="padding:8px 10px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-start;${chon ? 'background:#F5F9FF' : ''}">
     <input type="checkbox" ${chon ? 'checked' : ''} onchange="g1688Tick('${d.id}', this.checked)" style="width:18px;height:18px;margin-top:4px;flex-shrink:0">
     ${d.anh ? `<img src="${escHtml(d.anh)}" referrerpolicy="no-referrer" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
@@ -9492,11 +9568,13 @@ function g1688VeDong(d, h) {
       <div style="font-size:13px;font-weight:600">${escHtml(d.phanLoai || 'Không phân loại')}</div>
       <a href="${escHtml(d.url || '')}" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--text2);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(d.tieuDe || d.offerId)}</a>
       <div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12.5px;flex-wrap:wrap">
-        <span>SL</span><input type="text" inputmode="numeric" value="${Number(d.sl) || 0}" onchange="g1688DoiSL('${d.id}', this.value)" style="width:56px;padding:4px;text-align:center">
-        <span>× ¥${fmtTe(d.giaTe)}${Number(d.shipTe) ? ` + ship ¥${fmtTe(d.shipTe)}` : ''}</span>
-        ${h ? `<span style="margin-left:auto">Về kho ~<b>${fmt(t.moiCai)}đ</b>/cái</span>` : ''}
+        <span>SL</span><input data-giu="1" type="text" inputmode="numeric" value="${Number(d.sl) || 0}" onchange="g1688DoiSL('${d.id}', this.value)" onblur="g1688SauGo()" style="width:56px;padding:4px;text-align:center">
+        <span>× ¥${fmtTe(g1688GiaTe(d))}</span>
+        <span style="margin-left:6px">Cân</span><input data-giu="1" type="text" inputmode="decimal" value="${c.g ? (Math.round(c.g * 10) / 10).toLocaleString('vi-VN') : ''}" placeholder="?" onchange="g1688DoiCan('${d.id}', this.value)" onblur="g1688SauGo()"
+          style="width:64px;padding:4px;text-align:center;${c.g ? '' : 'border-color:#F59E0B;background:#FFFBEB'}"><span>g/cái${nguon ? ` <span style="color:var(--text2);font-size:11px">${nguon}</span>` : ''}</span>
       </div>
-      ${sp ? `<div style="margin-top:4px;font-size:12.5px">✓ <b style="color:#0F766E">${escHtml(sp.sku)}</b> · ${escHtml(sp.ten)}${t.thieu ? ' <span style="color:#B45309">(chưa có cân nặng / kích thước)</span>' : ''}${lai != null ? ` · <span style="color:${lai < 30 ? '#DC2626' : '#16A34A'};font-weight:600">lời ~${lai}%</span>` : ''}
+      ${x && h ? `<div style="font-size:12px;color:var(--text2);margin-top:3px">Ship nội địa ~¥${fmtTe(x.shipTe)}${x.giamTe ? ` · giảm ¥${fmtTe(x.giamTe)}` : ''} · ${(Math.round(x.kgTinh * 100) / 100).toLocaleString('vi-VN')} kg tính cước · <span style="color:var(--text)">về kho ~<b>${fmt(x.moiCai)}đ</b>/cái</span>${lai != null ? ` · <span style="color:${lai < 30 ? '#DC2626' : '#16A34A'};font-weight:600">lời ~${lai}%</span>` : ''}</div>` : ''}
+      ${sp ? `<div style="margin-top:4px;font-size:12.5px">✓ <b style="color:#0F766E">${escHtml(sp.sku)}</b> · ${escHtml(sp.ten)}
           <a href="javascript:void(0)" onclick="g1688MoGan('${d.id}')" style="margin-left:6px;font-size:12px">đổi mã</a></div>`
         : `<button class="btn-xs" style="margin-top:4px;color:#B45309;border-color:#FDBA74" onclick="g1688MoGan('${d.id}')">Gắn mã hàng</button>`}
       ${g1688DangGan === d.id ? `<input id="g1688-tim" placeholder="Gõ mã hoặc tên hàng trong app..." value="${escHtml(g1688Tim)}" style="margin-top:6px;padding:6px 8px;font-size:13px"><div id="g1688-kq" style="border:1px solid var(--border);border-radius:7px;max-height:220px;overflow:auto;margin-top:4px"></div>` : ''}
@@ -9520,6 +9598,19 @@ window.g1688DoiSL = async (id, v) => {
   const sl = Math.max(1, Math.round(Number(String(v).replace(/[^\d]/g, '')) || 1));
   try { await updateDoc(doc(db, 'gio_1688', id), { sl }); } catch(e) { showToast('Không lưu được: ' + e.message, true); }
 };
+const g1688So = (v) => { const t = String(v ?? '').trim().replace(/\s/g, ''); if (!t) return null;
+  const s = t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : /^\d{1,3}(\.\d{3})+$/.test(t) ? t.replace(/\./g, '') : t;   // 1.234,5 · 756.000 · 2,5 · 1.5
+  const n = parseFloat(s); return isFinite(n) && n >= 0 ? n : null; };
+window.g1688DoiCan = async (id, v) => {
+  const g = g1688So(v);
+  try { await updateDoc(doc(db, 'gio_1688', id), { canNang: g == null ? null : Math.round(g * 10) / 10 }); } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.g1688SuaPhieu = async (k, v) => {
+  if (!['giam', 'ship', 'kg', 'cuoc', 'phi'].includes(k)) return;
+  const n = g1688So(v);
+  try { await setDoc(doc(db, 'gio_1688', '_phieu'), { [k]: n, suaLuc: serverTimestamp() }, { merge: true }); g1688CanVe = true; g1688SauGo(); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
 window.g1688Xoa = async (id) => {
   if (!await hoiXacNhan('Xóa dòng này khỏi giỏ 1688?')) return;
   try { await deleteDoc(doc(db, 'gio_1688', id)); } catch(e) { showToast(e.message, true); }
@@ -9536,7 +9627,7 @@ window.g1688ChonHvc = () => {
     g1688Hvc, (id) => { g1688Hvc = id; g1688Ve(); });
 };
 // Ghi link vào sp_1688/{mã hàng} giống extension. Một phân loại chỉ gắn một mã: gỡ khỏi mã khác trước.
-async function g1688GhiLink(sp, d, ghiLichSu) {
+async function g1688GhiLink(sp, d, ghiLichSu, canNang) {
   const nay = new Date().toISOString();
   const cungLoai = (l) => String(l.offerId) === String(d.offerId) && (l.phanLoai || '') === (d.phanLoai || '');
   for (const [khac, v] of sp1688) {
@@ -9546,8 +9637,10 @@ async function g1688GhiLink(sp, d, ghiLichSu) {
     }
   }
   const cu = (await getDoc(doc(db, 'sp_1688', sp.id))).data() || {};
+  const linkCu = (cu.links || []).find(cungLoai) || {};
   const link = { offerId: String(d.offerId), url: d.url || '', phanLoai: d.phanLoai || '', shop: d.shop || '', tieuDe: d.tieuDe || '', anh: d.anh || '', donVi: d.donVi || '',
-    giaTe: Number(d.giaTe) || 0, giaNiemYet: Number(d.giaNiemYet) || 0, sl: Number(d.sl) || 0, shipTe: Number(d.shipTe) || 0, luc: nay, nguoi: currentUser?.email || '' };
+    giaTe: g1688GiaTe(d), giaNiemYet: g1688GiaTe(d), sl: Number(d.sl) || 0, shipTe: Number(d.shipTe) || 0, luc: nay, nguoi: currentUser?.email || '',
+    canNang: Number(canNang) || Number(linkCu.canNang) || 0 };
   const links = [link, ...(cu.links || []).filter(x => !cungLoai(x))];
   const lichSu = ghiLichSu ? [{ offerId: link.offerId, phanLoai: link.phanLoai, giaTe: link.giaTe, sl: link.sl, shipTe: link.shipTe, luc: nay }, ...(cu.lichSu || [])].slice(0, 60) : (cu.lichSu || []);
   await setDoc(doc(db, 'sp_1688', sp.id), { skuId: sp.id, sku: sp.sku, ten: sp.ten || '', links, offerIds: [...new Set(links.map(x => String(x.offerId)))], lichSu, capNhat: nay }, { merge: true });
@@ -9556,7 +9649,7 @@ window.g1688Gan = async (skuId) => {
   const d = g1688Ds.find(x => x.id === g1688DangGan), sp = allSKUs.find(s => s.id === skuId);
   if (!d || !sp) return;
   try {
-    await g1688GhiLink(sp, d, false);
+    await g1688GhiLink(sp, d, false, Number(d.canNang) || 0);
     g1688DangGan = null; g1688Tim = '';
     showToast(`Đã gắn ${sp.sku} — lần sau phân loại này tự nhận`);
     g1688Ve();
@@ -9565,34 +9658,40 @@ window.g1688Gan = async (skuId) => {
 window.g1688TaoDon = async () => {
   const h = g1688Hang(g1688Hvc);
   if (!h && !await hoiXacNhan('Chưa chọn hãng vận chuyển — giá trong đơn sẽ để trống. Vẫn tạo?')) return;
-  const ds = g1688Ds.filter(d => g1688Chon.has(d.id)).map(d => ({ d, t: g1688TinhDong(d, h) })).filter(x => x.t.sp);
-  if (!ds.length) { showToast('Các dòng đã chọn chưa gắn mã hàng', true); return; }
+  const chonDs = g1688Ds.filter(d => g1688Chon.has(d.id));
+  const T = g1688TinhPhieu(chonDs, h);
+  if (!T.dong.length) { showToast('Chưa chọn dòng nào', true); return; }
+  if (T.chuaGan) { showToast(`Còn ${T.chuaGan} dòng chưa gắn mã — gắn mã hoặc bỏ chọn`, true); return; }
+  if (T.thieuCan && h && !await hoiXacNhan(`${T.thieuCan} dòng chưa có cân nặng — ship nội địa và cước sẽ dồn sang các dòng khác. Vẫn tạo?`)) return;
   if (dhDon && (dhDon.items.length || dhDon.id) && !await hoiXacNhan('Đang có đơn đặt hàng soạn dở. Thay bằng đơn từ giỏ 1688?')) return;
   const gop = new Map();
-  for (const { t } of ds) {
-    const x = gop.get(t.sp.sku) || { sku: t.sp.sku, skuId: t.sp.id, ten: t.sp.ten || '', sl: 0, tien: 0 };
-    x.sl += t.sl; x.tien += t.tong; gop.set(t.sp.sku, x);
+  for (const x of T.dong) {
+    const g = gop.get(x.sp.sku) || { sku: x.sp.sku, skuId: x.sp.id, ten: x.sp.ten || '', sl: 0, tien: 0 };
+    g.sl += x.sl; g.tien += x.tong; gop.set(x.sp.sku, g);
   }
-  const shops = [...new Set(ds.map(x => x.d.shop).filter(Boolean))];
+  const shops = [...new Set(T.dong.map(x => x.d.shop).filter(Boolean))];
   const ncc = shops.length === 1 ? (await dhTaiNcc()).find(n => boDauTim(n.ten) === boDauTim(shops[0])) : null;
   const nccCu = dhDon?.ncc || dhDocNhap()?.ncc || null;   // không khớp tên shop thì giữ nhà cung cấp đang chọn (vd "Trung")
   const khoCu = dhDon?.kho || 'san';
   dhDon = dhDonMoi(); dhDon.kho = khoCu;
   dhDon.ncc = ncc ? { id: ncc.id, ten: ncc.ten } : nccCu;
   dhDon.items = [...gop.values()].map(x => ({ sku: x.sku, skuId: x.skuId, ten: x.ten, sl: x.sl, giaVon: dhCoGia() && h ? Math.round(x.tien / x.sl) : 0 }));
-  dhDon.ghiChu = `1688${shops.length ? ': ' + shops.join(', ') : ''}${h ? ' · VC ' + h.ten : ''}`.slice(0, 300);
-  dhDon.tuGio1688 = ds.map(x => x.d.id);
+  const kgS = (Math.round(T.kg * 100) / 100).toLocaleString('vi-VN');
+  dhDon.ghiChu = (`1688: ${T.gy.soDon} đơn${shops.length ? ' (' + shops.join(', ') + ')' : ''}` +
+    (h ? ` · VC ${h.ten} · ship nội địa ¥${fmtTe(T.ship)}${T.giam ? ' · giảm ¥' + fmtTe(T.giam) : ''} · ${kgS} kg · cước ${fmt(T.cuoc)}đ · phí ${fmt(T.phi)}đ · tỷ giá ${fmt(T.ty)}` : '')).slice(0, 300);
+  dhDon.tuGio1688 = T.dong.map(x => x.d.id);
   dhVeLaiTraTruoc(); dhLuuNhap();
   switchSub('tao');
   showToast(dhDon.ncc ? 'Đã đưa vào đơn đặt hàng — kiểm lại rồi bấm Lưu' : 'Đã đưa vào đơn — chọn nhà cung cấp, kiểm lại rồi bấm Lưu', false, 6000);
 };
-// Đơn đặt hàng từ giỏ đã lưu: ghi giá nhập lần này làm mốc (sp_1688) rồi bỏ các dòng khỏi giỏ
+// Đơn đặt hàng từ giỏ đã lưu: ghi giá nhập + cân nặng lần này làm mốc (sp_1688), bỏ các dòng khỏi giỏ, phiếu về tự tính
 async function g1688SauKhiDat(ids) {
   for (const id of ids || []) {
     const d = g1688Ds.find(x => x.id === id); if (!d) continue;
-    try { const sp = g1688MaGan(d)[0]; if (sp) await g1688GhiLink(sp, d, true); } catch(e) {}
+    try { const c = g1688CanDong(d, null); if (c.sp) await g1688GhiLink(c.sp, d, true, c.g); } catch(e) {}
     try { await deleteDoc(doc(db, 'gio_1688', id)); } catch(e) {}
   }
+  try { await setDoc(doc(db, 'gio_1688', '_phieu'), { giam: null, ship: null, kg: null, cuoc: null, phi: null, suaLuc: serverTimestamp() }, { merge: true }); } catch(e) {}
 }
 
 function hvcVe() {
@@ -31753,7 +31852,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v844</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v845</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31811,7 +31910,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v844</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v845</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31861,7 +31960,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v844</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v845</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31878,7 +31977,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v844</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v845</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
