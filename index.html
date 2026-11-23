@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 841;
+  const APP_VERSION = 842;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -270,7 +270,7 @@ import { initializeFirestore, persistentLocalCache, persistentSingleTabManager, 
 // ===== LỊCH SỬ THAO TÁC: tự ghi mọi thay đổi dữ liệu + thao tác qua máy chủ =====
 // Mọi lệnh ghi Firestore đi qua các hàm bọc dưới đây; các thay đổi xảy ra liền nhau
 // (trong ~2 giây) của cùng một thao tác được gộp thành MỘT dòng lịch sử.
-const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong', 'gio_tem', 'dang_nhap']);
+const NK_BO_QUA = new Set(['nhat_ky', 'dem_phieu', 'the_kho', 'lich_cong_khai', 'anh_phieu', 'anh_cham_cong', 'gio_tem', 'dang_nhap', 'gio_1688']);
 const NK_COL = {
   skus: ['Hàng hóa', 'Kho'], ton_san: ['Tồn Kho Online', 'Kho'], gia_von: ['Giá vốn', 'Kho'], nhom_hang: ['Nhóm hàng', 'Kho'],
   phieu_chuyenkho: ['Phiếu chuyển kho', 'Kho'], phieu_huy: ['Phiếu xuất hủy', 'Kho'], phieu_nhap_san: ['Phiếu nhập kho', 'Kho'], moc_hang_hong: ['Mốc hàng hỏng', 'Kho'],
@@ -3319,6 +3319,8 @@ window.switchModule = function(mod) {
   const bDs = document.getElementById('stab-ds'); if (bDs) bDs.style.display = xemDS ? '' : 'none';
   if (bDs) bDs.textContent = mod === 'datcoc' ? 'Danh sách phiếu' : 'Danh sách';
   const bTk = document.getElementById('stab-thongke'); if (bTk) bTk.style.display = mod === 'baoca' ? '' : 'none';
+  ['gio1688', 'hvc'].forEach(k => { const b = document.getElementById('stab-' + k); if (b) b.style.display = mod === 'dathang' && currentUserData?.role === 'admin' ? '' : 'none'; });
+  if (mod === 'dathang') g1688BatNghe();
   if (mod === 'nhap' || mod === 'xuat') veChonKhoPhieu(mod);
   // Không được tạo phiếu chiều/kho nào mà được xem danh sách -> mở thẳng danh sách
   const taoDuoc = mod === 'nhap' ? dsChieuChuyenDuocPhep().length : mod === 'xuat' ? dsKhoHuyDuocPhep().length
@@ -3356,6 +3358,8 @@ window.switchSub = function(sub) {
   }
   if (sub === 'tao' && activeModule === 'nhaphang') nhVaoTao();
   if (sub === 'tao' && activeModule === 'dathang') dhVaoTao();
+  if (sub === 'gio1688') { g1688BatNghe(); g1688Ve(); if (!allSKUs.length) loadSKUs().then(() => g1688Ve()); }
+  if (sub === 'hvc') { g1688BatNghe(); hvcVe(); }
   if (sub === 'tao' && activeModule === 'dungnb') dnVaoTao();
   if (sub === 'ds' && activeModule === 'dungnb') dnTaiDs();
   if (sub === 'tao' && activeModule === 'datcoc') dcVaoTao();
@@ -9366,6 +9370,7 @@ ${loiChi}
 
 Mở đơn → Thanh toán để ghi lại.`);
     else showToast(d.id ? 'Đã lưu đơn ' + ma : 'Tạo đơn thành công · ' + ma);
+    if (!d.id && d.tuGio1688?.length) g1688SauKhiDat(d.tuGio1688);
     const daSua = !!d.id;
     dhDon = dhDonMoi(); dhDon.kho = d.kho; dhXoaNhap(); dhVeLaiTraTruoc();
     nut.textContent = 'Lưu đơn đặt hàng';
@@ -9374,6 +9379,269 @@ Mở đơn → Thanh toán để ghi lại.`);
     alert('Không lưu được đơn: ' + e.message);
     nut.disabled = false; nut.textContent = d.id ? 'Lưu thay đổi đơn' : 'Lưu đơn đặt hàng';
   }
+};
+
+// ==========================================================================
+// ===== GIỎ 1688 + HÃNG VẬN CHUYỂN (chỉ Admin) =====
+// Extension "CUA – Nhập hàng 1688": trên trang 1688 bấm "Thêm vào giỏ CUA" -> mỗi phân loại một dòng ở gio_1688.
+// Ở đây gắn dòng với mã hàng trong app (lưu vào sp_1688 như extension, lần sau phân loại đó tự nhận),
+// chọn hãng vận chuyển để ước tính giá về kho rồi tạo đơn đặt hàng.
+// Giá về kho = (giá ¥ + ship nội địa) × tỷ giá + phí mua % + phí kiểm đếm + cước.
+// Cước = kg tính cước × đ/kg (kg tính cước = max(cân nặng thật, thể tích ÷ hệ số quy đổi)); có giá theo khối thì lấy mức cao hơn.
+// ==========================================================================
+const laAdminGio = () => currentUserData?.role === 'admin';
+let g1688Ds = [], g1688Nghe = null, hvcDs = [], hvcNghe = null, g1688Hvc = null, g1688Chon = new Set(), g1688DangGan = null, g1688Tim = '';
+const fmtTe = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('vi-VN');
+
+function g1688BatNghe() {
+  if (!laAdminGio()) return;
+  ngheSp1688();
+  if (!g1688Nghe) g1688Nghe = onSnapshot(collection(db, 'gio_1688'), (s) => {
+    g1688Ds = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => String(b.themLuc || '').localeCompare(String(a.themLuc || '')));
+    veNutGio1688();
+    if (activeModule === 'dathang' && activeSubTab === 'gio1688') g1688Ve();
+  }, (e) => console.warn('[giỏ 1688]', e.message));
+  if (!hvcNghe) hvcNghe = onSnapshot(collection(db, 'hang_van_chuyen'), (s) => {
+    hvcDs = s.docs.map(d => ({ id: d.id, ...d.data() })).filter(h => !h.deleted)
+      .sort((a, b) => (b.macDinh ? 1 : 0) - (a.macDinh ? 1 : 0) || String(a.ten || '').localeCompare(String(b.ten || ''), 'vi'));
+    if (!g1688Hvc || !hvcDs.some(h => h.id === g1688Hvc)) g1688Hvc = (hvcDs.find(h => h.macDinh) || hvcDs[0] || {}).id || null;
+    if (activeModule === 'dathang' && activeSubTab === 'gio1688') g1688Ve();
+    if (activeModule === 'dathang' && activeSubTab === 'hvc') hvcVe();
+  }, (e) => console.warn('[hãng vận chuyển]', e.message));
+}
+function veNutGio1688() { const b = document.getElementById('stab-gio1688'); if (b) b.textContent = g1688Ds.length ? `Giỏ 1688 (${g1688Ds.length})` : 'Giỏ 1688'; }
+
+// Mã hàng trong app đã gắn với đúng phân loại này (sp_1688 giữ theo mã hàng)
+function g1688MaGan(d) {
+  const ra = [];
+  for (const [skuId, v] of sp1688) {
+    if ((v.links || []).some(l => String(l.offerId) === String(d.offerId) && (l.phanLoai || '') === (d.phanLoai || ''))) {
+      const sp = allSKUs.find(s => s.id === skuId && !s.deleted); if (sp) ra.push(sp);
+    }
+  }
+  return ra;
+}
+const g1688Hang = (id) => hvcDs.find(h => h.id === id) || null;
+function g1688TinhDong(d, h) {
+  const sl = Number(d.sl) || 0, sp = g1688MaGan(d)[0] || null, ty = Number(h?.tyGia) || 0;
+  const tienHang = ((Number(d.giaTe) || 0) + (Number(d.shipTe) || 0)) * sl * ty;
+  const phiMua = tienHang * (Number(h?.phiMua) || 0) / 100;
+  const kiem = (Number(h?.phiKiemDem) || 0) * sl;
+  let kg = 0, m3 = 0, thieu = !sp;
+  if (sp) {
+    const kt = sp.kichThuoc || {}, cm3 = kt.dai && kt.rong && kt.cao ? kt.dai * kt.rong * kt.cao : 0;
+    const kgThuc = (Number(sp.canNang) || 0) / 1000, kgQD = cm3 && Number(h?.heSo) > 0 ? cm3 / Number(h.heSo) : 0;
+    kg = Math.max(kgThuc, kgQD) * sl; m3 = cm3 / 1e6 * sl; thieu = !kgThuc && !cm3;
+  }
+  const cuoc = Math.max(kg * (Number(h?.cuocKg) || 0), m3 * (Number(h?.cuocKhoi) || 0));
+  const tong = tienHang + phiMua + kiem + cuoc;
+  return { sp, sl, tienHang, phiMua, kiem, cuoc, kg, m3, thieu, tong, moiCai: sl ? tong / sl : 0 };
+}
+
+function g1688Ve() {
+  const el = document.getElementById('dathang-gio1688'); if (!el) return;
+  if (!laAdminGio()) { el.innerHTML = '<p class="info-note">Chỉ Admin dùng giỏ 1688.</p>'; return; }
+  const h = g1688Hang(g1688Hvc), ds = g1688Ds;
+  g1688Chon = new Set([...g1688Chon].filter(id => ds.some(d => d.id === id)));
+  const nhom = new Map();
+  ds.forEach(d => { const k = d.shop || d.tieuDe || d.offerId; if (!nhom.has(k)) nhom.set(k, []); nhom.get(k).push(d); });
+  const chonDs = ds.filter(d => g1688Chon.has(d.id));
+  const tinh = chonDs.map(d => g1688TinhDong(d, h));
+  const tongVe = tinh.reduce((a, t) => a + t.tong, 0);
+  const tongTe = chonDs.reduce((a, d) => a + ((Number(d.giaTe) || 0) + (Number(d.shipTe) || 0)) * (Number(d.sl) || 0), 0);
+  const tongKg = tinh.reduce((a, t) => a + t.kg, 0);
+  const chuaGan = tinh.filter(t => !t.sp).length, thieuKT = tinh.filter(t => t.sp && t.thieu).length;
+  el.innerHTML = `
+    <div style="max-width:760px;margin:0 auto;padding-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <button class="bh-chon-tt" style="flex:1;min-width:200px;font-weight:600" onclick="g1688ChonHvc()">🚚 ${h ? escHtml(h.ten) : 'Chọn hãng vận chuyển'}</button>
+        ${ds.length ? `<button class="btn-xs" onclick="g1688ChonTatCa()">${chonDs.length === ds.length ? 'Bỏ chọn hết' : 'Chọn tất cả'}</button>` : ''}
+      </div>
+      ${!hvcDs.length ? '<p class="info-note">Chưa có hãng vận chuyển — thêm ở tab <b>Hãng vận chuyển</b> để ước tính giá về kho.</p>' : ''}
+      ${!ds.length ? '<p class="info-note" style="text-align:center;padding:24px 0">Giỏ trống.<br>Trên trang sản phẩm 1688, nhập số lượng các phân loại rồi bấm <b>🛒 Thêm vào giỏ CUA</b> ở khung CUA Aquarium.</p>' : ''}
+      ${[...nhom.entries()].map(([shop, dong]) => `
+        <div style="border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden">
+          <div style="background:#FFF7ED;padding:7px 10px;font-weight:700;font-size:13px">🏪 ${escHtml(shop)}</div>
+          ${dong.map(d => g1688VeDong(d, h)).join('')}
+        </div>`).join('')}
+    </div>
+    ${ds.length ? `<div style="position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:10px;max-width:760px;margin:0 auto">
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;flex-wrap:wrap">
+        <span>Đã chọn <b>${chonDs.length}</b>/${ds.length} dòng · ¥${fmtTe(tongTe)}${tongKg ? ` · ~${tongKg.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} kg tính cước` : ''}</span>
+        <span>Về kho ~<b style="color:#1D4ED8">${fmt(tongVe)}đ</b></span>
+      </div>
+      ${chuaGan ? `<div style="font-size:12px;color:#B45309">${chuaGan} dòng đã chọn chưa gắn mã — không vào đơn được.</div>` : ''}
+      ${thieuKT ? `<div style="font-size:12px;color:#B45309">${thieuKT} mã chưa có cân nặng / kích thước trong Hàng hóa — chưa tính cước.</div>` : ''}
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="btn-outline" style="flex:0 0 auto" ${chonDs.length ? '' : 'disabled'} onclick="g1688XoaChon()">Xóa khỏi giỏ</button>
+        <button class="btn-g" style="flex:1;margin:0;background:#2563EB" ${chonDs.length && chuaGan < chonDs.length ? '' : 'disabled'} onclick="g1688TaoDon()">Tạo đơn đặt hàng</button>
+      </div>
+    </div>` : ''}`;
+  const o = document.getElementById('g1688-tim');
+  if (o) { o.oninput = () => { g1688Tim = o.value; g1688VeKq(); }; g1688VeKq(); o.focus(); }
+}
+function g1688VeDong(d, h) {
+  const t = g1688TinhDong(d, h), gan = g1688MaGan(d), chon = g1688Chon.has(d.id), sp = gan[0];
+  const lai = sp && sp.gia && h ? Math.round((sp.gia - t.moiCai) / sp.gia * 100) : null;
+  return `<div style="padding:8px 10px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:flex-start;${chon ? 'background:#F5F9FF' : ''}">
+    <input type="checkbox" ${chon ? 'checked' : ''} onchange="g1688Tick('${d.id}', this.checked)" style="width:18px;height:18px;margin-top:4px;flex-shrink:0">
+    ${d.anh ? `<img src="${escHtml(d.anh)}" referrerpolicy="no-referrer" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0">` : ''}
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:600">${escHtml(d.phanLoai || 'Không phân loại')}</div>
+      <a href="${escHtml(d.url || '')}" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--text2);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(d.tieuDe || d.offerId)}</a>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:4px;font-size:12.5px;flex-wrap:wrap">
+        <span>SL</span><input type="text" inputmode="numeric" value="${Number(d.sl) || 0}" onchange="g1688DoiSL('${d.id}', this.value)" style="width:56px;padding:4px;text-align:center">
+        <span>× ¥${fmtTe(d.giaTe)}${Number(d.shipTe) ? ` + ship ¥${fmtTe(d.shipTe)}` : ''}</span>
+        ${h ? `<span style="margin-left:auto">Về kho ~<b>${fmt(t.moiCai)}đ</b>/cái</span>` : ''}
+      </div>
+      ${sp ? `<div style="margin-top:4px;font-size:12.5px">✓ <b style="color:#0F766E">${escHtml(sp.sku)}</b> · ${escHtml(sp.ten)}${t.thieu ? ' <span style="color:#B45309">(chưa có cân nặng / kích thước)</span>' : ''}${lai != null ? ` · <span style="color:${lai < 30 ? '#DC2626' : '#16A34A'};font-weight:600">lời ~${lai}%</span>` : ''}
+          <a href="javascript:void(0)" onclick="g1688MoGan('${d.id}')" style="margin-left:6px;font-size:12px">đổi mã</a></div>`
+        : `<button class="btn-xs" style="margin-top:4px;color:#B45309;border-color:#FDBA74" onclick="g1688MoGan('${d.id}')">Gắn mã hàng</button>`}
+      ${g1688DangGan === d.id ? `<input id="g1688-tim" placeholder="Gõ mã hoặc tên hàng trong app..." value="${escHtml(g1688Tim)}" style="margin-top:6px;padding:6px 8px;font-size:13px"><div id="g1688-kq" style="border:1px solid var(--border);border-radius:7px;max-height:220px;overflow:auto;margin-top:4px"></div>` : ''}
+    </div>
+    <button class="btn-xs" style="background:transparent;color:var(--text2)" onclick="g1688Xoa('${d.id}')" title="Xóa khỏi giỏ">✕</button>
+  </div>`;
+}
+function g1688VeKq() {
+  const o = document.getElementById('g1688-kq'); if (!o) return;
+  const k = boDauTim(g1688Tim);
+  if (!k) { o.innerHTML = '<div style="padding:6px 8px;font-size:12px;color:var(--text2)">Gõ để tìm...</div>'; return; }
+  const kq = allSKUs.filter(s => !s.deleted && !s.laCombo && (boDauTim(s.sku).includes(k) || boDauTim(s.ten).includes(k))).slice(0, 15);
+  o.innerHTML = kq.length ? kq.map(s => `<div onclick="g1688Gan('${escHtml(s.id)}')" style="padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer;font-size:13px;display:flex;gap:6px;align-items:center">
+      ${s.anhFileId ? `<img src="${anhThumbUrl(s.anhFileId, 80)}" style="width:28px;height:28px;object-fit:cover;border-radius:4px">` : ''}<span><b>${escHtml(s.sku)}</b> · ${escHtml(s.ten)}</span></div>`).join('')
+    : '<div style="padding:6px 8px;font-size:12px;color:var(--text2)">Không thấy mã nào</div>';
+}
+window.g1688Tick = (id, v) => { if (v) g1688Chon.add(id); else g1688Chon.delete(id); g1688Ve(); };
+window.g1688ChonTatCa = () => { g1688Chon = g1688Chon.size === g1688Ds.length ? new Set() : new Set(g1688Ds.map(d => d.id)); g1688Ve(); };
+window.g1688MoGan = (id) => { g1688DangGan = g1688DangGan === id ? null : id; g1688Tim = ''; g1688Ve(); };
+window.g1688DoiSL = async (id, v) => {
+  const sl = Math.max(1, Math.round(Number(String(v).replace(/[^\d]/g, '')) || 1));
+  try { await updateDoc(doc(db, 'gio_1688', id), { sl }); } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.g1688Xoa = async (id) => {
+  if (!await hoiXacNhan('Xóa dòng này khỏi giỏ 1688?')) return;
+  try { await deleteDoc(doc(db, 'gio_1688', id)); } catch(e) { showToast(e.message, true); }
+};
+window.g1688XoaChon = async () => {
+  const ids = [...g1688Chon];
+  if (!ids.length || !await hoiXacNhan(`Xóa ${ids.length} dòng đã chọn khỏi giỏ 1688?`)) return;
+  for (const id of ids) { try { await deleteDoc(doc(db, 'gio_1688', id)); } catch(e) {} }
+  g1688Chon.clear();
+};
+window.g1688ChonHvc = () => {
+  if (!hvcDs.length) { switchSub('hvc'); return; }
+  moBangChon('Hãng vận chuyển', hvcDs.map(h => ({ gt: h.id, nhan: h.ten, phu: `Tỷ giá ${fmt(h.tyGia)} · phí mua ${h.phiMua || 0}% · ${fmt(h.cuocKg)}đ/kg` })),
+    g1688Hvc, (id) => { g1688Hvc = id; g1688Ve(); });
+};
+// Ghi link vào sp_1688/{mã hàng} giống extension. Một phân loại chỉ gắn một mã: gỡ khỏi mã khác trước.
+async function g1688GhiLink(sp, d, ghiLichSu) {
+  const nay = new Date().toISOString();
+  const cungLoai = (l) => String(l.offerId) === String(d.offerId) && (l.phanLoai || '') === (d.phanLoai || '');
+  for (const [khac, v] of sp1688) {
+    if (khac !== sp.id && (v.links || []).some(cungLoai)) {
+      const links = v.links.filter(l => !cungLoai(l));
+      await setDoc(doc(db, 'sp_1688', khac), { links, offerIds: [...new Set(links.map(x => String(x.offerId)))], capNhat: nay }, { merge: true });
+    }
+  }
+  const cu = (await getDoc(doc(db, 'sp_1688', sp.id))).data() || {};
+  const link = { offerId: String(d.offerId), url: d.url || '', phanLoai: d.phanLoai || '', shop: d.shop || '', tieuDe: d.tieuDe || '', anh: d.anh || '', donVi: d.donVi || '',
+    giaTe: Number(d.giaTe) || 0, giaNiemYet: Number(d.giaNiemYet) || 0, sl: Number(d.sl) || 0, shipTe: Number(d.shipTe) || 0, luc: nay, nguoi: currentUser?.email || '' };
+  const links = [link, ...(cu.links || []).filter(x => !cungLoai(x))];
+  const lichSu = ghiLichSu ? [{ offerId: link.offerId, phanLoai: link.phanLoai, giaTe: link.giaTe, sl: link.sl, shipTe: link.shipTe, luc: nay }, ...(cu.lichSu || [])].slice(0, 60) : (cu.lichSu || []);
+  await setDoc(doc(db, 'sp_1688', sp.id), { skuId: sp.id, sku: sp.sku, ten: sp.ten || '', links, offerIds: [...new Set(links.map(x => String(x.offerId)))], lichSu, capNhat: nay }, { merge: true });
+}
+window.g1688Gan = async (skuId) => {
+  const d = g1688Ds.find(x => x.id === g1688DangGan), sp = allSKUs.find(s => s.id === skuId);
+  if (!d || !sp) return;
+  try {
+    await g1688GhiLink(sp, d, false);
+    g1688DangGan = null; g1688Tim = '';
+    showToast(`Đã gắn ${sp.sku} — lần sau phân loại này tự nhận`);
+    g1688Ve();
+  } catch(e) { showToast('Không gắn được: ' + e.message, true); }
+};
+window.g1688TaoDon = async () => {
+  const h = g1688Hang(g1688Hvc);
+  if (!h && !await hoiXacNhan('Chưa chọn hãng vận chuyển — giá trong đơn sẽ để trống. Vẫn tạo?')) return;
+  const ds = g1688Ds.filter(d => g1688Chon.has(d.id)).map(d => ({ d, t: g1688TinhDong(d, h) })).filter(x => x.t.sp);
+  if (!ds.length) { showToast('Các dòng đã chọn chưa gắn mã hàng', true); return; }
+  if (dhDon && (dhDon.items.length || dhDon.id) && !await hoiXacNhan('Đang có đơn đặt hàng soạn dở. Thay bằng đơn từ giỏ 1688?')) return;
+  const gop = new Map();
+  for (const { t } of ds) {
+    const x = gop.get(t.sp.sku) || { sku: t.sp.sku, skuId: t.sp.id, ten: t.sp.ten || '', sl: 0, tien: 0 };
+    x.sl += t.sl; x.tien += t.tong; gop.set(t.sp.sku, x);
+  }
+  const shops = [...new Set(ds.map(x => x.d.shop).filter(Boolean))];
+  const ncc = shops.length === 1 ? (await dhTaiNcc()).find(n => boDauTim(n.ten) === boDauTim(shops[0])) : null;
+  dhDon = dhDonMoi(); dhDon.kho = 'san';
+  dhDon.ncc = ncc ? { id: ncc.id, ten: ncc.ten } : null;
+  dhDon.items = [...gop.values()].map(x => ({ sku: x.sku, skuId: x.skuId, ten: x.ten, sl: x.sl, giaVon: dhCoGia() && h ? Math.round(x.tien / x.sl) : 0 }));
+  dhDon.ghiChu = `1688${shops.length ? ': ' + shops.join(', ') : ''}${h ? ' · VC ' + h.ten : ''}`.slice(0, 300);
+  dhDon.tuGio1688 = ds.map(x => x.d.id);
+  dhVeLaiTraTruoc(); dhLuuNhap();
+  switchSub('tao');
+  showToast(dhDon.ncc ? 'Đã đưa vào đơn đặt hàng — kiểm lại rồi bấm Lưu' : 'Đã đưa vào đơn — chọn nhà cung cấp, kiểm lại rồi bấm Lưu', false, 6000);
+};
+// Đơn đặt hàng từ giỏ đã lưu: ghi giá nhập lần này làm mốc (sp_1688) rồi bỏ các dòng khỏi giỏ
+async function g1688SauKhiDat(ids) {
+  for (const id of ids || []) {
+    const d = g1688Ds.find(x => x.id === id); if (!d) continue;
+    try { const sp = g1688MaGan(d)[0]; if (sp) await g1688GhiLink(sp, d, true); } catch(e) {}
+    try { await deleteDoc(doc(db, 'gio_1688', id)); } catch(e) {}
+  }
+}
+
+function hvcVe() {
+  const el = document.getElementById('dathang-hvc'); if (!el) return;
+  if (!laAdminGio()) { el.innerHTML = '<p class="info-note">Chỉ Admin.</p>'; return; }
+  el.innerHTML = `<div style="max-width:640px;margin:0 auto">
+    <p class="info-note">Giá từng hãng dùng để ước tính giá về kho ở Giỏ 1688: (giá ¥ + ship nội địa) × tỷ giá, cộng phí mua %, phí kiểm đếm và cước.
+      Cước = kg tính cước × đ/kg, với kg tính cước = max(cân nặng thật, thể tích ÷ hệ số quy đổi); hãng có giá theo khối thì lấy mức cao hơn.
+      Cân nặng, kích thước lấy từ thông tin Hàng hóa.</p>
+    ${hvcDs.map(h => `<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;display:flex;gap:8px;align-items:center">
+      <div style="flex:1;min-width:0"><b>${escHtml(h.ten)}</b>${h.macDinh ? ' <span style="font-size:11px;background:#DCFCE7;color:#15803D;padding:1px 6px;border-radius:4px">Mặc định</span>' : ''}
+        <div style="font-size:12px;color:var(--text2)">Tỷ giá ${fmt(h.tyGia)}đ/¥ · phí mua ${h.phiMua || 0}% · ${fmt(h.cuocKg)}đ/kg${Number(h.heSo) ? ` · quy đổi ÷${h.heSo}` : ''}${Number(h.cuocKhoi) ? ` · ${fmt(h.cuocKhoi)}đ/m³` : ''}${Number(h.phiKiemDem) ? ` · kiểm đếm ${fmt(h.phiKiemDem)}đ/sp` : ''}</div>
+        ${h.ghiChu ? `<div style="font-size:12px;color:var(--text2)">${escHtml(h.ghiChu)}</div>` : ''}</div>
+      <button class="btn-xs" onclick="hvcMo('${h.id}')">Sửa</button></div>`).join('') || '<p class="info-note" style="text-align:center">Chưa có hãng nào.</p>'}
+    <button class="btn-g" style="background:#2563EB" onclick="hvcMo()">+ Thêm hãng vận chuyển</button></div>`;
+}
+window.hvcMo = (id) => {
+  const h = hvcDs.find(x => x.id === id) || { heSo: 6000 };
+  const o = (k, nhan, phu) => `<div class="field"><label>${nhan}${phu ? ` <span style="font-weight:400;color:var(--text2)">${phu}</span>` : ''}</label><input id="hvc-${k}" inputmode="decimal" value="${h[k] ?? ''}"></div>`;
+  ddbMoKhung('hvc-modal', id ? 'Sửa hãng vận chuyển' : 'Thêm hãng vận chuyển', '', `
+    <div class="field"><label>Tên hãng</label><input id="hvc-ten" maxlength="80" value="${escHtml(h.ten || '')}"></div>
+    ${o('tyGia', 'Tỷ giá', '(đ/¥)')}
+    ${o('phiMua', 'Phí mua hàng', '(% trên tiền hàng + ship nội địa)')}
+    ${o('cuocKg', 'Cước cân nặng', '(đ/kg)')}
+    ${o('heSo', 'Hệ số quy đổi thể tích', '(cm³ ra 1 kg, thường 6000; 0 = không quy đổi)')}
+    ${o('cuocKhoi', 'Cước theo khối', '(đ/m³; 0 = không tính)')}
+    ${o('phiKiemDem', 'Phí kiểm đếm', '(đ/sản phẩm; 0 = không)')}
+    <div class="field"><label>Ghi chú</label><input id="hvc-ghiChu" maxlength="200" value="${escHtml(h.ghiChu || '')}"></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:14px;margin:6px 0"><input type="checkbox" id="hvc-macDinh" ${h.macDinh ? 'checked' : ''} style="width:18px;height:18px"> Dùng làm hãng mặc định</label>`,
+    `${id ? `<button class="btn-outline" style="flex:0 0 auto;color:#DC2626" onclick="hvcXoa('${id}')">Xóa</button>` : ''}
+     <button class="btn-outline" style="flex:1" onclick="document.getElementById('hvc-modal').style.display='none'">Hủy</button>
+     <button class="btn-g" style="flex:1;margin:0;background:#2563EB" onclick="hvcLuu(${id ? `'${id}'` : ''})">Lưu</button>`);
+  ddbCanhGiua('hvc-modal');
+};
+window.hvcLuu = async (id) => {
+  const v = (k) => String(document.getElementById('hvc-' + k)?.value || '').trim();
+  const so = (k) => Math.max(0, parseFloat(v(k).replace(/\s/g, '').replace(',', '.')) || 0);
+  const du = { ten: v('ten'), tyGia: so('tyGia'), phiMua: so('phiMua'), cuocKg: so('cuocKg'), heSo: so('heSo'), cuocKhoi: so('cuocKhoi'), phiKiemDem: so('phiKiemDem'),
+    ghiChu: v('ghiChu'), macDinh: !!document.getElementById('hvc-macDinh')?.checked, deleted: false, suaLuc: serverTimestamp() };
+  if (!du.ten) { showToast('Nhập tên hãng', true); return; }
+  if (!du.tyGia) { showToast('Nhập tỷ giá', true); return; }
+  try {
+    if (du.macDinh) for (const h of hvcDs) if (h.macDinh && h.id !== id) await updateDoc(doc(db, 'hang_van_chuyen', h.id), { macDinh: false });
+    if (id) await updateDoc(doc(db, 'hang_van_chuyen', id), du);
+    else await addDoc(collection(db, 'hang_van_chuyen'), { ...du, taoLuc: serverTimestamp() });
+    document.getElementById('hvc-modal').style.display = 'none';
+    showToast('Đã lưu hãng vận chuyển');
+  } catch(e) { showToast('Không lưu được: ' + e.message, true); }
+};
+window.hvcXoa = async (id) => {
+  if (!await hoiXacNhan('Xóa hãng vận chuyển này?')) return;
+  try { await updateDoc(doc(db, 'hang_van_chuyen', id), { deleted: true, macDinh: false }); document.getElementById('hvc-modal').style.display = 'none'; }
+  catch(e) { showToast(e.message, true); }
 };
 
 // ===== DANH SÁCH ĐƠN =====
@@ -18360,7 +18628,7 @@ function ngheSp1688() {
   if (sp1688Nghe || currentUserData?.role !== 'admin') return;
   sp1688Nghe = onSnapshot(collection(db, 'sp_1688'), (s) => {
     sp1688 = new Map(s.docs.map(d => [d.id, d.data()]));
-    clearTimeout(window.__hh1688); window.__hh1688 = setTimeout(() => { if (document.getElementById('hanghoa-list')) renderHangHoaList(); }, 300);
+    clearTimeout(window.__hh1688); window.__hh1688 = setTimeout(() => { if (document.getElementById('hanghoa-list')) renderHangHoaList(); if (activeModule === 'dathang' && activeSubTab === 'gio1688') g1688Ve(); }, 300);
   }, () => {});
 }
 const linkSp1688 = (id) => (sp1688.get(id)?.links || []).slice().sort((a, b) => String(b.luc || '').localeCompare(String(a.luc || '')));
@@ -21509,6 +21777,13 @@ function theoDoiTinhNang() {
   if (dangTheoDoiTinhNang) return;
   dangTheoDoiTinhNang = true;
   setTimeout(() => ghiDangNhapThietBi(), 3000);
+  setTimeout(() => {
+    try {
+      if (new URLSearchParams(location.search).get('mo') === 'gio1688' && currentUserData?.role === 'admin') {
+        switchModule('dathang'); setTimeout(() => switchSub('gio1688'), 400);
+      }
+    } catch(e) {}
+  }, 2000);
   setTimeout(() => bhKhoiDongNen(), 8000);
   onSnapshot(doc(db, 'cau_hinh', 'chi_nhanh'), (snap) => {
     cauHinhChiNhanh = snap.exists() ? snap.data() : null;
@@ -31447,7 +31722,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v841</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v842</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31505,7 +31780,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v841</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v842</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31555,7 +31830,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v841</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v842</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31572,7 +31847,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v841</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v842</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
@@ -31622,6 +31897,8 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
       <button class="stab" id="stab-tao" onclick="switchSub('tao')">Tạo phiếu</button>
       <button class="stab" id="stab-ds" onclick="switchSub('ds')">Danh sách</button>
       <button class="stab" id="stab-thongke" onclick="switchSub('thongke')">Thống kê</button>
+      <button class="stab" id="stab-gio1688" style="display:none" onclick="switchSub('gio1688')">Giỏ 1688</button>
+      <button class="stab" id="stab-hvc" style="display:none" onclick="switchSub('hvc')">Hãng vận chuyển</button>
     </div>
     </div>
 
@@ -31944,6 +32221,8 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
       <div class="panel" id="panel-dathang-ds">
         <div id="dathang-ds-list"><div class="loading">Đang tải...</div></div>
       </div>
+      <div class="panel" id="panel-dathang-gio1688"><div id="dathang-gio1688"><div class="loading">Đang tải...</div></div></div>
+      <div class="panel" id="panel-dathang-hvc"><div id="dathang-hvc"><div class="loading">Đang tải...</div></div></div>
       <div class="panel" id="panel-datcoc-tao"><div id="dc-tao" style="max-width:640px;margin:0 auto"></div></div>
       <div class="panel" id="panel-datcoc-ds"><div id="datcoc-ds-list" style="max-width:760px;margin:0 auto"><div class="loading">Đang tải...</div></div></div>
       <div class="panel" id="panel-dungnb-tao"><div id="dn-tao" style="max-width:640px;margin:0 auto"></div></div>
