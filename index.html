@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 847;
+  const APP_VERSION = 848;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -11000,22 +11000,73 @@ window.moTheKho = async function(maSku, maKho = 'cuahang') {
       : await taiKho(maKho);
     const el = document.getElementById('the-kho-noidung');
     if (!ds.length) { el.innerHTML = ''; return; }
-    el.innerHTML = ds.map(g => {
-      const t = g.thoiGian?.toDate ? g.thoiGian.toDate() : null;
-      const am = Number(g.soLuong) < 0;
+    // Phiếu chuyển kho đã sửa / xóa: gạch dòng gốc, hiện số đúng ngay dưới, ẩn các dòng "Sửa/Xóa phiếu" (chỉ là phần chênh lệch).
+    // Số "còn" của các dòng nằm giữa lúc chuyển và lúc sửa được cộng phần chênh để đọc liền mạch như thể phiếu đúng từ đầu.
+    const asc = [...ds].sort((a, b) => ms(a) - ms(b));
+    const laGoc = (g) => /^Chuyển kho /.test(String(g.loaiGiaoDich || ''));
+    const laSua = (g) => /^(Sửa|Xóa) phiếu chuyển kho/.test(String(g.loaiGiaoDich || ''));
+    const cungPhieu = (o, e) => o.kho === e.kho && o.sku === e.sku &&
+      ((e.phieuId && (e.phieuId === o.phieuId || e.phieuId === o.maChungTu)) || (e.maChungTu && e.maChungTu === o.maChungTu));
+    const suaCua = new Map(), daGop = new Set();
+    asc.forEach((o, i) => {
+      if (!laGoc(o)) return;
+      const ds2 = [];
+      for (let j = i + 1; j < asc.length; j++) {
+        const e = asc[j];
+        if (laGoc(e) && cungPhieu(o, e)) break;   // cùng mã chứng từ nhưng là phiếu khác (hiếm) -> dừng
+        if (laSua(e) && !daGop.has(e) && cungPhieu(o, e)) { ds2.push({ e, j }); daGop.add(e); }
+      }
+      if (ds2.length) suaCua.set(o, ds2);
+    });
+    const bu = new Map();   // phần chênh cộng vào "còn" của các dòng nằm giữa
+    for (const [o, ds2] of suaCua) {
+      const i = asc.indexOf(o);
+      for (const { e, j } of ds2) for (let k = i + 1; k < j; k++) {
+        const g = asc[k]; if (g.kho === o.kho && g !== e) bu.set(g, (bu.get(g) || 0) + (Number(e.soLuong) || 0));
+      }
+    }
+    const tg = (g) => { const t = g.thoiGian?.toDate ? g.thoiGian.toDate() : null;
+      return t ? t.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: '2-digit' }) : ''; };
+    const so = (n) => `${Number(n) < 0 ? '' : '+'}${n}`;
+    const con = (g, n) => g.tonSau != null && !laChung ? `<div style="font-size:11px;color:var(--text2)">còn ${n}</div>` : '';
+    el.innerHTML = ds.filter(g => !daGop.has(g)).map(g => {
+      const am = Number(g.soLuong) < 0, b = bu.get(g) || 0;
+      const meta = `<div style="font-size:11px;color:var(--text2)">${tg(g)}${g.maChungTu ? ` · ${escHtml(g.maChungTu)}` : ''}${g.nguoiTao ? ` · ${escHtml(g.nguoiTao)}` : ''}</div>`;
+      const sua = suaCua.get(g);
+      if (sua) {
+        const tong = sua.reduce((a, x) => a + (Number(x.e.soLuong) || 0), 0), dung = (Number(g.soLuong) || 0) + tong, cuoi = sua[sua.length - 1].e;
+        const xoa = /^Xóa/.test(String(cuoi.loaiGiaoDich || ''));
+        const maMoi = sua.map(x => x.e.maChungTu).filter(m => m && m !== g.maChungTu).pop();
+        return `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;gap:10px">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:600;text-decoration:line-through;color:var(--text2)">${escHtml(g.loaiGiaoDich || '')}</div>${meta}
+          </div>
+          <div style="text-align:right;flex-shrink:0;text-decoration:line-through;color:var(--text2)">
+            <div style="font-size:14px;font-weight:600">${so(g.soLuong)}</div>${con(g, g.tonSau)}
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:5px;padding:6px 8px;border-radius:8px;background:#FFFBEB;border:1px solid #FDE68A">
+          <div style="flex:1;min-width:0;font-size:12px">
+            <b>✎ ${xoa ? 'Phiếu đã xóa' : dung === 0 ? 'Đã bỏ khỏi phiếu' : 'Đã sửa thành ' + so(dung)}</b>${maMoi ? ` · mã mới ${escHtml(maMoi)}` : ''}
+            ${sua.map(x => `<div style="color:var(--text2)">${escHtml(x.e.nguoiTao || '')} ${xoa && x.e === cuoi ? 'xóa' : 'sửa'} lúc ${tg(x.e)} (${so(x.e.soLuong)})</div>`).join('')}
+          </div>
+          <div style="text-align:right;flex-shrink:0">
+            <div style="font-size:16px;font-weight:700;color:${dung < 0 ? 'var(--red)' : dung > 0 ? 'var(--green)' : 'var(--text2)'}">${so(dung)}</div>${con(g, (Number(g.tonSau) || 0) + tong + b)}
+          </div>
+        </div>
+      </div>`;
+      }
+      const nhan = laSua(g) ? `${escHtml(g.loaiGiaoDich || '')} <span style="font-weight:400;color:var(--text2)">· phần chênh khi sửa (vd hàng thêm vào phiếu)</span>` : escHtml(g.loaiGiaoDich || '');
       return `
       <div style="display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600">${escHtml(g.loaiGiaoDich || '')}</div>
-          <div style="font-size:11px;color:var(--text2)">
-            ${t ? t.toLocaleString('vi-VN', {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',year:'2-digit'}) : ''}
-            ${g.maChungTu ? ` · ${escHtml(g.maChungTu)}` : ''}
-            ${g.nguoiTao ? ` · ${escHtml(g.nguoiTao)}` : ''}
-          </div>
+          <div style="font-size:13px;font-weight:600">${nhan}</div>${meta}
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-size:16px;font-weight:700;color:${am ? 'var(--red)' : 'var(--green)'}">${am ? '' : '+'}${g.soLuong}</div>
-          ${g.tonSau != null && !laChung ? `<div style="font-size:11px;color:var(--text2)">còn ${g.tonSau}</div>` : ''}
+          <div style="font-size:16px;font-weight:700;color:${am ? 'var(--red)' : 'var(--green)'}">${so(g.soLuong)}</div>
+          ${con(g, (Number(g.tonSau) || 0) + b)}
         </div>
       </div>`;
     }).join('');
@@ -23826,6 +23877,7 @@ async function dieuChinhTonKhoApp(items, dau = -1, maKho = 'san', chungTu = null
         kho: maKho,
         loaiGiaoDich: (chungTu.loai || 'Điều chỉnh') + (it.quaCombo ? ` (combo ${it.quaCombo})` : ''),
         maChungTu: chungTu.ma || '',
+        ...(chungTu.phieuId ? { phieuId: String(chungTu.phieuId) } : {}),
         soLuong: dau * sl,
         tonTruoc,
         tonSau: tonTruoc === null ? null : tonTruoc + dau * sl,
@@ -23990,7 +24042,7 @@ window.submitNhap = async function() {
     let ketQuaTon = { soDong: 0, boQuaCombo: [] };
     try {
       // Chuyển kho = trừ kho đi, cộng kho đến
-      const ct = { loai: 'Chuyển kho ' + cc.ten, ma: maPhieu };
+      const ct = { loai: 'Chuyển kho ' + cc.ten, ma: maPhieu, phieuId: maPhieu };
       ketQuaTon = await dieuChinhTonKhoApp(currentNhap.items, -1, cc.tu, ct);
       await dieuChinhTonKhoApp(currentNhap.items, +1, cc.den, ct);
     } catch(e) {
@@ -26685,7 +26737,7 @@ window.deleteNhap = async function(id) {
   await updateDoc(doc(db,'phieu_chuyenkho',id), { deleted:true, deletedAt:serverTimestamp(), deletedBy:{uid:currentUser.uid,ten:currentUserData.ten} });
   // Hàng chưa chuyển đi nữa -> trả lại tồn kho app cho khớp với KiotViet
   try {
-    const ctXoa = { loai: 'Xóa phiếu chuyển kho', ma: data.maPhieu || id };
+    const ctXoa = { loai: 'Xóa phiếu chuyển kho', ma: data.maPhieu || id, phieuId: id };
     const ccX = CHIEU_CHUYEN[chieuCuaPhieu(data)];
     const kq = await dieuChinhTonKhoApp(data.items || [], +1, ccX.tu, ctXoa);
     await dieuChinhTonKhoApp(data.items || [], -1, ccX.den, ctXoa);
@@ -26971,7 +27023,8 @@ window.saveEdit = async function() {
           const nhomTru = cheneLech.filter(x => x.dau === -1);
           const nhomCong = cheneLech.filter(x => x.dau === +1);
           // Chuyển kho tác động NGƯỢC CHIỀU lên hai kho (kho đi / kho đến theo chiều của phiếu)
-          const ctSua = { loai: 'Sửa phiếu chuyển kho', ma: old.maPhieu || editingPhieuId };
+          // phieuId (cố định) để thẻ kho nối dòng sửa với dòng chuyển gốc dù mã phiếu đổi theo KiotViet
+          const ctSua = { loai: 'Sửa phiếu chuyển kho', ma: updatePayload.maPhieu || old.maPhieu || editingPhieuId, phieuId: editingPhieuId };
           const ccS = CHIEU_CHUYEN[chieuCuaPhieu(old)];
           if (nhomTru.length) {
             await dieuChinhTonKhoApp(nhomTru, -1, ccS.tu, ctSua);
@@ -31866,7 +31919,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v847</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v848</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -31924,7 +31977,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v847</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v848</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -31974,7 +32027,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v847</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v848</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -31991,7 +32044,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v847</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v848</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
