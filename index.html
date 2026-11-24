@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 851;
+  const APP_VERSION = 852;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -19052,7 +19052,7 @@ function ngheGioTem() {
     const items = snap.data()?.items || {};
     const cu = new Set(gioTem.keys());
     gioTem.clear();
-    Object.entries(items).forEach(([id, t]) => { if (t && Number(t.soLuong) > 0) gioTem.set(id, { ten: t.ten || '', gia: Number(t.gia) || 0, sku: t.sku || '', soLuong: Number(t.soLuong) }); });
+    Object.entries(items).forEach(([id, t]) => { if (t && Number(t.soLuong) > 0) gioTem.set(id, { ten: t.ten || '', gia: Number(t.gia) || 0, sku: t.sku || '', soLuong: Number(t.soLuong), luc: Number(t.luc) || 0 }); });
     new Set([...cu, ...gioTem.keys()]).forEach(capNhatNutTem);
     capNhatNutTem();
     veGioTem();
@@ -19070,7 +19070,8 @@ async function ghiCaDanhSachTem() {
 
 // Hàng đã tắt "Bán trực tiếp" (không bán tại quầy) không in tem: ẩn khỏi tìm kiếm, danh sách và lệnh in
 const temBiAn = (id) => allSKUs.find(x => x.id === id)?.banTrucTiep === false;
-const dsTemHienThi = () => [...gioTem.entries()].filter(([id, t]) => t.soLuong > 0 && !temBiAn(id));
+// Mới thêm nằm trên đầu (Firestore trả map theo thứ tự mã nên phải tự sắp theo lúc thêm)
+const dsTemHienThi = () => [...gioTem.entries()].filter(([id, t]) => t.soLuong > 0 && !temBiAn(id)).sort((a, b) => (b[1].luc || 0) - (a[1].luc || 0));
 function tongSoTem() {
   return dsTemHienThi().reduce((n, [, t]) => n + t.soLuong, 0);
 }
@@ -19084,7 +19085,7 @@ function capNhatNutTem(id) {
   }
 }
 
-window.themVaoGioTem = function(id, soThem = 1) {
+window.themVaoGioTem = function(id, soThem = 1, lenDau = true) {
   if (!coQuyen('hh_intem')) { showToast('Bạn không có quyền in tem giá', true); return; }
   const s = allSKUs.find(x => x.id === id);
   if (!s) return;
@@ -19093,6 +19094,7 @@ window.themVaoGioTem = function(id, soThem = 1) {
   t.soLuong = Math.max(0, Math.min(500, t.soLuong + soThem));
   // Giá/tên lấy mới nhất mỗi lần bấm — lỡ vừa sửa giá thì tem in theo giá mới
   t.ten = s.ten || ''; t.gia = giaBanHang(s); t.sku = s.sku || '';
+  if (!t.luc || (lenDau && soThem > 0)) t.luc = Date.now();   // thêm mới / thêm lại -> lên đầu danh sách; bấm +/− trong danh sách thì giữ chỗ
   if (t.soLuong) gioTem.set(id, t); else gioTem.delete(id);
   capNhatNutTem(id);
   luuMotTem(id);
@@ -19213,11 +19215,11 @@ function veTemXemTruoc(cv, t) {
   for (const d of dong) { ctx.fillText(d, (w - Math.min(ctx.measureText(d).width, w - 2 * le)) / 2, y, w - 2 * le); y += co * 1.12; }
 }
 
-window.doiSoTem = function(id, d) { themVaoGioTem(id, d); veGioTem(); };
+window.doiSoTem = function(id, d) { themVaoGioTem(id, d, false); veGioTem(); };
 window.datSoTem = function(id, v) {
   const t = gioTem.get(id);
   if (!t) return;
-  themVaoGioTem(id, (Math.max(0, Math.min(500, parseInt(v, 10) || 0))) - t.soLuong);
+  themVaoGioTem(id, (Math.max(0, Math.min(500, parseInt(v, 10) || 0))) - t.soLuong, false);
   veGioTem();
 };
 window.xoaHetGioTem = async function(khongHoi) {
@@ -32024,7 +32026,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v851</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v852</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -32082,7 +32084,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v851</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v852</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -32132,7 +32134,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v851</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v852</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -32149,7 +32151,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v851</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v852</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
