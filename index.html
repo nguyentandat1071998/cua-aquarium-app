@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 856;
+  const APP_VERSION = 857;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9325,7 +9325,10 @@ function dhVeTao() {
         <button class="bh-chon-tt" id="dh-tt-cach" style="flex:0 0 auto;min-height:36px;font-size:13px;font-weight:600" onclick="dhMoCachTruoc()">${SQ_CACH[d.traTruoc.cach]}</button>
         <button class="bh-chon-tt" id="dh-tt-tk" title="Trả từ tài khoản" style="flex:0 0 auto;min-height:36px;font-size:13px;font-weight:600;${ttLaAdmin() && d.traTruoc.cach === 'chuyenkhoan' ? '' : 'display:none'}" onclick="ttMoChonTk('dh-tt-tk', true)">${escHtml(ttTenTk(d.traTruoc.tk))}</button>`;
       tt.style.flexWrap = 'wrap';
-      if (ttLaAdmin()) ttNapTk().then(() => { const b = document.getElementById('dh-tt-tk'); if (b && dhDon?.traTruoc) b.textContent = ttTenTk(dhDon.traTruoc.tk); });
+      if (ttLaAdmin()) ttNapTk().then(() => {
+        if (dhDon?.traTruoc && dhDon.traTruoc.tk === undefined) { dhDon.traTruoc.tk = ttTkMacDinh(); dhLuuNhap(); }
+        const b = document.getElementById('dh-tt-tk'); if (b && dhDon?.traTruoc) b.textContent = ttTenTk(dhDon.traTruoc.tk);
+      });
     }
   }
   const nut = document.getElementById('btn-dh-luu');
@@ -9424,7 +9427,7 @@ window.dhLuuDon = async function() {
     }
     let loiChi = '';
     if (!d.id && dhCoTT() && Number(d.traTruoc?.soTien) > 0) {
-      try { await dhGhiChi(ma, d.ncc, { soTien: d.traTruoc.soTien, hangMuc: d.traTruoc.hangMuc, cach: d.traTruoc.cach, ghiChu: 'Thanh toán khi lên đơn', tk: d.traTruoc.tk || '' }); }
+      try { await dhGhiChi(ma, d.ncc, { soTien: d.traTruoc.soTien, hangMuc: d.traTruoc.hangMuc, cach: d.traTruoc.cach, ghiChu: 'Thanh toán khi lên đơn', tk: d.traTruoc.tk ?? (ttLaAdmin() ? ttTkMacDinh() : '') }); }
       catch(e) { loiChi = e.message; }
     }
     if (loiChi) alert(`Đã tạo đơn ${ma} nhưng CHƯA ghi được khoản đã thanh toán:
@@ -10048,18 +10051,27 @@ async function ttNapTk() {
   return sqDsTk();
 }
 const ttTenTkO = (t) => !t ? 'TK bán hàng' : t.stk ? `${sqTenNH(t.nganHang)} ***${String(t.stk).slice(-4)}${t.macDinh ? ' (bán hàng)' : ''}` : (t.macDinh ? 'TK bán hàng' : (t.ten || 'Ngân hàng'));
+// Tài khoản chi mặc định: lần chọn gần nhất trên máy này; chưa chọn bao giờ thì lấy tài khoản đầu tiên không phải TK bán hàng (VD Techcombank)
+function ttTkMacDinh() {
+  let ds = []; try { ds = sqDsTk(); } catch(e) {}
+  const ids = ds.map(x => x.macDinh ? '' : x.id);
+  let luu = null; try { luu = localStorage.getItem('tt_tk_chi'); } catch(e) {}
+  if (luu !== null && ids.includes(luu)) return luu;
+  return ds.find(x => !x.macDinh)?.id || '';
+}
 function ttTenTk(id) { let ds = []; try { ds = sqDsTk(); } catch(e) {} return ttTenTkO(ds.find(x => (x.macDinh ? '' : x.id) === (id || ''))); }
 window.ttMoChonTk = async (oId, laTraTruoc) => {
   const ds = await ttNapTk();
   if (ds.length < 2) { showToast('Sổ quỹ mới có 1 tài khoản ngân hàng — thêm tài khoản ở Sổ quỹ'); return; }
   moBangChon('Trả từ tài khoản', ds.map(t => ({ gt: t.macDinh ? '' : t.id, nhan: ttTenTkO(t), phu: t.ten || '' })), laTraTruoc ? (dhDon?.traTruoc?.tk || '') : ttTkChon, (v) => {
     if (laTraTruoc) { if (dhDon?.traTruoc) { dhDon.traTruoc.tk = v; dhLuuNhap(); } } else ttTkChon = v;
+    try { localStorage.setItem('tt_tk_chi', v); } catch(e) {}   // lần sau mặc định tài khoản này
     const b = document.getElementById(oId); if (b) b.textContent = ttTenTk(v);
   });
 };
 // Ô chọn tài khoản chỉ hiện khi trả bằng chuyển khoản
 function ttHienTk(oId, cach) { const o = document.getElementById(oId); if (o) o.style.display = ttLaAdmin() && cach === 'chuyenkhoan' ? '' : 'none'; }
-async function ttMoKhungTk(oNut) { ttTkChon = ''; await ttNapTk(); const b = document.getElementById(oNut); if (b) b.textContent = ttTenTk(''); }
+async function ttMoKhungTk(oNut) { ttTkChon = ''; await ttNapTk(); ttTkChon = ttTkMacDinh(); const b = document.getElementById(oNut); if (b) b.textContent = ttTenTk(ttTkChon); }
 async function dhGhiChi(donId, ncc, { soTien, hangMuc, cach, ghiChu, tk }) {
   if (!dhCoTT()) throw new Error('Bạn không có quyền thanh toán');
   soTien = Math.round(Number(soTien) || 0);
@@ -32150,7 +32162,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v856</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v857</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -32208,7 +32220,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v856</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v857</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -32258,7 +32270,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v856</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v857</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -32275,7 +32287,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v856</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v857</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
