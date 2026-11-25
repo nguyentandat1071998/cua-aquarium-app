@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 853;
+  const APP_VERSION = 854;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9738,16 +9738,41 @@ window.g1688TaoDon = async () => {
   const ncc = shops.length === 1 ? (await dhTaiNcc()).find(n => boDauTim(n.ten) === boDauTim(shops[0])) : null;
   const nccCu = dhDon?.ncc || dhDocNhap()?.ncc || null;   // không khớp tên shop thì giữ nhà cung cấp đang chọn (vd "Trung")
   const khoCu = dhDon?.kho || 'san';
-  dhPhieuTamMoi(khoCu);   // đơn từ giỏ 1688 vào một phiếu tạm mới, không đè phiếu đang soạn
-  dhDon.ncc = ncc ? { id: ncc.id, ten: ncc.ten } : nccCu;
-  dhDon.items = [...gop.values()].map(x => ({ sku: x.sku, skuId: x.skuId, ten: x.ten, sl: x.sl, giaVon: dhCoGia() && h ? Math.round(x.tien / x.sl) : 0 }));
+  const hangMoi = [...gop.values()].map(x => ({ sku: x.sku, skuId: x.skuId, ten: x.ten, sl: x.sl, giaVon: dhCoGia() && h ? Math.round(x.tien / x.sl) : 0 }));
   const kgS = (Math.round(T.kg * 100) / 100).toLocaleString('vi-VN');
-  dhDon.ghiChu = (`1688: ${T.gy.soDon} đơn${shops.length ? ' (' + shops.join(', ') + ')' : ''}` +
-    (h ? ` · VC ${h.ten} · ship nội địa ¥${fmtTe(T.ship)}${T.giam ? ' · giảm ¥' + fmtTe(T.giam) : ''} · ${kgS} kg · cước ${fmt(T.cuoc)}đ · phí ${fmt(T.phi)}đ · tỷ giá ${fmt(T.ty)}` : '')).slice(0, 300);
-  dhDon.tuGio1688 = T.dong.map(x => x.d.id);
+  const ghiChuMoi = `1688: ${T.gy.soDon} đơn${shops.length ? ' (' + shops.join(', ') + ')' : ''}` +
+    (h ? ` · VC ${h.ten} · ship nội địa ¥${fmtTe(T.ship)}${T.giam ? ' · giảm ¥' + fmtTe(T.giam) : ''} · ${kgS} kg · cước ${fmt(T.cuoc)}đ · phí ${fmt(T.phi)}đ · tỷ giá ${fmt(T.ty)}` : '');
+  // Đang có phiếu tạm (chưa lưu) -> hỏi đưa vào phiếu nào: phiếu mới hoặc gộp vào phiếu cũ
+  const nT = dhNapNhap(); if (dhDon && nT.ds.indexOf(dhDon) < 0) dhLuuNhap();
+  const cu = nT.ds.map((x, i) => ({ x, i })).filter(({ x }) => !x.id && dhCoNoiDung(x));
+  let dich = 'moi';
+  if (cu.length) {
+    dich = await new Promise(res => moBangChon('Đưa vào phiếu tạm nào?', [{ gt: 'moi', nhan: '+ Phiếu tạm mới' },
+      ...cu.map(({ x, i }) => ({ gt: String(i), nhan: `Gộp vào: ${x.ncc?.ten || 'Phiếu ' + (i + 1)}`, phu: `${x.items.length} mã · ${KHO_NHAP[x.kho]?.ten || ''}` }))], 'moi', (v) => res(v)));
+  }
+  if (dich === 'moi' || !nT.ds[Number(dich)]) {
+    dhPhieuTamMoi(khoCu);   // phiếu tạm mới, không đè phiếu đang soạn
+    dhDon.ncc = ncc ? { id: ncc.id, ten: ncc.ten } : nccCu;
+    dhDon.items = hangMoi;
+    dhDon.ghiChu = ghiChuMoi.slice(0, 300);
+    dhDon.tuGio1688 = T.dong.map(x => x.d.id);
+  } else {
+    nT.dang = Number(dich); dhDon = nT.ds[nT.dang];
+    // Gộp: mã đã có thì cộng số lượng, giá vốn lấy bình quân theo số lượng
+    for (const it of hangMoi) {
+      const c = dhDon.items.find(y => y.sku === it.sku);
+      if (!c) { dhDon.items.push(it); continue; }
+      const slCu = Number(c.sl) || 0, sl = slCu + it.sl, gCu = Number(c.giaVon) || 0;
+      c.giaVon = gCu && it.giaVon ? Math.round((gCu * slCu + it.giaVon * it.sl) / sl) : (gCu || it.giaVon);
+      c.sl = sl;
+    }
+    if (!dhDon.ncc) dhDon.ncc = ncc ? { id: ncc.id, ten: ncc.ten } : nccCu;
+    dhDon.ghiChu = [dhDon.ghiChu, ghiChuMoi].filter(Boolean).join(' | ').slice(0, 300);
+    dhDon.tuGio1688 = [...new Set([...(dhDon.tuGio1688 || []), ...T.dong.map(x => x.d.id)])];
+  }
   dhVeLaiTraTruoc(); dhLuuNhap();
   switchSub('tao');
-  showToast(dhDon.ncc ? 'Đã đưa vào đơn đặt hàng — kiểm lại rồi bấm Lưu' : 'Đã đưa vào đơn — chọn nhà cung cấp, kiểm lại rồi bấm Lưu', false, 6000);
+  showToast((dich === 'moi' ? 'Đã đưa vào phiếu tạm mới' : 'Đã gộp vào phiếu tạm') + (dhDon.ncc ? ' — kiểm lại rồi bấm Lưu' : ' — chọn nhà cung cấp, kiểm lại rồi bấm Lưu'), false, 6000);
 };
 // Đơn đặt hàng từ giỏ đã lưu: ghi giá nhập + cân nặng lần này làm mốc (sp_1688), bỏ các dòng khỏi giỏ, phiếu về tự tính
 async function g1688SauKhiDat(ids) {
@@ -32081,7 +32106,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v853</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v854</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -32139,7 +32164,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v853</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v854</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -32189,7 +32214,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v853</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v854</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -32206,7 +32231,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v853</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v854</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
