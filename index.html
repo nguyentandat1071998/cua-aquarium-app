@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 854;
+  const APP_VERSION = 855;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -9348,7 +9348,9 @@ window.dhXoaDong = function(i) { dhDon.items.splice(i, 1); dhVeTao(); };
 window.dhDoiGhiChu = function(v) { if (dhDon) { dhDon.ghiChu = String(v || '').slice(0, 300); dhLuuNhap(); } };
 window.dhBoSoan = async function() {
   if ((dhDon?.items.length || dhDon?.id) && !await hoiXacNhan('Bỏ phiếu đang soạn?\n\nThay đổi chưa lưu sẽ mất.')) return;
+  const traGio = !dhDon?.id ? [...(dhDon?.tuGio1688 || [])] : [];   // bỏ phiếu tạm lấy từ giỏ 1688 -> các dòng hiện lại trong giỏ
   dhXoaNhap(dhDon?.kho || 'ch'); dhVeLaiTraTruoc(); dhVeTao();
+  for (const id of traGio) updateDoc(doc(db, 'gio_1688', id), { vaoPhieuLuc: null }).catch(() => {});
 };
 function dhVeLaiTraTruoc() { const tt = document.getElementById('dh-tra-truoc'); if (tt) { delete tt.dataset.daVe; tt.innerHTML = ''; } }
 window.dhMoChonKho = function() {
@@ -9444,7 +9446,7 @@ Mở đơn → Thanh toán để ghi lại.`);
 // Cước = kg tính cước × đ/kg (kg tính cước = max(cân nặng thật, thể tích ÷ hệ số quy đổi)); có giá theo khối thì lấy mức cao hơn.
 // ==========================================================================
 const laAdminGio = () => currentUserData?.role === 'admin';
-let g1688Ds = [], g1688Nghe = null, hvcDs = [], hvcNghe = null, g1688Hvc = null, g1688Chon = new Set(), g1688DangGan = null, g1688Tim = '', g1688Phieu = {}, g1688CanVe = false, g1688DaThay = new Set();
+let g1688Ds = [], g1688TatCa = [], g1688Nghe = null, hvcDs = [], hvcNghe = null, g1688Hvc = null, g1688Chon = new Set(), g1688DangGan = null, g1688Tim = '', g1688Phieu = {}, g1688CanVe = false, g1688DaThay = new Set();
 const fmtTe = (n) => (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('vi-VN');
 
 function g1688BatNghe() {
@@ -9453,7 +9455,9 @@ function g1688BatNghe() {
   if (!g1688Nghe) g1688Nghe = onSnapshot(collection(db, 'gio_1688'), (s) => {
     const tatCa = s.docs.map(d => ({ id: d.id, ...d.data() }));
     g1688Phieu = tatCa.find(d => d.id === '_phieu') || {};   // ô nhập tay của phiếu, không phải dòng hàng
-    g1688Ds = tatCa.filter(d => d.id !== '_phieu').sort((a, b) => String(b.themLuc || '').localeCompare(String(a.themLuc || '')));
+    g1688TatCa = tatCa.filter(d => d.id !== '_phieu').sort((a, b) => String(b.themLuc || '').localeCompare(String(a.themLuc || '')));
+    // Dòng đã đưa vào phiếu tạm thì ẩn khỏi giỏ (lưu đơn xong mới xóa hẳn). Thêm lại phân loại đó trên 1688 thì hiện lại.
+    g1688Ds = g1688TatCa.filter(d => !(d.vaoPhieuLuc && String(d.vaoPhieuLuc) > String(d.themLuc || '')));
     veNutGio1688();
     if (activeModule === 'dathang' && activeSubTab === 'gio1688') g1688Ve();
   }, (e) => console.warn('[giỏ 1688]', e.message));
@@ -9566,6 +9570,7 @@ function g1688Ve() {
       </div>
       ${h ? hvcDongTyGia(h) : ''}
       ${!hvcDs.length ? '<p class="info-note">Chưa có hãng vận chuyển — thêm ở tab <b>Hãng vận chuyển</b> để ước tính giá về kho.</p>' : ''}
+      ${g1688TatCa.length > ds.length ? `<div style="font-size:12.5px;color:var(--text2);margin-bottom:8px">🧾 ${g1688TatCa.length - ds.length} dòng đã đưa vào phiếu tạm nên ẩn khỏi giỏ (lưu đơn xong tự xóa) · <a href="javascript:void(0)" onclick="g1688HienLai()">hiện lại</a></div>` : ''}
       ${!ds.length ? '<p class="info-note" style="text-align:center;padding:24px 0">Giỏ trống.<br>Trên trang sản phẩm 1688, nhập số lượng các phân loại rồi bấm <b>🛒 Thêm vào giỏ CUA</b> ở khung CUA Aquarium.</p>' : ''}
       ${[...nhom.entries()].map(([shop, dong]) => {
         const tienShop = dong.reduce((a, d) => a + g1688GiaTe(d) * (Number(d.sl) || 0), 0);
@@ -9658,6 +9663,11 @@ function g1688VeKq() {
     : '<div style="padding:6px 8px;font-size:12px;color:var(--text2)">Không thấy mã nào</div>';
 }
 window.g1688Tick = (id, v) => { if (v) g1688Chon.add(id); else g1688Chon.delete(id); g1688Ve(); };
+window.g1688HienLai = async () => {
+  const an = g1688TatCa.filter(d => !g1688Ds.includes(d));
+  if (!an.length || !await hoiXacNhan(`Hiện lại ${an.length} dòng đã đưa vào phiếu tạm?\n\nChỉ làm khi đã bỏ phiếu tạm đó — kẻo đặt trùng.`)) return;
+  for (const d of an) { try { await updateDoc(doc(db, 'gio_1688', d.id), { vaoPhieuLuc: null }); } catch(e) {} }
+};
 window.g1688ChonTatCa = () => { g1688Chon = g1688Chon.size === g1688Ds.length ? new Set() : new Set(g1688Ds.map(d => d.id)); g1688Ve(); };
 window.g1688MoGan = (id) => { g1688DangGan = g1688DangGan === id ? null : id; g1688Tim = ''; g1688Ve(); };
 window.g1688DoiSL = async (id, v) => {
@@ -9771,14 +9781,17 @@ window.g1688TaoDon = async () => {
     dhDon.tuGio1688 = [...new Set([...(dhDon.tuGio1688 || []), ...T.dong.map(x => x.d.id)])];
   }
   dhVeLaiTraTruoc(); dhLuuNhap();
+  // Đã vào phiếu tạm -> ẩn khỏi giỏ, chốt giá theo bậc lúc này (lưu đơn xong dùng giá này làm mốc)
+  const nayIso = new Date().toISOString(), giaChot = T.dong.map(x => [x.d.id, g1688GiaTe(x.d)]);
+  for (const [id, gia] of giaChot) { g1688Chon.delete(id); updateDoc(doc(db, 'gio_1688', id), { vaoPhieuLuc: nayIso, giaChot: gia }).catch(() => {}); }
   switchSub('tao');
   showToast((dich === 'moi' ? 'Đã đưa vào phiếu tạm mới' : 'Đã gộp vào phiếu tạm') + (dhDon.ncc ? ' — kiểm lại rồi bấm Lưu' : ' — chọn nhà cung cấp, kiểm lại rồi bấm Lưu'), false, 6000);
 };
 // Đơn đặt hàng từ giỏ đã lưu: ghi giá nhập + cân nặng lần này làm mốc (sp_1688), bỏ các dòng khỏi giỏ, phiếu về tự tính
 async function g1688SauKhiDat(ids) {
-  const giaLuc = {}; for (const id of ids || []) { const d = g1688Ds.find(x => x.id === id); if (d) giaLuc[id] = g1688GiaTe(d); }
+  const giaLuc = {}; for (const id of ids || []) { const d = g1688TatCa.find(x => x.id === id); if (d) giaLuc[id] = Number(d.giaChot) || g1688GiaTe(d); }
   for (const id of ids || []) {
-    const d0 = g1688Ds.find(x => x.id === id); if (!d0) continue;
+    const d0 = g1688TatCa.find(x => x.id === id); if (!d0) continue;
     const d = { ...d0, giaNiemYet: giaLuc[id] ?? g1688GiaTe(d0), bacGia: null };   // chốt giá theo bậc lúc đặt
     try { const c = g1688CanDong(d, null); if (c.sp) await g1688GhiLink(c.sp, d, true, c.g); } catch(e) {}
     try { await deleteDoc(doc(db, 'gio_1688', id)); } catch(e) {}
@@ -32106,7 +32119,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v854</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v855</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -32164,7 +32177,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v854</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v855</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -32214,7 +32227,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v854</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v855</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -32231,7 +32244,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v854</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v855</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
