@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 859;
+  const APP_VERSION = 860;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -28326,8 +28326,37 @@ async function layLanDongGoiThang(tuNgay, denNgay, uidLoc) {
   return { docs };
 }
 
+// ===== NGÀY NGHỈ LỄ HƯỞNG LƯƠNG (Bộ luật Lao động Đ112 + Ngày Văn hóa 24/11) =====
+// Nghỉ lễ: nhân viên vẫn hưởng 1 công. Đi làm ngày lễ: lương công ×4 (ít nhất 1 công).
+// Chỉ tính cho người có đi làm trong tháng, từ ngày vào làm, tới hôm nay. Áp dụng từ tháng 11/2026.
+// Tết Âm (5 ngày) và Quốc khánh (2 ngày) có ngày do cửa hàng chọn -> Admin thêm / bỏ ở Thiết lập bảng lương (settings/ngay_le).
+const LE_LUONG_TU_THANG = '2026-11';
+let ngayLeLuong = null;   // { them: ['YYYY-MM-DD'], bo: [...] }
+async function napNgayLeLuong(moi) {
+  if (ngayLeLuong && !moi) return ngayLeLuong;
+  try { const s = await getDoc(doc(db, 'settings', 'ngay_le')); ngayLeLuong = s.exists() ? s.data() : {}; } catch(e) { ngayLeLuong = ngayLeLuong || {}; }
+  return ngayLeLuong;
+}
+function tenNgayLeLuong(ngay) {
+  const c = ngayLeLuong || {};
+  if ((c.bo || []).includes(ngay)) return '';
+  const goc = ngayLe(ngay).le.filter(x => x.nghi).map(x => x.ten);
+  if (goc.length) return goc.join(', ');
+  return (c.them || []).includes(ngay) ? 'Nghỉ lễ' : '';
+}
+function dsNgayLeThang(thang, nguoi) {
+  if (thang < LE_LUONG_TU_THANG) return [];
+  const [nam, th] = thang.split('-').map(Number), homNay = ngayLocal(), ds = [];
+  for (let d = 1; d <= new Date(nam, th, 0).getDate(); d++) {
+    const s = `${thang}-${String(d).padStart(2, '0')}`;
+    if (s > homNay || (nguoi?.ngayVaoLam && s < nguoi.ngayVaoLam)) continue;
+    if (tenNgayLeLuong(s)) ds.push(s);
+  }
+  return ds;
+}
 async function tinhLuongThang(thang) {
   if (!allCaLamViec.length) await napCaLamViec();
+  await napNgayLeLuong();
   const dauThang = `${thang}-01`;
   const [nam, th] = thang.split('-').map(Number);
   const ngayCuoi = new Date(nam, th, 0).getDate();
@@ -28480,6 +28509,14 @@ async function tinhLuongThang(thang) {
   }
 
   // Thưởng / trừ theo công thức tính theo THÁNG (bên dưới), không chia theo ngày
+  // Ngày lễ: nghỉ vẫn hưởng 1 công; đi làm thì lương công ×4
+  if (donGia && cacCa.some(c => c.vaoLuc?.seconds && c.thoatLuc?.seconds)) for (const ngayL of dsNgayLeThang(thang, nguoi)) {
+    const tenL = tenNgayLeLuong(ngayL), n = layNgay(ngayL);
+    if (n.coCong) {
+      const them = Math.round(donGia * Math.max(4 * n.soCong, 1)) - n.luong;
+      if (them > 0) { n.luong += them; n.tienLe = them; n.ghiChuDC.push(`🎌 ${tenL}: đi làm ngày lễ, lương công ×4 (+${fmt(them)}đ)`); }
+    } else { n.luong += donGia; n.tienLe = donGia; n.ngayLeNghi = tenL; n.ghiChuDC.push(`🎌 ${tenL}: nghỉ lễ, hưởng 1 công (${fmt(donGia)}đ)`); }
+  }
   for (const n of theoNgay.values()) n.tong = n.luong + (n.tienLamThem || 0) + (n.thuongThem || 0) - n.khauTru;
 
   const ds = [...theoNgay.values()].sort((a, b) => b.ngay.localeCompare(a.ngay));
@@ -28649,6 +28686,7 @@ async function qtDuLieuCuaHang(thang, donBanCoSan) {
 
 async function tinhLuongTatCa(thang) {
   if (!allCaLamViec.length) await napCaLamViec();
+  await napNgayLeLuong();
   blHoaHongDuLieu = [];
   const dauThang = `${thang}-01`;
   const [nam, th] = thang.split('-').map(Number);
@@ -28712,6 +28750,7 @@ async function tinhLuongTatCa(thang) {
       n.soCa++; n.phut += phut;
       n.tongCong += soCong;
       n.luong += Math.round(donGia * soCong);
+      (n._congNgay = n._congNgay || {})[ca.ngay] = (n._congNgay[ca.ngay] || 0) + soCong; n._donGia = donGia;
       const lt = ltTach(ca, gioCa);
       if (lt.phutTinh) {
         n.lamThem += Math.round(donGia / phutMotCong(caLV) * lt.phutTinh * HE_SO_LAM_THEM);
@@ -28764,7 +28803,13 @@ async function tinhLuongTatCa(thang) {
 
   const ds = [...theoNguoi.values()].filter(Boolean).map(n => {
     const r = qtTinhChoNguoi(n.vaiTroId, { ...chung, donBan: n._donBan, donHoanTat: hoanTatTheoNguoi ? (hoanTatTheoNguoi.get(n.uid) || []) : null, loiDongGoi: loiTheoNguoi.get(n.uid) || [], quetGoi: n._quet, donSan: [...(n._quet || []).map(x => x._don).filter(Boolean), ...allDonHangSan], cacCa: n._ca, soCong: n.tongCong });
-    const { _ca, _donBan, _quet, ...gon } = n;
+    // Ngày lễ: nghỉ vẫn hưởng 1 công; đi làm thì lương công ×4
+    if (n._congNgay && n._donGia) for (const ngayL of dsNgayLeThang(thang, allUsersCache.find(x => x.id === n.uid))) {
+      const c = n._congNgay[ngayL] || 0;
+      const them = c > 0 ? Math.round(n._donGia * Math.max(4 * c, 1)) - Math.round(n._donGia * c) : n._donGia;
+      if (them > 0) { n.luong += them; n.tienLe = (n.tienLe || 0) + them; n.soNgayLe = (n.soNgayLe || 0) + 1; }
+    }
+    const { _ca, _donBan, _quet, _congNgay, _donGia, ...gon } = n;
     blHoaHongDuLieu.push({ uid: n.uid, ten: n.ten, vaiTroId: n.vaiTroId, donBan: _donBan, donHoanTat: hoanTatTheoNguoi?.get(n.uid) || [], donChuaHT: chuaHTTheoNguoi.get(n.uid) || [] });
     const pc = phuCapTheoNguoi.get(n.uid) || {};
     const phuCap = Number(pc.soTien) || 0;
@@ -29485,6 +29530,33 @@ function tinhPhutLamThem(gioRaThat, gioCaKetThuc) {
   return du > PHUT_TOI_THIEU_LAM_THEM ? du : 0;
 }
 
+function blKhoiNgayLe() {
+  const nam = new Date().getFullYear(), c = ngayLeLuong || {}, ds = [];
+  for (let t = new Date(nam, 0, 1); t.getFullYear() === nam; t.setDate(t.getDate() + 1)) {
+    const s = t.toLocaleDateString('sv-SE'), goc = ngayLe(s).le.filter(x => x.nghi).map(x => x.ten);
+    if (goc.length || (c.them || []).includes(s)) ds.push({ s, ten: goc.join(', ') || 'Cửa hàng thêm', bo: (c.bo || []).includes(s) });
+  }
+  return `<div class="admin-block" id="bl-ngay-le" style="margin-bottom:1rem">
+    <h3 style="margin-bottom:4px">Ngày nghỉ lễ hưởng lương ${nam}</h3>
+    <p class="info-note">Nghỉ lễ: nhân viên vẫn hưởng 1 công. Đi làm ngày lễ: lương công ×4. Chỉ tính cho người có đi làm trong tháng, từ tháng 11/2026.
+      Tết Âm lịch được nghỉ 5 ngày và Quốc khánh 2 ngày — ngày Tết thứ 5 và ngày Quốc khánh thứ 2 do cửa hàng chọn, thêm ở dưới.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${ds.map(x => `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:8px;font-size:12.5px;background:${x.bo ? 'var(--bg)' : '#FEF2F2'};${x.bo ? 'text-decoration:line-through;opacity:.55' : ''}">
+      <b>${x.s.slice(8)}/${x.s.slice(5, 7)}</b> ${escHtml(x.ten)}
+      <button class="btn-xs" style="padding:0 6px" title="${x.bo ? 'Tính lại ngày này' : 'Không tính ngày này'}" onclick="nlDoi('${x.s}')">${x.bo ? '↺' : '✕'}</button></span>`).join('')}</div>
+    <div style="display:flex;gap:8px;margin-top:8px"><input type="date" id="nl-them" style="flex:1;min-width:0"><button class="btn-g" style="margin:0;flex:0 0 auto" onclick="nlThem()">+ Thêm ngày nghỉ lễ</button></div>
+  </div>`;
+}
+async function nlLuu(them, bo) {
+  try { await setDoc(doc(db, 'settings', 'ngay_le'), { them: [...new Set(them)].sort(), bo: [...new Set(bo)].sort(), suaLuc: serverTimestamp() }); ngayLeLuong = { them, bo };
+    const o = document.getElementById('bl-ngay-le'); if (o) o.outerHTML = blKhoiNgayLe(); showToast('Đã lưu ngày nghỉ lễ'); }
+  catch(e) { showToast('Không lưu được: ' + e.message, true); }
+}
+window.nlThem = async () => { const v = document.getElementById('nl-them')?.value; if (!v) { showToast('Chọn ngày', true); return; } const c = await napNgayLeLuong(true); nlLuu([...(c.them || []), v], (c.bo || []).filter(x => x !== v)); };
+window.nlDoi = async (s) => {
+  const c = await napNgayLeLuong(true); let them = c.them || [], bo = c.bo || [];
+  if (bo.includes(s)) bo = bo.filter(x => x !== s); else if (them.includes(s) && !ngayLe(s).le.some(x => x.nghi)) them = them.filter(x => x !== s); else bo = [...bo, s];
+  nlLuu(them, bo);
+};
 async function getLuongConfig() {
   const snap = await getDoc(doc(db, 'settings', 'luong_theo_gio'));
   return snap.exists() ? snap.data() : {};
@@ -29977,6 +30049,7 @@ async function renderThietLapLuong() {
       </div>` : '<p class="info-note">Chưa có vai trò nào. Tạo ở Thiết lập › Phân quyền.</p>'}
     </div>
 
+    ${(await napNgayLeLuong(true), blKhoiNgayLe())}
     <div class="admin-block" style="margin-bottom:1rem">
       <h3 style="margin-bottom:4px">Bảng công thức thưởng / trừ</h3>
       <p class="info-note">Tự đặt tên và công thức. Bảng lương tháng tự tính theo các dòng đang bật.</p>
@@ -32205,7 +32278,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v859</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v860</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -32263,7 +32336,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v859</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v860</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -32313,7 +32386,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v859</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v860</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -32330,7 +32403,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v859</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v860</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
