@@ -15,7 +15,7 @@ if (location.protocol === 'http:' && !/^(localhost|127\.|192\.168\.|10\.)/.test(
 // Ô số (tồn kho, giá, số lượng...): lăn chuột khi đang trỏ trong ô KHÔNG đổi số — bỏ chọn ô để trang cuộn bình thường
 document.addEventListener('wheel', (e) => { const el = document.activeElement; if (el && el.tagName === 'INPUT' && el.type === 'number' && (e.target === el || el.contains(e.target))) el.blur(); }, { passive: true, capture: true });
 (function () {
-  const APP_VERSION = 858;
+  const APP_VERSION = 859;
   window.APP_VERSION = APP_VERSION;
   const KHOA = 'cua_ver_target';
   let dangTai = false, banMoi = 0;
@@ -20759,7 +20759,8 @@ const knDuoi = (loai) => /jpe?g/.test(loai) ? 'jpg' : /png/.test(loai) ? 'png' :
   : /mp4/.test(loai) ? 'mp4' : /quicktime|mov/.test(loai) ? 'mov' : 'webm';
 // Phiên trên máy: kieu 'anh' (ảnh mã đơn) hoặc mặc định là video mở hàng
 const knLaAnh = (p) => p?.kieu === 'anh';
-const knTenFile = (p) => `${knLaAnh(p) ? 'AnhMaDon_' : 'VideoMoHangTra_'}${p.ma}.${knDuoi(p.loai)}`;
+// Video quay bị ngắt (cuộc gọi đến...) rồi quay tiếp: phần 2, 3... lưu thành file riêng cạnh file chính
+const knTenFile = (p) => `${knLaAnh(p) ? 'AnhMaDon_' : 'VideoMoHangTra_'}${p.ma}${!knLaAnh(p) && Number(p.phan) > 1 ? '_phan' + p.phan : ''}.${knDuoi(p.loai)}`;
 const knNhan = (p) => knLaAnh(p) ? 'Ảnh mã đơn' : 'Video mở hàng';
 const knMB = (b) => (b / 1048576).toFixed(1) + ' MB';
 let knMo = null;         // cửa sổ Thư mục Video đang mở: { ma, donId, thuMuc, files, ghiChu, dangTai, loi, anhTam }
@@ -21094,19 +21095,21 @@ async function knHoiThayVideoCu() {
 // --- Quay video mở hàng ngay trong app (camera sau). Mỗi giây ghi vào bộ nhớ máy.
 async function knGiuManHinh() { try { if (knQ && navigator.wakeLock && document.visibilityState === 'visible') knQ.wl = await navigator.wakeLock.request('screen'); } catch(e) {} }
 function knKhiDoiHienThi() { if (document.visibilityState === 'visible') knGiuManHinh(); }
-window.knQuay = async function() {
-  if (!knMo || knQ) return;
+// tiep = { ma, phan }: quay tiếp phần sau khi bị ngắt (không hỏi lại ảnh mã đơn / thay video cũ)
+window.knQuay = async function(tiep) {
+  if (knQ || (!knMo && !tiep)) return;
   if (!coQuyen('kn_quay')) { showToast('Bạn chưa có quyền quay video mở hàng trả', true); return; }
   if (!window.MediaRecorder || !navigator.mediaDevices?.getUserMedia) { alert('Máy này không quay được trong app — dùng app Camera của điện thoại rồi bấm "Chọn video có sẵn".'); return; }
-  if (!await knHoiChuaCoAnh()) return;
-  if (!await knHoiThayVideoCu()) return;
+  if (!tiep && !await knHoiChuaCoAnh()) return;
+  if (!tiep && !await knHoiThayVideoCu()) return;
+  const phan = Number(tiep?.phan) > 1 ? Number(tiep.phan) : 1;
   try { await knDB(); } catch(e) { if (!await hoiXacNhan('Không mở được bộ nhớ máy để giữ video an toàn (có thể đang ở chế độ ẩn danh).\n\nVẫn quay? Nếu sập app giữa chừng sẽ mất video — nên dùng app Camera của điện thoại rồi bấm "Chọn video có sẵn".', { nutDongY: 'Vẫn quay' })) return; }
-  const ma = knMo.ma;
+  const ma = tiep?.ma || knMo.ma;
   let m = document.getElementById('kn-quay');
   if (!m) { m = document.createElement('div'); m.id = 'kn-quay'; m.style.cssText = 'position:fixed;inset:0;background:#000;z-index:1600;display:flex;flex-direction:column'; document.body.appendChild(m); }
   m.innerHTML = `<video id="kn-quay-v" playsinline muted style="flex:1;min-height:0;width:100%;object-fit:contain;background:#000"></video>
     <div style="position:absolute;top:10px;left:12px;right:12px;color:#fff;text-shadow:0 1px 3px #000">
-      <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700"><span>${escHtml(ma)}</span><span id="kn-quay-gio">Đang mở camera...</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700"><span>${escHtml(ma)}${phan > 1 ? ' · phần ' + phan : ''}</span><span id="kn-quay-gio">Đang mở camera...</span></div>
       <div id="kn-quay-tt" style="font-size:12px;margin-top:3px;opacity:.9">Giữ màn hình sáng, không chuyển sang app khác khi đang quay</div></div>
     <div style="display:flex;gap:12px;padding:14px;background:#111;justify-content:center">
       <button onclick="knHuyQuay()" style="flex:1;max-width:150px;padding:12px;border-radius:10px;border:1px solid #555;background:#222;color:#fff;font-size:15px">Hủy</button>
@@ -21125,8 +21128,8 @@ window.knQuay = async function() {
   catch(e) { rec = new MediaRecorder(stream); }
   const id = 'q' + Date.now();
   const loaiThat = (rec.mimeType || loai || 'video/webm').split(';')[0];
-  knQ = { id, ma, stream, rec, stt: 0, size: 0, giay: 0, chuoi: Promise.resolve(), loiLuu: '', duPhong: [], loai: loaiThat, batDau: Date.now() };
-  try { await knLuuPhien({ id, ma, loai: loaiThat, batDau: knQ.batDau, trangThai: 'dang_quay', size: 0, soDoan: 0, nguoi: currentUserData?.ten || '' }); }
+  knQ = { id, ma, phan, stream, rec, stt: 0, size: 0, giay: 0, chuoi: Promise.resolve(), loiLuu: '', duPhong: [], loai: loaiThat, batDau: Date.now() };
+  try { await knLuuPhien({ id, ma, phan, loai: loaiThat, batDau: knQ.batDau, trangThai: 'dang_quay', size: 0, soDoan: 0, nguoi: currentUserData?.ten || '' }); }
   catch(e) { knQ.loiLuu = e.message; }
   rec.ondataavailable = (e) => {
     const q = knQ; if (!q || !e.data?.size) return;
@@ -21136,8 +21139,15 @@ window.knQuay = async function() {
     if (tt) tt.textContent = q.loiLuu ? `⚠ Không ghi được vào máy (${q.loiLuu}) — đang giữ tạm trong bộ nhớ, ĐỪNG tắt app` : `✓ Đã lưu vào máy ${knMB(q.size)} · giữ màn hình sáng`;
   };
   rec.onstop = () => knKetThucQuay();
-  rec.onerror = () => { try { rec.state !== 'inactive' && rec.stop(); } catch(e) {} };
-  stream.getVideoTracks().forEach(t => t.addEventListener('ended', () => { try { knQ?.rec.state !== 'inactive' && knQ.rec.stop(); } catch(e) {} }));
+  // Bị ngắt (cuộc gọi đến, chuyển app, mất camera / micro): cất phần đã quay rồi cho bấm "Quay tiếp" — không mất video
+  const ngat = (lyDo) => { const q = knQ; if (!q || q.id !== id || q.ngat || q.dungTay || q.daKetThuc) return; q.ngat = lyDo; try { q.rec.state !== 'inactive' ? q.rec.stop() : knKetThucQuay(); } catch(e) { knKetThucQuay(); } };
+  rec.onerror = () => ngat('loi');
+  stream.getTracks().forEach(t => {
+    t.addEventListener('ended', () => ngat('mat_' + t.kind));
+    t.addEventListener('mute', () => { const q = knQ; if (!q) return; clearTimeout(q.henMute); q.henMute = setTimeout(() => { if (t.muted) ngat('tat_' + t.kind); }, 1500); });
+  });
+  knQ.anDi = () => { if (document.visibilityState === 'hidden') ngat('an'); };
+  document.addEventListener('visibilitychange', knQ.anDi);
   rec.start(1000);
   knGiuManHinh();
   document.addEventListener('visibilitychange', knKhiDoiHienThi);
@@ -21149,8 +21159,9 @@ function knDongManQuay() {
 async function knKetThucQuay() {
   const q = knQ; if (!q || q.daKetThuc) return;
   q.daKetThuc = true;
-  clearInterval(q.hen);
+  clearInterval(q.hen); clearTimeout(q.henMute);
   document.removeEventListener('visibilitychange', knKhiDoiHienThi);
+  if (q.anDi) document.removeEventListener('visibilitychange', q.anDi);
   try { q.wl?.release(); } catch(e) {}
   try { q.stream.getTracks().forEach(t => t.stop()); } catch(e) {}
   const nut = document.getElementById('kn-quay-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang cất video...'; }
@@ -21172,19 +21183,36 @@ async function knKetThucQuay() {
     return;
   }
   const p = await knDocPhien(q.id).catch(() => null);
-  await knLuuPhien({ ...(p || { id: q.id, ma: q.ma, loai: q.loai, batDau: q.batDau, nguoi: currentUserData?.ten || '' }), trangThai: 'cho_tai', ketThuc: Date.now(), size: q.size, soDoan: q.stt });
+  await knLuuPhien({ ...(p || { id: q.id, ma: q.ma, phan: q.phan, loai: q.loai, batDau: q.batDau, nguoi: currentUserData?.ten || '' }), trangThai: 'cho_tai', ketThuc: Date.now(), size: q.size, soDoan: q.stt });
   if (knMo?.ma === q.ma) { knMo.cho = await knPhienCho(q.ma); knVe(); }
   knTaiPhien(q.id);
+  if (q.ngat && q.size) knManNgat(q);
+}
+// Màn hình sau khi bị ngắt: phần vừa quay đã cất + đang tải lên; bấm Quay tiếp để quay phần sau
+function knManNgat(q) {
+  let m = document.getElementById('kn-quay');
+  if (!m) { m = document.createElement('div'); m.id = 'kn-quay'; m.style.cssText = 'position:fixed;inset:0;background:#000;z-index:1600;display:flex;flex-direction:column'; document.body.appendChild(m); }
+  const ma = escHtml(q.ma), phut = dgPhut(Math.floor((Date.now() - q.batDau) / 1000));
+  m.innerHTML = `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;color:#fff;text-align:center">
+      <div style="font-size:44px">⏸</div>
+      <div style="font-size:19px;font-weight:800">Quay bị ngắt — ${ma}</div>
+      <div style="font-size:14px;opacity:.9;max-width:420px">Có cuộc gọi đến hoặc app bị chuyển ra ngoài. <b>Phần ${q.phan}</b> (khoảng ${phut}) đã cất an toàn trên máy và đang tải lên Drive.</div>
+      <div style="font-size:14px;opacity:.9;max-width:420px">Bấm <b>▶ Quay tiếp</b> để quay phần ${q.phan + 1}, lưu cùng đơn này thành file riêng.</div></div>
+    <div style="display:flex;gap:12px;padding:14px;background:#111;justify-content:center">
+      <button onclick="knDongManQuay()" style="flex:1;max-width:150px;padding:12px;border-radius:10px;border:1px solid #555;background:#222;color:#fff;font-size:15px">Xong</button>
+      <button onclick="knQuay({ ma: '${ma}', phan: ${q.phan + 1} })" style="flex:2;max-width:260px;padding:12px;border-radius:10px;border:none;background:#DC2626;color:#fff;font-size:16px;font-weight:700">▶ Quay tiếp</button></div>`;
+  m.style.display = 'flex';
 }
 window.knDungQuay = function() {
   const q = knQ; if (!q) return;
+  q.dungTay = true;
   const nut = document.getElementById('kn-quay-nut'); if (nut) { nut.disabled = true; nut.textContent = 'Đang cất video...'; }
   try { if (q.rec.state !== 'inactive') q.rec.stop(); else knKetThucQuay(); } catch(e) { knKetThucQuay(); }
 };
 window.knHuyQuay = async function() {
   const q = knQ; if (!q) { knDongManQuay(); return; }
   if (q.giay > 3 && !await hoiXacNhan('Bỏ video đang quay? Video sẽ bị xóa, không tải lên.', { nutDongY: 'Bỏ video' })) return;
-  q.huy = true;
+  q.huy = true; q.dungTay = true;
   try { if (q.rec.state !== 'inactive') q.rec.stop(); else knKetThucQuay(); } catch(e) { knKetThucQuay(); }
 };
 
@@ -32177,7 +32205,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 <div id="screen-login">
   <div class="login-box">
     <div class="login-logo">
-      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v858</small></h1>
+      <h1><img src="icon-192.png" style="width:48px;height:48px;border-radius:12px;display:block;margin:0 auto 8px"> CUA Aquarium <small style="opacity:0.4;font-size:10px">v859</small></h1>
       <p>Hệ thống quản lý nội bộ</p>
     </div>
     <label>Email</label>
@@ -32235,7 +32263,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
 
   <!-- SIDEBAR (desktop) -->
   <div class="sidebar">
-    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v858</span></div>
+    <div class="sidebar-brand"><img src="icon-192.png" style="width:28px;height:28px;border-radius:6px;vertical-align:middle;margin-right:6px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v859</span></div>
     <div class="sidebar-section">Module</div>
     <button class="mod-btn purple" id="sidebar-checklist" style="display:none" onclick="switchModule('checklist');updateSidebar('checklist')">Checklist</button>
     <button class="mod-btn green" id="sidebar-nhap" style="display:none" onclick="switchModule('nhap');updateSidebar('nhap')">Chuyển kho</button>
@@ -32285,7 +32313,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
         <span id="ten-man-gon">Menu</span>
       </button>
       </div>
-      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v858</span></div>
+      <div class="brand"><img src="icon-192.png" style="width:24px;height:24px;border-radius:5px;vertical-align:middle;margin-right:5px"> CUA Aquarium <span style="font-size:10px;opacity:0.5">v859</span></div>
       <div class="header-right">
         <button id="lh-nut" class="tb-nut" onclick="event.stopPropagation();lhMo()" title="Lịch hẹn" aria-label="Lịch hẹn" style="display:none">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
@@ -32302,7 +32330,7 @@ select.chon-so-trang{width:auto!important;max-width:110px!important;display:inli
           <div class="user-menu-dropdown" id="mobile-user-menu" style="right:0;left:auto;top:100%">
             <button class="nut-ket-thuc-ca" onclick="event.stopPropagation();document.querySelectorAll('.user-menu-dropdown').forEach(m=>m.classList.remove('open'));thoatCa()" style="display:none;color:var(--red);font-weight:700">Kết thúc ca (check-out)</button>
             <button onclick="kiemTraCamera()">Kiểm tra camera</button>
-            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v858</span></button>
+            <button onclick="kiemTraCapNhatTay()">Kiểm tra cập nhật <span style="opacity:.55;font-size:11px">v859</span></button>
             <button onclick="moDoiMatKhau()">Đổi mật khẩu</button>
             <button onclick="doLogout()">Đăng xuất</button>
           </div>
